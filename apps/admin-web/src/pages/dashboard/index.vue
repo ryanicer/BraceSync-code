@@ -9,53 +9,61 @@
       </el-radio-group>
     </div>
 
-    <!-- 6 KPI 卡片 -->
-    <el-row :gutter="16" class="kpi-row">
-      <el-col :span="4" v-for="card in kpiCards" :key="card.label">
-        <div :class="['kpi-card', 'kpi-' + card.color]">
-          <div class="kpi-value">{{ card.value }}</div>
-          <div class="kpi-label">{{ card.label }}</div>
-        </div>
-      </el-col>
-    </el-row>
+    <!-- 6 KPI 卡片：自适应网格 -->
+    <div class="kpi-grid">
+      <div v-for="card in kpiCards" :key="card.label" :class="['kpi-card', 'kpi-' + card.color]">
+        <div class="kpi-value">{{ card.value }}</div>
+        <div class="kpi-label">{{ card.label }}</div>
+      </div>
+    </div>
 
-    <!-- 趋势图表行 -->
-    <el-row :gutter="16">
-      <el-col :span="12">
-        <div class="page-card">
-          <div class="page-card-title">近7天日均佩戴时长</div>
-          <Line v-if="wearTrendData" :data="wearTrendData" :options="lineOptions" class="chart-canvas" />
+    <!-- 趋势图表行：自适应双列/单列 -->
+    <div class="chart-row">
+      <div class="page-card chart-card">
+        <el-tooltip content="近7天日均佩戴时长" placement="top" :show-after="300">
+          <div class="page-card-title card-title-ellipsis">近7天日均佩戴时长</div>
+        </el-tooltip>
+        <div class="chart-container">
+          <Line v-if="wearTrendData" :data="wearTrendData" :options="lineOptions" />
         </div>
-      </el-col>
-      <el-col :span="12">
-        <div class="page-card">
-          <div class="page-card-title">近7天告警趋势</div>
-          <Bar v-if="alertTrendData" :data="alertTrendData" :options="barOptions" class="chart-canvas" />
+      </div>
+      <div class="page-card chart-card">
+        <el-tooltip content="近7天告警趋势" placement="top" :show-after="300">
+          <div class="page-card-title card-title-ellipsis">近7天告警趋势</div>
+        </el-tooltip>
+        <div class="chart-container">
+          <Bar v-if="alertTrendData" :data="alertTrendData" :options="barOptions" />
         </div>
-      </el-col>
-    </el-row>
+      </div>
+    </div>
 
     <!-- 分布图表行 -->
-    <el-row :gutter="16">
-      <el-col :span="12">
-        <div class="page-card">
-          <div class="page-card-title">各团队管理患者数</div>
-          <Bar v-if="teamChartData" :data="teamChartData" :options="barOptions" class="chart-canvas" />
+    <div class="chart-row">
+      <div class="page-card chart-card">
+        <el-tooltip content="各团队管理患者数" placement="top" :show-after="300">
+          <div class="page-card-title card-title-ellipsis">各团队管理患者数</div>
+        </el-tooltip>
+        <div class="chart-container">
+          <Bar v-if="teamChartData" :data="teamChartData" :options="barOptions" />
         </div>
-      </el-col>
-      <el-col :span="12">
-        <div class="page-card">
-          <div class="page-card-title">佩戴时长分布</div>
-          <Doughnut v-if="distributionData" :data="distributionData" :options="doughnutOptions" class="chart-canvas" />
+      </div>
+      <div class="page-card chart-card">
+        <el-tooltip content="佩戴时长分布" placement="top" :show-after="300">
+          <div class="page-card-title card-title-ellipsis">佩戴时长分布</div>
+        </el-tooltip>
+        <div class="chart-container">
+          <Doughnut v-if="distributionData" :data="distributionData" :options="doughnutOptions" />
         </div>
-      </el-col>
-    </el-row>
+      </div>
+    </div>
 
     <!-- 2 排行 -->
-    <el-row :gutter="16">
-      <el-col :span="12">
-        <div class="page-card">
-          <div class="page-card-title">团队佩戴达标排行</div>
+    <div class="chart-row">
+      <div class="page-card chart-card">
+        <el-tooltip content="团队佩戴达标排行" placement="top" :show-after="300">
+          <div class="page-card-title card-title-ellipsis">团队佩戴达标排行</div>
+        </el-tooltip>
+        <div class="table-scroll">
           <el-table :data="teamRanking" size="small">
             <el-table-column prop="rank" label="排名" width="70" />
             <el-table-column prop="teamName" label="团队" />
@@ -70,10 +78,12 @@
             </el-table-column>
           </el-table>
         </div>
-      </el-col>
-      <el-col :span="12">
-        <div class="page-card">
-          <div class="page-card-title">医生管理患者排行</div>
+      </div>
+      <div class="page-card chart-card">
+        <el-tooltip content="医生管理患者排行" placement="top" :show-after="300">
+          <div class="page-card-title card-title-ellipsis">医生管理患者排行</div>
+        </el-tooltip>
+        <div class="table-scroll">
           <el-table :data="doctorRanking" size="small">
             <el-table-column prop="rank" label="排名" width="70" />
             <el-table-column prop="doctorName" label="医生" width="100" />
@@ -86,8 +96,8 @@
             </el-table-column>
           </el-table>
         </div>
-      </el-col>
-    </el-row>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -228,35 +238,106 @@ onMounted(loadData)
 </script>
 
 <style scoped>
-.kpi-row {
+/* KPI 卡片自适应网格：≥1280px 6列，768-1279px 3列，<768px 2列 */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 16px;
   margin-bottom: 16px;
 }
+
 .kpi-card {
   background: #fff;
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  min-width: 0;
 }
+
 .kpi-value {
   font-size: 28px;
   font-weight: 600;
   color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
 .kpi-label {
   font-size: 13px;
   color: #999;
   margin-top: 4px;
 }
+
 .kpi-primary { border-left: 4px solid #1a6db5; }
 .kpi-success { border-left: 4px solid #10AC84; }
 .kpi-warning { border-left: 4px solid #EE5A24; }
 .kpi-info { border-left: 4px solid #2E86DE; }
 .kpi-accent { border-left: 4px solid #8E44AD; }
 .kpi-secondary { border-left: 4px solid #F39C12; }
-.chart-canvas {
+
+/* 图表行：双列网格 */
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.chart-card {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+/* 卡片标题单行省略：窄屏下避免长标题撑高卡片 */
+.card-title-ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+/* 图表容器：固定高度 + 相对定位，切断 Chart.js resize 死循环
+   Chart.js responsive:true 会监听容器尺寸，若容器大小又受 canvas 影响会无限循环 */
+.chart-container {
+  position: relative;
+  width: 100%;
   height: 280px;
 }
-.dashboard :deep(.el-row) {
-  margin-bottom: 16px;
+
+/* 表格横向滚动兜底 */
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* 平板断点（768-1279px）：KPI 3列，图表仍双列 */
+@media (max-width: 1279px) and (min-width: 768px) {
+  .kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* 移动端断点（<768px）：KPI 2列，图表单列 */
+@media (max-width: 767px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  .kpi-card {
+    padding: 14px;
+  }
+  .kpi-value {
+    font-size: 22px;
+  }
+  .kpi-label {
+    font-size: 12px;
+  }
+  .chart-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .chart-container {
+    height: 220px;
+  }
 }
 </style>

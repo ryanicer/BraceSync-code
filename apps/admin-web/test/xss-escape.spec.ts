@@ -1,6 +1,6 @@
 // T023 安全审计 Part A · XSS 防护测试（admin-web）
 //
-// 对齐：docs/ 面）
+// 对齐：docs/（XSS 面）
 //
 // 三层防护回归：
 //  1. 框架层：Vue 3 插值（{{ }}）对 OWASP XSS 载荷自动 HTML 转义

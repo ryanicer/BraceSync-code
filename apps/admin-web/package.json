@@ -11,8 +11,9 @@
     "test": "npm run typecheck && vitest run"
   },
   "dependencies": {
-    "@bracesync/shared-types": "*",
     "@bracesync/constants": "*",
+    "@bracesync/shared-types": "*",
+    "@element-plus/icons-vue": "^2.3.2",
     "chart.js": "^4.4.0",
     "element-plus": "^2.9.0",
     "pinia": "^2.1.0",
