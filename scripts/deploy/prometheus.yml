@@ -1,0 +1,60 @@
+# BraceSync Prometheus 抓取配置
+# 对齐：docs/ §9 · docs/ §6.1
+# 用法：挂载到 prometheus 容器的 /etc/prometheus/prometheus.yml
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# ─── 告警规则（运维侧，独立渠道）────────────────────────────────────────
+rule_files:
+  # 后续补齐：待告警策略稳定后创建 rules/alerts.yml
+  # - /etc/prometheus/alerts.yml
+
+# ─── 抓取目标 ───────────────────────────────────────────────────────────
+scrape_configs:
+  # ─ 7 应用服务
+  - job_name: "bracesync-gateway"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8080"]
+
+  - job_name: "bracesync-user-service"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["user-service:8080"]
+
+  - job_name: "bracesync-device-service"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["device-service:8080"]
+
+  - job_name: "bracesync-data-service"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["data-service:8080"]
+
+  - job_name: "bracesync-alert-service"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["alert-service:8080"]
+
+  - job_name: "bracesync-file-service"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["file-service:8080"]
+
+  - job_name: "bracesync-msg-service"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["msg-service:8080"]
+
+  # ─ 主机监控（node_exporter）
+  - job_name: "node"
+    static_configs:
+      - targets: ["node_exporter:9100"]
+
+  # ─ Prometheus 自身
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -1,0 +1,31 @@
+{
+  "name": "bracesync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "矫智通 · 脊柱侧弯支具压力监测系统",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:patient": "npm -w apps/patient-miniapp run dev",
+    "dev:tech": "npm -w apps/tech-miniapp run dev",
+    "dev:admin": "npm -w apps/admin-web run dev",
+    "build:all": "npm run build --workspaces",
+    "lint": "eslint . --ext .js --ignore-pattern node_modules --ignore-pattern dist",
+    "test": "npm run test --workspaces",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "clean": "rimraf apps/*/dist packages/*/dist"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "eslint": "^8.57.0"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.0.0"
+  }
+}

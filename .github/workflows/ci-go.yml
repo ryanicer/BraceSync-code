@@ -1,0 +1,140 @@
+# BraceSync CI-Go — PR 门禁（Go 侧）
+# 对齐：docs/ §6.2/§6.3 · docs/ §7
+# 成本优化（T038）：仅 services/ 或 Go 依赖/CI 配置变更时触发；纯 docs/ Go 检查
+name: CI-Go
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'services/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'go.work'
+      - 'go.work.sum'
+      - '.golangci.yml'
+      - '.github/workflows/ci-go.yml'
+
+# 成本优化（T045）：同一 PR/分支并发 push 只保留最新一次运行，取消旧 run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.22"
+
+jobs:
+  go-lint:
+    name: Go Vet + Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            go.work.sum
+      - name: go vet
+        run: go vet ./services/gateway/... ./services/user-service/... ./services/device-service/... ./services/data-service/... ./services/alert-service/... ./services/file-service/... ./services/msg-service/...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.59
+          args: --timeout=5m --go=1.22 --config=.golangci.yml ./services/gateway/... ./services/user-service/... ./services/device-service/... ./services/data-service/... ./services/alert-service/... ./services/file-service/... ./services/msg-service/... ./services/testhelper/...
+
+  go-test:
+    name: Go Unit + HTTP Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            go.work.sum
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-${{ runner.os }}-
+      - name: Run tests with coverage
+        run: |
+          go test -v -coverprofile=coverage.out -covermode=atomic \
+            ./services/gateway/... ./services/user-service/... ./services/device-service/... \
+            ./services/data-service/... ./services/alert-service/... ./services/file-service/... \
+            ./services/msg-service/...
+      - name: Check coverage (diff ≥70% overall, ≥90% high-risk)
+        run: |
+          TOTAL=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${TOTAL}%"
+          # 骨架阶段：总覆盖率门禁暂不阻塞 PR（T002 后骨架上已有测试文件覆盖）
+          # 业务代码阶段启用严格门禁：
+          # if (( $(echo "$TOTAL < 70" | bc -l) )); then
+          #   echo "ERROR: total coverage ${TOTAL}% below 70% threshold"; exit 1
+          # fi
+          echo "Coverage check OK (gate soft, will enforce ≥70% after Phase 2)"
+          # 高危模块覆盖率检查（alert-service/device-signing/rbac）
+          echo "High-risk module coverage:"
+          for svc in alert device user; do
+            COV=$(go tool cover -func=coverage.out 2>/dev/null | grep "${svc}-service" | awk '{sum+=$NF} END {if(NR>0) printf "%.1f", sum/NR; else print "0"}')
+            echo "  ${svc}-service coverage points: ${COV}%"
+            # TODO: 启用 ≥90% 门禁 when high-risk modules are implemented
+            # if (( $(echo "$COV < 90" | bc -l) )); then
+            #   echo "ERROR: ${svc}-service coverage below 90%"; exit 1
+            # fi
+          done
+
+  go-integration:
+    name: Go Integration Tests (testcontainers)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: bracesync_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            go.work.sum
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-${{ runner.os }}-
+      - name: Run integration tests
+        env:
+          TEST_DB_URL: postgres://test:test@localhost:5432/bracesync_test?sslmode=disable
+          TEST_REDIS_URL: redis://localhost:6379/0
+        run: |
+          go test -v -tags=integration \
+            ./services/gateway/... ./services/user-service/... ./services/device-service/... \
+            ./services/data-service/... ./services/alert-service/... ./services/file-service/... \
+            ./services/msg-service/...

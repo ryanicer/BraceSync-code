@@ -1,0 +1,23 @@
+{
+  "name": "@bracesync/ui-components",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bracesync/shared-types": "*"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^14.12.0",
+    "vitest": "^1.6.0",
+    "vue": "^3.4.0"
+  }
+}

@@ -1,0 +1,39 @@
+# BraceSync CI-FE — PR 门禁（前端侧）
+# 对齐：docs/ §6.2/§6.3 · docs/ §7
+# 成本优化（T038）：仅 apps/ packages/ 或前端依赖/CI 配置变更时触发；纯 docs/ 改动不跑前端检查
+name: CI-FE
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ci-fe.yml'
+
+# 成本优化（T045）：同一 PR/分支并发 push 只保留最新一次运行，取消旧 run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "18"
+
+jobs:
+  frontend-lint-test:
+    name: Frontend Lint + Vitest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: ESLint
+        run: npm run lint
+      - name: Vitest with coverage
+        run: npm run test -- --coverage --run

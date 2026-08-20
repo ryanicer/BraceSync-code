@@ -1,0 +1,17 @@
+{
+  "envId": "env-test-bracesync-<ENV_ID>",
+  "functionRoot": "cloudfunctions",
+  "functions": [
+    {
+      "name": "hello-http",
+      "handler": "index.main",
+      "runtime": "Nodejs18.15",
+      "timeout": 10,
+      "memorySize": 256,
+      "isHTTP": true,
+      "envVariables": {},
+      "triggers": [],
+      "ignore": ["node_modules/**", ".git/**", "*.md"]
+    }
+  ]
+}

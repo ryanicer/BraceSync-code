@@ -1,0 +1,193 @@
+# BraceSync 生产/Staging 部署 Compose
+# 对齐：docs/ §1 · docs/ §6.1
+# 用法：docker compose up -d（生产）/ docker compose -p staging up -d（staging）
+
+services:
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  gateway:
+    image: bracesync/gateway:${TAG:-latest}
+    environment:
+      # T039-H1（T023-H1）：JWT_SECRET 必填，未设置 compose 直接报错，防部署遗漏 fail-open
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (T023-H1 fail-closed)}
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+      # T028：/api/v1/alerts 代理目标（alert-service 公开查询/处理端点）
+      - ALERT_SERVICE_URL=http://alert-service:8080
+      # T030：admin 域端点代理目标（缺省即 compose 服务名地址）
+      - USER_SERVICE_URL=http://user-service:8081
+      - DEVICE_SERVICE_URL=http://device-service:8082
+      - DATA_SERVICE_URL=http://data-service:8083
+      - MSG_SERVICE_URL=http://msg-service:8086
+      # T022：file-service 代理目标（COS 预签名直传）
+      - FILE_SERVICE_URL=http://file-service:8085
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  user-service:
+    image: bracesync/user-service:${TAG:-latest}
+    environment:
+      - PORT=8081
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+      # T039-H1：与 gateway 同源必填校验（user-service 登录签发依赖同一密钥）
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set (T023-H1 fail-closed)}
+      # T030：手机号 AES-GCM 加密密钥（技师新建/编辑写入路径必需）
+      - PHONE_ENC_KEY=${PHONE_ENC_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  device-service:
+    image: bracesync/device-service:${TAG:-latest}
+    environment:
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+      # device_secret 列加密密钥（架构 §5.2 AES-GCM，64 位 hex = 32 字节）
+      - DEVICE_SECRET_ENC_KEY=${DEVICE_SECRET_ENC_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  data-service:
+    image: bracesync/data-service:${TAG:-latest}
+    environment:
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+      # 服务间直连白名单（架构 §3.4）：内联告警评估；不可用时降级写 alert:pending
+      - ALERT_SERVICE_URL=http://alert-service:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  alert-service:
+    image: bracesync/alert-service:${TAG:-latest}
+    environment:
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  msg-service:
+    image: bracesync/msg-service:${TAG:-latest}
+    environment:
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  file-service:
+    image: bracesync/file-service:${TAG:-latest}
+    environment:
+      - PORT=8085
+      - DB_URL=${DB_URL}
+      - COS_SECRET_ID=${COS_SECRET_ID}
+      - COS_SECRET_KEY=${COS_SECRET_KEY}
+      - COS_BUCKET=${COS_BUCKET}
+      - COS_REGION=${COS_REGION}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=bracesync
+      - POSTGRES_USER=${POSTGRES_USER:-bracesync}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bracesync}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --appendfsync everysec --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    restart: unless-stopped
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafanadata:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    logging: *default-logging
+
+  node_exporter:
+    image: prom/node-exporter:v1.7.0
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  pgdata:
+  redisdata:
+  promdata:
+  grafanadata:

@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+.pnp.*
+*.tgz
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# SSL certificates (private keys, never commit)
+scripts/deploy/certs/*.pem
+scripts/deploy/certs/*.key
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Playwright E2E
+test-results/
+playwright-report/
+
+# Miniapp
+project.private.config.json
+
+# Temp
+temp/
+.tmp/
+
+# Minio / Uploads
+uploads/
+
+# Go
+bin/
+go.work.sum
+
+# Vite
+.vite/
+*.timestamp-*.mjs
+
+# Qoder / better-harness analysis artifacts
+.qoder/
+
+# Agent worktrees（仓库内执行人工作区，共享 .git 但引用隔离，不入库）
+.worktrees/
+
+# Agent memory / 自报归档（本机工作区文件，不入库）
+.workbuddy/

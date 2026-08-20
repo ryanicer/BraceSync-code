@@ -1,0 +1,39 @@
+{
+  "pages": [
+    {
+      "path": "pages/login/index",
+      "style": { "navigationBarTitleText": "登录", "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/monitor/index",
+      "style": { "navigationBarTitleText": "实时监测", "enablePullDownRefresh": true }
+    },
+    {
+      "path": "pages/history/index",
+      "style": { "navigationBarTitleText": "历史记录" }
+    },
+    {
+      "path": "pages/device/index",
+      "style": { "navigationBarTitleText": "设备管理" }
+    },
+    {
+      "path": "pages/wifi-setup/index",
+      "style": { "navigationBarTitleText": "WiFi配网" }
+    },
+    {
+      "path": "pages/anomaly/index",
+      "style": { "navigationBarTitleText": "异常事件" }
+    }
+  ],
+  "tabBar": {
+    "color": "#94a3b8",
+    "selectedColor": "#2563EB",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/monitor/index", "text": "实时监测" },
+      { "pagePath": "pages/history/index", "text": "异常监测" },
+      { "pagePath": "pages/device/index", "text": "设备管理" }
+    ]
+  }
+}

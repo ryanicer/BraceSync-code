@@ -1,0 +1,208 @@
+# BraceSync E2E
+# PR 门禁（informational，不阻塞合并）：患者端 H5 Playwright e2e（e2e/ 基座）
+# 定时/手动：Admin Web staging 巡检（占位，staging 就绪后启用）
+# 对齐：docs/ §4 · docs/ §6.3
+name: E2E
+
+on:
+  pull_request:
+    branches: [main, develop]
+    # 成本优化（T038）：仅前端代码/测试/CI 配置变更时跑 PR E2E；纯 docs/ 改动跳过
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'e2e/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'playwright.config.ts'
+      - '.github/workflows/e2e.yml'
+  schedule:
+    - cron: "0 2 * * *"  # 每日 02:00 UTC（巡检，不受 paths 限制）
+  workflow_dispatch: {}   # 手动触发（发版前）
+
+# 成本优化（T045）：同一 PR/分支并发 push 只保留最新一次，取消旧 run（巡检/手动不受限）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  STAGING_URL: https://staging.bracesync.example.com
+
+jobs:
+  patient-miniapp-e2e:
+    name: Patient MiniApp E2E (Playwright, H5)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check apps/patient-miniapp exists
+        id: check
+        run: |
+          if [ -d "apps/patient-miniapp" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::apps/patient-miniapp 尚未入库（T016 待合并），E2E 跳过（informational，不阻塞）"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.present == 'true'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        if: steps.check.outputs.present == 'true'
+        run: npm ci
+      - name: Install Playwright Chromium
+        if: steps.check.outputs.present == 'true'
+        run: npx playwright install --with-deps chromium
+      # dev server 由 playwright.config.ts 的 webServer 拉起（npm run dev:patient，5173）
+      - name: Run Playwright E2E
+        if: steps.check.outputs.present == 'true'
+        run: npx playwright test
+      - name: Upload Playwright report
+        if: failure() && steps.check.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+      - name: Upload failure screenshots/traces
+        if: failure() && steps.check.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: test-results/
+          retention-days: 14
+
+  tech-miniapp-e2e:
+    name: Tech MiniApp E2E (Playwright, H5)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check apps/tech-miniapp exists
+        id: check
+        run: |
+          if [ -d "apps/tech-miniapp" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::apps/tech-miniapp 尚未入库（T018 待合并），E2E 跳过（informational，不阻塞）"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.present == 'true'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        if: steps.check.outputs.present == 'true'
+        run: npm ci
+      - name: Install Playwright Chromium
+        if: steps.check.outputs.present == 'true'
+        run: npx playwright install --with-deps chromium
+      # dev server 由 e2e/tech-playwright.config.ts 的 webServer 拉起（npm run dev:tech --port 5174）
+      - name: Run Playwright E2E (tech-miniapp)
+        if: steps.check.outputs.present == 'true'
+        run: npx playwright test --config=e2e/tech-playwright.config.ts
+      - name: Upload Playwright report
+        if: failure() && steps.check.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-tech-report
+          path: playwright-report/
+          retention-days: 14
+      - name: Upload failure screenshots/traces
+        if: failure() && steps.check.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tech-test-results
+          path: test-results/
+          retention-days: 14
+
+  admin-web-e2e:
+    name: Admin Web E2E (Playwright, Vue3+ElementPlus)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check apps/admin-web exists
+        id: check
+        run: |
+          if [ -d "apps/admin-web" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::apps/admin-web 尚未入库（T020 待合并），E2E 跳过（informational，不阻塞）"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.present == 'true'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        if: steps.check.outputs.present == 'true'
+        run: npm ci
+      - name: Install Playwright Chromium
+        if: steps.check.outputs.present == 'true'
+        run: npx playwright install --with-deps chromium
+      # dev server 由 e2e/admin-playwright.config.ts 的 webServer 拉起（npx vite --port 5175）
+      - name: Run Playwright E2E (admin-web)
+        if: steps.check.outputs.present == 'true'
+        run: npx playwright test --config=e2e/admin-playwright.config.ts
+      - name: Upload Playwright report
+        if: failure() && steps.check.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-admin-report
+          path: playwright-report/
+          retention-days: 14
+      - name: Upload failure screenshots/traces
+        if: failure() && steps.check.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-admin-test-results
+          path: test-results/
+          retention-days: 14
+
+  playwright-e2e:
+    name: Playwright E2E (Admin Web, staging 巡检)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run E2E tests
+        run: npx playwright test --project=chromium
+        env:
+          BASE_URL: ${{ env.STAGING_URL }}
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+
+  miniapp-smoke:
+    name: 小程序冒烟 (miniprogram-automator)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run miniapp smoke tests
+        run: |
+          echo "TODO: miniprogram-automator 冒烟测试（登录/monitor/绑定流程）"
+          echo "需配置微信开发者工具 CI 环境，Phase 3 启用"

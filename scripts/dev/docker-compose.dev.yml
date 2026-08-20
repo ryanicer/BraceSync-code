@@ -1,0 +1,40 @@
+# BraceSync 本地开发环境 — 仅 PG15 + Redis7
+# 对齐：docs/ §6.1 · §4.1（Redis AOF）
+# 用法：docker compose -f scripts/dev/docker-compose.dev.yml up -d
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: bracesync-dev-pg
+    environment:
+      POSTGRES_DB: bracesync
+      POSTGRES_USER: bracesync
+      POSTGRES_PASSWORD: bracesync
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev_pgdata:/var/lib/postgresql/data
+      - ../db/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bracesync"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: bracesync-dev-redis
+    command: redis-server --appendonly yes --appendfsync everysec
+    ports:
+      - "6379:6379"
+    volumes:
+      - dev_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  dev_pgdata:
+  dev_redisdata:

@@ -1,0 +1,5 @@
+# 行尾统一（CI 红线防御，T013 新增）
+# Dockerfile / shell / workflow 对行尾敏感，强制 LF，防止 Windows 编辑引入 CRLF 破坏 CI
+*.sh text eol=lf
+services/Dockerfile text eol=lf
+.github/workflows/*.yml text eol=lf

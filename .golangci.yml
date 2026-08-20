@@ -1,0 +1,33 @@
+# BraceSync golangci-lint 配置
+# 对齐：go.work workspace（8 module），Go 1.22，CI PR 门禁
+
+run:
+  timeout: 5m
+  go: "1.22"
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+  disable-all: false
+  fast: false
+
+linters-settings:
+  errcheck:
+    check-blank: false
+    check-type-assertions: false
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 50
+  max-same-issues: 5
+  exclude-dirs:
+    - scripts/
+    - vendor/
+

@@ -1,0 +1,12 @@
+go 1.22
+
+use (
+	./services/gateway
+	./services/user-service
+	./services/device-service
+	./services/data-service
+	./services/alert-service
+	./services/file-service
+	./services/msg-service
+	./services/testhelper
+)
