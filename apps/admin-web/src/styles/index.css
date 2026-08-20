@@ -34,3 +34,37 @@ body {
   margin-bottom: 16px;
   flex-wrap: wrap;
 }
+
+/* 响应式：表格横向滚动兜底（极窄屏） */
+.table-responsive {
+  overflow-x: auto;
+}
+
+/* 平板断点（768-1279px） */
+@media (max-width: 1279px) and (min-width: 768px) {
+  .page-card {
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .page-card-title {
+    font-size: 15px;
+    margin-bottom: 12px;
+  }
+}
+
+/* 移动端断点（<768px） */
+@media (max-width: 767px) {
+  .page-card {
+    padding: 12px;
+    margin-bottom: 12px;
+    border-radius: 8px;
+  }
+  .page-card-title {
+    font-size: 14px;
+    margin-bottom: 10px;
+  }
+  .page-toolbar {
+    margin-bottom: 12px;
+    gap: 8px;
+  }
+}

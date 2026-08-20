@@ -2,19 +2,24 @@
 import { vi } from 'vitest'
 
 // Element Plus 使用 matchMedia（响应式断点）
+// 默认模拟桌面端（≥1280px），保证现有布局/菜单测试行为不变
 if (!window.matchMedia) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
-    value: (query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }),
+    value: (query: string) => {
+      // 桌面端断点匹配：min-width: 1280px 返回 true
+      const isDesktop = /min-width:\s*1280px/.test(query) && !/max-width/.test(query)
+      return {
+        matches: isDesktop,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }
+    },
   })
 }
 
