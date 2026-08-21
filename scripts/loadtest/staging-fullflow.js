@@ -1,19 +1,36 @@
 // T023 Part B: BraceSync Staging Full-Flow Stress Test (k6)
 //
-// Usage:
-//   1. Set environment variables (see .env.example)
-//   2. Run via k6 run staging-fullflow.js
-//   3. Output: stdout metrics + HTML report in ./reports/
+// ===== Running Instructions =====
+// 1. SSH Tunnel (local machine): ssh -L 2080:localhost:81 ubuntu@<STAGING_IP> -N
+// 2. Set environment variables:
+//    - Windows PowerShell: $env:TARGET_URL="http://localhost:2080"; $env:ADMIN_USER="ops_admin"...
+//    - Linux/Mac: export TARGET_URL="http://localhost:81"; export ADMIN_USER="ops_admin"...
+//    - See .env.example for all required vars (ADMIN/TECH/PATIENT credentials, DEVICE config)
+// 3. Run: k6 run scripts/loadtest/staging-fullflow.js
+// 4. Optional HTML report: k6 run --summary-export=results.json scripts/loadtest/staging-fullflow.js; k6 report results.json --browser
 //
-// Notes:
-//   - Device reporting scenario SKIPS if DEVICE_SECRET is not set (placeholder detection)
-//   - All login endpoints require real staging credentials
-//   - P95 ≤ 400ms target from runbook §9
+// ===== Scenarios =====
+// - loginBurst:     0→100 VUs over 5s, hold 10s      (validate auth throughput)
+// - deviceIngest:   0→50 VUs over 10s, hold 60s      (signature verification + DB insertion)
+// - dashboardQuery: 0→30 VUs over 5s, hold 30s       (aggregation queries P95≤400ms)
+//
+// ===== Thresholds =====
+// - http_req_duration: p(95)<400ms (P95 ≤ 400ms)
+// - http_req_failed: rate<0.05 (<5% error rate)
+//
+// ===== Notes =====
+// - Device reporting scenario SKIPS if DEVICE_SECRET not set (placeholder key in staging DB)
+// - To disable device scenario: SCENARIO_DEVICE_REPORT_ENABLED=false
+// - All login endpoints require real staging credentials (not mock data)
+// - Dashboard endpoint: GET /api/v1/admin/dashboard/kpi?period=today|week|month
+// - Alerts endpoint: GET /api/v1/alerts?page=1&pageSize=50 (supports patientId/type/status filters)
+// - P95 ≤ 400ms target from runbook §9
 
 import { check, group } from 'k6';
 import http from 'k6/http';
 import { Trend, Rate, Counter } from 'k6/metrics';
 import crypto from 'k6/crypto';
+import { writeFileSync, mkdirSync } from 'fs';
 
 // ===== Custom Metrics =====
 const p95ResponseTime = new Trend('http_req_duration_p95');
@@ -194,7 +211,9 @@ function submitDeviceReport(token, deviceSecret, numSamples = 10) {
 
 // ===== Alert Query =====
 function queryAlerts(token) {
-  const url = `${TARGET_URL}/api/v1/alerts?limit=50&page=1`;
+  // 后端契约：GET /api/v1/alerts?page=1&pageSize=20
+  // 返回结构：{ code: 200, message: "success", data: { list: [], total: 6, page: 1, pageSize: 20 } }
+  const url = `${TARGET_URL}/api/v1/alerts?page=1&pageSize=50`;
   
   const headers = {
     'Authorization': `Bearer ${token}`,
@@ -205,7 +224,10 @@ function queryAlerts(token) {
 
   check(res, {
     'alerts queried successfully': (r) => r.status === 200,
-    'alerts list is array': (r) => r.status === 200 && JSON.parse(r.body).data && JSON.parse(r.body).data.length >= 0,
+    'alerts list is array': (r) => {
+      const d = JSON.parse(r.body).data
+      return r.status === 200 && d && d.list instanceof Array
+    },
   });
 
   errorRate.add(res.status >= 400);
@@ -214,7 +236,9 @@ function queryAlerts(token) {
 
 // ===== Dashboard Aggregation Query =====
 function queryDashboard(token) {
-  const url = `${TARGET_URL}/api/v1/admin/dashboard`;
+  // 后端契约：GET /api/v1/admin/dashboard/kpi?period=today|week|month
+  // 返回结构：{ code: 200, message: "success", data: { totalPatients, todayActiveWear, todayAlerts, avgWearHours, deviceOnlineRate, monthNewPatients } }
+  const url = `${TARGET_URL}/api/v1/admin/dashboard/kpi?period=today`;
 
   const headers = {
     'Authorization': `Bearer ${token}`,
@@ -225,8 +249,12 @@ function queryDashboard(token) {
 
   check(res, {
     'dashboard queried successfully': (r) => r.status === 200,
-    'dashboard has required fields': (r) => 
-      r.status === 200 && JSON.parse(r.body).data && JSON.parse(r.body).data.totalAlerts !== undefined,
+    'dashboard has required fields': (r) => {
+      if (r.status !== 200) return false;
+      const data = JSON.parse(r.body).data;
+      return data && data.totalPatients !== undefined &&
+             data.todayAlerts !== undefined && data.todayActiveWear !== undefined;
+    },
   });
 
   errorRate.add(res.status >= 400);
@@ -302,14 +330,21 @@ export default function() {
 
 // ===== Execution Hooks =====
 export function handleSummary(data) {
+  // Ensure reports directory exists (k6 doesn't auto-create nested dirs)
+  try {
+    mkdirSync('reports', { recursive: true, mode: 0o755 });
+  } catch (e) {
+    console.error('[WARN] Failed to create reports directory:', e.message);
+  }
+
   // Use k6's built-in percentile values from http_req_duration metric
   const durationMetrics = data.metrics.http_req_duration;
   const p95 = durationMetrics && durationMetrics.values['p(95)'] ? durationMetrics.values['p(95)'] : 0;
   const p99 = durationMetrics && durationMetrics.values['p(99)'] ? durationMetrics.values['p(99)'] : 0;
 
   console.log('\n===== T023 压测报告基线 =====');
-  console.log(`P95响应时间：${p95.toFixed(2)}ms`);
-  console.log(`P99响应时间：${p99.toFixed(2)}ms`);
+  console.log(`P95 响应时间：${p95.toFixed(2)}ms`);
+  console.log(`P99 响应时间：${p99.toFixed(2)}ms`);
   
   // Error rate
   const errorMetrics = data.metrics.errors;
