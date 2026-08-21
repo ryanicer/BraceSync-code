@@ -30,7 +30,6 @@ import { check, group } from 'k6';
 import http from 'k6/http';
 import { Trend, Rate, Counter } from 'k6/metrics';
 import crypto from 'k6/crypto';
-import { writeFileSync, mkdirSync } from 'fs';
 
 // ===== Custom Metrics =====
 const p95ResponseTime = new Trend('http_req_duration_p95');
@@ -332,7 +331,6 @@ export default function() {
 export function handleSummary(data) {
   // Ensure reports directory exists (k6 doesn't auto-create nested dirs)
   try {
-    mkdirSync('reports', { recursive: true, mode: 0o755 });
   } catch (e) {
     console.error('[WARN] Failed to create reports directory:', e.message);
   }
@@ -378,7 +376,7 @@ export function handleSummary(data) {
 
   // Return JSON summary and stdout text (no external dependencies)
   return {
-    'reports/staging-summary.json': JSON.stringify(data, null, 2),
+    'staging-summary.json': JSON.stringify(data, null, 2),
     stdout: generateTextSummary(data),
   };
 }
