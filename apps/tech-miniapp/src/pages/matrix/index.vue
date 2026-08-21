@@ -216,10 +216,10 @@ function completeInstall() {
 
 onMounted(() => {
   if (!authStore.isLoggedIn) {
-    // 未登录时 mock 登录
-    authStore.login('mock-tech-token-001', 'tech-001')
+    uni.reLaunch({ url: '/pages/login/index' })
+    return
   }
-  installStore.startInstall(deviceInfo.value.deviceId, patientInfo.value.patientId, authStore.techId || 'tech-001')
+  installStore.startInstall(deviceInfo.value.deviceId, patientInfo.value.patientId, authStore.techId || '')
 })
 </script>
 

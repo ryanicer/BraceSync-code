@@ -50,8 +50,8 @@
       </view>
 
       <!-- Login Button -->
-      <view class="btn-primary" @click="doLogin">
-        <text>登录</text>
+      <view :class="['btn-primary', { 'btn-disabled': loading }]" @click="doLogin">
+        <text>{{ loading ? '登录中...' : '登录' }}</text>
       </view>
     </view>
   </view>
@@ -60,13 +60,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAuthStore } from '../../stores/auth'
-import { request } from '../../utils/request'
+import { USE_MOCK } from '../../utils/request'
 
 const authStore = useAuthStore()
 const phone = ref('')
 const password = ref('')
 const showPassword = ref(false)
 const agreed = ref(false)
+const loading = ref(false)
 
 function checkAgreed(): boolean {
   if (!agreed.value) {
@@ -76,8 +77,8 @@ function checkAgreed(): boolean {
   return true
 }
 
-function isValidPhone(phone: string): boolean {
-  return /^1\d{10}$/.test(phone)
+function isValidPhone(p: string): boolean {
+  return /^1\d{10}$/.test(p)
 }
 
 function isValidPassword(pwd: string): boolean {
@@ -99,42 +100,46 @@ async function doLogin() {
     return
   }
 
+  loading.value = true
   try {
     // 3. MOCK mode (USE_MOCK = true)
-    // Simulate login with predefined tech account
-    if (request.USE_MOCK) {
+    if (USE_MOCK) {
       // Mock success response
       const mockToken = 'mock-tech-token-001'
       const mockTechId = 'TECH' + Math.random().toString(16).slice(2, 14)
-      
+
       authStore.login(mockToken, mockTechId)
-      
-      uni.showToast({ 
-        title: '登录成功，正在跳转...', 
-        icon: 'success' 
+
+      uni.showToast({
+        title: '登录成功，正在跳转...',
+        icon: 'success',
       })
-      
+
       setTimeout(() => {
         uni.reLaunch({ url: '/pages/bind/index' })
       }, 1500)
       return
     }
 
-    // 4. REAL API (USE_MOCK = false, pending backend endpoint T037)
-    // TODO: Call POST /api/v1/auth/tech-login (backend endpoint to be added)
-    // const result = await request({
-    //   url: '/api/v1/auth/tech-login',
-    //   method: 'POST',
-    //   data: { phone: phone.value, password: password.value }
-    // })
-    // authStore.login(result.token, result.techId)
-    // uni.reLaunch({ url: '/pages/bind/index' })
+    // 4. REAL API (USE_MOCK = false) — POST /api/v1/tech/login
+    await authStore.loginWithPassword(phone.value.trim(), password.value)
 
-  } catch (error) {
-    uni.showToast({ 
-      title: error instanceof Error ? error.message : '登录失败', 
-      icon: 'none' 
+    uni.showToast({
+      title: '登录成功，正在跳转...',
+      icon: 'success',
     })
+
+    setTimeout(() => {
+      uni.reLaunch({ url: '/pages/bind/index' })
+    }, 1500)
+  } catch (error) {
+    // 失败统一提示（对齐后端防枚举，不区分"用户不存在/密码错误"）
+    uni.showToast({
+      title: '手机号或密码错误',
+      icon: 'none',
+    })
+  } finally {
+    loading.value = false
   }
 }
 </script>
@@ -223,5 +228,8 @@ async function doLogin() {
   color: #fff; 
   font-size: 32rpx; 
   font-weight: 500; 
+}
+.btn-disabled {
+  opacity: 0.6;
 }
 </style>

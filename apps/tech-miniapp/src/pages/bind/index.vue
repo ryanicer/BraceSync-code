@@ -5,27 +5,6 @@
       <text class="page-subtitle">扫码或手动输入设备 ID 进行绑定</text>
     </view>
 
-    <!-- MOCK 登录入口（技师端无独立登录页，此处模拟） -->
-    <view v-if="!authStore.isLoggedIn" class="section">
-      <view class="card">
-        <text class="card-title">技师登录</text>
-        <view class="form-group">
-          <text class="form-label">手机号</text>
-          <input class="form-input" type="number" placeholder="请输入手机号" maxlength="11" v-model="phone" />
-        </view>
-        <view class="form-group">
-          <text class="form-label">验证码</text>
-          <view class="sms-row">
-            <input class="form-input sms-input" type="number" placeholder="验证码" v-model="smsCode" />
-            <view :class="['sms-btn', { 'sms-disabled': smsCountdown > 0 }]" @click="sendSMS">
-              <text>{{ smsCountdown > 0 ? smsCountdown + 's' : '获取验证码' }}</text>
-            </view>
-          </view>
-        </view>
-        <view class="btn-primary" @click="doLogin"><text>登录</text></view>
-      </view>
-    </view>
-
     <template v-if="authStore.isLoggedIn">
       <!-- 扫码绑定 -->
       <view class="section">
@@ -94,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { useDeviceStore } from '../../stores/device'
 import { discoverDevices, initBluetooth, createBLEConnection } from '../../utils/ble'
@@ -103,48 +82,12 @@ import { mockScanResults } from '../../mock/device'
 const authStore = useAuthStore()
 const deviceStore = useDeviceStore()
 
-const phone = ref('')
-const smsCode = ref('')
-const smsCountdown = ref(0)
 const manualDeviceId = ref('')
 const patientId = ref('')
 const scanning = ref(false)
 const scanResults = ref<{ deviceId: string; name: string; RSSI: number }[]>([])
 const toastVisible = ref(false)
 const toastText = ref('')
-let smsTimer: ReturnType<typeof setInterval> | null = null
-
-function sendSMS() {
-  if (smsCountdown.value > 0) return
-  if (!/^1\d{10}$/.test(phone.value)) {
-    uni.showToast({ title: '请输入正确的手机号', icon: 'none' })
-    return
-  }
-  smsCountdown.value = 60
-  smsTimer = setInterval(() => {
-    smsCountdown.value--
-    if (smsCountdown.value <= 0 && smsTimer) {
-      clearInterval(smsTimer)
-      smsTimer = null
-    }
-  }, 1000)
-  uni.showToast({ title: '验证码已发送（mock）', icon: 'none' })
-}
-
-// MOCK: 技师登录
-// 替换计划: 接 user-service POST /api/v1/auth/login (tech role)
-function doLogin() {
-  if (!/^1\d{10}$/.test(phone.value)) {
-    uni.showToast({ title: '请输入正确的手机号', icon: 'none' })
-    return
-  }
-  if (!smsCode.value) {
-    uni.showToast({ title: '请输入验证码', icon: 'none' })
-    return
-  }
-  authStore.login('mock-tech-token-001', 'tech-001')
-  showToast('登录成功')
-}
 
 function showToast(text: string) {
   toastText.value = text
@@ -217,8 +160,10 @@ function goRecords() {
   uni.navigateTo({ url: '/pages/records/index' })
 }
 
-onUnmounted(() => {
-  if (smsTimer) clearInterval(smsTimer)
+onMounted(() => {
+  if (!authStore.isLoggedIn) {
+    uni.reLaunch({ url: '/pages/login/index' })
+  }
 })
 </script>
 
@@ -232,15 +177,9 @@ onUnmounted(() => {
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20rpx; }
 .section-header .section-title { margin-bottom: 0; }
 .card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 32rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); }
-.card-title { font-size: 32rpx; font-weight: 600; color: #1e293b; display: block; margin-bottom: 24rpx; }
 .form-group { margin-bottom: 24rpx; }
 .form-label { font-size: 26rpx; color: #64748b; display: block; margin-bottom: 12rpx; }
 .form-input { width: 100%; padding: 22rpx 28rpx; border: 1rpx solid #e2e8f0; border-radius: 16rpx; font-size: 30rpx; color: #1e293b; background: #f8fafc; }
-.sms-row { display: flex; gap: 16rpx; align-items: center; }
-.sms-input { flex: 1; }
-.sms-btn { flex-shrink: 0; padding: 22rpx 24rpx; background: #eff6ff; border-radius: 16rpx; }
-.sms-btn text { font-size: 26rpx; color: #2563EB; font-weight: 500; white-space: nowrap; }
-.sms-disabled text { color: #cbd5e1; }
 .btn-primary { width: 100%; padding: 24rpx 0; background: #2563EB; border-radius: 16rpx; text-align: center; margin-top: 8rpx; }
 .btn-primary text { color: #fff; font-size: 30rpx; font-weight: 500; }
 .scan-card { background: #eff6ff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 48rpx; text-align: center; }
