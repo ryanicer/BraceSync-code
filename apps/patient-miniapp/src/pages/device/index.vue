@@ -123,7 +123,7 @@ function confirmUnbind() {
 .input-group { margin-bottom: 24rpx; }
 .input-group:last-child { margin-bottom: 0; }
 .input-label { font-size: 26rpx; color: #94a3b8; display: block; margin-bottom: 12rpx; }
-.app-input { width: 100%; padding: 22rpx 28rpx; border: 1rpx solid #e2e8f0; border-radius: 24rpx; font-size: 30rpx; color: #1e293b; background: #faf7f4; }
+.app-input { width: 100%; box-sizing: border-box; height: 88rpx; line-height: 86rpx; padding: 0 28rpx; border: 1rpx solid #e2e8f0; border-radius: 24rpx; font-size: 30rpx; color: #1e293b; background: #faf7f4; }
 .action-btn { width: 100%; height: 88rpx; background: #2563EB; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; }
 .action-btn text { color: #fff; font-size: 30rpx; }
 .device-section { padding-bottom: 40rpx; }

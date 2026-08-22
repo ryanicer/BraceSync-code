@@ -186,7 +186,13 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 微信端视口单位兼容性存疑，小程序端改用 page 高度撑满；H5 端保留 100vh */
+/* #ifdef MP-WEIXIN */
+.page { padding-bottom: 240rpx; min-height: 100%; }
+/* #endif */
+/* #ifndef MP-WEIXIN */
 .page { padding-bottom: 240rpx; min-height: 100vh; }
+/* #endif */
 .brand-header { text-align: center; padding: 112rpx 0 40rpx; }
 .brand-logo { width: 144rpx; height: 144rpx; border-radius: 40rpx; background: linear-gradient(135deg, #2563EB, #6366f1); margin: 0 auto; display: flex; align-items: center; justify-content: center; box-shadow: 0 8rpx 32rpx rgba(37, 99, 235, 0.25); }
 .brand-icon { font-size: 72rpx; }
@@ -199,7 +205,7 @@ onUnmounted(() => {
 .panel { padding: 40rpx 64rpx 0; }
 .input-group { display: flex; align-items: center; background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 0 28rpx; margin-bottom: 24rpx; }
 .input-icon { font-size: 32rpx; margin-right: 20rpx; }
-.input-field { flex: 1; min-width: 0; border: none; padding: 28rpx 0; font-size: 30rpx; color: #1e293b; }
+.input-field { flex: 1; width: 0; height: 88rpx; line-height: 88rpx; border: none; padding: 0; font-size: 30rpx; color: #1e293b; }
 .input-sms { min-width: 0; }
 .pwd-toggle { font-size: 32rpx; padding: 0 8rpx; }
 .sms-btn { flex-shrink: 0; padding: 12rpx 0 12rpx 24rpx; }

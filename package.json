@@ -23,7 +23,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "eslint": "^8.57.0"
+    "eslint": "^8.57.0",
+    "miniprogram-automator": "^0.12.1"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.0.0"
