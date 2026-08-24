@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { techRoutes } from '../tech-helpers'
+import { techRoutes, forceTechLoginMock } from '../tech-helpers'
 
 /**
  * tech-matrix 页：6 阶段安装流程（患者确认→安装定位→校准→基线→WiFi→签名）
@@ -23,6 +23,7 @@ async function advanceToStage(page: any, target: number) {
 
 test.describe('安装流程 6 阶段', () => {
   test.beforeEach(async ({ page }) => {
+    await forceTechLoginMock(page)
     await page.goto(techRoutes.matrix)
   })
 
@@ -73,7 +74,9 @@ test.describe('安装流程 6 阶段', () => {
 })
 
 test.describe('签名与完成安装', () => {
-  test.setTimeout(60_000)
+  test.beforeEach(async ({ page }) => {
+    await forceTechLoginMock(page)
+  })
 
   test('阶段 6：从 matrix 到 save-baseline 再返回', async ({ page }) => {
     await page.goto(techRoutes.matrix)

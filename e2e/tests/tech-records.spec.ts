@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { techRoutes, uniModal } from '../tech-helpers'
+import { techRoutes, uniModal, forceTechLoginMock } from '../tech-helpers'
 
 /**
  * tech-records 页：安装记录列表（筛选/详情弹窗）
@@ -7,6 +7,7 @@ import { techRoutes, uniModal } from '../tech-helpers'
  */
 
 test.beforeEach(async ({ page }) => {
+  await forceTechLoginMock(page)
   await page.goto(techRoutes.records)
 })
 
