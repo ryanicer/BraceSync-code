@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { techRoutes } from '../tech-helpers'
+import { techRoutes, forceTechLoginMock } from '../tech-helpers'
 
 /**
  * tech-save-baseline 页：20 点 offset_values 基线校验（计数/范围/稳定性）+ 统计摘要
@@ -7,6 +7,7 @@ import { techRoutes } from '../tech-helpers'
  */
 
 test.beforeEach(async ({ page }) => {
+  await forceTechLoginMock(page)
   // save-baseline 页从 installStore 或 mockBaseline() 获取数据
   // 直接导航即可（mock 数据自动填充）
   await page.goto(techRoutes.saveBaseline)

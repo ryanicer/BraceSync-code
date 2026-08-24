@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test'
 import {
-  techRoutes, techLoginPage, techToast, fillTechInput,
-  TECH_PHONE, TECH_SMS_CODE, MOCK_DEVICE_ID,
+  techRoutes, fillTechInput,
+  MOCK_TECH_TOKEN, MOCK_DEVICE_ID,
+  forceTechLoginMock, doTechRealLogin,
 } from '../tech-helpers'
 
 /**
@@ -11,46 +12,30 @@ import {
 
 test.describe('技师 mock 登录', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(techRoutes.bind)
+    await forceTechLoginMock(page)
   })
 
-  test('未登录时显示登录表单', async ({ page }) => {
-    await expect(page.getByText('技师登录')).toBeVisible()
-    await expect(page.locator('uni-input.form-input').first()).toBeAttached()
-    await expect(page.locator('.sms-btn')).toBeVisible()
+  // === T037 真实登录流程验证（仅本地）===
+  test('真实登录流程：navigate /login → 跳转 bind', async ({ page }) => {
+    test.skip(!!process.env.CI, '真实登录依赖后端 /api/v1/tech/login，CI 无后端')
+    await doTechRealLogin(page)
   })
 
-  test('手机号与验证码输入', async ({ page }) => {
-    const el = techLoginPage(page)
-    await fillTechInput(el.phone, TECH_PHONE)
-    await fillTechInput(el.smsCode, TECH_SMS_CODE)
-  })
-
-  test('手机号格式错误时提示', async ({ page }) => {
-    const el = techLoginPage(page)
-    await fillTechInput(el.phone, '123')
-    await el.smsBtn.click()
-    await expect(page.locator('uni-toast')).toContainText('请输入正确的手机号', { timeout: 5_000 })
-  })
-
-  test('登录成功', async ({ page }) => {
-    const el = techLoginPage(page)
-    await fillTechInput(el.phone, TECH_PHONE)
-    await fillTechInput(el.smsCode, TECH_SMS_CODE)
-    await el.loginBtn.click()
-    await expect(techToast(page).text).toContainText('登录成功', { timeout: 10_000 })
+  // === Mock Token 注入后验证 bind 页可用 ===
+  test('bind 页标题显示', async ({ page }) => {
     await expect(page.getByText('扫码绑定')).toBeVisible({ timeout: 10_000 })
+  })
+
+  test('手动输入设备 ID', async ({ page }) => {
+    const deviceInput = page.locator('.section').nth(1).locator('uni-input.form-input').first()
+    await fillTechInput(deviceInput, MOCK_DEVICE_ID)
   })
 })
 
 test.describe('设备绑定', () => {
   test.beforeEach(async ({ page }) => {
+    await forceTechLoginMock(page)
     await page.goto(techRoutes.bind)
-    const el = techLoginPage(page)
-    await fillTechInput(el.phone, TECH_PHONE)
-    await fillTechInput(el.smsCode, TECH_SMS_CODE)
-    await el.loginBtn.click()
-    await expect(techToast(page).text).toContainText('登录成功', { timeout: 10_000 })
   })
 
   test('扫码绑定自动填入设备 ID', async ({ page }) => {
@@ -59,11 +44,11 @@ test.describe('设备绑定', () => {
   })
 
   test('手动输入设备 ID 绑定成功并跳转 matrix', async ({ page }) => {
-    // 手动输入区域：第二个 .section 内的第一个 uni-input
     const deviceInput = page.locator('.section').nth(1).locator('uni-input.form-input').first()
     await fillTechInput(deviceInput, MOCK_DEVICE_ID)
     await page.locator('.btn-primary', { hasText: '绑定设备' }).click()
-    await expect(techToast(page).text).toContainText('设备绑定成功')
+    // bind 页自实现 toast（非 uni.showToast），跳转 matrix 前显示 1.2s
+    await expect(page.locator('.toast-text')).toContainText('设备绑定成功', { timeout: 3_000 })
     await page.waitForURL('**/pages/matrix/**', { timeout: 15_000 })
   })
 

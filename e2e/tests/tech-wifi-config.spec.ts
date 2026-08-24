@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { techRoutes, fillTechInput } from '../tech-helpers'
+import { techRoutes, fillTechInput, forceTechLoginMock } from '../tech-helpers'
 
 /**
  * tech-wifi-config 页：WiFi 配网（步骤条 + WiFi 选择 + 密码输入 + 进度 + 完成）
@@ -7,6 +7,7 @@ import { techRoutes, fillTechInput } from '../tech-helpers'
  */
 
 test.beforeEach(async ({ page }) => {
+  await forceTechLoginMock(page)
   await page.goto(techRoutes.wifiConfig)
 })
 
