@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   techRoutes, fillTechInput,
-  MOCK_TECH_TOKEN, MOCK_DEVICE_ID,
+  MOCK_DEVICE_ID,
   forceTechLoginMock, doTechRealLogin,
 } from '../tech-helpers'
 
