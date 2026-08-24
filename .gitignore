@@ -66,3 +66,7 @@ go.work.sum
 
 # Agent memory / 自报归档（本机工作区文件，不入库）
 .workbuddy/
+
+# 小程序冒烟产物与本地调试脚本（不入库）
+scripts/wechat/artifacts/
+scripts/wechat/debug/

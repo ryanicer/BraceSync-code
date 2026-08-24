@@ -9,6 +9,10 @@ page {
   background: #f8fafc;
   color: #1e293b;
 }
+/* 微信端页面根节点撑满视口，供页面内 min-height: 100% 生效 */
+/* #ifdef MP-WEIXIN */
+page { height: 100%; }
+/* #endif */
 view,
 text,
 input,

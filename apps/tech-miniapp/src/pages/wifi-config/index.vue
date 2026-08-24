@@ -227,7 +227,7 @@ onUnmounted(() => {
 .form-input { width: 100%; padding: 20rpx 24rpx; border: 1rpx solid #e2e8f0; border-radius: 16rpx; font-size: 28rpx; color: #1e293b; background: #f8fafc; }
 .form-group { margin-bottom: 24rpx; }
 .password-wrap { position: relative; }
-.password-input { padding-right: 72rpx; }
+.password-input { padding-left: 24rpx; padding-right: 72rpx; }
 .password-toggle { position: absolute; right: 16rpx; top: 50%; transform: translateY(-50%); font-size: 32rpx; }
 .btn-primary { width: 100%; padding: 24rpx 0; background: #2563EB; border-radius: 16rpx; text-align: center; }
 .btn-primary text { color: #fff; font-size: 30rpx; font-weight: 500; }

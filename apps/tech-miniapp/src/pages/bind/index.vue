@@ -179,7 +179,7 @@ onMounted(() => {
 .card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 32rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); }
 .form-group { margin-bottom: 24rpx; }
 .form-label { font-size: 26rpx; color: #64748b; display: block; margin-bottom: 12rpx; }
-.form-input { width: 100%; padding: 22rpx 28rpx; border: 1rpx solid #e2e8f0; border-radius: 16rpx; font-size: 30rpx; color: #1e293b; background: #f8fafc; }
+.form-input { width: 100%; height: 76rpx; line-height: 76rpx; padding: 0 28rpx; border: 1rpx solid #e2e8f0; border-radius: 16rpx; font-size: 30rpx; color: #1e293b; background: #f8fafc; box-sizing: border-box; }
 .btn-primary { width: 100%; padding: 24rpx 0; background: #2563EB; border-radius: 16rpx; text-align: center; margin-top: 8rpx; }
 .btn-primary text { color: #fff; font-size: 30rpx; font-weight: 500; }
 .scan-card { background: #eff6ff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 48rpx; text-align: center; }

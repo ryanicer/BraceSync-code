@@ -145,7 +145,13 @@ async function doLogin() {
 </script>
 
 <style scoped>
+/* 微信端视口单位兼容性存疑，小程序端改用 page 高度撑满；H5 端保留 100vh */
+/* #ifdef MP-WEIXIN */
+.page { padding-bottom: 240rpx; min-height: 100%; }
+/* #endif */
+/* #ifndef MP-WEIXIN */
 .page { padding-bottom: 240rpx; min-height: 100vh; }
+/* #endif */
 .brand-header { text-align: center; padding: 112rpx 0 40rpx; }
 .brand-logo { 
   width: 144rpx; 
@@ -186,9 +192,11 @@ async function doLogin() {
 .input-icon { font-size: 32rpx; margin-right: 20rpx; }
 .input-field { 
   flex: 1; 
-  min-width: 0; 
+  width: 0; 
+  height: 88rpx; 
+  line-height: 88rpx;
   border: none; 
-  padding: 28rpx 0; 
+  padding: 0; 
   font-size: 30rpx; 
   color: #1e293b; 
 }

@@ -278,7 +278,7 @@ onMounted(() => {
 /* Form */
 .form-group { margin-bottom: 24rpx; }
 .form-label { font-size: 26rpx; color: #64748b; display: block; margin-bottom: 12rpx; }
-.form-textarea { width: 100%; min-height: 120rpx; padding: 20rpx 24rpx; border: 1rpx solid #e2e8f0; border-radius: 16rpx; font-size: 28rpx; color: #1e293b; background: #f8fafc; }
+.form-textarea { width: 100%; box-sizing: border-box; min-height: 120rpx; padding: 20rpx 24rpx; border: 1rpx solid #e2e8f0; border-radius: 16rpx; font-size: 28rpx; color: #1e293b; background: #f8fafc; }
 /* Buttons */
 .btn-primary { width: 100%; padding: 24rpx 0; background: #2563EB; border-radius: 16rpx; text-align: center; margin-top: 24rpx; }
 .btn-primary text { color: #fff; font-size: 30rpx; font-weight: 500; }
