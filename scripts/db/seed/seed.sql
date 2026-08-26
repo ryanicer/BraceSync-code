@@ -1,4 +1,4 @@
-﻿-- BraceSync 测试/开发种子数据（单测 / 集成 / E2E / 本地开发共用）
+-- BraceSync 测试/开发种子数据（单测 / 集成 / E2E / 本地开发共用）
 -- 依赖：已执行 000001_init_schema.up.sql ~ 000006_file_service.up.sql
 -- 说明：phone_enc 用占位 bytea（真实环境由服务 AES-GCM 加密写入）；phone_hash 用示例 SHA-256
 -- 幂等：可重复执行（ON CONFLICT DO NOTHING）
@@ -91,11 +91,23 @@ INSERT INTO devices (device_id, model, firmware_version, device_secret_enc, pati
    NULL, NULL, 'unbound', NULL)
 ON CONFLICT (device_id) DO NOTHING;
 
--- ===== 设备绑定历史（000002 新增表，覆盖设备管理绑定记录）=====
-INSERT INTO device_bindings (device_id, patient_id, bind_at, unbind_at, reason, operator_id) VALUES
-  ('PRS-ML05-RC-20260701001', 'P20260001', '2026-07-16 10:00:00+08', NULL, 'install', 'T0001'),
-  ('PRS-ML05-RC-20260701003', 'P20260003', '2026-07-18 14:00:00+08', NULL, 'install', 'T0002'),
-  ('PRS-ML05-RC-20260701004', 'P20260004', '2026-07-21 09:30:00+08', NULL, 'install', 'T0002')
+INSERT INTO device_bindings (device_id, patient_id, bind_at, unbind_at, reason, operator_id)
+SELECT 'PRS-ML05-RC-20260701001', 'P20260001', '2026-07-16 10:00:00+08', NULL, 'install', 'T0001'
+WHERE NOT EXISTS (
+  SELECT 1 FROM device_bindings WHERE device_id = 'PRS-ML05-RC-20260701001' AND unbind_at IS NULL
+);
+
+INSERT INTO device_bindings (device_id, patient_id, bind_at, unbind_at, reason, operator_id)
+SELECT 'PRS-ML05-RC-20260701003', 'P20260003', '2026-07-18 14:00:00+08', NULL, 'install', 'T0002'
+WHERE NOT EXISTS (
+  SELECT 1 FROM device_bindings WHERE device_id = 'PRS-ML05-RC-20260701003' AND unbind_at IS NULL
+);
+
+INSERT INTO device_bindings (device_id, patient_id, bind_at, unbind_at, reason, operator_id)
+SELECT 'PRS-ML05-RC-20260701004', 'P20260004', '2026-07-21 09:30:00+08', NULL, 'install', 'T0002'
+WHERE NOT EXISTS (
+  SELECT 1 FROM device_bindings WHERE device_id = 'PRS-ML05-RC-20260701004' AND unbind_at IS NULL
+);
 ON CONFLICT DO NOTHING;
 
 -- ===== 压力采集样本（落入 202607/202608 分区，多患者多时段）=====
