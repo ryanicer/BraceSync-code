@@ -224,20 +224,58 @@ INSERT INTO feeling_logs (patient_id, log_date, comfort_score, discomfort_areas,
 ON CONFLICT (patient_id, log_date) DO NOTHING;
 
 -- ===== 患者反馈（3+，含回复，覆盖患者沟通页）=====
-INSERT INTO feedbacks (patient_id, type, content, status) VALUES
-  ('P20260001', '佩戴咨询', '支具晚上佩戴时有点压痛，正常吗？', 'pending'),
-  ('P20260003', '设备问题', '设备指示灯一直闪红灯，是什么情况？', 'resolved'),
-  ('P20260004', '佩戴咨询', '佩戴支具后皮肤有些过敏，需要处理吗？', 'resolved'),
-  ('P20260001', '功能建议', '希望 App 能增加佩戴提醒自定义铃声功能', 'pending')
-ON CONFLICT DO NOTHING;
+-- 幂等：feedback_id 为 IDENTITY 自增，ON CONFLICT 无冲突目标，改用 WHERE NOT EXISTS 防御
+INSERT INTO feedbacks (patient_id, type, content, status)
+SELECT 'P20260001', '佩戴咨询', '支具晚上佩戴时有点压痛，正常吗？', 'pending'
+WHERE NOT EXISTS (
+  SELECT 1 FROM feedbacks
+  WHERE patient_id = 'P20260001' AND type = '佩戴咨询' AND content = '支具晚上佩戴时有点压痛，正常吗？'
+);
+INSERT INTO feedbacks (patient_id, type, content, status)
+SELECT 'P20260003', '设备问题', '设备指示灯一直闪红灯，是什么情况？', 'resolved'
+WHERE NOT EXISTS (
+  SELECT 1 FROM feedbacks
+  WHERE patient_id = 'P20260003' AND type = '设备问题' AND content = '设备指示灯一直闪红灯，是什么情况？'
+);
+INSERT INTO feedbacks (patient_id, type, content, status)
+SELECT 'P20260004', '佩戴咨询', '佩戴支具后皮肤有些过敏，需要处理吗？', 'resolved'
+WHERE NOT EXISTS (
+  SELECT 1 FROM feedbacks
+  WHERE patient_id = 'P20260004' AND type = '佩戴咨询' AND content = '佩戴支具后皮肤有些过敏，需要处理吗？'
+);
+INSERT INTO feedbacks (patient_id, type, content, status)
+SELECT 'P20260001', '功能建议', '希望 App 能增加佩戴提醒自定义铃声功能', 'pending'
+WHERE NOT EXISTS (
+  SELECT 1 FROM feedbacks
+  WHERE patient_id = 'P20260001' AND type = '功能建议' AND content = '希望 App 能增加佩戴提醒自定义铃声功能'
+);
 
 -- ===== 矫形方案（2+ 患者各 1+，覆盖矫形日志页）=====
-INSERT INTO orthosis_plans (patient_id, doctor_id, content, version) VALUES
-  ('P20260001', 'D0001', '维持当前矫形力，2 周后复查压力趋势', 'v1.0'),
-  ('P20260003', 'D0002', '适当增加 P03 点矫形力，4 周后复查 Cobb 角', 'v1.0'),
-  ('P20260004', 'D0002', '双弯型需关注胸椎和腰椎协同矫形，维持当前方案', 'v1.0'),
-  ('P20260001', 'D0001', '根据 8 月数据微调，P03 点压力偏高需降低矫形力', 'v1.1')
-ON CONFLICT DO NOTHING;
+-- 幂等：plan_id 为 IDENTITY 自增，ON CONFLICT 无冲突目标，改用 WHERE NOT EXISTS 防御
+INSERT INTO orthosis_plans (patient_id, doctor_id, content, version)
+SELECT 'P20260001', 'D0001', '维持当前矫形力，2 周后复查压力趋势', 'v1.0'
+WHERE NOT EXISTS (
+  SELECT 1 FROM orthosis_plans
+  WHERE patient_id = 'P20260001' AND content = '维持当前矫形力，2 周后复查压力趋势'
+);
+INSERT INTO orthosis_plans (patient_id, doctor_id, content, version)
+SELECT 'P20260003', 'D0002', '适当增加 P03 点矫形力，4 周后复查 Cobb 角', 'v1.0'
+WHERE NOT EXISTS (
+  SELECT 1 FROM orthosis_plans
+  WHERE patient_id = 'P20260003' AND content = '适当增加 P03 点矫形力，4 周后复查 Cobb 角'
+);
+INSERT INTO orthosis_plans (patient_id, doctor_id, content, version)
+SELECT 'P20260004', 'D0002', '双弯型需关注胸椎和腰椎协同矫形，维持当前方案', 'v1.0'
+WHERE NOT EXISTS (
+  SELECT 1 FROM orthosis_plans
+  WHERE patient_id = 'P20260004' AND content = '双弯型需关注胸椎和腰椎协同矫形，维持当前方案'
+);
+INSERT INTO orthosis_plans (patient_id, doctor_id, content, version)
+SELECT 'P20260001', 'D0001', '根据 8 月数据微调，P03 点压力偏高需降低矫形力', 'v1.1'
+WHERE NOT EXISTS (
+  SELECT 1 FROM orthosis_plans
+  WHERE patient_id = 'P20260001' AND content = '根据 8 月数据微调，P03 点压力偏高需降低矫形力'
+);
 
 -- ===== 患者偏好（多患者）=====
 INSERT INTO patient_preferences (patient_id, reminder_enabled, reminder_time, subscription_auth_status) VALUES
