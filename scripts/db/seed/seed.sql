@@ -47,7 +47,7 @@ INSERT INTO technicians (tech_id, name, phone_enc, phone_hash, team_id, install_
    'b2b3c4d5e6f70819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f91', 'TEAM02', 3, 'authorized',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe'),
   ('T0003', '技师小周', '\x00'::bytea,
-   'b3b4c5d6e7f80819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f92', 'TEAM03', 1, 'suspended',
+   'b3b4c5d6e7f80819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f92', 'TEAM03', 1, 'unauthorized',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe')
 ON CONFLICT (tech_id) DO NOTHING;
 
@@ -108,7 +108,6 @@ SELECT 'PRS-ML05-RC-20260701004', 'P20260004', '2026-07-21 09:30:00+08', NULL, '
 WHERE NOT EXISTS (
   SELECT 1 FROM device_bindings WHERE device_id = 'PRS-ML05-RC-20260701004' AND unbind_at IS NULL
 );
-ON CONFLICT DO NOTHING;
 
 -- ===== 压力采集样本（落入 202607/202608 分区，多患者多时段）=====
 INSERT INTO pressure_records (device_id, patient_id, ts,
@@ -245,7 +244,7 @@ INSERT INTO patient_preferences (patient_id, reminder_enabled, reminder_time, su
   ('P20260001', true, '20:00', 'authorized'),
   ('P20260003', true, '19:30', 'authorized'),
   ('P20260004', false, '21:00', 'authorized'),
-  ('P20260005', true, '20:00', 'pending')
+  ('P20260005', true, '20:00', 'rejected')
 ON CONFLICT (patient_id) DO NOTHING;
 
 -- ===== 健康报告（2+ 患者各 1+，覆盖矫形日志页）=====
