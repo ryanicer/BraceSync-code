@@ -49,6 +49,7 @@ type PublicAlertStore interface {
 type AlertItem struct {
 	AlertID        string  `json:"alertId"`
 	PatientID      string  `json:"patientId"`
+	PatientName    string  `json:"patientName"`
 	DeviceID       string  `json:"deviceId"`
 	Type           string  `json:"type"`
 	Detail         string  `json:"detail"`
@@ -70,6 +71,7 @@ func toAlertItem(r repo.AlertRow) AlertItem {
 	item := AlertItem{
 		AlertID:        strconv.FormatInt(r.AlertID, 10),
 		PatientID:      r.PatientID,
+		PatientName:    r.PatientName,
 		DeviceID:       r.DeviceID,
 		Type:           r.Type,
 		Detail:         r.Detail,

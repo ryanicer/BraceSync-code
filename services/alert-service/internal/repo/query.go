@@ -77,6 +77,7 @@ func buildAlertWhere(f AlertQueryFilter) (string, []any) {
 type AlertRow struct {
 	AlertID        int64
 	PatientID      string
+	PatientName    string
 	DeviceID       string
 	Type           string
 	Detail         string
@@ -94,7 +95,7 @@ type AlertRow struct {
 }
 
 // alertSelectColumns 查询列（可空列 COALESCE 兜底，避免 NULL 扫描错误）
-const alertSelectColumns = `alert_id, patient_id, device_id, type,
+const alertSelectColumns = `alert_id, patient_id, COALESCE(patients.name, ''), device_id, type,
 	COALESCE(detail, ''), COALESCE(sensor_point, ''),
 	COALESCE(threshold_value, 0), COALESCE(actual_value, 0),
 	ts, read_status, process_status, resolved_status,
@@ -105,7 +106,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 
 // scanAlertRow 扫描单行 alerts 投影（列序 = alertSelectColumns）
 func scanAlertRow(s rowScanner, r *AlertRow) error {
-	return s.Scan(&r.AlertID, &r.PatientID, &r.DeviceID, &r.Type,
+	return s.Scan(&r.AlertID, &r.PatientID, &r.PatientName, &r.DeviceID, &r.Type,
 		&r.Detail, &r.SensorPoint, &r.ThresholdValue, &r.ActualValue,
 		&r.Ts, &r.ReadStatus, &r.ProcessStatus, &r.ResolvedStatus,
 		&r.ResolvedAt, &r.ProcessedBy, &r.ProcessedAt, &r.ProcessNote)
@@ -124,7 +125,7 @@ func (r *PGAlertRepo) ListAlerts(ctx context.Context, f AlertQueryFilter) ([]Ale
 
 	pageArgs := append(append([]any{}, args...), f.PageSize, f.Offset())
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+alertSelectColumns+` FROM alerts`+where+
+		`SELECT `+alertSelectColumns+` FROM alerts LEFT JOIN patients ON alerts.patient_id = patients.patient_id`+where+
 			` ORDER BY ts DESC, alert_id DESC LIMIT $`+strconv.Itoa(len(args)+1)+` OFFSET $`+strconv.Itoa(len(args)+2),
 		pageArgs...)
 	if err != nil {

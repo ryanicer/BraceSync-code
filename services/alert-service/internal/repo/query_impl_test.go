@@ -116,7 +116,7 @@ func TestScanAlertRow(t *testing.T) {
 	note := "ok"
 
 	s := &fakeScanner{vals: []any{
-		int64(7), "P001", "DEV01", "sensor_drift",
+		int64(7), "P001", "林小雨", "DEV01", "sensor_drift",
 		"漂移", "P07", 2.8, 3.5,
 		ts, "read", "processed", "resolved",
 		&resolvedAt, &by, &processedAt, &note,
@@ -125,6 +125,7 @@ func TestScanAlertRow(t *testing.T) {
 	require.NoError(t, scanAlertRow(s, &row))
 	assert.Equal(t, int64(7), row.AlertID)
 	assert.Equal(t, "P001", row.PatientID)
+	assert.Equal(t, "林小雨", row.PatientName)
 	assert.Equal(t, "DEV01", row.DeviceID)
 	assert.Equal(t, "sensor_drift", row.Type)
 	assert.Equal(t, "漂移", row.Detail)
@@ -146,7 +147,7 @@ func TestScanAlertRow(t *testing.T) {
 
 func TestScanAlertRow_NullablesNil(t *testing.T) {
 	s := &fakeScanner{vals: []any{
-		int64(8), "P002", "DEV02", "wear_interrupt",
+		int64(8), "P002", "", "DEV02", "wear_interrupt",
 		"", "", 0.0, 0.0,
 		time.Unix(0, 0).UTC(), "unread", "pending", "active",
 		(*time.Time)(nil), (*string)(nil), (*time.Time)(nil), (*string)(nil),
@@ -168,7 +169,7 @@ func TestScanAlertRow_Error(t *testing.T) {
 // alertSelectColumns 列数与 scanAlertRow 目标数一致性（防 schema 漂移；
 // 仅计括号外的逗号，COALESCE 内逗号不算列分隔）
 func TestSelectColumnsCount(t *testing.T) {
-	const want = 16 // scanAlertRow 的 Scan 目标个数
+	const want = 17 // scanAlertRow 的 Scan 目标个数
 	count, depth := 1, 0
 	for _, c := range alertSelectColumns {
 		switch c {
