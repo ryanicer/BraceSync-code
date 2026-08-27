@@ -936,3 +936,104 @@ func TestGetRealtime_StoreErrors(t *testing.T) {
 	require.Nil(t, appErr)
 	assert.Equal(t, "offline", snap.Status)
 }
+
+// ─── T056：PressureHeatmap 契约单测 ───
+
+func TestGetRealtime_HeatmapFromFrame(t *testing.T) {
+	env := newTestEnv()
+	// 上报一帧（25.5N 在 P02 为最大值）
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10, 25.5, 8, 5)))
+	require.Nil(t, appErr)
+
+	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
+	require.Nil(t, appErr)
+	require.Len(t, snap.PressureHeatmap, model.PointCount)
+
+	// P01、P02 数值与上报一致
+	assert.InDelta(t, 10.0, snap.PressureHeatmap[0].PressureValue, 0.001)
+	assert.InDelta(t, 25.5, snap.PressureHeatmap[1].PressureValue, 0.001)
+	// 结构信息（RrCc / PointID）
+	assert.Equal(t, "P01", snap.PressureHeatmap[0].PointID)
+	assert.Equal(t, 1, snap.PressureHeatmap[0].Row)
+	assert.Equal(t, 1, snap.PressureHeatmap[0].Col)
+	assert.Equal(t, "R1C1", snap.PressureHeatmap[0].Label)
+	// P02（下标 1）是最大点
+	assert.True(t, snap.PressureHeatmap[1].IsMax)
+	// IsMax 唯一
+	isMaxCount := 0
+	for _, p := range snap.PressureHeatmap {
+		if p.IsMax {
+			isMaxCount++
+		}
+	}
+	assert.Equal(t, 1, isMaxCount)
+}
+
+func TestGetRealtime_HeatmapSeedFallback(t *testing.T) {
+	// 绑定设备 + rt:frame 为空 → 走 seed 兜底
+	env := newTestEnv()
+	env.cache.rtFrame[testDevice] = ""
+
+	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
+	require.Nil(t, appErr)
+	require.Len(t, snap.PressureHeatmap, model.PointCount)
+
+	// seed 有合理范围（≥10N，非全 0）
+	minV := snap.PressureHeatmap[0].PressureValue
+	for _, p := range snap.PressureHeatmap {
+		if p.PressureValue < minV {
+			minV = p.PressureValue
+		}
+		assert.NotEmpty(t, p.PointID)
+		assert.NotEmpty(t, p.Label)
+	}
+	assert.GreaterOrEqual(t, minV, 8.0) // SeedHeatmap 基础 12N，扣除误差不会太低
+
+	// IsMax 唯一
+	isMaxCount := 0
+	for _, p := range snap.PressureHeatmap {
+		if p.IsMax {
+			isMaxCount++
+		}
+	}
+	assert.Equal(t, 1, isMaxCount)
+}
+
+func TestGetRealtime_HeatmapInvalidPointsFallback(t *testing.T) {
+	// rt:frame 的 Points 长度不足 20 → seed
+	env := newTestEnv()
+	shortFrame := realtimeFrame{
+		DeviceID:  testDevice,
+		PatientID: testPatient,
+		Timestamp: fixedNow,
+		Points:    make([]float64, 10), // 短于 PointCount
+		Battery:   50,
+	}
+	b, err := json.Marshal(&shortFrame)
+	require.NoError(t, err)
+	env.cache.rtFrame[testDevice] = string(b)
+	env.cache.lastseen[testDevice] = fixedNow // 保持 online
+
+	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
+	require.Nil(t, appErr)
+	require.Len(t, snap.PressureHeatmap, model.PointCount)
+
+	// seed 不会全部等于 0
+	anyNonZero := false
+	for _, p := range snap.PressureHeatmap {
+		if p.PressureValue > 0.1 {
+			anyNonZero = true
+			break
+		}
+	}
+	assert.True(t, anyNonZero, "seed heatmap should have non-zero values")
+
+	// IsMax 唯一
+	isMaxCount := 0
+	for _, p := range snap.PressureHeatmap {
+		if p.IsMax {
+			isMaxCount++
+		}
+	}
+	assert.Equal(t, 1, isMaxCount)
+}

@@ -378,7 +378,8 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 		return nil, model.ErrInternal("lookup device: %v", err)
 	}
 	if !exists {
-		return snapshot, nil // 未绑定设备：返回空快照
+		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
+		return snapshot, nil // 未绑定设备：返回空快照，heatmap 走 seed
 	}
 
 	// 状态推导（架构 §4.6 查询时实时推导）：abnormal 优先，其次 lastseen ≤2h 判 online
@@ -388,14 +389,30 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 		snapshot.Status = "online"
 	}
 
-	// 最新帧（rt:frame，零 DB）
+	// 最新帧（rt:frame，零 DB）→ 同时产出 PressureRecords 与热力图 20 点
 	frameJSON, err := s.cache.GetRealtimeFrame(ctx, deviceID)
 	if err != nil {
 		return nil, model.ErrInternal("read rt:frame: %v", err)
 	}
+	var hmPoints [model.PointCount]float32
+	heatmapReady := false
 	if frameJSON != "" {
 		var rf realtimeFrame
 		if jsonErr := json.Unmarshal([]byte(frameJSON), &rf); jsonErr == nil {
+			if len(rf.Points) >= model.PointCount {
+				allDead := true
+				for i := 0; i < model.PointCount; i++ {
+					v := float32(rf.Points[i])
+					hmPoints[i] = v
+					if v >= model.WearingThresholdN {
+						allDead = false
+					}
+				}
+				if !allDead {
+					heatmapReady = true
+				}
+			}
+			// PressureRecords 总是构建（即便 points 短，PressureRecord 逻辑保留原有对不齐能力）
 			var points [model.PointCount]float32
 			for i := 0; i < model.PointCount && i < len(rf.Points); i++ {
 				points[i] = float32(rf.Points[i])
@@ -408,8 +425,13 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 				UploadTime: rf.UploadTime.UTC().Format(time.RFC3339),
 			})
 		} else {
-			log.Warn().Err(jsonErr).Str("device_id", deviceID).Msg("invalid rt:frame json, ignored")
+			log.Warn().Err(jsonErr).Str("device_id", deviceID).Msg("invalid rt:frame json, heatmap fall back to seed")
 		}
+	}
+	if heatmapReady {
+		snapshot.PressureHeatmap = model.BuildHeatmap(hmPoints)
+	} else {
+		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
 	}
 
 	// 今日统计（stat:today）

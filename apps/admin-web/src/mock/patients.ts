@@ -17,6 +17,61 @@ function makePoints(maxValue: number): SensorPoint[] {
   return points
 }
 
+// T056：热力图 20 点专用结构（对齐后端 model.HeatmapPoint）
+export interface PressureHeatmapPoint {
+  pointId: string
+  row: number
+  col: number
+  label: string
+  pressureValue: number
+  isMax: boolean
+}
+
+function makeHeatmap(points: SensorPoint[]): PressureHeatmapPoint[] {
+  let maxIdx = 0
+  let maxV = -Infinity
+  points.forEach((p, i) => {
+    if (p.pressureValue > maxV) {
+      maxIdx = i
+      maxV = p.pressureValue
+    }
+  })
+  return points.map((p, i) => ({
+    pointId: p.pointId,
+    row: p.row,
+    col: p.col,
+    label: p.label,
+    pressureValue: p.pressureValue,
+    isMax: i === maxIdx && maxV > 0,
+  }))
+}
+
+function seedHeatmap(patientId: string): PressureHeatmapPoint[] {
+  let seed = 0
+  for (let i = 0; i < patientId.length; i++) seed = (seed * 31 + patientId.charCodeAt(i)) >>> 0
+  if (seed === 0) seed = 0x9e3779b1
+  const maxIdx = seed % 20
+  const pts: SensorPoint[] = []
+  for (let i = 0; i < 20; i++) {
+    const r = Math.floor(i / 5)
+    const c = i % 5
+    const base = 12 + r * 6
+    const wave = (((seed >>> ((c + 1) * 3)) & 7) / 7) * 8
+    const loc = i === maxIdx ? 18 : 0
+    let v = Math.round((base + wave + loc) * 10) / 10
+    if (v > 60) v = 58
+    pts.push({
+      pointId: `P${String(i + 1).padStart(2, '0')}`,
+      row: r + 1,
+      col: c + 1,
+      label: `R${r + 1}C${c + 1}`,
+      pressureValue: v,
+      status: v >= 45 ? 'critical' : v >= 33.75 ? 'warning' : 'normal',
+    })
+  }
+  return makeHeatmap(pts)
+}
+
 const PATIENTS: Patient[] = [
   { patientId: 'PT-001', name: '林小雨', gender: 'female', age: 13, diagnosis: '青少年特发性脊柱侧弯', cobbAngle: 28, deviceId: 'DEV-A3F312', teamId: 'TEAM-001', doctorId: 'DOC-001', status: 'active', createdAt: '2026-03-12T09:00:00+08:00', updatedAt: '2026-08-10T18:00:00+08:00' },
   { patientId: 'PT-002', name: '陈子航', gender: 'male', age: 15, diagnosis: '青少年特发性脊柱侧弯', cobbAngle: 35, deviceId: 'DEV-B7E456', teamId: 'TEAM-001', doctorId: 'DOC-001', status: 'active', createdAt: '2026-04-02T10:30:00+08:00', updatedAt: '2026-08-11T08:00:00+08:00' },
@@ -53,6 +108,7 @@ export interface RealtimeSnapshot {
   events: number
   pressureRecords: PressureRecord[]
   alerts: Alert[]
+  pressureHeatmap: PressureHeatmapPoint[]
 }
 
 export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
@@ -60,12 +116,13 @@ export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
   const offline = !patient || !patient.deviceId
   const abnormal = patientId === 'PT-004'
   const status = offline ? 'offline' : abnormal ? 'abnormal' : 'online'
+  const sensorPts = makePoints(abnormal ? 68 : 35)
   const record: PressureRecord = {
     recordId: `REC-${patientId}-latest`,
     deviceId: patient?.deviceId ?? '',
     patientId,
     timestamp: '2026-08-11T14:30:00+08:00',
-    points: makePoints(abnormal ? 68 : 35),
+    points: sensorPts,
     uploadTime: '2026-08-11T14:30:01+08:00',
   }
   return {
@@ -76,5 +133,6 @@ export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
     events: abnormal ? 3 : patientId === 'PT-002' ? 1 : 0,
     pressureRecords: offline ? [] : [record],
     alerts: [],
+    pressureHeatmap: offline ? seedHeatmap(patientId) : makeHeatmap(sensorPts),
   }
 }

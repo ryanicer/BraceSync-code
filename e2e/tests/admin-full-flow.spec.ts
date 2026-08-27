@@ -61,7 +61,7 @@ test('医生工作链路：登录 → Dashboard → 告警查看 → 实时监�
 
   await gotoMenu(page, '实时监控')
   await expect(page).toHaveURL(/\/monitor/)
-  await expect(page.getByText('每 30s 自动刷新')).toBeVisible()
+  await expect(page.locator('.page-toolbar .realtime-tag')).toContainText('实时同步中')
   await expect(page.locator('.update-time')).toContainText(/\d{2}:\d{2}:\d{2}/, { timeout: 15_000 })
 
   // 医生无权进入患者管理（菜单不可见，直达被拦）
