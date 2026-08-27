@@ -15,7 +15,7 @@ import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } fr
  *   1. .page-toolbar 增加添加患者 / 批量绑定按钮
  *   2. el-table 增加 selection 列（批量绑定前置）
  *   3. el-drawer 详情增加分配团队按钮 + 弹窗
- *   4. 新建 / 分配 / 批量绑定 三个 el-dialog 表单
+ *   4. 新建 / 分配 / 批量绑定 三个 el-dialog 表单（新建表单含手机号必填字段）
  *   5. mock 层补 POST /api/v1/admin/patients、PUT .../team、POST .../batch-bind
  * 届时移除 test.fail 标记，用例转绿。
  */
@@ -36,8 +36,9 @@ test.describe('添加患者', () => {
     await btn.click()
     const dialog = page.locator('.el-dialog').filter({ hasText: '新建患者' })
     await expect(dialog).toBeVisible()
-    // 对话框应含姓名、性别、年龄、诊断、Cobb角、设备ID、团队、医生字段
+    // 对话框应含姓名、手机号、性别、年龄、诊断、Cobb角、设备ID、团队、医生字段
     await expect(dialog).toContainText('姓名')
+    await expect(dialog).toContainText('手机号')
     await expect(dialog).toContainText('诊断')
     await expect(dialog).toContainText('团队')
   })
@@ -47,8 +48,9 @@ test.describe('添加患者', () => {
     const dialog = page.locator('.el-dialog').filter({ hasText: '新建患者' })
     await expect(dialog).toBeVisible()
 
-    // 填写表单
+    // 填写表单（含手机号必填字段）
     await dialog.locator('input[placeholder*="姓名"]').fill('测试患者E2E')
+    await dialog.locator('input[placeholder*="手机号"]').fill('13800138000')
     await dialog.locator('input[placeholder*="年龄"]').fill('15')
     await dialog.locator('input[placeholder*="诊断"]').fill('青少年特发性脊柱侧弯')
     // 选择团队
@@ -73,6 +75,20 @@ test.describe('添加患者', () => {
     await dialog.getByRole('button', { name: '确定' }).click()
     // 应显示校验错误（姓名必填）
     await expect(dialog.locator('.el-form-item__error')).toContainText('姓名')
+    // 对话框仍可见（未关闭）
+    await expect(dialog).toBeVisible()
+  })
+
+  test.fail('手机号为空时表单校验拦截提交', async ({ page }) => {
+    await page.locator('.page-toolbar').getByRole('button', { name: '添加患者' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '新建患者' })
+    await expect(dialog).toBeVisible()
+
+    // 填姓名但不填手机号直接提交
+    await dialog.locator('input[placeholder*="姓名"]').fill('有姓名无手机号')
+    await dialog.getByRole('button', { name: '确定' }).click()
+    // 应显示校验错误（手机号必填）
+    await expect(dialog.locator('.el-form-item__error')).toContainText('手机号')
     // 对话框仍可见（未关闭）
     await expect(dialog).toBeVisible()
   })
