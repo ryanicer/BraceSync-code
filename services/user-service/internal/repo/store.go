@@ -7,8 +7,17 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrPatientExists 创建患者重复键冲突（name+age+diagnosis 完全相同）。
+// store.CreatePatient 返回此 sentinel，handler 映射为 409 CodeConflict。
+var ErrPatientExists = errors.New("patient already exists")
+
+// ErrPatientNotFound 患者 ID 不存在。
+// store.AssignPatientTeam 返回此 sentinel，handler 映射为 404 CodeNotFound。
+var ErrPatientNotFound = errors.New("patient not found")
 
 // ─────────────────────────────────────────────────────────────
 // 行投影（repo 层出参；handler 层转 DTO）
@@ -170,6 +179,30 @@ type TechInput struct {
 	TeamID    *string
 }
 
+// PatientInput 创建患者入参（T057 写功能契约）。Name 必填；其余可空指针。
+type PatientInput struct {
+	Name      string
+	Gender    *string
+	Age       *int
+	Diagnosis *string
+	CobbAngle *float64
+	DeviceID  *string
+	TeamID    *string
+	DoctorID  *string
+}
+
+// BatchBindFailure 批量绑定单条失败记录
+type BatchBindFailure struct {
+	PatientID string
+	Reason    string
+}
+
+// BatchBindResult 批量绑定结果：成功 ID 列表 + 失败明细（部分失败策略，不整体回滚）
+type BatchBindResult struct {
+	Success []string
+	Failed  []BatchBindFailure
+}
+
 // ─────────────────────────────────────────────────────────────
 // Store 数据访问接口（handler 依赖注入点；单测用 fake，集成测试用 PGStore）
 // ─────────────────────────────────────────────────────────────
@@ -187,6 +220,11 @@ type Store interface {
 	// 患者（管理端只读）
 	ListPatients(ctx context.Context, f PatientFilter) ([]PatientRow, int64, error)
 	GetPatient(ctx context.Context, patientID string) (*PatientRow, error)
+
+	// 患者（管理端写，T057 写功能契约）
+	CreatePatient(ctx context.Context, in PatientInput) (*PatientRow, error)
+	AssignPatientTeam(ctx context.Context, patientID, teamID string) (*PatientRow, error)
+	BatchBindPatients(ctx context.Context, patientIDs []string, teamID string) (*BatchBindResult, error)
 
 	// 团队 / 医生
 	ListTeams(ctx context.Context) ([]TeamRow, error)

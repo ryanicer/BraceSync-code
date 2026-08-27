@@ -88,6 +88,9 @@ func (h *Handler) Router() *gin.Engine {
 
 		v1.GET("/admin/patients", h.listPatients)
 		v1.GET("/admin/patients/:patientId", h.getPatient)
+		v1.POST("/admin/patients", h.createPatient)              // T057 创建患者
+		v1.POST("/admin/patients/batch-bind", h.batchBindPatients) // T057 批量绑定
+		v1.PUT("/admin/patients/:patientId/team", h.assignPatientTeam) // T057 分配团队
 
 		v1.GET("/teams", h.listTeams)
 		v1.GET("/teams/:teamId/members", h.getTeamMembers)
@@ -1224,4 +1227,27 @@ func (h *Handler) updateSettings(c *gin.Context) {
 	}
 	req.WifiPresets = maskWifiPasswords(merged)
 	ok(c, req)
+}
+
+// ─────────────────────────────────────────────────────────────
+// 患者写操作（T057 stub — 实现方转绿阶段补业务逻辑）
+//
+// 当前为占位实现，直接返回 500 ErrInternal。KNOWN_RED 单测据此断言失败为红；
+// 实现方填入参数校验 + store 调用 + DTO 组装后转绿。契约见
+// docs/tasks/ella/T057-患者管理测试规格.md。
+// ─────────────────────────────────────────────────────────────
+
+// createPatient POST /api/v1/admin/patients —— 创建患者
+func (h *Handler) createPatient(c *gin.Context) {
+	fail(c, model.ErrInternal("not implemented: T057 createPatient"))
+}
+
+// assignPatientTeam PUT /api/v1/admin/patients/:patientId/team —— 分配/更改团队（幂等）
+func (h *Handler) assignPatientTeam(c *gin.Context) {
+	fail(c, model.ErrInternal("not implemented: T057 assignPatientTeam"))
+}
+
+// batchBindPatients POST /api/v1/admin/patients/batch-bind —— 批量绑定（部分失败不回滚）
+func (h *Handler) batchBindPatients(c *gin.Context) {
+	fail(c, model.ErrInternal("not implemented: T057 batchBindPatients"))
 }

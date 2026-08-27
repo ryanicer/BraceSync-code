@@ -104,6 +104,19 @@ type fakeStore struct {
 	techLoginErr    error
 	patientLogin    *repo.PatientLoginRow
 	patientLoginErr error
+
+	// T057 患者写操作 stub 字段（实现方转绿时由用例装配返回值）
+	createdPatient     *repo.PatientRow
+	createPatientErr   error
+	assignedPatient    *repo.PatientRow
+	assignPatientErr   error
+	batchBindResult    *repo.BatchBindResult
+	batchBindErr       error
+	lastCreateInput    repo.PatientInput
+	lastAssignPatient  string
+	lastAssignTeam     string
+	lastBatchIDs       []string
+	lastBatchTeam      string
 }
 
 func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {
@@ -212,6 +225,23 @@ func (f *fakeStore) GetTechByPhoneHash(_ context.Context, _ string) (*repo.TechL
 }
 func (f *fakeStore) GetPatientByPhoneHash(_ context.Context, _ string) (*repo.PatientLoginRow, error) {
 	return f.patientLogin, f.patientLoginErr
+}
+
+// T057 患者写操作 stub 实现（仅满足扩展后的 Store 接口编译；
+// stub handler 当前不调用 store，这些方法待实现方转绿时被触达）
+func (f *fakeStore) CreatePatient(_ context.Context, in repo.PatientInput) (*repo.PatientRow, error) {
+	f.lastCreateInput = in
+	return f.createdPatient, f.createPatientErr
+}
+func (f *fakeStore) AssignPatientTeam(_ context.Context, patientID, teamID string) (*repo.PatientRow, error) {
+	f.lastAssignPatient = patientID
+	f.lastAssignTeam = teamID
+	return f.assignedPatient, f.assignPatientErr
+}
+func (f *fakeStore) BatchBindPatients(_ context.Context, patientIDs []string, teamID string) (*repo.BatchBindResult, error) {
+	f.lastBatchIDs = patientIDs
+	f.lastBatchTeam = teamID
+	return f.batchBindResult, f.batchBindErr
 }
 
 // testEnv 装配 Handler + 请求工具

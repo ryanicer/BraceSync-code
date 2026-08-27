@@ -629,3 +629,25 @@ func (s *PGStore) UpsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy s
 	}
 	return tx.Commit(ctx)
 }
+
+// ─────────────────────────────────────────────────────────────
+// 患者写操作（T057 stub — 实现方转绿阶段补 SQL）
+//
+// 当前为占位实现，返回 not implemented 错误。仅保证 PGStore 满足扩展后的
+// Store 接口编译；运行期不被 KNOWN_RED 单测触达（单测走 fakeStore）。
+// ─────────────────────────────────────────────────────────────
+
+// CreatePatient 创建患者（含重复判重）
+func (s *PGStore) CreatePatient(ctx context.Context, in PatientInput) (*PatientRow, error) {
+	return nil, errors.New("not implemented: T057 CreatePatient")
+}
+
+// AssignPatientTeam 分配/更改患者团队（幂等）
+func (s *PGStore) AssignPatientTeam(ctx context.Context, patientID, teamID string) (*PatientRow, error) {
+	return nil, errors.New("not implemented: T057 AssignPatientTeam")
+}
+
+// BatchBindPatients 批量绑定患者到团队（部分失败不回滚）
+func (s *PGStore) BatchBindPatients(ctx context.Context, patientIDs []string, teamID string) (*BatchBindResult, error) {
+	return nil, errors.New("not implemented: T057 BatchBindPatients")
+}
