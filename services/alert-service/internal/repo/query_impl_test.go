@@ -52,21 +52,21 @@ func TestBuildAlertWhere(t *testing.T) {
 	assert.Empty(t, args)
 
 	where, args = buildAlertWhere(AlertQueryFilter{PatientID: "P001"})
-	assert.Equal(t, " WHERE patient_id = $1", where)
+	assert.Equal(t, " WHERE a.patient_id = $1", where)
 	assert.Equal(t, []any{"P001"}, args)
 
 	where, args = buildAlertWhere(AlertQueryFilter{Type: "wear_interrupt"})
-	assert.Equal(t, " WHERE type = $1", where)
+	assert.Equal(t, " WHERE a.type = $1", where)
 	assert.Equal(t, []any{"wear_interrupt"}, args)
 
 	where, args = buildAlertWhere(AlertQueryFilter{Status: "pending"})
-	assert.Equal(t, " WHERE process_status = $1", where)
+	assert.Equal(t, " WHERE a.process_status = $1", where)
 	assert.Equal(t, []any{"pending"}, args)
 
 	where, args = buildAlertWhere(AlertQueryFilter{
 		PatientID: "P001", Type: "pressure_high", Status: "processed",
 	})
-	assert.Equal(t, " WHERE patient_id = $1 AND type = $2 AND process_status = $3", where)
+	assert.Equal(t, " WHERE a.patient_id = $1 AND a.type = $2 AND a.process_status = $3", where)
 	assert.Equal(t, []any{"P001", "pressure_high", "processed"}, args)
 }
 

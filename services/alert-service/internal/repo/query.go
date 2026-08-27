@@ -57,15 +57,15 @@ func buildAlertWhere(f AlertQueryFilter) (string, []any) {
 	var args []any
 	if f.PatientID != "" {
 		args = append(args, f.PatientID)
-		conds = append(conds, "patient_id = $"+strconv.Itoa(len(args)))
+		conds = append(conds, "a.patient_id = $"+strconv.Itoa(len(args)))
 	}
 	if f.Type != "" {
 		args = append(args, f.Type)
-		conds = append(conds, "type = $"+strconv.Itoa(len(args)))
+		conds = append(conds, "a.type = $"+strconv.Itoa(len(args)))
 	}
 	if f.Status != "" {
 		args = append(args, f.Status)
-		conds = append(conds, "process_status = $"+strconv.Itoa(len(args)))
+		conds = append(conds, "a.process_status = $"+strconv.Itoa(len(args)))
 	}
 	if len(conds) == 0 {
 		return "", nil
@@ -95,11 +95,12 @@ type AlertRow struct {
 }
 
 // alertSelectColumns 查询列（可空列 COALESCE 兜底，避免 NULL 扫描错误）
-const alertSelectColumns = `alert_id, patient_id, COALESCE(patients.name, ''), device_id, type,
-	COALESCE(detail, ''), COALESCE(sensor_point, ''),
-	COALESCE(threshold_value, 0), COALESCE(actual_value, 0),
-	ts, read_status, process_status, resolved_status,
-	resolved_at, processed_by, processed_at, process_note`
+// LEFT JOIN 后统一加表别名前缀：a=alerts, p=patients，防止列引用歧义
+const alertSelectColumns = `a.alert_id, a.patient_id, COALESCE(p.name, ''), a.device_id, a.type,
+	COALESCE(a.detail, ''), COALESCE(a.sensor_point, ''),
+	COALESCE(a.threshold_value, 0), COALESCE(a.actual_value, 0),
+	a.ts, a.read_status, a.process_status, a.resolved_status,
+	a.resolved_at, a.processed_by, a.processed_at, a.process_note`
 
 // rowScanner pgx.Row / pgx.Rows 的最小公共接口（便于单测扫描逻辑）
 type rowScanner interface{ Scan(dest ...any) error }
@@ -119,14 +120,14 @@ func (r *PGAlertRepo) ListAlerts(ctx context.Context, f AlertQueryFilter) ([]Ale
 	where, args := buildAlertWhere(f)
 
 	var total int64
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM alerts`+where, args...).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM alerts AS a`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	pageArgs := append(append([]any{}, args...), f.PageSize, f.Offset())
 	rows, err := r.pool.Query(ctx,
-		`SELECT `+alertSelectColumns+` FROM alerts LEFT JOIN patients ON alerts.patient_id = patients.patient_id`+where+
-			` ORDER BY ts DESC, alert_id DESC LIMIT $`+strconv.Itoa(len(args)+1)+` OFFSET $`+strconv.Itoa(len(args)+2),
+		`SELECT `+alertSelectColumns+` FROM alerts AS a LEFT JOIN patients AS p ON a.patient_id = p.patient_id`+where+
+			` ORDER BY a.ts DESC, a.alert_id DESC LIMIT $`+strconv.Itoa(len(args)+1)+` OFFSET $`+strconv.Itoa(len(args)+2),
 		pageArgs...)
 	if err != nil {
 		return nil, 0, err
