@@ -30,7 +30,7 @@ test.beforeEach(async ({ page }) => {
 // ─────────────────────────────────────────────────────────────
 
 test.describe('添加患者', () => {
-  test.fail('点击添加患者按钮打开新建对话框', async ({ page }) => {
+  test('点击添加患者按钮打开新建对话框', async ({ page }) => {
     // 工具栏应有"添加患者"按钮（当前不存在 → KNOWN_RED）
     const btn = page.locator('.page-toolbar').getByRole('button', { name: '添加患者' })
     await btn.click()
@@ -43,7 +43,7 @@ test.describe('添加患者', () => {
     await expect(dialog).toContainText('团队')
   })
 
-  test.fail('填写患者表单提交成功后列表刷新', async ({ page }) => {
+  test('填写患者表单提交成功后列表刷新', async ({ page }) => {
     await page.locator('.page-toolbar').getByRole('button', { name: '添加患者' }).click()
     const dialog = page.locator('.el-dialog').filter({ hasText: '新建患者' })
     await expect(dialog).toBeVisible()
@@ -66,7 +66,7 @@ test.describe('添加患者', () => {
     await expect(tableRows(page).filter({ hasText: '测试患者E2E' })).toHaveCount(1)
   })
 
-  test.fail('姓名为空时表单校验拦截提交', async ({ page }) => {
+  test('姓名为空时表单校验拦截提交', async ({ page }) => {
     await page.locator('.page-toolbar').getByRole('button', { name: '添加患者' }).click()
     const dialog = page.locator('.el-dialog').filter({ hasText: '新建患者' })
     await expect(dialog).toBeVisible()
@@ -79,7 +79,7 @@ test.describe('添加患者', () => {
     await expect(dialog).toBeVisible()
   })
 
-  test.fail('手机号为空时表单校验拦截提交', async ({ page }) => {
+  test('手机号为空时表单校验拦截提交', async ({ page }) => {
     await page.locator('.page-toolbar').getByRole('button', { name: '添加患者' }).click()
     const dialog = page.locator('.el-dialog').filter({ hasText: '新建患者' })
     await expect(dialog).toBeVisible()
@@ -99,7 +99,7 @@ test.describe('添加患者', () => {
 // ─────────────────────────────────────────────────────────────
 
 test.describe('分配团队', () => {
-  test.fail('详情抽屉中分配团队成功', async ({ page }) => {
+  test('详情抽屉中分配团队成功', async ({ page }) => {
     // 打开详情抽屉
     await tableRows(page).filter({ hasText: '林小雨' }).click()
     const drawer = page.locator('.el-drawer')
@@ -120,7 +120,7 @@ test.describe('分配团队', () => {
     await expect(drawer).toContainText('脊柱侧弯二组')
   })
 
-  test.fail('分配相同团队（幂等）返回成功不报错', async ({ page }) => {
+  test('分配相同团队（幂等）返回成功不报错', async ({ page }) => {
     await tableRows(page).filter({ hasText: '林小雨' }).click()
     const drawer = page.locator('.el-drawer')
     await expect(drawer).toBeVisible()
@@ -144,7 +144,7 @@ test.describe('分配团队', () => {
 // ─────────────────────────────────────────────────────────────
 
 test.describe('批量绑定', () => {
-  test.fail('选择多个患者批量绑定到团队', async ({ page }) => {
+  test('选择多个患者批量绑定到团队', async ({ page }) => {
     // el-table 应有 selection 列（当前不存在 → KNOWN_RED）
     // 勾选前 2 行
     const checkboxes = page.locator('.el-table__body-wrapper .el-checkbox')
@@ -164,7 +164,7 @@ test.describe('批量绑定', () => {
     await expect(adminMessage(page)).toContainText('成功')
   })
 
-  test.fail('批量绑定部分失败显示失败明细', async ({ page }) => {
+  test('批量绑定部分失败显示失败明细', async ({ page }) => {
     const checkboxes = page.locator('.el-table__body-wrapper .el-checkbox')
     await checkboxes.nth(0).click()
     await checkboxes.nth(1).click()

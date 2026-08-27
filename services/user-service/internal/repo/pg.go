@@ -5,11 +5,15 @@ package repo
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -631,23 +635,91 @@ func (s *PGStore) UpsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy s
 }
 
 // ─────────────────────────────────────────────────────────────
-// 患者写操作（T057 stub — 实现方转绿阶段补 SQL）
+// 患者写操作（T057：创建患者 / 分配团队 / 批量绑定）
 //
-// 当前为占位实现，返回 not implemented 错误。仅保证 PGStore 满足扩展后的
-// Store 接口编译；运行期不被 KNOWN_RED 单测触达（单测走 fakeStore）。
+// phone_hash 唯一键（idx_patients_phone_hash）：先查重 + INSERT 兜底 unique violation → ErrPatientExists。
+// patient_id 生成：P + 年份 + 12 位随机 hex（VARCHAR(32) 内，规避并发序号竞争）。
 // ─────────────────────────────────────────────────────────────
 
-// CreatePatient 创建患者（含重复判重）
+// newPatientID 生成患者 ID：P + 当前年份 + 12 位随机 hex
+func newPatientID() (string, error) {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "P" + time.Now().Format("2006") + hex.EncodeToString(buf), nil
+}
+
+// CreatePatient 创建患者（phone_hash 查重 → INSERT → 回读 join 行）
 func (s *PGStore) CreatePatient(ctx context.Context, in PatientInput) (*PatientRow, error) {
-	return nil, errors.New("not implemented: T057 CreatePatient")
+	var taken bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM patients WHERE phone_hash = $1)`, in.PhoneHash).Scan(&taken); err != nil {
+		return nil, err
+	}
+	if taken {
+		return nil, ErrPatientExists
+	}
+	patientID, err := newPatientID()
+	if err != nil {
+		return nil, err
+	}
+	_, execErr := s.pool.Exec(ctx,
+		`INSERT INTO patients (patient_id, name, phone_enc, phone_hash, gender, age, diagnosis, cobb_angle,
+		                       device_id, team_id, primary_doctor_id, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active')`,
+		patientID, in.Name, in.PhoneEnc, in.PhoneHash, in.Gender, in.Age, in.Diagnosis, in.CobbAngle,
+		in.DeviceID, in.TeamID, in.DoctorID)
+	if execErr != nil {
+		// 并发兜底：unique violation(phone_hash) → ErrPatientExists
+		var pgErr *pgconn.PgError
+		if errors.As(execErr, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrPatientExists
+		}
+		return nil, execErr
+	}
+	return s.GetPatient(ctx, patientID)
 }
 
-// AssignPatientTeam 分配/更改患者团队（幂等）
+// AssignPatientTeam 分配/更改患者团队（幂等：同 teamId no-op，不变更 updated_at）
 func (s *PGStore) AssignPatientTeam(ctx context.Context, patientID, teamID string) (*PatientRow, error) {
-	return nil, errors.New("not implemented: T057 AssignPatientTeam")
+	existing, err := s.GetPatient(ctx, patientID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrPatientNotFound
+	}
+	// 幂等：当前已绑定同一 teamId → 直接返回，不更新 updated_at
+	if existing.TeamID != nil && *existing.TeamID == teamID {
+		return existing, nil
+	}
+	if _, err = s.pool.Exec(ctx,
+		`UPDATE patients SET team_id = $2, updated_at = now() WHERE patient_id = $1`,
+		patientID, teamID); err != nil {
+		return nil, err
+	}
+	return s.GetPatient(ctx, patientID)
 }
 
-// BatchBindPatients 批量绑定患者到团队（部分失败不回滚）
+// BatchBindPatients 批量绑定患者到团队（逐条 UPDATE；部分失败不回滚，HTTP 仍 200）
 func (s *PGStore) BatchBindPatients(ctx context.Context, patientIDs []string, teamID string) (*BatchBindResult, error) {
-	return nil, errors.New("not implemented: T057 BatchBindPatients")
+	result := &BatchBindResult{}
+	for _, pid := range patientIDs {
+		tag, err := s.pool.Exec(ctx,
+			`UPDATE patients SET team_id = $2, updated_at = now() WHERE patient_id = $1`,
+			pid, teamID)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() > 0 {
+			result.Success = append(result.Success, pid)
+		} else {
+			result.Failed = append(result.Failed, BatchBindFailure{
+				PatientID: pid,
+				Reason:    "patient not found",
+			})
+		}
+	}
+	return result, nil
 }
