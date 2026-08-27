@@ -242,6 +242,74 @@ func BuildSensorPoints(points [PointCount]float32) []SensorPoint {
 	return out
 }
 
+// HeatmapMaxN 热力图色阶上界（设计要求：60N）
+const HeatmapMaxN = 60.0
+
+// HeatmapPoint 热力图 20 点单格（RealtimeSnapshot.pressureHeatmap 元素）
+type HeatmapPoint struct {
+	PointID       string  `json:"pointId"`       // P01–P20
+	Row           int     `json:"row"`           // 1–4
+	Col           int     `json:"col"`           // 1–5
+	Label         string  `json:"label"`         // RrCc，如 R3C2
+	PressureValue float64 `json:"pressureValue"` // 压力 N
+	IsMax         bool    `json:"isMax"`         // 是否为当前最大点（前端 ★ + 脉冲用）
+}
+
+// BuildHeatmap 将 20 点压力值构造为 HeatmapPoint 数组（唯一 IsMax 标记）
+func BuildHeatmap(points [PointCount]float32) []HeatmapPoint {
+	out := make([]HeatmapPoint, PointCount)
+	maxIdx, maxV := 0, float32(-1)
+	for i, v := range points {
+		row, col, label := PointLabel(i)
+		out[i] = HeatmapPoint{
+			PointID:       PointID(i),
+			Row:           row,
+			Col:           col,
+			Label:         label,
+			PressureValue: float64(v),
+			IsMax:         false,
+		}
+		if v > maxV {
+			maxIdx, maxV = i, v
+		}
+	}
+	if maxV > 0 {
+		out[maxIdx].IsMax = true
+	}
+	return out
+}
+
+// SeedHeatmap 根据 patientID 生成带梯度的 20 点兜底热力图（无真实帧时用）
+// 策略：按字符 hash 定最大点位置与强度，每行递增加 6N 基础 + 列 sin 波动（参考设计实时监控.html）
+func SeedHeatmap(patientID string) []HeatmapPoint {
+	var seed uint32
+	for _, r := range patientID {
+		seed = seed*31 + uint32(r)
+	}
+	if seed == 0 {
+		seed = 0x9e3779b1
+	}
+	var pts [PointCount]float32
+	maxIdx := int(seed % PointCount)
+	for i := 0; i < PointCount; i++ {
+		r := i / 5
+		c := i % 5
+		// 基础 + 行梯度 + 列波动 + hash 扰动（10–50N）
+		base := float32(12 + r*6)
+		wave := float32(float64(seed>>uint((c+1)*3)&7) / 7.0 * 8) // 0–8
+		loc := float32(0)
+		if i == maxIdx {
+			loc = 18 // 最大点额外+18N
+		}
+		v := base + wave + loc
+		if v > HeatmapMaxN {
+			v = HeatmapMaxN - 2
+		}
+		pts[i] = v
+	}
+	return BuildHeatmap(pts)
+}
+
 // PressureRecordDTO 对齐 shared-types PressureRecord（camelCase）
 type PressureRecordDTO struct {
 	RecordID   string        `json:"recordId"`
@@ -328,7 +396,8 @@ type RealtimeSnapshot struct {
 	MaxPoint        string              `json:"maxPoint"`
 	Events          int                 `json:"events"` // 今日异常值
 	PressureRecords []PressureRecordDTO `json:"pressureRecords"`
-	Alerts          []any               `json:"alerts"` // 今日告警摘要，明细由 alert-service 提供
+	Alerts          []any               `json:"alerts"`          // 今日告警摘要，明细由 alert-service 提供
+	PressureHeatmap []HeatmapPoint      `json:"pressureHeatmap"` // 热力图 20 点（独立数据源，有 seed 兜底）
 }
 
 // Dashboard 常量 (shared between service + integration tests)
