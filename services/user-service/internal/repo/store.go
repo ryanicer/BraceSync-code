@@ -181,7 +181,7 @@ type TechInput struct {
 }
 
 // PatientInput 创建患者入参（T057 写功能契约）。Name 必填；PhoneEnc/PhoneHash 必填
-//（由 handler 层 preparePhone 加密+哈希后传入，与 TechInput 模式一致）；其余可空指针。
+// （由 handler 层 preparePhone 加密+哈希后传入，与 TechInput 模式一致）；其余可空指针。
 type PatientInput struct {
 	Name      string
 	PhoneEnc  []byte // AES-GCM 密文（handler.preparePhone 生成）

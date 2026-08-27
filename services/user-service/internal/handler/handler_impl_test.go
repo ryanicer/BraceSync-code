@@ -106,17 +106,17 @@ type fakeStore struct {
 	patientLoginErr error
 
 	// T057 患者写操作 stub 字段（实现方转绿时由用例装配返回值）
-	createdPatient     *repo.PatientRow
-	createPatientErr   error
-	assignedPatient    *repo.PatientRow
-	assignPatientErr   error
-	batchBindResult    *repo.BatchBindResult
-	batchBindErr       error
-	lastCreateInput    repo.PatientInput
-	lastAssignPatient  string
-	lastAssignTeam     string
-	lastBatchIDs       []string
-	lastBatchTeam      string
+	createdPatient    *repo.PatientRow
+	createPatientErr  error
+	assignedPatient   *repo.PatientRow
+	assignPatientErr  error
+	batchBindResult   *repo.BatchBindResult
+	batchBindErr      error
+	lastCreateInput   repo.PatientInput
+	lastAssignPatient string
+	lastAssignTeam    string
+	lastBatchIDs      []string
+	lastBatchTeam     string
 }
 
 func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {
