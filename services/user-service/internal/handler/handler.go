@@ -89,8 +89,8 @@ func (h *Handler) Router() *gin.Engine {
 
 		v1.GET("/admin/patients", h.listPatients)
 		v1.GET("/admin/patients/:patientId", h.getPatient)
-		v1.POST("/admin/patients", h.createPatient)              // T057 创建患者
-		v1.POST("/admin/patients/batch-bind", h.batchBindPatients) // T057 批量绑定
+		v1.POST("/admin/patients", h.createPatient)                    // T057 创建患者
+		v1.POST("/admin/patients/batch-bind", h.batchBindPatients)     // T057 批量绑定
 		v1.PUT("/admin/patients/:patientId/team", h.assignPatientTeam) // T057 分配团队
 
 		v1.GET("/teams", h.listTeams)
