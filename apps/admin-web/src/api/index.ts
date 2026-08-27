@@ -215,7 +215,11 @@ export async function fetchNotificationLogs(params: { patientId?: string; channe
 // ========== 展示辅助（mock 期姓名映射，真实模式后端 join 返回后可移除） ==========
 
 export function patientNameOf(patientId: string | null): string {
-  return deviceMock.mockPatientName(patientId)
+  if (USE_MOCK) {
+    return deviceMock.mockPatientName(patientId)
+  }
+  // 真实模式：姓名由后端 join 提供至 row.patientName，此处仅作 patientId 兜底
+  return patientId || '-'
 }
 
 export function teamNameOf(teamId: string | null): string {

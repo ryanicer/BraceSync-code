@@ -23,7 +23,7 @@
         </el-table-column>
         <el-table-column prop="detail" label="详情" min-width="240" show-overflow-tooltip />
         <el-table-column label="患者" width="110">
-          <template #default="{ row }">{{ patientNameOf(row.patientId) }}</template>
+          <template #default="{ row }">{{ row.patientName || patientNameOf(row.patientId) }}</template>
         </el-table-column>
         <el-table-column prop="deviceId" label="设备" width="130" />
         <el-table-column label="传感器" width="80">
@@ -121,7 +121,8 @@ function severityType(type: string): 'danger' | 'warning' {
   return 'warning'
 }
 
-function formatTime(iso: string): string {
+function formatTime(iso: string | null | undefined): string {
+  if (typeof iso !== 'string' || iso.length < 16) return '-'
   return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`
 }
 

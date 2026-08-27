@@ -152,7 +152,7 @@ func TestListAlerts_DTOMapping(t *testing.T) {
 	store := &fakePublicStore{
 		total: 1,
 		rows: []repo.AlertRow{{
-			AlertID: 42, PatientID: "P001", DeviceID: "DEV01", Type: "pressure_high",
+			AlertID: 42, PatientID: "P001", PatientName: "林小雨", DeviceID: "DEV01", Type: "pressure_high",
 			Detail: "P03 超阈值", SensorPoint: "P03", ThresholdValue: 45, ActualValue: 52.5,
 			Ts: ts, ReadStatus: "unread", ProcessStatus: "processed", ResolvedStatus: "active",
 			ResolvedAt: &resolvedAt, ProcessedBy: &by, ProcessedAt: &processedAt, ProcessNote: &note,
@@ -168,6 +168,7 @@ func TestListAlerts_DTOMapping(t *testing.T) {
 	// 字段名对齐 shared-types Alert
 	assert.Equal(t, "42", item.AlertID, "alertId 字符串化")
 	assert.Equal(t, "P001", item.PatientID)
+	assert.Equal(t, "林小雨", item.PatientName)
 	assert.Equal(t, "DEV01", item.DeviceID)
 	assert.Equal(t, "pressure_high", item.Type)
 	assert.Equal(t, "P03", item.SensorPoint)

@@ -86,6 +86,7 @@ export interface PressureRecord {
 export interface Alert {
   alertId: string;
   patientId: string;
+  patientName?: string | null;
   deviceId: string;
   type: 'pressure_high' | 'wear_interrupt' | 'pressure_fluctuation' | 'sensor_drift';
   detail: string;
