@@ -97,6 +97,22 @@ export async function fetchPatientRealtime(patientId: string): Promise<RealtimeS
   return request<RealtimeSnapshot>({ url: `/api/v1/patients/${patientId}/realtime` })
 }
 
+// T057 患者写功能
+export async function createPatientApi(input: patientMock.CreatePatientInput): Promise<Patient> {
+  if (USE_MOCK) { await delay(); return patientMock.mockCreatePatient(input) }
+  return request<Patient>({ url: '/api/v1/admin/patients', method: 'POST', data: input as unknown as Record<string, unknown> })
+}
+
+export async function assignPatientTeamApi(patientId: string, teamId: string): Promise<Patient> {
+  if (USE_MOCK) { await delay(); return patientMock.mockAssignPatientTeam(patientId, teamId) }
+  return request<Patient>({ url: `/api/v1/admin/patients/${patientId}/team`, method: 'PUT', data: { teamId } })
+}
+
+export async function batchBindPatientsApi(patientIds: string[], teamId: string): Promise<patientMock.BatchBindResult> {
+  if (USE_MOCK) { await delay(); return patientMock.mockBatchBindPatients(patientIds, teamId) }
+  return request<patientMock.BatchBindResult>({ url: '/api/v1/admin/patients/batch-bind', method: 'POST', data: { patientIds, teamId } })
+}
+
 // ========== Alert（复用 T019B 已验证端点） ==========
 
 export async function fetchAlerts(params: { patientId?: string; type?: string; status?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<Alert>> {

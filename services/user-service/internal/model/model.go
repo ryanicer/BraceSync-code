@@ -94,6 +94,7 @@ type AdminPatientDTO struct {
 	DeviceID   *string  `json:"deviceId"`
 	TeamID     *string  `json:"teamId"`
 	DoctorID   *string  `json:"doctorId"`
+	Phone      string   `json:"phone"` // 脱敏手机号（138****8000），由 handler.Masked(PhoneEnc) 生成
 	Status     string   `json:"status"`
 	CreatedAt  string   `json:"createdAt"`
 	UpdatedAt  string   `json:"updatedAt"`
@@ -231,4 +232,45 @@ type PatientLoginResultDTO struct {
 	PatientID string `json:"patientId"`
 	Name      string `json:"name"`
 	Role      string `json:"role"` // 固定 "patient"
+}
+
+// ─────────────────────────────────────────────────────────────
+// 患者写操作请求/响应 DTO（T057 写功能契约）
+// ─────────────────────────────────────────────────────────────
+
+// CreatePatientRequestDTO 创建患者请求（name + phone 必填，其余可空）
+type CreatePatientRequestDTO struct {
+	Name      string   `json:"name"`
+	Phone     string   `json:"phone"` // 必填，11 位 1 开头手机号（validPhone 校验）
+	Gender    *string  `json:"gender"`
+	Age       *int     `json:"age"`
+	Diagnosis *string  `json:"diagnosis"`
+	CobbAngle *float64 `json:"cobbAngle"`
+	DeviceID  *string  `json:"deviceId"`
+	TeamID    *string  `json:"teamId"`
+	DoctorID  *string  `json:"doctorId"`
+}
+
+// AssignTeamRequestDTO 分配团队请求（teamId 必填）
+type AssignTeamRequestDTO struct {
+	TeamID string `json:"teamId"`
+}
+
+// BatchBindRequestDTO 批量绑定请求（patientIds 非空、teamId 必填）
+type BatchBindRequestDTO struct {
+	PatientIDs []string `json:"patientIds"`
+	TeamID     string   `json:"teamId"`
+}
+
+// BatchBindFailureDTO 批量绑定单条失败
+type BatchBindFailureDTO struct {
+	PatientID string `json:"patientId"`
+	Reason    string `json:"reason"`
+}
+
+// BatchBindResultDTO 批量绑定响应（部分失败不回滚，HTTP 仍 200）
+type BatchBindResultDTO struct {
+	SuccessCount int                   `json:"successCount"`
+	FailedCount  int                   `json:"failedCount"`
+	Failures     []BatchBindFailureDTO `json:"failures"`
 }

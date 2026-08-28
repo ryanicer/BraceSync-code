@@ -34,6 +34,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -88,6 +89,9 @@ func (h *Handler) Router() *gin.Engine {
 
 		v1.GET("/admin/patients", h.listPatients)
 		v1.GET("/admin/patients/:patientId", h.getPatient)
+		v1.POST("/admin/patients", h.createPatient)                    // T057 创建患者
+		v1.POST("/admin/patients/batch-bind", h.batchBindPatients)     // T057 批量绑定
+		v1.PUT("/admin/patients/:patientId/team", h.assignPatientTeam) // T057 分配团队
 
 		v1.GET("/teams", h.listTeams)
 		v1.GET("/teams/:teamId/members", h.getTeamMembers)
@@ -1224,4 +1228,139 @@ func (h *Handler) updateSettings(c *gin.Context) {
 	}
 	req.WifiPresets = maskWifiPasswords(merged)
 	ok(c, req)
+}
+
+// ─────────────────────────────────────────────────────────────
+// 患者写操作（T057：创建患者 / 分配团队 / 批量绑定）
+//
+// 契约：docs/tasks/ella/T057-患者管理测试规格.md
+// 手机号唯一键：preparePhone 生成 PhoneEnc(AES-GCM) + PhoneHash(SHA-256)，
+// store 按 PhoneHash 查重命中返回 ErrPatientExists → handler 映射 409。
+// ─────────────────────────────────────────────────────────────
+
+// createPatient POST /api/v1/admin/patients —— 创建患者（手机号必填，phone_hash 查重）
+func (h *Handler) createPatient(c *gin.Context) {
+	var req model.CreatePatientRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		fail(c, model.ErrInvalidParam("name is required"))
+		return
+	}
+	if req.Phone == "" {
+		fail(c, model.ErrInvalidParam("phone is required"))
+		return
+	}
+	if !validPhone(req.Phone) {
+		fail(c, model.ErrInvalidParam("invalid phone format: must be 11 digits starting with 1"))
+		return
+	}
+	if req.Gender != nil && *req.Gender != "male" && *req.Gender != "female" {
+		fail(c, model.ErrInvalidParam("invalid gender: male|female"))
+		return
+	}
+	if req.Age != nil && (*req.Age < 0 || *req.Age > 150) {
+		fail(c, model.ErrInvalidParam("invalid age range: [0,150]"))
+		return
+	}
+	if req.CobbAngle != nil && (*req.CobbAngle < 0 || *req.CobbAngle > 180) {
+		fail(c, model.ErrInvalidParam("invalid cobbAngle range: [0,180]"))
+		return
+	}
+	enc, hash, appErr := h.preparePhone(req.Phone)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	row, err := h.store.CreatePatient(c.Request.Context(), repo.PatientInput{
+		Name:      name,
+		PhoneEnc:  enc,
+		PhoneHash: hash,
+		Gender:    req.Gender,
+		Age:       req.Age,
+		Diagnosis: req.Diagnosis,
+		CobbAngle: req.CobbAngle,
+		DeviceID:  req.DeviceID,
+		TeamID:    req.TeamID,
+		DoctorID:  req.DoctorID,
+	})
+	if err != nil {
+		if errors.Is(err, repo.ErrPatientExists) {
+			fail(c, model.ErrConflict("patient already exists"))
+			return
+		}
+		fail(c, model.ErrInternal("create patient failed"))
+		return
+	}
+	// 用 preparePhone 生成的 enc 脱敏（store 返回行可能未回填 PhoneEnc）
+	dto := toPatientDTO(*row)
+	if h.phone != nil {
+		dto.Phone = h.phone.Masked(enc)
+	}
+	ok(c, dto)
+}
+
+// assignPatientTeam PUT /api/v1/admin/patients/:patientId/team —— 分配/更改团队（幂等）
+func (h *Handler) assignPatientTeam(c *gin.Context) {
+	patientID := c.Param("patientId")
+	var req model.AssignTeamRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	if req.TeamID == "" {
+		fail(c, model.ErrInvalidParam("teamId is required"))
+		return
+	}
+	row, err := h.store.AssignPatientTeam(c.Request.Context(), patientID, req.TeamID)
+	if err != nil {
+		if errors.Is(err, repo.ErrPatientNotFound) {
+			fail(c, model.ErrNotFound("patient not found: %s", patientID))
+			return
+		}
+		fail(c, model.ErrInternal("assign team failed"))
+		return
+	}
+	dto := toPatientDTO(*row)
+	if h.phone != nil {
+		dto.Phone = h.phone.Masked(row.PhoneEnc)
+	}
+	ok(c, dto)
+}
+
+// batchBindPatients POST /api/v1/admin/patients/batch-bind —— 批量绑定（部分失败不回滚，HTTP 仍 200）
+func (h *Handler) batchBindPatients(c *gin.Context) {
+	var req model.BatchBindRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	if len(req.PatientIDs) == 0 {
+		fail(c, model.ErrInvalidParam("patientIds must not be empty"))
+		return
+	}
+	if req.TeamID == "" {
+		fail(c, model.ErrInvalidParam("teamId is required"))
+		return
+	}
+	result, err := h.store.BatchBindPatients(c.Request.Context(), req.PatientIDs, req.TeamID)
+	if err != nil {
+		fail(c, model.ErrInternal("batch bind failed"))
+		return
+	}
+	failures := make([]model.BatchBindFailureDTO, 0, len(result.Failed))
+	for _, f := range result.Failed {
+		failures = append(failures, model.BatchBindFailureDTO{
+			PatientID: f.PatientID,
+			Reason:    f.Reason,
+		})
+	}
+	ok(c, model.BatchBindResultDTO{
+		SuccessCount: len(result.Success),
+		FailedCount:  len(result.Failed),
+		Failures:     failures,
+	})
 }

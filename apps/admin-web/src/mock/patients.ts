@@ -136,3 +136,92 @@ export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
     pressureHeatmap: offline ? seedHeatmap(patientId) : makeHeatmap(sensorPts),
   }
 }
+
+// ========== T057 写功能 mock ==========
+
+export interface CreatePatientInput {
+  name: string
+  phone: string                    // 11 位手机号（mock 不做判重，后端走 phone_hash 查重）
+  gender?: 'male' | 'female' | null
+  age?: number | null
+  diagnosis?: string | null
+  cobbAngle?: number | null
+  deviceId?: string | null
+  teamId?: string | null
+  doctorId?: string | null
+}
+
+export interface BatchBindFailure {
+  patientId: string
+  reason: string
+}
+
+export interface BatchBindResult {
+  successCount: number
+  failedCount: number
+  failures: BatchBindFailure[]
+}
+
+// mock 患者自增序号（PT-100 起，避开预置 PT-001~PT-006）
+let patientSeq = 100
+
+/** 创建患者：push 到 PATIENTS，返回新行（phone 不入 Patient 类型，mock 忽略） */
+export function mockCreatePatient(input: CreatePatientInput): Patient {
+  patientSeq += 1
+  const now = new Date().toISOString()
+  const patient: Patient = {
+    patientId: `PT-${String(patientSeq).padStart(3, '0')}`,
+    name: input.name,
+    gender: input.gender ?? null,
+    age: input.age ?? null,
+    diagnosis: input.diagnosis ?? null,
+    cobbAngle: input.cobbAngle ?? null,
+    deviceId: input.deviceId ?? null,
+    teamId: input.teamId ?? null,
+    doctorId: input.doctorId ?? null,
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+  }
+  PATIENTS.push(patient)
+  return patient
+}
+
+/** 分配/更改患者团队（幂等：同 teamId no-op，不变更 updatedAt） */
+export function mockAssignPatientTeam(patientId: string, teamId: string): Patient {
+  const p = PATIENTS.find((x) => x.patientId === patientId)
+  if (!p) {
+    throw new Error('患者不存在')
+  }
+  if (p.teamId !== teamId) {
+    p.teamId = teamId
+    p.updatedAt = new Date().toISOString()
+  }
+  return p
+}
+
+/**
+ * 批量绑定患者到团队（部分失败不回滚，HTTP 仍 200）
+ * mock 策略：不存在的患者计入 failures；存在的更新 teamId
+ */
+export function mockBatchBindPatients(patientIds: string[], teamId: string): BatchBindResult {
+  const failures: BatchBindFailure[] = []
+  let successCount = 0
+  for (const pid of patientIds) {
+    const p = PATIENTS.find((x) => x.patientId === pid)
+    if (!p) {
+      failures.push({ patientId: pid, reason: '患者不存在' })
+      continue
+    }
+    if (p.teamId !== teamId) {
+      p.teamId = teamId
+      p.updatedAt = new Date().toISOString()
+    }
+    successCount += 1
+  }
+  return {
+    successCount,
+    failedCount: failures.length,
+    failures,
+  }
+}
