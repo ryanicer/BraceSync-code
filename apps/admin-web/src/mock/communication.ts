@@ -40,3 +40,19 @@ export function mockFeedbackPatientName(patientId: string): string {
   }
   return names[patientId] ?? patientId
 }
+
+export function mockProcessFeedback(feedbackId: string, reply?: string): void {
+  const fb = FEEDBACKS.find((f) => f.feedbackId === feedbackId)
+  if (!fb) return
+  const now = new Date().toISOString()
+  const defaultHandler = '运营客服'
+  if (reply && reply.trim().length > 0) {
+    fb.status = 'replied'
+    fb.replyContent = reply
+    fb.replyTime = now
+    fb.handler = fb.handler ?? defaultHandler
+  } else {
+    fb.status = 'resolved'
+    fb.handler = fb.handler ?? defaultHandler
+  }
+}

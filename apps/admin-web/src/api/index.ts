@@ -202,7 +202,7 @@ export async function fetchFeedbacks(params: { keyword?: string }): Promise<Feed
 }
 
 export async function processFeedbackApi(feedbackId: string, reply?: string): Promise<void> {
-  if (USE_MOCK) { await delay(); return }
+  if (USE_MOCK) { await delay(); feedbackMock.mockProcessFeedback(feedbackId, reply); return }
   await request<null>({ url: `/api/v1/feedbacks/${feedbackId}/process`, method: 'POST', data: { replyContent: reply } })
 }
 
