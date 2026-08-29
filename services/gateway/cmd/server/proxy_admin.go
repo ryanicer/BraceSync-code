@@ -77,13 +77,19 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/tech/login"},    // T037 技师登录（免 JWT 白名单）
 	{http.MethodPost, "/patient/login"}, // T037 患者登录（免 JWT 白名单）
 
-	{http.MethodGet, "/admin/patients"},                 // T030 #1
-	{http.MethodGet, "/admin/patients/:patientId"},      // T030 #2
-	{http.MethodPost, "/admin/patients"},                // T057 创建患者
-	{http.MethodPut, "/admin/patients/:patientId/team"}, // T057 分配团队
-	{http.MethodPost, "/admin/patients/batch-bind"},     // T057 批量绑定
-	{http.MethodGet, "/teams"},                          // T030 #10 概要
-	{http.MethodGet, "/teams/:teamId/members"},          // T030 #10 成员明细
+	{http.MethodGet, "/admin/patients"},                     // T030 #1
+	{http.MethodGet, "/admin/patients/:patientId"},          // T030 #2
+	{http.MethodPost, "/admin/patients"},                    // T057 创建患者
+	{http.MethodPut, "/admin/patients/:patientId/team"},     // T057 分配团队
+	{http.MethodPost, "/admin/patients/batch-bind"},         // T057 批量绑定
+	{http.MethodGet, "/teams"},                              // T030 #10 概要
+	{http.MethodGet, "/teams/:teamId/members"},              // T030 #10 成员明细
+	{http.MethodPost, "/teams"},                             // T059 创建团队
+	{http.MethodPut, "/teams/:teamId"},                      // T059 编辑团队
+	{http.MethodDelete, "/teams/:teamId"},                   // T059 删除团队
+	{http.MethodPost, "/teams/:teamId/members"},             // T059 添加成员
+	{http.MethodPut, "/teams/:teamId/members/:memberId"},    // T059 编辑成员
+	{http.MethodDelete, "/teams/:teamId/members/:memberId"}, // T059 移除成员
 	{http.MethodGet, "/doctors"},
 	{http.MethodGet, "/technicians"},
 	{http.MethodPost, "/admin/technicians"},        // T030 #4 新建

@@ -2,7 +2,7 @@
 // Dashboard 域契约对齐 api-contracts.ts（T021 聚合接口）；告警域复用 T019B 已验证端点。
 import type {
   AdminLoginResult, ApiResponse, DashboardKPI, TeamRanking, DoctorRanking, PaginatedResponse, Patient, Device,
-  Alert, InstallRecord, Technician, Team, Doctor, Feedback, OrthosisPlan,
+  Alert, InstallRecord, Technician, Team, TeamDetail, TeamMember, Doctor, Feedback, OrthosisPlan,
   FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
 } from '@bracesync/shared-types'
 import { USE_MOCK, request } from '../utils/request'
@@ -135,6 +135,43 @@ export async function fetchDevices(params: { keyword?: string }): Promise<Pagina
 export async function fetchTeams(): Promise<Team[]> {
   if (USE_MOCK) { await delay(); return orgMock.mockTeams() }
   return request<Team[]>({ url: '/api/v1/teams' })
+}
+
+// T059 团队管理写功能（6 写端点 + 1 成员明细读端点）
+export async function fetchTeamMembersApi(teamId: string): Promise<orgMock.TeamMembersView> {
+  if (USE_MOCK) { await delay(); return orgMock.mockTeamMembers(teamId) }
+  return request<orgMock.TeamMembersView>({ url: `/api/v1/teams/${teamId}/members` })
+}
+
+export async function createTeamApi(input: orgMock.CreateTeamInput): Promise<TeamDetail> {
+  if (USE_MOCK) { await delay(); return orgMock.mockCreateTeam(input) }
+  return request<TeamDetail>({ url: '/api/v1/teams', method: 'POST', data: input as unknown as Record<string, unknown> })
+}
+
+export async function updateTeamApi(teamId: string, input: orgMock.UpdateTeamInput): Promise<TeamDetail> {
+  if (USE_MOCK) { await delay(); return orgMock.mockUpdateTeam(teamId, input) }
+  return request<TeamDetail>({ url: `/api/v1/teams/${teamId}`, method: 'PUT', data: input as unknown as Record<string, unknown> })
+}
+
+export async function deleteTeamApi(teamId: string): Promise<void> {
+  if (USE_MOCK) { await delay(); return orgMock.mockDeleteTeam(teamId) }
+  await request<null>({ url: `/api/v1/teams/${teamId}`, method: 'DELETE' })
+}
+
+export async function addTeamMemberApi(teamId: string, input: orgMock.AddMemberInput): Promise<TeamMember> {
+  if (USE_MOCK) { await delay(); return orgMock.mockAddTeamMember(teamId, input) }
+  return request<TeamMember>({ url: `/api/v1/teams/${teamId}/members`, method: 'POST', data: input as unknown as Record<string, unknown> })
+}
+
+export async function updateTeamMemberApi(teamId: string, memberId: string, input: orgMock.UpdateMemberInput): Promise<TeamMember> {
+  if (USE_MOCK) { await delay(); return orgMock.mockUpdateTeamMember(teamId, memberId, input) }
+  return request<TeamMember>({ url: `/api/v1/teams/${teamId}/members/${memberId}`, method: 'PUT', data: input as unknown as Record<string, unknown> })
+}
+
+export async function removeTeamMemberApi(teamId: string, memberId: string, memberType: 'doctor' | 'technician'): Promise<void> {
+  if (USE_MOCK) { await delay(); return orgMock.mockRemoveTeamMember(teamId, memberId, memberType) }
+  // DELETE 无 body：memberType 走 query（对齐规格端点 6）
+  await request<null>({ url: `/api/v1/teams/${teamId}/members/${memberId}?memberType=${memberType}`, method: 'DELETE' })
 }
 
 export async function fetchDoctors(): Promise<Doctor[]> {

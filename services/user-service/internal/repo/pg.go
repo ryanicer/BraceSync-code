@@ -723,3 +723,350 @@ func (s *PGStore) BatchBindPatients(ctx context.Context, patientIDs []string, te
 	}
 	return result, nil
 }
+
+// ─────────────────────────────────────────────────────────────
+// T059 团队 / 成员写操作（reject-if-referenced 删除策略）
+//
+// 契约：docs/tasks/ella/T059-团队管理测试规格.md
+// sentinel 映射（handler 层）：
+//   - ErrTeamNotFound  → 404
+//   - ErrTeamNameExists → 409
+//   - ErrLeaderNotFound → 400
+//   - ErrMemberNotFound → 404
+//   - ErrMemberInTeam   → 409
+//   - ErrTeamInUse{PatientCount, MemberCount} → 409（携带计数）
+// ─────────────────────────────────────────────────────────────
+
+// teamDetailSelect teams LEFT JOIN doctors 负责人姓名投影（T059 写功能返回）
+const teamDetailSelect = `
+SELECT t.team_id, t.name, COALESCE(t.leader, ''), COALESCE(d.name, ''),
+       t.member_count, t.patient_count, COALESCE(t.description, ''), t.status, t.created_at
+FROM teams t
+LEFT JOIN doctors d ON d.doctor_id = t.leader
+WHERE t.team_id = $1`
+
+// getTeamDetail 回读团队详情（含 leader_name join）；不存在返回 ErrTeamNotFound
+func (s *PGStore) getTeamDetail(ctx context.Context, teamID string) (*TeamDetailRow, error) {
+	row := s.pool.QueryRow(ctx, teamDetailSelect, teamID)
+	var t TeamDetailRow
+	err := row.Scan(&t.TeamID, &t.Name, &t.Leader, &t.LeaderName,
+		&t.MemberCount, &t.PatientCount, &t.Description, &t.Status, &t.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTeamNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// newTeamID 生成团队 ID：TEAM + 年份后两位 + 随机 hex（VARCHAR(32) 内，规避并发序号竞争）
+func newTeamID() (string, error) {
+	buf := make([]byte, 4)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "TEAM" + time.Now().Format("06") + hex.EncodeToString(buf), nil
+}
+
+// CreateTeam 创建团队（name 唯一性 + leader 存在性校验 → INSERT → 回读 join doctors.leader_name）
+func (s *PGStore) CreateTeam(ctx context.Context, in TeamInput) (*TeamDetailRow, error) {
+	// 1. name 查重
+	var nameTaken bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM teams WHERE name = $1)`, in.Name).Scan(&nameTaken); err != nil {
+		return nil, err
+	}
+	if nameTaken {
+		return nil, ErrTeamNameExists
+	}
+	// 2. leader 存在性校验
+	var leaderExists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM doctors WHERE doctor_id = $1)`, in.Leader).Scan(&leaderExists); err != nil {
+		return nil, err
+	}
+	if !leaderExists {
+		return nil, ErrLeaderNotFound
+	}
+	// 3. 生成 team_id + INSERT
+	teamID, err := newTeamID()
+	if err != nil {
+		return nil, err
+	}
+	if _, err = s.pool.Exec(ctx,
+		`INSERT INTO teams (team_id, name, leader, description, status) VALUES ($1, $2, $3, $4, 'active')`,
+		teamID, in.Name, in.Leader, in.Description); err != nil {
+		return nil, err
+	}
+	// 4. 回读 join doctors.leader_name
+	return s.getTeamDetail(ctx, teamID)
+}
+
+// UpdateTeam 编辑团队（团队存在 + name 查重排除自身 + leader 校验 + UPDATE）
+func (s *PGStore) UpdateTeam(ctx context.Context, teamID string, in TeamInput) (*TeamDetailRow, error) {
+	// 1. name 查重排除自身
+	var nameTaken bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM teams WHERE name = $1 AND team_id <> $2)`, in.Name, teamID).Scan(&nameTaken); err != nil {
+		return nil, err
+	}
+	if nameTaken {
+		return nil, ErrTeamNameExists
+	}
+	// 2. leader 存在性校验
+	var leaderExists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM doctors WHERE doctor_id = $1)`, in.Leader).Scan(&leaderExists); err != nil {
+		return nil, err
+	}
+	if !leaderExists {
+		return nil, ErrLeaderNotFound
+	}
+	// 3. UPDATE（0 行 → 团队不存在）
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE teams SET name = $2, leader = $3, description = $4 WHERE team_id = $1`,
+		teamID, in.Name, in.Leader, in.Description)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrTeamNotFound
+	}
+	// 4. 回读
+	return s.getTeamDetail(ctx, teamID)
+}
+
+// DeleteTeam 删除团队（拒绝被引用：patients.team_id / doctors.team_id / technicians.team_id 命中 → ErrTeamInUse）
+func (s *PGStore) DeleteTeam(ctx context.Context, teamID string) error {
+	// 1. 团队存在性
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM teams WHERE team_id = $1)`, teamID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrTeamNotFound
+	}
+	// 2. 统计引用计数（patients + doctors + technicians）
+	var patientCount, doctorCount, techCount int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT (SELECT COUNT(*) FROM patients WHERE team_id = $1),
+		        (SELECT COUNT(*) FROM doctors WHERE team_id = $1),
+		        (SELECT COUNT(*) FROM technicians WHERE team_id = $1)`,
+		teamID).Scan(&patientCount, &doctorCount, &techCount); err != nil {
+		return err
+	}
+	memberCount := doctorCount + techCount
+	if patientCount > 0 || memberCount > 0 {
+		return &ErrTeamInUse{PatientCount: patientCount, MemberCount: memberCount}
+	}
+	// 3. DELETE
+	_, err := s.pool.Exec(ctx, `DELETE FROM teams WHERE team_id = $1`, teamID)
+	return err
+}
+
+// AddTeamMember 添加成员（doctor/technician.team_id 置为本 teamId；重复 → ErrMemberInTeam）
+func (s *PGStore) AddTeamMember(ctx context.Context, teamID string, in MemberInput) (*TeamMemberRow, error) {
+	// 1. 团队存在性
+	var teamOK bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM teams WHERE team_id = $1)`, teamID).Scan(&teamOK); err != nil {
+		return nil, err
+	}
+	if !teamOK {
+		return nil, ErrTeamNotFound
+	}
+	// 2. 按 memberType 查成员 + 更新 team_id
+	if in.MemberType == "doctor" {
+		return s.addDoctorToTeam(ctx, teamID, in)
+	}
+	return s.addTechToTeam(ctx, teamID, in)
+}
+
+// addDoctorToTeam 添加医生到团队（重复 → ErrMemberInTeam；memberId 查无 → ErrMemberNotFound）
+func (s *PGStore) addDoctorToTeam(ctx context.Context, teamID string, in MemberInput) (*TeamMemberRow, error) {
+	var name, title, dept string
+	var currentTeamID *string
+	var phoneEnc []byte
+	var status string
+	err := s.pool.QueryRow(ctx,
+		`SELECT name, COALESCE(title, ''), COALESCE(department, ''), team_id, phone_enc, status
+		 FROM doctors WHERE doctor_id = $1`, in.MemberID).
+		Scan(&name, &title, &dept, &currentTeamID, &phoneEnc, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrMemberNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	// 已在本团队
+	if currentTeamID != nil && *currentTeamID == teamID {
+		return nil, ErrMemberInTeam
+	}
+	// UPDATE team_id + 可选 title
+	if in.Role != "" {
+		_, err = s.pool.Exec(ctx,
+			`UPDATE doctors SET team_id = $2, title = $3 WHERE doctor_id = $1`,
+			in.MemberID, teamID, in.Role)
+	} else {
+		_, err = s.pool.Exec(ctx,
+			`UPDATE doctors SET team_id = $2 WHERE doctor_id = $1`,
+			in.MemberID, teamID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	role := title
+	if in.Role != "" {
+		role = in.Role
+	}
+	var patientCount int
+	_ = s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM patients WHERE primary_doctor_id = $1`, in.MemberID).Scan(&patientCount)
+	return &TeamMemberRow{
+		MemberID:     in.MemberID,
+		MemberType:   "doctor",
+		Name:         name,
+		Role:         role,
+		Title:        dept,
+		PhoneEnc:     phoneEnc,
+		PatientCount: patientCount,
+		JoinTime:     time.Now().UTC(),
+		Status:       status,
+	}, nil
+}
+
+// addTechToTeam 添加技师到团队（重复 → ErrMemberInTeam；techId 查无 → ErrMemberNotFound）
+func (s *PGStore) addTechToTeam(ctx context.Context, teamID string, in MemberInput) (*TeamMemberRow, error) {
+	var name string
+	var currentTeamID *string
+	var phoneEnc []byte
+	var status string
+	err := s.pool.QueryRow(ctx,
+		`SELECT name, team_id, phone_enc, status FROM technicians WHERE tech_id = $1`, in.MemberID).
+		Scan(&name, &currentTeamID, &phoneEnc, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrMemberNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if currentTeamID != nil && *currentTeamID == teamID {
+		return nil, ErrMemberInTeam
+	}
+	if _, err = s.pool.Exec(ctx,
+		`UPDATE technicians SET team_id = $2 WHERE tech_id = $1`, in.MemberID, teamID); err != nil {
+		return nil, err
+	}
+	return &TeamMemberRow{
+		MemberID:   in.MemberID,
+		MemberType: "technician",
+		Name:       name,
+		PhoneEnc:   phoneEnc,
+		JoinTime:   time.Now().UTC(),
+		Status:     status,
+	}, nil
+}
+
+// UpdateTeamMember 编辑成员（更新 doctor.title；member 不属本团队 → ErrMemberNotFound）
+func (s *PGStore) UpdateTeamMember(ctx context.Context, teamID, memberID string, in MemberInput) (*TeamMemberRow, error) {
+	// 1. 团队存在性
+	var teamOK bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM teams WHERE team_id = $1)`, teamID).Scan(&teamOK); err != nil {
+		return nil, err
+	}
+	if !teamOK {
+		return nil, ErrTeamNotFound
+	}
+	// 2. 按 memberType 更新
+	if in.MemberType == "doctor" {
+		return s.updateDoctorMember(ctx, teamID, memberID, in)
+	}
+	return s.updateTechMember(ctx, teamID, memberID, in)
+}
+
+// updateDoctorMember 编辑医生成员（须属本团队；role 可选更新 doctor.title）
+func (s *PGStore) updateDoctorMember(ctx context.Context, teamID, memberID string, in MemberInput) (*TeamMemberRow, error) {
+	var name, title, dept string
+	var phoneEnc []byte
+	var status string
+	err := s.pool.QueryRow(ctx,
+		`SELECT name, COALESCE(title, ''), COALESCE(department, ''), phone_enc, status
+		 FROM doctors WHERE doctor_id = $1 AND team_id = $2`, memberID, teamID).
+		Scan(&name, &title, &dept, &phoneEnc, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrMemberNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if in.Role != "" {
+		if _, err = s.pool.Exec(ctx,
+			`UPDATE doctors SET title = $2 WHERE doctor_id = $1`, memberID, in.Role); err != nil {
+			return nil, err
+		}
+		title = in.Role
+	}
+	var patientCount int
+	_ = s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM patients WHERE primary_doctor_id = $1`, memberID).Scan(&patientCount)
+	return &TeamMemberRow{
+		MemberID:     memberID,
+		MemberType:   "doctor",
+		Name:         name,
+		Role:         title,
+		Title:        dept,
+		PhoneEnc:     phoneEnc,
+		PatientCount: patientCount,
+		JoinTime:     time.Now().UTC(),
+		Status:       status,
+	}, nil
+}
+
+// updateTechMember 编辑技师成员（technician 无 title 字段，role 忽略）
+func (s *PGStore) updateTechMember(ctx context.Context, teamID, memberID string, _ MemberInput) (*TeamMemberRow, error) {
+	var name string
+	var phoneEnc []byte
+	var status string
+	err := s.pool.QueryRow(ctx,
+		`SELECT name, phone_enc, status FROM technicians WHERE tech_id = $1 AND team_id = $2`, memberID, teamID).
+		Scan(&name, &phoneEnc, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrMemberNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &TeamMemberRow{
+		MemberID:   memberID,
+		MemberType: "technician",
+		Name:       name,
+		PhoneEnc:   phoneEnc,
+		JoinTime:   time.Now().UTC(),
+		Status:     status,
+	}, nil
+}
+
+// RemoveTeamMember 移除成员（doctor/technician.team_id 置 NULL；幂等：已 NULL no-op）
+func (s *PGStore) RemoveTeamMember(ctx context.Context, teamID, memberID, memberType string) error {
+	// 1. 团队存在性
+	var teamOK bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM teams WHERE team_id = $1)`, teamID).Scan(&teamOK); err != nil {
+		return err
+	}
+	if !teamOK {
+		return ErrTeamNotFound
+	}
+	// 2. 置 NULL（幂等：已 NULL 或 member 不属本团队 → 0 行 no-op）
+	if memberType == "doctor" {
+		_, err := s.pool.Exec(ctx,
+			`UPDATE doctors SET team_id = NULL WHERE doctor_id = $1 AND team_id = $2`, memberID, teamID)
+		return err
+	}
+	_, err := s.pool.Exec(ctx,
+		`UPDATE technicians SET team_id = NULL WHERE tech_id = $1 AND team_id = $2`, memberID, teamID)
+	return err
+}

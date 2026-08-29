@@ -274,3 +274,61 @@ type BatchBindResultDTO struct {
 	FailedCount  int                   `json:"failedCount"`
 	Failures     []BatchBindFailureDTO `json:"failures"`
 }
+
+// ─────────────────────────────────────────────────────────────
+// 团队 / 成员写操作请求/响应 DTO（T059 写功能契约）
+// 契约：docs/tasks/ella/T059-团队管理测试规格.md
+// ─────────────────────────────────────────────────────────────
+
+// CreateTeamRequestDTO 创建团队请求（name + leader 必填，description 可选）
+type CreateTeamRequestDTO struct {
+	Name        string `json:"name"`        // 必填，trim 后 ≥1 字符 ≤50
+	Leader      string `json:"leader"`      // 必填，doctor_id 存在性校验
+	Description string `json:"description"` // 可选，≤200 字符
+}
+
+// UpdateTeamRequestDTO 编辑团队请求（与创建同字段，全量替换语义）
+type UpdateTeamRequestDTO struct {
+	Name        string `json:"name"`
+	Leader      string `json:"leader"`
+	Description string `json:"description"`
+}
+
+// TeamDetailDTO 团队详情响应（创建/编辑返回；扩展 TeamDTO 增 leader/description/status/createdAt）
+type TeamDetailDTO struct {
+	TeamID       string `json:"teamId"`
+	Name         string `json:"name"`
+	Leader       string `json:"leader"`
+	LeaderName   string `json:"leaderName"`
+	MemberCount  int    `json:"memberCount"`
+	PatientCount int    `json:"patientCount"`
+	Description  string `json:"description"`
+	Status       string `json:"status"`
+	CreatedAt    string `json:"createdAt"`
+}
+
+// AddMemberRequestDTO 添加成员请求
+type AddMemberRequestDTO struct {
+	MemberType string `json:"memberType"` // 必填，枚举 {doctor, technician}
+	MemberID   string `json:"memberId"`   // 必填，doctor_id / tech_id
+	Role       string `json:"role"`       // 可选，更新 doctor.title
+}
+
+// UpdateMemberRequestDTO 编辑成员请求（memberType 定位表，role 可选更新）
+type UpdateMemberRequestDTO struct {
+	MemberType string `json:"memberType"` // 必填，{doctor, technician}
+	Role       string `json:"role"`       // 可选，更新 doctor.title
+}
+
+// TeamMemberDTO 团队成员响应（统一 doctor/technician 两类）
+type TeamMemberDTO struct {
+	MemberID     string `json:"memberId"`
+	MemberType   string `json:"memberType"`
+	Name         string `json:"name"`
+	Role         string `json:"role"`
+	Title        string `json:"title"`
+	PhoneMasked  string `json:"phoneMasked"`
+	PatientCount int    `json:"patientCount"`
+	JoinTime     string `json:"joinTime"`
+	Status       string `json:"status"`
+}

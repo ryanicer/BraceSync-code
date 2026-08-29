@@ -54,6 +54,34 @@ export interface Team {
   name: string;
   memberCount: number;
   patientCount: number;
+  /** T059 团队管理写功能（GET /teams 扩展返回，可选字段对齐既有读路径） */
+  leader?: string | null;         // 负责人 doctorId
+  leaderName?: string | null;     // 负责人姓名（后端 join）
+  description?: string | null;    // 团队描述
+  status?: 'active' | 'deleted';  // 状态
+  createdAt?: string;            // 创建时间
+}
+
+/** 团队详情（T059 写端点 POST/PUT /teams 返回，对齐后端 TeamDetailDTO） */
+export interface TeamDetail extends Team {
+  leader: string | null;
+  leaderName: string | null;
+  description: string | null;
+  status: 'active' | 'deleted';
+  createdAt: string;
+}
+
+/** 团队成员（T059 成员管理，对齐后端 TeamMemberDTO） */
+export interface TeamMember {
+  memberId: string;
+  memberType: 'doctor' | 'technician';
+  name: string;
+  role: string | null;           // 角色（doctor.title 更新值，technician 无则 null）
+  title: string | null;          // 职称/科室
+  phoneMasked: string;
+  patientCount: number;
+  joinTime: string;
+  status: 'enabled' | 'disabled';
 }
 
 // ===== 业务实体 =====
