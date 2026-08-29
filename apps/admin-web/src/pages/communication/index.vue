@@ -18,6 +18,8 @@
         @clear="loadData"
       />
       <el-button type="primary" @click="loadData">查询</el-button>
+      <el-button @click="openWechatKF">打开微信客服后台</el-button>
+      <span class="kf-hint">小程序客服消息 · 需使用运营账号登录微信公众平台</span>
     </div>
 
     <div class="page-card">
@@ -104,6 +106,10 @@ function formatTime(iso: string): string {
   return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`
 }
 
+function openWechatKF() {
+  window.open('https://mpkf.weixin.qq.com/', '_blank')
+}
+
 async function loadData() {
   loading.value = true
   try {
@@ -164,5 +170,10 @@ onMounted(loadData)
 .reply-input {
   margin-top: 16px;
   margin-bottom: 12px;
+}
+.kf-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-left: 8px;
 }
 </style>

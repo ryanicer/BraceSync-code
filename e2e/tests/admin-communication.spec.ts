@@ -2,28 +2,23 @@ import { test, expect } from '@playwright/test'
 import { adminRoutes, adminLogin, adminMessage, tableRows } from '../admin-helpers'
 
 /**
- * T061 患者沟通 E2E（KNOWN_RED 前 2 条）
+ * T061 患者沟通 E2E（6/6 已转绿 · Winner 实现）
  *
  * 设计源：docs/design/admin/患者沟通.html
  * 覆盖 6 条验收用例：
- *   1. 🔴 渲染"打开微信客服后台"按钮  → 按钮不存在 · KNOWN_RED（test.fail）
- *   2. 🔴 点击按钮新窗口打开微信客服 (mpkf.weixin.qq.com) · KNOWN_RED（test.fail）
+ *   1. 🟢 渲染"打开微信客服后台"按钮
+ *   2. 🟢 点击按钮新窗口打开微信客服 (mpkf.weixin.qq.com)
  *   3. 🟢 列表展示已有反馈（患者/内容/状态 tag）
  *   4. 🟢 详情对话框可打开显示反馈内容
- *   5. 🔴 回复并标记已处理后状态变更 + 列表刷新 · KNOWN_RED（test.fail）
- *        注：mock USE_MOCK 分支 processFeedbackApi 目前仅 delay 不更新 FEEDBACKS 内存。
- *        实现方转绿时需补 mock 内存更新逻辑后移除本条 test.fail。
- *        标记为 test.fail 的原因：避免真实 CI 环境 retries=2 后整体 exit 1，
- *        与 #1 #2 同属 KNOWN_RED（但失败原因不同：缺 UI vs 缺 mock 内存更新）。
+ *   5. 🟢 回复并标记已处理后状态变更 + 列表刷新
+ *        实现：mock/communication.ts 补 mockProcessFeedback 更新 FEEDBACKS 内存
  *   6. 🟢 客服角色权限提示 alert 可见
  *
- * 预期红态：#1 #2 因工具栏无按钮，#5 因 mock 不更新内存 → 三者 FAIL。
- * test.fail 标记使 CI 视其为预期失败（绿信号）。
- * 实现方转绿清单：
+ * 实现方转绿补全（Winner T061）：
  *   - apps/admin-web/src/pages/communication/index.vue .page-toolbar 新增
  *     "打开微信客服后台"按钮，click → window.open('https://mpkf.weixin.qq.com/', '_blank')
- *   - mock/communication.ts 或 api/index.ts USE_MOCK 分支补 FEEDBACKS 记录内存更新
- *   - 6/6 全绿后移除 #1 #2 #5 的 test.fail 标记（3 处）
+ *   - mock/communication.ts + api/index.ts USE_MOCK 分支补 FEEDBACKS 记录内存更新
+ *   - 原 #1 #2 #5 的 test.fail 标记已移除（3 处）
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -35,9 +30,9 @@ test.describe('患者沟通 · admin 视角', () => {
     await page.goto(adminRoutes.communication)
   })
 
-  // ── 打开微信客服后台入口（KNOWN_RED 2 条） ───────────────
-  test.describe('打开微信客服后台入口（KNOWN_RED）', () => {
-    test.fail('页面工具栏渲染"打开微信客服后台"按钮', async ({ page }) => {
+  // ── 打开微信客服后台入口 ───────────────────────────────
+  test.describe('打开微信客服后台入口', () => {
+    test('页面工具栏渲染"打开微信客服后台"按钮', async ({ page }) => {
       // 按钮应位于 .page-toolbar（与"查询"同排）
       const toolbar = page.locator('.page-toolbar')
       const btn = toolbar.getByRole('button', { name: '打开微信客服后台' })
@@ -45,7 +40,7 @@ test.describe('患者沟通 · admin 视角', () => {
       await expect(btn).toContainText('打开微信客服后台')
     })
 
-    test.fail('点击按钮新窗口打开微信客服 URL 含 mpkf.weixin.qq.com', async ({ page, browserName }) => {
+    test('点击按钮新窗口打开微信客服 URL 含 mpkf.weixin.qq.com', async ({ page, browserName }) => {
       // 双断言策略：
       // 1) 优先用 waitForEvent('popup') 抓新窗口
       // 2) 兜底 spy window.open 调用参数（mock/无头环境可能拦截真实 popup）
@@ -140,7 +135,7 @@ test.describe('患者沟通 · admin 视角', () => {
 
   // ── 回复与处理流程 ──────────────────────────────────────
   test.describe('回复与处理流程', () => {
-    test.fail('填写回复并提交后 ElMessage 成功 + 状态变更 + 列表刷新', async ({ page }) => {
+    test('填写回复并提交后 ElMessage 成功 + 状态变更 + 列表刷新', async ({ page }) => {
       const rows = tableRows(page)
       await expect(rows).toHaveCount(4)
 
