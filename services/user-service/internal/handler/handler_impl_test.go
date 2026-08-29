@@ -117,6 +117,30 @@ type fakeStore struct {
 	lastAssignTeam    string
 	lastBatchIDs      []string
 	lastBatchTeam     string
+
+	// T059 团队/成员写操作 stub 字段（实现方转绿时由用例装配返回值）
+	createdTeam        *repo.TeamDetailRow
+	createTeamErr      error
+	updatedTeam        *repo.TeamDetailRow
+	updateTeamErr      error
+	deleteTeamErr      error
+	addedMember        *repo.TeamMemberRow
+	addMemberErr       error
+	updatedMember      *repo.TeamMemberRow
+	updateMemberErr    error
+	removeMemberErr    error
+	lastCreateTeamIn   repo.TeamInput
+	lastUpdateTeamID   string
+	lastUpdateTeamIn   repo.TeamInput
+	lastDeleteTeamID   string
+	lastAddTeamID      string
+	lastAddMemberIn    repo.MemberInput
+	lastUpdateMTeamID  string
+	lastUpdateMID      string
+	lastUpdateMemberIn repo.MemberInput
+	lastRemoveTeamID   string
+	lastRemoveMID      string
+	lastRemoveMType    string
 }
 
 func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {
@@ -242,6 +266,39 @@ func (f *fakeStore) BatchBindPatients(_ context.Context, patientIDs []string, te
 	f.lastBatchIDs = patientIDs
 	f.lastBatchTeam = teamID
 	return f.batchBindResult, f.batchBindErr
+}
+
+// T059 团队/成员写操作 stub 实现（仅满足扩展后的 Store 接口编译；
+// stub handler 当前不调用 store，这些方法待实现方转绿时被触达）
+func (f *fakeStore) CreateTeam(_ context.Context, in repo.TeamInput) (*repo.TeamDetailRow, error) {
+	f.lastCreateTeamIn = in
+	return f.createdTeam, f.createTeamErr
+}
+func (f *fakeStore) UpdateTeam(_ context.Context, teamID string, in repo.TeamInput) (*repo.TeamDetailRow, error) {
+	f.lastUpdateTeamID = teamID
+	f.lastUpdateTeamIn = in
+	return f.updatedTeam, f.updateTeamErr
+}
+func (f *fakeStore) DeleteTeam(_ context.Context, teamID string) error {
+	f.lastDeleteTeamID = teamID
+	return f.deleteTeamErr
+}
+func (f *fakeStore) AddTeamMember(_ context.Context, teamID string, in repo.MemberInput) (*repo.TeamMemberRow, error) {
+	f.lastAddTeamID = teamID
+	f.lastAddMemberIn = in
+	return f.addedMember, f.addMemberErr
+}
+func (f *fakeStore) UpdateTeamMember(_ context.Context, teamID, memberID string, in repo.MemberInput) (*repo.TeamMemberRow, error) {
+	f.lastUpdateMTeamID = teamID
+	f.lastUpdateMID = memberID
+	f.lastUpdateMemberIn = in
+	return f.updatedMember, f.updateMemberErr
+}
+func (f *fakeStore) RemoveTeamMember(_ context.Context, teamID, memberID, memberType string) error {
+	f.lastRemoveTeamID = teamID
+	f.lastRemoveMID = memberID
+	f.lastRemoveMType = memberType
+	return f.removeMemberErr
 }
 
 // testEnv 装配 Handler + 请求工具

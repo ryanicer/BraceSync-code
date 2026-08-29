@@ -95,6 +95,13 @@ func (h *Handler) Router() *gin.Engine {
 
 		v1.GET("/teams", h.listTeams)
 		v1.GET("/teams/:teamId/members", h.getTeamMembers)
+		// T059 团队/成员写操作（stub，统一返回 500；实现方转绿时填充逻辑）
+		v1.POST("/teams", h.createTeam)
+		v1.PUT("/teams/:teamId", h.updateTeam)
+		v1.DELETE("/teams/:teamId", h.deleteTeam)
+		v1.POST("/teams/:teamId/members", h.addTeamMember)
+		v1.PUT("/teams/:teamId/members/:memberId", h.updateTeamMember)
+		v1.DELETE("/teams/:teamId/members/:memberId", h.removeTeamMember)
 		v1.GET("/doctors", h.listDoctors)
 
 		v1.GET("/technicians", h.listTechnicians)
@@ -1363,4 +1370,264 @@ func (h *Handler) batchBindPatients(c *gin.Context) {
 		FailedCount:  len(result.Failed),
 		Failures:     failures,
 	})
+}
+
+// ─────────────────────────────────────────────────────────────
+// T059 团队 / 成员写操作
+//
+// 契约：docs/tasks/ella/T059-团队管理测试规格.md
+// 错误映射：ErrTeamNameExists→409、ErrTeamNotFound→404、ErrLeaderNotFound→400、
+//           ErrTeamInUse{计数}→409、ErrMemberNotFound→404、ErrMemberInTeam→409
+// ─────────────────────────────────────────────────────────────
+
+// validMemberType 校验成员类型枚举（doctor|technician）
+func validMemberType(t string) bool { return t == "doctor" || t == "technician" }
+
+// toTeamDetailDTO 将 TeamDetailRow 转为 TeamDetailDTO
+func toTeamDetailDTO(r repo.TeamDetailRow) model.TeamDetailDTO {
+	return model.TeamDetailDTO{
+		TeamID:       r.TeamID,
+		Name:         r.Name,
+		Leader:       r.Leader,
+		LeaderName:   r.LeaderName,
+		MemberCount:  r.MemberCount,
+		PatientCount: r.PatientCount,
+		Description:  r.Description,
+		Status:       r.Status,
+		CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
+// toTeamMemberDTO 将 TeamMemberRow 转为 TeamMemberDTO（phone 脱敏由 handler 补充）
+func toTeamMemberDTO(r repo.TeamMemberRow) model.TeamMemberDTO {
+	return model.TeamMemberDTO{
+		MemberID:     r.MemberID,
+		MemberType:   r.MemberType,
+		Name:         r.Name,
+		Role:         r.Role,
+		Title:        r.Title,
+		PhoneMasked:  r.PhoneMasked,
+		PatientCount: r.PatientCount,
+		JoinTime:     r.JoinTime.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Status:       r.Status,
+	}
+}
+
+// createTeam POST /api/v1/teams —— 创建团队（name 唯一 + leader 校验）
+func (h *Handler) createTeam(c *gin.Context) {
+	var req model.CreateTeamRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		fail(c, model.ErrInvalidParam("name is required"))
+		return
+	}
+	if len([]rune(name)) > 50 {
+		fail(c, model.ErrInvalidParam("name exceeds 50 chars"))
+		return
+	}
+	if req.Leader == "" {
+		fail(c, model.ErrInvalidParam("leader is required"))
+		return
+	}
+	if len([]rune(req.Description)) > 200 {
+		fail(c, model.ErrInvalidParam("description exceeds 200 chars"))
+		return
+	}
+	row, err := h.store.CreateTeam(c.Request.Context(), repo.TeamInput{
+		Name:        name,
+		Leader:      req.Leader,
+		Description: req.Description,
+	})
+	if err != nil {
+		if errors.Is(err, repo.ErrTeamNameExists) {
+			fail(c, model.ErrConflict("team name already exists"))
+			return
+		}
+		if errors.Is(err, repo.ErrLeaderNotFound) {
+			fail(c, model.ErrInvalidParam("leader not found"))
+			return
+		}
+		fail(c, model.ErrInternal("create team failed"))
+		return
+	}
+	ok(c, toTeamDetailDTO(*row))
+}
+
+// updateTeam PUT /api/v1/teams/:teamId —— 编辑团队（团队存在 + name 查重排除自身）
+func (h *Handler) updateTeam(c *gin.Context) {
+	teamID := c.Param("teamId")
+	var req model.UpdateTeamRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		fail(c, model.ErrInvalidParam("name is required"))
+		return
+	}
+	if len([]rune(name)) > 50 {
+		fail(c, model.ErrInvalidParam("name exceeds 50 chars"))
+		return
+	}
+	if req.Leader == "" {
+		fail(c, model.ErrInvalidParam("leader is required"))
+		return
+	}
+	if len([]rune(req.Description)) > 200 {
+		fail(c, model.ErrInvalidParam("description exceeds 200 chars"))
+		return
+	}
+	row, err := h.store.UpdateTeam(c.Request.Context(), teamID, repo.TeamInput{
+		Name:        name,
+		Leader:      req.Leader,
+		Description: req.Description,
+	})
+	if err != nil {
+		if errors.Is(err, repo.ErrTeamNotFound) {
+			fail(c, model.ErrNotFound("team not found: %s", teamID))
+			return
+		}
+		if errors.Is(err, repo.ErrTeamNameExists) {
+			fail(c, model.ErrConflict("team name already exists"))
+			return
+		}
+		if errors.Is(err, repo.ErrLeaderNotFound) {
+			fail(c, model.ErrInvalidParam("leader not found"))
+			return
+		}
+		fail(c, model.ErrInternal("update team failed"))
+		return
+	}
+	ok(c, toTeamDetailDTO(*row))
+}
+
+// deleteTeam DELETE /api/v1/teams/:teamId —— 删除团队（被引用 409 带计数）
+func (h *Handler) deleteTeam(c *gin.Context) {
+	teamID := c.Param("teamId")
+	err := h.store.DeleteTeam(c.Request.Context(), teamID)
+	if err != nil {
+		if errors.Is(err, repo.ErrTeamNotFound) {
+			fail(c, model.ErrNotFound("team not found: %s", teamID))
+			return
+		}
+		var inUse *repo.ErrTeamInUse
+		if errors.As(err, &inUse) {
+			fail(c, model.ErrConflict("%s", inUse.Error()))
+			return
+		}
+		fail(c, model.ErrInternal("delete team failed"))
+		return
+	}
+	ok(c, nil)
+}
+
+// addTeamMember POST /api/v1/teams/:teamId/members —— 添加成员
+func (h *Handler) addTeamMember(c *gin.Context) {
+	teamID := c.Param("teamId")
+	var req model.AddMemberRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	if !validMemberType(req.MemberType) {
+		fail(c, model.ErrInvalidParam("invalid memberType: doctor|technician"))
+		return
+	}
+	if req.MemberID == "" {
+		fail(c, model.ErrInvalidParam("memberId is required"))
+		return
+	}
+	row, err := h.store.AddTeamMember(c.Request.Context(), teamID, repo.MemberInput{
+		MemberType: req.MemberType,
+		MemberID:   req.MemberID,
+		Role:       req.Role,
+	})
+	if err != nil {
+		if errors.Is(err, repo.ErrTeamNotFound) {
+			fail(c, model.ErrNotFound("team not found: %s", teamID))
+			return
+		}
+		if errors.Is(err, repo.ErrMemberNotFound) {
+			fail(c, model.ErrNotFound("member not found: %s", req.MemberID))
+			return
+		}
+		if errors.Is(err, repo.ErrMemberInTeam) {
+			fail(c, model.ErrConflict("member already in team"))
+			return
+		}
+		fail(c, model.ErrInternal("add member failed"))
+		return
+	}
+	dto := toTeamMemberDTO(*row)
+	if h.phone != nil && row.PhoneEnc != nil {
+		dto.PhoneMasked = h.phone.Masked(row.PhoneEnc)
+	}
+	ok(c, dto)
+}
+
+// updateTeamMember PUT /api/v1/teams/:teamId/members/:memberId —— 编辑成员
+func (h *Handler) updateTeamMember(c *gin.Context) {
+	teamID := c.Param("teamId")
+	memberID := c.Param("memberId")
+	var req model.UpdateMemberRequestDTO
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	if !validMemberType(req.MemberType) {
+		fail(c, model.ErrInvalidParam("invalid memberType: doctor|technician"))
+		return
+	}
+	row, err := h.store.UpdateTeamMember(c.Request.Context(), teamID, memberID, repo.MemberInput{
+		MemberType: req.MemberType,
+		MemberID:   memberID,
+		Role:       req.Role,
+	})
+	if err != nil {
+		if errors.Is(err, repo.ErrTeamNotFound) {
+			fail(c, model.ErrNotFound("team not found: %s", teamID))
+			return
+		}
+		if errors.Is(err, repo.ErrMemberNotFound) {
+			fail(c, model.ErrNotFound("member not found: %s", memberID))
+			return
+		}
+		fail(c, model.ErrInternal("update member failed"))
+		return
+	}
+	dto := toTeamMemberDTO(*row)
+	if h.phone != nil && row.PhoneEnc != nil {
+		dto.PhoneMasked = h.phone.Masked(row.PhoneEnc)
+	}
+	ok(c, dto)
+}
+
+// removeTeamMember DELETE /api/v1/teams/:teamId/members/:memberId?memberType=doctor —— 移除成员（幂等）
+func (h *Handler) removeTeamMember(c *gin.Context) {
+	teamID := c.Param("teamId")
+	memberID := c.Param("memberId")
+	memberType := c.Query("memberType")
+	if memberType == "" {
+		fail(c, model.ErrInvalidParam("memberType is required"))
+		return
+	}
+	if !validMemberType(memberType) {
+		fail(c, model.ErrInvalidParam("invalid memberType: doctor|technician"))
+		return
+	}
+	err := h.store.RemoveTeamMember(c.Request.Context(), teamID, memberID, memberType)
+	if err != nil {
+		if errors.Is(err, repo.ErrTeamNotFound) {
+			fail(c, model.ErrNotFound("team not found: %s", teamID))
+			return
+		}
+		fail(c, model.ErrInternal("remove member failed"))
+		return
+	}
+	ok(c, nil)
 }

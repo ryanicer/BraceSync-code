@@ -8,6 +8,7 @@ package repo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -18,6 +19,45 @@ var ErrPatientExists = errors.New("patient already exists")
 // ErrPatientNotFound 患者 ID 不存在。
 // store.AssignPatientTeam 返回此 sentinel，handler 映射为 404 CodeNotFound。
 var ErrPatientNotFound = errors.New("patient not found")
+
+// ─────────────────────────────────────────────────────────────
+// T059 团队/成员写操作 sentinel 错误（handler 据此映射 HTTP code）
+// ─────────────────────────────────────────────────────────────
+
+// ErrTeamNotFound 团队 ID 不存在。
+// store.UpdateTeam/DeleteTeam/AddTeamMember/UpdateTeamMember/RemoveTeamMember 返回此 sentinel，
+// handler 映射为 404 CodeNotFound。
+var ErrTeamNotFound = errors.New("team not found")
+
+// ErrTeamNameExists 团队名重复。
+// store.CreateTeam/UpdateTeam 按 name 查重命中返回此 sentinel，handler 映射为 409 CodeConflict。
+var ErrTeamNameExists = errors.New("team name already exists")
+
+// ErrLeaderNotFound 负责人 doctorId 不存在。
+// store.CreateTeam/UpdateTeam 校验 leader 存在性失败返回此 sentinel，handler 映射为 400 CodeInvalidParam。
+var ErrLeaderNotFound = errors.New("leader not found")
+
+// ErrMemberNotFound 成员不存在或不属本团队。
+// store.AddTeamMember（memberId 查无）/UpdateTeamMember（memberId 不属本团队）返回此 sentinel，
+// handler 映射为 404 CodeNotFound。
+var ErrMemberNotFound = errors.New("member not found")
+
+// ErrMemberInTeam 成员已属本团队（重复添加）。
+// store.AddTeamMember 检测到 member.team_id 已等于目标 teamID 返回此 sentinel，
+// handler 映射为 409 CodeConflict。
+var ErrMemberInTeam = errors.New("member already in team")
+
+// ErrTeamInUse 团队被引用（patients/members 命中），不可删除。
+// store.DeleteTeam 统计引用计数命中返回此结构化错误，handler 据 Counts 拼装 409 文案。
+// 删除约束策略 A（reject-if-referenced，Ella 推荐，待 Boss 评审）。
+type ErrTeamInUse struct {
+	PatientCount int
+	MemberCount  int
+}
+
+func (e *ErrTeamInUse) Error() string {
+	return fmt.Sprintf("team in use: %d patients, %d members", e.PatientCount, e.MemberCount)
+}
 
 // ─────────────────────────────────────────────────────────────
 // 行投影（repo 层出参；handler 层转 DTO）
@@ -48,6 +88,47 @@ type TeamRow struct {
 	Name         string
 	MemberCount  int
 	PatientCount int
+}
+
+// TeamDetailRow teams 详情投影（T059 写功能返回；扩展 leader/description/status/createdAt）
+type TeamDetailRow struct {
+	TeamID       string
+	Name         string
+	Leader       string // 负责人 doctor_id
+	LeaderName   string // 负责人姓名（join doctors.name）
+	MemberCount  int
+	PatientCount int
+	Description  string
+	Status       string // "active"（一期固定；预留软删除字段）
+	CreatedAt    time.Time
+}
+
+// TeamMemberRow 团队成员投影（T059 写功能返回；统一 doctor/technician 两类）
+type TeamMemberRow struct {
+	MemberID     string
+	MemberType   string // "doctor" | "technician"
+	Name         string
+	Role         string // doctor.title（technician 无 title 字段则空）
+	Title        string // 保留字段：科室/职称（与 Role 字段语义对齐设计源成员表角色）
+	PhoneEnc     []byte // AES-GCM 密文，handler 层脱敏
+	PhoneMasked  string // handler 装配时脱敏（避免在 repo 层依赖 phone.Cipher）
+	PatientCount int    // 仅 doctor 有意义（technician 用 InstallCount，预留位）
+	JoinTime     time.Time
+	Status       string
+}
+
+// TeamInput 创建/编辑团队入参（T059 写功能契约）
+type TeamInput struct {
+	Name        string // 必填，trim 后 ≥1 字符 ≤50
+	Leader      string // 必填，doctor_id 存在性校验
+	Description string // 可选，≤200 字符
+}
+
+// MemberInput 成员管理入参（T059 写功能契约）
+type MemberInput struct {
+	MemberType string // "doctor" | "technician"
+	MemberID   string // doctor_id / tech_id
+	Role       string // 可选，更新 doctor.title（technician 无 title 字段则忽略）
 }
 
 // DoctorRow doctors LEFT JOIN 患者计数投影
@@ -235,6 +316,16 @@ type Store interface {
 	TeamExists(ctx context.Context, teamID string) (bool, error)
 	ListDoctors(ctx context.Context) ([]DoctorRow, error)
 	ListDoctorsByTeam(ctx context.Context, teamID string) ([]DoctorRow, error)
+
+	// 团队 / 成员写操作（T059 写功能契约）
+	// 契约：docs/tasks/ella/T059-团队管理测试规格.md
+	// sentinel：ErrTeamNotFound/ErrTeamNameExists/ErrLeaderNotFound/ErrMemberNotFound/ErrMemberInTeam/ErrTeamInUse
+	CreateTeam(ctx context.Context, in TeamInput) (*TeamDetailRow, error)
+	UpdateTeam(ctx context.Context, teamID string, in TeamInput) (*TeamDetailRow, error)
+	DeleteTeam(ctx context.Context, teamID string) error // 返回 ErrTeamNotFound / ErrTeamInUse
+	AddTeamMember(ctx context.Context, teamID string, in MemberInput) (*TeamMemberRow, error)
+	UpdateTeamMember(ctx context.Context, teamID, memberID string, in MemberInput) (*TeamMemberRow, error)
+	RemoveTeamMember(ctx context.Context, teamID, memberID, memberType string) error // 幂等：已移除 no-op
 
 	// 技师
 	ListTechnicians(ctx context.Context, page, pageSize int) ([]TechnicianRow, int64, error)
