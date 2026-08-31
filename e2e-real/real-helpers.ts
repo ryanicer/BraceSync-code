@@ -111,7 +111,7 @@ export async function realLogin(
   // 失败也会变 URL，但这里用 waitForURL 非登录页路径 + 同时用 ElMessage 兜底）
   try {
     await page.waitForURL(
-      (url) => !url.pathname.startsWith('/admin/login'),
+      (url) => !url.pathname.startsWith('/login'),
       { timeout: 20_000 },
     )
   } catch {
