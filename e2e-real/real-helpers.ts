@@ -11,7 +11,7 @@ import { expect, type Page, type Locator } from '@playwright/test'
 
 // ─────────────────────────────────────────────────────────────
 // Re-export 通用 selector helper（直接复用 mock admin-helpers）
-// 注意：不再 re-export adminRoutes（mock 根路径，真实模式用下方 realRoutes —— 根路径，对齐 router base=/）
+// 注意：不再 re-export adminRoutes（mock 根路径，真实模式用下方 realRoutes —— 带 /admin/ 前缀，Nginx strip 后 router 见根路径）
 // ─────────────────────────────────────────────────────────────
 export {
   pickSelectOption,
@@ -25,24 +25,25 @@ export {
 } from '../e2e/admin-helpers'
 
 // ─────────────────────────────────────────────────────────────
-// 真实模式「staging 路由」全量常量（baseURL 是根，router base=/，路由用根路径）
-// 对应：apps/admin-web/router 配置（createWebHistory() 无 base，pageRoutes 全为根路径）
+// 真实模式「staging 路由」全量常量（baseURL 是根，staging 前端挂在 Nginx /admin/ 下）
+// Nginx /admin/ location strip 前缀后交根路径 router（createWebHistory() 无 base，pageRoutes 全根路径）
+// 故 realRoutes 带 /admin/ 前缀对齐浏览器 URL；登录成功 router push /dashboard → 浏览器 URL /admin/dashboard
 // ─────────────────────────────────────────────────────────────
 export const realRoutes = {
-  login: '/login',
-  dashboard: '/dashboard',
-  monitor: '/monitor',
-  patients: '/patients',
-  teams: '/teams',
-  devices: '/devices',
-  alerts: '/alerts',
-  communication: '/communication',
-  orthosisLog: '/orthosis-log',
-  installRecords: '/install-records',
-  technicians: '/technicians',
-  roles: '/roles',
-  settings: '/settings',
-  forbidden: '/403',
+  login: '/admin/login',
+  dashboard: '/admin/dashboard',
+  monitor: '/admin/monitor',
+  patients: '/admin/patients',
+  teams: '/admin/teams',
+  devices: '/admin/devices',
+  alerts: '/admin/alerts',
+  communication: '/admin/communication',
+  orthosisLog: '/admin/orthosis-log',
+  installRecords: '/admin/install-records',
+  technicians: '/admin/technicians',
+  roles: '/admin/roles',
+  settings: '/admin/settings',
+  forbidden: '/admin/403',
 } as const
 export type RealRoutesKey = keyof typeof realRoutes
 
@@ -108,7 +109,7 @@ export async function realLogin(
 
   await loginBtn.click()
 
-  // 登录成功：离开 /login（成功跳 /dashboard 等；SPA 根路径，router 无 base）
+  // 登录成功：离开 /admin/login（router push 根路径 /dashboard，浏览器 URL /admin/dashboard）
   // 失败也会变 URL，但这里用 waitForURL 非登录页路径 + 同时用 ElMessage 兜底）
   try {
     await page.waitForURL(

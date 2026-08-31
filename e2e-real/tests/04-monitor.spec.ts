@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { realLogin, pickSelectOption, realRoutes } from '../real-helpers'
+import { realLogin, gotoMenu, pickSelectOption, realRoutes } from '../real-helpers'
 
 /**
  * T053 - 04 实时监控（真实模式）
@@ -11,7 +11,7 @@ import { realLogin, pickSelectOption, realRoutes } from '../real-helpers'
 test.describe('04-实时监控', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await page.goto(realRoutes.monitor, { waitUntil: 'domcontentloaded' })
+    await gotoMenu(page, '实时监控')
   })
 
   /** 等待快照时间戳出现（即数据加载完成信号） */

@@ -1,6 +1,7 @@
 import { test, expect, type Locator } from '@playwright/test'
 import {
   realLogin,
+  gotoMenu,
   pickSelectOption,
   tableRows,
   adminMessage,
@@ -18,7 +19,7 @@ import {
 test.describe('06-团队管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await page.goto(realRoutes.teams, { waitUntil: 'domcontentloaded' })
+    await gotoMenu(page, '团队管理')
     await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
       timeout: 25_000,
     })

@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import {
   realLogin,
+  gotoMenu,
   adminMessage,
   pickSelectOption,
   tableRows,
@@ -18,7 +19,7 @@ import {
 test.describe('03-告警管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await page.goto(realRoutes.alerts, { waitUntil: 'domcontentloaded' })
+    await gotoMenu(page, '告警管理')
     // 等待表格加载完成（至少 1 行可见）
     await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
       timeout: 25_000,

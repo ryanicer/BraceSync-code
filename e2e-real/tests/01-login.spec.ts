@@ -81,7 +81,7 @@ test.describe('01-登录模块', () => {
       const tokenAfter = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
       expect(tokenAfter).toBeFalsy()
       // 第四步：直接访问受保护页 → 被守卫重定向回 /login 并带 redirect 参数
-      // 注：goto('/patients') 退出后无 token → 守卫重定向 /login?redirect=/patients
+      // 注：goto('/admin/patients') 退出后无 token → Nginx strip → router /patients → 守卫重定向 /login?redirect=/admin/patients
       // 只验证 redirect 参数存在（不绑死具体值）
       await page.goto(realRoutes.patients)
       await page.waitForTimeout(1_500) // 给前端守卫跳转留时间
