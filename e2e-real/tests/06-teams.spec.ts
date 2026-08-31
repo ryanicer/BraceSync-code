@@ -19,10 +19,9 @@ test.describe('06-团队管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
     await page.goto(realRoutes.teams, { waitUntil: 'domcontentloaded' })
-    await expect(page.locator('.el-table__body-wrapper tbody tr')).toHaveCount(
-      (n) => n >= 1,
-      { timeout: 25_000 },
-    )
+    await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
+      timeout: 25_000,
+    })
   })
 
   // 本 spec 新建的团队名（用于末尾删除清理）

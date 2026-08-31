@@ -11,7 +11,7 @@ import { expect, type Page, type Locator } from '@playwright/test'
 
 // ─────────────────────────────────────────────────────────────
 // Re-export 通用 selector helper（直接复用 mock admin-helpers）
-// 注意：不再 re-export adminRoutes（mock 根路径，真实模式需用下方 realRoutes —— 全带 /admin/ 前缀）
+// 注意：不再 re-export adminRoutes（mock 根路径，真实模式用下方 realRoutes —— 根路径，对齐 router base=/）
 // ─────────────────────────────────────────────────────────────
 export {
   pickSelectOption,
@@ -21,27 +21,28 @@ export {
   adminMessage,
   topBarUserName,
   adminLogout,
+  adminLogout as realLogout,
 } from '../e2e/admin-helpers'
 
 // ─────────────────────────────────────────────────────────────
-// 真实模式「staging 路由」全量常量（baseURL 是根，路由统一带 /admin/ 前缀）
-// 对应：apps/admin-web/router 配置（staging 前端挂在 Nginx /admin/ 下）
+// 真实模式「staging 路由」全量常量（baseURL 是根，router base=/，路由用根路径）
+// 对应：apps/admin-web/router 配置（createWebHistory() 无 base，pageRoutes 全为根路径）
 // ─────────────────────────────────────────────────────────────
 export const realRoutes = {
-  login: '/admin/login',
-  dashboard: '/admin/dashboard',
-  monitor: '/admin/monitor',
-  patients: '/admin/patients',
-  teams: '/admin/teams',
-  devices: '/admin/devices',
-  alerts: '/admin/alerts',
-  communication: '/admin/communication',
-  orthosisLog: '/admin/orthosis-log',
-  installRecords: '/admin/install-records',
-  technicians: '/admin/technicians',
-  roles: '/admin/roles',
-  settings: '/admin/settings',
-  forbidden: '/admin/403',
+  login: '/login',
+  dashboard: '/dashboard',
+  monitor: '/monitor',
+  patients: '/patients',
+  teams: '/teams',
+  devices: '/devices',
+  alerts: '/alerts',
+  communication: '/communication',
+  orthosisLog: '/orthosis-log',
+  installRecords: '/install-records',
+  technicians: '/technicians',
+  roles: '/roles',
+  settings: '/settings',
+  forbidden: '/403',
 } as const
 export type RealRoutesKey = keyof typeof realRoutes
 
@@ -107,7 +108,7 @@ export async function realLogin(
 
   await loginBtn.click()
 
-  // 登录成功：离开 /login（成功跳 /dashboard 等；SPA 用根路径，非 /admin/，因 router 无 base）
+  // 登录成功：离开 /login（成功跳 /dashboard 等；SPA 根路径，router 无 base）
   // 失败也会变 URL，但这里用 waitForURL 非登录页路径 + 同时用 ElMessage 兜底）
   try {
     await page.waitForURL(
@@ -134,10 +135,9 @@ export async function getAuthToken(page: Page): Promise<string | null> {
 
 /** 等待表格首行加载完成（列表通用） */
 export async function waitForTableLoaded(page: Page): Promise<void> {
-  await expect(page.locator('.el-table__body-wrapper tbody tr')).toHaveCount(
-    (n) => n >= 1,
-    { timeout: 20_000 },
-  )
+  await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
+    timeout: 20_000,
+  })
 }
 
 /** 取所有表格行中可见的 tag 文本（用于状态存在性验证） */

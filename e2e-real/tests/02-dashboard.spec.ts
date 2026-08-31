@@ -26,7 +26,9 @@ test.describe('02-Dashboard 数据概览', () => {
     test('2.1 渲染 6 张 KPI 卡片，label 齐全 + value 含数字（非空）', async ({ page }) => {
       const cards = page.locator('.kpi-card')
       // 允许 ≥6（未来扩展），但至少 6
-      await expect(cards).toHaveCount((n) => n >= 6, { timeout: 20_000 })
+      await expect(cards.first()).toBeVisible({ timeout: 20_000 })
+      const cardCount = await cards.count()
+      expect(cardCount).toBeGreaterThanOrEqual(6)
 
       // 验证 label 齐全（6 个预期 label 都能找到一张卡片）
       for (const label of KPI_LABELS) {
@@ -53,18 +55,22 @@ test.describe('02-Dashboard 数据概览', () => {
         await expect(page.getByText(t)).toBeVisible({ timeout: 10_000 })
       }
       // canvas 数量至少 4
-      await expect(page.locator('.dashboard canvas, .page-card canvas, canvas')).toHaveCount(
-        (n) => n >= 4,
-        { timeout: 25_000 },
-      )
+      const canvas = page.locator('.dashboard canvas, .page-card canvas, canvas')
+      await expect(canvas.first()).toBeVisible({ timeout: 25_000 })
+      const canvasCount = await canvas.count()
+      expect(canvasCount).toBeGreaterThanOrEqual(4)
       // 团队佩戴达标排行表 ≥3 行（seed 3 团队）
       const teamRankCard = page.locator('.page-card').filter({ hasText: '团队佩戴达标排行' })
       const teamRows = teamRankCard.locator('.el-table__body-wrapper tbody tr')
-      await expect(teamRows).toHaveCount((n) => n >= 3, { timeout: 10_000 })
+      await expect(teamRows.first()).toBeVisible({ timeout: 10_000 })
+      const teamRowCount = await teamRows.count()
+      expect(teamRowCount).toBeGreaterThanOrEqual(3)
       // 医生管理患者排行表 ≥3 行（seed 3 医生）
       const docRankCard = page.locator('.page-card').filter({ hasText: '医生管理患者排行' })
       const docRows = docRankCard.locator('.el-table__body-wrapper tbody tr')
-      await expect(docRows).toHaveCount((n) => n >= 3, { timeout: 10_000 })
+      await expect(docRows.first()).toBeVisible({ timeout: 10_000 })
+      const docRowCount = await docRows.count()
+      expect(docRowCount).toBeGreaterThanOrEqual(3)
     })
   })
 

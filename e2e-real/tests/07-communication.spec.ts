@@ -18,10 +18,9 @@ test.describe('07-患者沟通', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
     await page.goto(realRoutes.communication, { waitUntil: 'domcontentloaded' })
-    await expect(page.locator('.el-table__body-wrapper tbody tr')).toHaveCount(
-      (n) => n >= 1,
-      { timeout: 25_000 },
-    )
+    await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
+      timeout: 25_000,
+    })
   })
 
   test.describe('反馈列表渲染', () => {

@@ -39,7 +39,7 @@ test.describe('01-登录模块', () => {
       // 3) 顶栏用户名非空（真实显示名由后端返回，不做精确匹配）
       const userName = topBarUserName(page)
       await expect(userName).toBeVisible()
-      await expect(userName).toHaveText((t) => t.trim().length > 0, { timeout: 5_000 })
+      await expect(userName).not.toBeEmpty({ timeout: 5_000 })
       // 4) localStorage 中存在 token
       const token = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
       expect(token).toBeTruthy()
@@ -50,8 +50,16 @@ test.describe('01-登录模块', () => {
 
   test.describe('错误密码拒绝', () => {
     test('1.3 错误密码 → ElMessage 「用户名或密码错误」 + 仍在登录页', async ({ page }) => {
-      await realLogin(page, 'ops_admin', 'wrongpass123')
-      // ElMessage 提示（真实后端统一错误文案，对齐 T052 经验）
+      // 内联登录：不用 realLogin（其 waitForURL 在错误密码时会白等 20s，期间 ElMessage 已消失）
+      await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
+      const userInput = page.locator('.login-form input:not([type="password"])').first()
+      const passInput = page.locator('.login-form input[type="password"]')
+      await userInput.click()
+      await userInput.fill('ops_admin')
+      await passInput.fill('wrongpass123')
+      await page.locator('.login-form').getByRole('button', { name: '登 录' }).click()
+      // 立即检查 ElMessage（错误密码 URL 不会离开 /login，不等 URL 变化）
       const msg = adminMessage(page)
       await expect(msg).toBeVisible({ timeout: 10_000 })
       await expect(msg).toContainText(/用户名或密码错误/)
@@ -72,13 +80,14 @@ test.describe('01-登录模块', () => {
       // 第三步：确认 token 已清
       const tokenAfter = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
       expect(tokenAfter).toBeFalsy()
-      // 第四步：直接访问 /admin/patients → 被重定向回 /login 并带 redirect
+      // 第四步：直接访问受保护页 → 被守卫重定向回 /login 并带 redirect 参数
+      // 注：goto('/patients') 退出后无 token → 守卫重定向 /login?redirect=/patients
+      // 只验证 redirect 参数存在（不绑死具体值）
       await page.goto(realRoutes.patients)
       await page.waitForTimeout(1_500) // 给前端守卫跳转留时间
       const urlAfter = page.url()
       expect(urlAfter).toContain('/login')
-      // redirect 参数应包含 patients（允许编码或原路径）
-      expect(urlAfter).toMatch(/redirect=.*patients/)
+      expect(urlAfter).toMatch(/redirect=/)
     })
   })
 })

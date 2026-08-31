@@ -84,7 +84,9 @@ test.describe('04-实时监控', () => {
 
       // 图例至少 3 项（低/中/高 + 异常或更多）
       const legendItems = page.locator('.hm-legend .hm-lg-item')
-      await expect(legendItems).toHaveCount((n) => n >= 3, { timeout: 5_000 })
+      await expect(legendItems.first()).toBeVisible({ timeout: 5_000 }).catch(() => {})
+      const legendCount = await legendItems.count()
+      expect(legendCount).toBeGreaterThanOrEqual(3)
       const legendText = await page.locator('.hm-legend').textContent()
       expect(legendText).toMatch(/低压|高压|低|高/)
     })
@@ -100,7 +102,9 @@ test.describe('04-实时监控', () => {
       await expect(dropdown).toBeVisible({ timeout: 5_000 })
       const options = dropdown.locator('.el-select-dropdown__item')
       // seed 5 患者，至少 5 个选项
-      await expect(options).toHaveCount((n) => n >= 5, { timeout: 10_000 })
+      await expect(options.first()).toBeVisible({ timeout: 10_000 })
+      const optCount = await options.count()
+      expect(optCount).toBeGreaterThanOrEqual(5)
 
       // 获取第 0、1、2 个患者名（跳过可能的 "请选择" 占位）
       const countOpt = await options.count()

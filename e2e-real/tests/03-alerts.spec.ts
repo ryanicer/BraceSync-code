@@ -19,11 +19,10 @@ test.describe('03-告警管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
     await page.goto(realRoutes.alerts, { waitUntil: 'domcontentloaded' })
-    // 等待表格加载完成（至少 1 行）
-    await expect(page.locator('.el-table__body-wrapper tbody tr')).toHaveCount(
-      (n) => n >= 1,
-      { timeout: 25_000 },
-    )
+    // 等待表格加载完成（至少 1 行可见）
+    await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
+      timeout: 25_000,
+    })
   })
 
   test.describe('告警列表', () => {
