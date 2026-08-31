@@ -5,7 +5,7 @@ import { defineConfig, devices } from '@playwright/test'
  *
  * 与 e2e/admin-playwright.config.ts（mock 模式）完全隔离：
  *  - 测试目标：staging 已部署的 admin-web（VITE_USE_MOCK=false）
- *  - baseURL：默认 http://localhost:2080/admin（SSH 隧道），可通过 E2E_BASE_URL env 覆盖
+ *  - baseURL：默认 http://localhost:2080（SSH 隧道到 staging 81 端口，不含 /admin；各路由由 realRoutes.xxx 提供 /admin/ 前缀），可通过 E2E_BASE_URL env 覆盖
  *  - 无 webServer 字段：不启动本地 vite，直连 staging 真实服务
  *  - 串行执行（workers=1）：避免真实接口数据竞争
  *  - testDir: ./tests（与 e2e/tests/ 完全隔离）
@@ -29,7 +29,7 @@ export default defineConfig({
     ['json', { outputFile: 'test-results/result.json' }],
   ],
   use: {
-    baseURL: process.env.E2E_BASE_URL || 'http://localhost:2080/admin',
+    baseURL: process.env.E2E_BASE_URL || 'http://localhost:2080',
     trace: 'retain-on-failure',
     screenshot: 'on',
     actionTimeout: 20_000,

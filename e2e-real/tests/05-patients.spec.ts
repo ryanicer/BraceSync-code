@@ -5,7 +5,7 @@ import {
   pickSelectOption,
   tableRows,
   adminMessage,
-  adminRoutes,
+  realRoutes,
   E2E_PATIENT_NAME_PREFIX,
   uniqueName,
   getAuthToken,
@@ -19,7 +19,7 @@ import {
 test.describe('05-患者管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await page.goto(adminRoutes.patients, { waitUntil: 'domcontentloaded' })
+    await page.goto(realRoutes.patients, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('.el-table__body-wrapper tbody tr')).toHaveCount(
       (n) => n >= 1,
       { timeout: 25_000 },

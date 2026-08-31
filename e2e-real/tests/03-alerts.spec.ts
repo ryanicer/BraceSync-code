@@ -4,7 +4,7 @@ import {
   adminMessage,
   pickSelectOption,
   tableRows,
-  adminRoutes,
+  realRoutes,
   E2E_REPLY_PREFIX,
   uniqueName,
   getAllTagTexts,
@@ -18,7 +18,7 @@ import {
 test.describe('03-告警管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await page.goto(adminRoutes.alerts, { waitUntil: 'domcontentloaded' })
+    await page.goto(realRoutes.alerts, { waitUntil: 'domcontentloaded' })
     // 等待表格加载完成（至少 1 行）
     await expect(page.locator('.el-table__body-wrapper tbody tr')).toHaveCount(
       (n) => n >= 1,

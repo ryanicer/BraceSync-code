@@ -5,7 +5,7 @@ import {
   adminMessage,
   topBarUserName,
   LS_TOKEN_KEY,
-  adminRoutes,
+  realRoutes,
 } from '../real-helpers'
 
 /**
@@ -16,7 +16,7 @@ test.describe('01-登录模块', () => {
 
   test.describe('登录页渲染', () => {
     test('1.1 显示标题 / 用户名框 / 密码框 / 登录按钮', async ({ page }) => {
-      await page.goto('/login')
+      await page.goto(realRoutes.login)
       await expect(page.locator('.login-title')).toContainText('矫智通运营平台')
       // 用户名（非 password input）
       await expect(page.locator('.login-form input:not([type="password"])').first()).toBeVisible()
@@ -32,8 +32,8 @@ test.describe('01-登录模块', () => {
   test.describe('真实账号登录成功', () => {
     test('1.2 ops_admin 登录 → Dashboard + localStorage JWT + 顶栏用户名', async ({ page }) => {
       await realLogin(page)
-      // 1) 跳转到 dashboard
-      await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 })
+      // 1) 跳转到 /admin/dashboard
+      await expect(page).toHaveURL(/\/admin\/dashboard/, { timeout: 20_000 })
       // 2) ElMessage 欢迎提示（非空即可，文案为「欢迎，xxx」）
       await expect(adminMessage(page)).toBeVisible({ timeout: 10_000 })
       // 3) 顶栏用户名非空（真实显示名由后端返回，不做精确匹配）
@@ -55,9 +55,9 @@ test.describe('01-登录模块', () => {
       const msg = adminMessage(page)
       await expect(msg).toBeVisible({ timeout: 10_000 })
       await expect(msg).toContainText(/用户名或密码错误/)
-      // 仍在 /login（不跳 dashboard）
+      // 仍在 /admin/login（不跳 dashboard）
       const path = new URL(page.url()).pathname
-      expect(path.endsWith('/login') || path.endsWith('/login/')).toBe(true)
+      expect(path === '/admin/login' || path.endsWith('/admin/login')).toBe(true)
     })
   })
 
@@ -65,18 +65,18 @@ test.describe('01-登录模块', () => {
     test('1.4 退出后访问受保护页被重定向到 /login?redirect=', async ({ page }) => {
       // 第一步：登录
       await realLogin(page)
-      await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 })
+      await expect(page).toHaveURL(/\/admin\/dashboard/, { timeout: 20_000 })
       // 第二步：退出
       await realLogout(page)
-      await expect(page).toHaveURL(/\/login/, { timeout: 15_000 })
+      await expect(page).toHaveURL(/\/admin\/login/, { timeout: 15_000 })
       // 第三步：确认 token 已清
       const tokenAfter = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
       expect(tokenAfter).toBeFalsy()
-      // 第四步：直接访问 /patients → 被重定向回 /login 并带 redirect
-      await page.goto(adminRoutes.patients)
+      // 第四步：直接访问 /admin/patients → 被重定向回 /admin/login 并带 redirect
+      await page.goto(realRoutes.patients)
       await page.waitForTimeout(1_500) // 给前端守卫跳转留时间
       const urlAfter = page.url()
-      expect(urlAfter).toContain('/login')
+      expect(urlAfter).toContain('/admin/login')
       // redirect 参数应包含 patients（允许编码或原路径）
       expect(urlAfter).toMatch(/redirect=.*patients/)
     })

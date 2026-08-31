@@ -11,9 +11,9 @@ import { expect, type Page, type Locator } from '@playwright/test'
 
 // ─────────────────────────────────────────────────────────────
 // Re-export 通用 selector helper（直接复用 mock admin-helpers）
+// 注意：不再 re-export adminRoutes（mock 根路径，真实模式需用下方 realRoutes —— 全带 /admin/ 前缀）
 // ─────────────────────────────────────────────────────────────
 export {
-  adminRoutes,
   pickSelectOption,
   tableRows,
   menuItems,
@@ -22,6 +22,28 @@ export {
   topBarUserName,
   adminLogout,
 } from '../e2e/admin-helpers'
+
+// ─────────────────────────────────────────────────────────────
+// 真实模式「staging 路由」全量常量（baseURL 是根，路由统一带 /admin/ 前缀）
+// 对应：apps/admin-web/router 配置（staging 前端挂在 Nginx /admin/ 下）
+// ─────────────────────────────────────────────────────────────
+export const realRoutes = {
+  login: '/admin/login',
+  dashboard: '/admin/dashboard',
+  monitor: '/admin/monitor',
+  patients: '/admin/patients',
+  teams: '/admin/teams',
+  devices: '/admin/devices',
+  alerts: '/admin/alerts',
+  communication: '/admin/communication',
+  orthosisLog: '/admin/orthosis-log',
+  installRecords: '/admin/install-records',
+  technicians: '/admin/technicians',
+  roles: '/admin/roles',
+  settings: '/admin/settings',
+  forbidden: '/admin/403',
+} as const
+export type RealRoutesKey = keyof typeof realRoutes
 
 // ─────────────────────────────────────────────────────────────
 // 资源命名前缀 + 唯一命名工具（写操作可重放，避免污染 seed）
@@ -59,7 +81,7 @@ export async function realLogin(
   username: string = DEFAULT_REAL_USERNAME,
   password: string = DEFAULT_REAL_PASSWORD,
 ): Promise<void> {
-  await page.goto('/login', { waitUntil: 'domcontentloaded' })
+  await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
   // 等待登录卡片渲染
   await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
 
@@ -85,12 +107,15 @@ export async function realLogin(
 
   await loginBtn.click()
 
-  // 登录成功：离开 /login（成功跳 dashboard 或 redirect 查询参数指定的路径；
+  // 登录成功：离开 /admin/login（成功跳 dashboard 或 redirect 查询参数指定的路径；
   // 失败也会变 URL，但这里用 waitForURL 非登录页路径 + 同时用 ElMessage 兜底）
   try {
-    await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 20_000 })
+    await page.waitForURL(
+      (url) => !url.pathname.startsWith('/admin/login'),
+      { timeout: 20_000 },
+    )
   } catch {
-    // 兜底：如果被 redirect 回 /login（账号异常），不抛，由上层断言判断
+    // 兜底：如果被 redirect 回 /admin/login（账号异常），不抛，由上层断言判断
   }
 }
 

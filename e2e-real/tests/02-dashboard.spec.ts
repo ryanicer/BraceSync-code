@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { realLogin, adminMessage, adminRoutes } from '../real-helpers'
+import { realLogin, adminMessage, realRoutes } from '../real-helpers'
 
 /**
  * T053 - 02 Dashboard 数据概览（真实模式）
@@ -9,7 +9,7 @@ import { realLogin, adminMessage, adminRoutes } from '../real-helpers'
 test.describe('02-Dashboard 数据概览', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await page.goto(adminRoutes.dashboard, { waitUntil: 'domcontentloaded' })
+    await page.goto(realRoutes.dashboard, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('.page-title, h1')).toBeVisible({ timeout: 20_000 }).catch(() => {})
   })
 

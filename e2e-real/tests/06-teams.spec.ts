@@ -4,7 +4,7 @@ import {
   pickSelectOption,
   tableRows,
   adminMessage,
-  adminRoutes,
+  realRoutes,
   E2E_TEAM_NAME_PREFIX,
   uniqueName,
   getAuthToken,
@@ -18,7 +18,7 @@ import {
 test.describe('06-团队管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await page.goto(adminRoutes.teams, { waitUntil: 'domcontentloaded' })
+    await page.goto(realRoutes.teams, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('.el-table__body-wrapper tbody tr')).toHaveCount(
       (n) => n >= 1,
       { timeout: 25_000 },
