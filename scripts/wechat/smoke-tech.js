@@ -56,27 +56,36 @@ async function shot(mp, file, label) {
   console.log(`  [截图] ${file} 失败（不阻塞）`);
 }
 
+const CONNECT_ONLY = process.env.CONNECT_ONLY === '1';
+
 async function run() {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
   let mp;
   let cliProcess;
   try {
-    console.log('[1/9] 通过 CLI 启动自动化端口...');
-    cliProcess = exec(`"${CLI_PATH}" auto --project "${TECH_PROJECT}" --auto-port ${AUTO_PORT}`, {
-      timeout: 120000,
-      maxBuffer: 1024 * 1024,
-    }, (err, stdout, stderr) => {
-      if (err && !err.killed) {
-        console.log('  CLI output:', stdout?.substring(0, 300));
-        console.log('  CLI stderr:', stderr?.substring(0, 300));
-      }
-    });
-    cliProcess.stdout?.on('data', (d) => console.log('  CLI:', d.toString().trim()));
-    cliProcess.stderr?.on('data', (d) => console.log('  CLI err:', d.toString().trim()));
+    if (CONNECT_ONLY) {
+      console.log('[1/9] CONNECT_ONLY 模式：跳过 CLI 启动，直接连接已运行的自动化端口...');
+      console.log('[2/9] 等待自动化端口就绪...');
+      await withTimeout(waitForPort(AUTO_PORT, 60000), 65000, 'waitForPort');
+      console.log('[2/9] 端口就绪');
+    } else {
+      console.log('[1/9] 通过 CLI 启动自动化端口...');
+      cliProcess = exec(`"${CLI_PATH}" auto --project "${TECH_PROJECT}" --auto-port ${AUTO_PORT}`, {
+        timeout: 120000,
+        maxBuffer: 1024 * 1024,
+      }, (err, stdout, stderr) => {
+        if (err && !err.killed) {
+          console.log('  CLI output:', stdout?.substring(0, 300));
+          console.log('  CLI stderr:', stderr?.substring(0, 300));
+        }
+      });
+      cliProcess.stdout?.on('data', (d) => console.log('  CLI:', d.toString().trim()));
+      cliProcess.stderr?.on('data', (d) => console.log('  CLI err:', d.toString().trim()));
 
-    console.log('[2/9] 等待自动化端口就绪...');
-    await withTimeout(waitForPort(AUTO_PORT, 30000), 35000, 'waitForPort');
-    console.log('[2/9] 端口就绪');
+      console.log('[2/9] 等待自动化端口就绪...');
+      await withTimeout(waitForPort(AUTO_PORT, 30000), 35000, 'waitForPort');
+      console.log('[2/9] 端口就绪');
+    }
 
     console.log('[3/9] 连接自动化端口...');
     await new Promise(r => setTimeout(r, 3000));
