@@ -107,7 +107,7 @@ export async function realLogin(
 
   await loginBtn.click()
 
-  // 登录成功：离开 /admin/login（成功跳 dashboard 或 redirect 查询参数指定的路径；
+  // 登录成功：离开 /login（成功跳 /dashboard 等；SPA 用根路径，非 /admin/，因 router 无 base）
   // 失败也会变 URL，但这里用 waitForURL 非登录页路径 + 同时用 ElMessage 兜底）
   try {
     await page.waitForURL(
@@ -115,7 +115,7 @@ export async function realLogin(
       { timeout: 20_000 },
     )
   } catch {
-    // 兜底：如果被 redirect 回 /admin/login（账号异常），不抛，由上层断言判断
+    // 兜底：如果被 redirect 回 /login（账号异常），不抛，由上层断言判断
   }
 }
 
