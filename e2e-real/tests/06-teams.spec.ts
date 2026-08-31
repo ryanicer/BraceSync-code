@@ -79,17 +79,11 @@ test.describe('06-团队管理', () => {
       const newBtn = page
         .locator('.page-toolbar')
         .getByRole('button', { name: /新建团队|新增团队/ })
-      if ((await newBtn.count()) === 0 || !(await newBtn.isVisible().catch(() => false))) {
-        test.fixme()
-        return
-      }
+      await expect(newBtn.first()).toBeVisible({ timeout: 8_000 })
       await newBtn.first().click()
 
       const dialog = page.locator('.el-dialog').filter({ hasText: /新建团队|新建/ })
-      if (!(await dialog.isVisible({ timeout: 10_000 }).catch(() => false))) {
-        test.fixme()
-        return
-      }
+      await expect(dialog).toBeVisible({ timeout: 10_000 })
       // 团队名称输入框：第一个 input 或 placeholder 含"团队名称"
       const nameInput = dialog
         .locator('input, .el-input__inner')
@@ -147,10 +141,8 @@ test.describe('06-团队管理', () => {
 
   test.describe('编辑团队（写）', () => {
     test('6.3 编辑新建团队 → 名称加「-改」→ 更新成功', async ({ page }) => {
-      if (createdTeams.length === 0) {
-        test.fixme()
-        return
-      }
+      // 前置：6.2 创建团队成功，否则本用例如实失败并让测试人员知道 6.2 有问题
+      expect(createdTeams.length).toBeGreaterThan(0)
       const oldName = createdTeams[createdTeams.length - 1]
       // 找到目标行
       const rows = tableRows(page)
@@ -161,16 +153,13 @@ test.describe('06-团队管理', () => {
           break
         }
       }
-      if (!target) { test.fixme(); return }
+      expect(target).not.toBeNull()
       // 编辑按钮
-      const editBtn = target.getByRole('button', { name: /编辑|修改/ }).first()
-      if ((await editBtn.count()) === 0) { test.fixme(); return }
+      const editBtn = target!.getByRole('button', { name: /编辑|修改/ }).first()
+      await expect(editBtn).toBeVisible({ timeout: 5_000 })
       await editBtn.click()
       const dialog = page.locator('.el-dialog')
-      if (!(await dialog.isVisible({ timeout: 10_000 }).catch(() => false))) {
-        test.fixme()
-        return
-      }
+      await expect(dialog).toBeVisible({ timeout: 10_000 })
       const nameInput = dialog
         .locator('input:not([type="password"]), .el-input__inner')
         .first()
@@ -207,7 +196,7 @@ test.describe('06-团队管理', () => {
   test.describe('删除团队', () => {
     test('6.4 删除 seed 已有团队（被引用则拒绝或通过都 OK，不崩溃）', async ({ page }) => {
       const rows = tableRows(page)
-      if ((await rows.count()) < 3) { test.skip(); return }
+      expect(await rows.count()).toBeGreaterThanOrEqual(3)
       // 找第一个不是我们自己创建的团队（seed 团队）
       let target: Locator | null = null
       for (let i = 0; i < await rows.count(); i++) {
@@ -215,9 +204,9 @@ test.describe('06-团队管理', () => {
         const isMine = createdTeams.some((n) => t?.includes(n))
         if (!isMine) { target = rows.nth(i); break }
       }
-      if (!target) { test.skip(); return }
-      const delBtn = target.getByRole('button', { name: /删除|移除/ }).first()
-      if ((await delBtn.count()) === 0) { test.fixme(); return }
+      expect(target).not.toBeNull()
+      const delBtn = target!.getByRole('button', { name: /删除|移除/ }).first()
+      await expect(delBtn).toBeVisible({ timeout: 5_000 })
       await delBtn.click()
       const msgBox = page.locator('.el-message-box')
       if (await msgBox.isVisible({ timeout: 8_000 }).catch(() => false)) {
@@ -232,7 +221,8 @@ test.describe('06-团队管理', () => {
     })
 
     test('6.5 删除自己新建的（唯一命名）团队 → 删除成功，列表消失', async ({ page }) => {
-      if (createdTeams.length === 0) { test.fixme(); return }
+      // 前置：6.2 创建团队成功（6.3 可能改了名但 createdTeams 已同步），否则如实失败
+      expect(createdTeams.length).toBeGreaterThan(0)
       const targetName = createdTeams[createdTeams.length - 1]
       const rows = tableRows(page)
       let target: Locator | null = null
@@ -242,15 +232,12 @@ test.describe('06-团队管理', () => {
           break
         }
       }
-      if (!target) { test.fixme(); return }
-      const delBtn = target.getByRole('button', { name: /删除|移除/ }).first()
-      if ((await delBtn.count()) === 0) { test.fixme(); return }
+      expect(target).not.toBeNull()
+      const delBtn = target!.getByRole('button', { name: /删除|移除/ }).first()
+      await expect(delBtn).toBeVisible({ timeout: 5_000 })
       await delBtn.click()
       const msgBox = page.locator('.el-message-box')
-      if (!(await msgBox.isVisible({ timeout: 10_000 }).catch(() => false))) {
-        test.fixme()
-        return
-      }
+      await expect(msgBox).toBeVisible({ timeout: 10_000 })
       await msgBox.getByRole('button', { name: /确定|确认/ }).first().click()
       const msg = adminMessage(page)
       const visible = await msg.isVisible({ timeout: 15_000 }).catch(() => false)

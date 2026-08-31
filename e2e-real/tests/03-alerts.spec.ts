@@ -78,11 +78,7 @@ test.describe('03-告警管理', () => {
 
     test('3.2 按告警类型筛选后，每行都包含所选类型文案', async ({ page }) => {
       const typeSelect = page.locator('.filter-select').first()
-      // 如果页面没有 filter-select（功能未部署），标记为 fixme 兼容
-      if ((await typeSelect.count()) === 0) {
-        test.fixme()
-        return
-      }
+      await expect(typeSelect.first()).toBeVisible({ timeout: 8_000 })
       const pickedType = await pickFirstAvailableOption(page, typeSelect)
       // 给前端过滤 + 请求留时间
       await page.waitForTimeout(2_000)
@@ -102,10 +98,7 @@ test.describe('03-告警管理', () => {
 
     test('3.3 按状态筛选 待处理 → 每行 tag 都含待处理；已处理 → 每行 tag 含已处理', async ({ page }) => {
       const statusSelect = page.locator('.filter-select').nth(1)
-      if ((await statusSelect.count()) === 0) {
-        test.fixme()
-        return
-      }
+      await expect(statusSelect.first()).toBeVisible({ timeout: 8_000 })
       // (1) 待处理
       await pickSelectOption(page, statusSelect, '待处理').catch(async () => {
         // 「待处理」文本不存在，用第一个含"待"的
@@ -153,11 +146,8 @@ test.describe('03-告警管理', () => {
       await page.waitForTimeout(2_000)
 
       const rows = tableRows(page)
-      // 找至少 1 行待处理（如果没有任何 pending，写用例标记 fixme）
-      if ((await rows.count()) === 0) {
-        test.fixme(true)
-        return
-      }
+      // 待处理行应至少有 1 条（beforeEach 已保证表格有行）
+      expect(await rows.count()).toBeGreaterThanOrEqual(1)
       // 找第一行有「处理」按钮的行
       let targetRow: Locator | null = null
       const totalRows = Math.min(await rows.count(), 20)
@@ -168,13 +158,9 @@ test.describe('03-告警管理', () => {
           break
         }
       }
-      if (!targetRow) {
-        // 没有处理按钮（功能未部署），fixme
-        test.fixme(true)
-        return
-      }
+      expect(targetRow).not.toBeNull()
 
-      const processBtn = targetRow.getByRole('button', { name: '处理' })
+      const processBtn = targetRow!.getByRole('button', { name: '处理' })
       await processBtn.click()
 
       const dialog = page.locator('.el-dialog').filter({ hasText: /处理告警|处理/ })

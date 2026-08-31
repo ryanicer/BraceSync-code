@@ -124,22 +124,15 @@ test.describe('05-患者管理', () => {
       const firstRowText = await rows.first().textContent() ?? ''
       // 抓团队名（含"组"或"团队"的 2-10 字中文）
       const m = firstRowText.match(/([\u4e00-\u9fa5]{2,10}(?:组|团队))/)
-      if (!m) {
-        // 兜底：从表格整体找
-        const allText = await page.locator('.el-table').textContent() ?? ''
-        const m2 = allText.match(/([\u4e00-\u9fa5]{2,10}(?:组|团队))/)
-        if (!m2) {
-          test.fixme()
-          return
-        }
-      }
-      const teamName = (m?.[1])!
+      const m2 = m
+        ? undefined
+        : (await page.locator('.el-table').textContent() ?? '').match(
+            /([\u4e00-\u9fa5]{2,10}(?:组|团队))/,
+          )
+      expect(m || m2).toBeTruthy()
+      const teamName = ((m?.[1] || m2?.[1]) as string)!
       const teamSelect = page.locator('.team-select, .filter-select.team')
-      if ((await teamSelect.count()) === 0) {
-        // 没有筛选器，skip
-        test.fixme()
-        return
-      }
+      await expect(teamSelect.first()).toBeVisible({ timeout: 8_000 })
       await pickSelectOption(page, teamSelect.first(), teamName).catch(async () => {
         // 找不到精确项时跳过
       })
@@ -164,19 +157,11 @@ test.describe('05-患者管理', () => {
       const addBtn = page
         .locator('.page-toolbar')
         .getByRole('button', { name: /添加患者|新建患者|新增患者/ })
-      if ((await addBtn.count()) === 0 || !(await addBtn.isVisible().catch(() => false))) {
-        // 功能未部署
-        test.fixme()
-        return
-      }
+      await expect(addBtn.first()).toBeVisible({ timeout: 8_000 })
       await addBtn.first().click()
 
       const dialog = page.locator('.el-dialog').filter({ hasText: /患者|新建|添加/ })
-      const dialogVisible = await dialog.isVisible({ timeout: 10_000 }).catch(() => false)
-      if (!dialogVisible) {
-        test.fixme()
-        return
-      }
+      await expect(dialog).toBeVisible({ timeout: 10_000 })
 
       // 填最小必填集（姓名 + 手机号/诊断 + 性别/生日等）：找到所有非 password input 逐个填
       // 1) 姓名：第一个 input 或有 "姓名" 标签的字段
@@ -296,55 +281,36 @@ test.describe('05-患者管理', () => {
         }
       }
       if (!targetRow) {
-        test.fixme()
-        return
+        expect(targetRow).not.toBeNull()
       }
       // 找「分配团队」或「编辑」按钮
-      const assignBtn = targetRow.getByRole('button', { name: /分配团队|分配/ }).first()
-      const editBtn = targetRow.getByRole('button', { name: /编辑|修改/ }).first()
+      const assignBtn = targetRow!.getByRole('button', { name: /分配团队|分配/ }).first()
+      const editBtn = targetRow!.getByRole('button', { name: /编辑|修改/ }).first()
       let btn = (await assignBtn.count()) > 0 ? assignBtn : editBtn
-      if ((await btn.count()) === 0) {
-        test.fixme()
-        return
-      }
-      await btn.click()
+      await expect(btn.first()).toBeVisible({ timeout: 5_000 })
+      await btn.first().click()
       const dialog = page.locator('.el-dialog')
       const drawer = page.locator('.el-drawer')
-      const panelVisible = await Promise.race([
-        dialog.isVisible({ timeout: 8_000 }).catch(() => false),
-        drawer.isVisible({ timeout: 8_000 }).catch(() => false),
-      ])
-      if (!panelVisible) {
-        test.fixme()
-        return
-      }
+      const dialogVisibleP = dialog.isVisible({ timeout: 8_000 }).catch(() => false)
+      const drawerVisibleP = drawer.isVisible({ timeout: 8_000 }).catch(() => false)
+      const panelVisible = (await Promise.race([dialogVisibleP, drawerVisibleP])) as boolean
+      expect(panelVisible).toBe(true)
       const panel: Locator = (await dialog.isVisible().catch(() => false)) ? dialog : drawer
       // 选团队 select：第一个 el-select（如果有）
       const teamSelect = panel.locator('.el-select').first()
-      if ((await teamSelect.count()) === 0) {
-        test.fixme()
-        return
-      }
+      await expect(teamSelect).toBeVisible({ timeout: 8_000 })
       // 随便选第一个可见团队
-      try {
-        await teamSelect.click({ timeout: 5_000 })
-        const firstTeamOpt = page.locator('.el-select-dropdown:visible .el-select-dropdown__item').nth(1)
-        const teamName = (await firstTeamOpt.textContent())?.trim()
-        if (!teamName) {
-          await page.locator('.el-select-dropdown:visible .el-select-dropdown__item').first().click()
-        } else {
-          await firstTeamOpt.click()
-        }
-      } catch {
-        test.fixme()
-        return
+      await teamSelect.click({ timeout: 5_000 })
+      const firstTeamOpt = page.locator('.el-select-dropdown:visible .el-select-dropdown__item').nth(1)
+      const teamName = (await firstTeamOpt.textContent())?.trim()
+      if (!teamName) {
+        await page.locator('.el-select-dropdown:visible .el-select-dropdown__item').first().click()
+      } else {
+        await firstTeamOpt.click()
       }
       // 保存
       const save = panel.getByRole('button', { name: /保存|确认|提交/ }).first()
-      if ((await save.count()) === 0) {
-        test.fixme()
-        return
-      }
+      await expect(save).toBeVisible({ timeout: 5_000 })
       await save.click()
       // ElMessage 成功（允许任意非 error 文案）
       const msg = adminMessage(page)

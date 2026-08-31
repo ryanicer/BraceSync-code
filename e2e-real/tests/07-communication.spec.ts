@@ -56,14 +56,11 @@ test.describe('07-患者沟通', () => {
           break
         }
       }
-      if (!target) { test.fixme(); return }
-      await target.getByRole('button', { name: '详情' }).first().click()
+      expect(target).not.toBeNull()
+      await target!.getByRole('button', { name: '详情' }).first().click()
 
       const dialog = page.locator('.el-dialog')
-      if (!(await dialog.isVisible({ timeout: 10_000 }).catch(() => false))) {
-        test.fixme()
-        return
-      }
+      await expect(dialog).toBeVisible({ timeout: 10_000 })
       // 对话框标题含「反馈」或「详情」
       const title = await dialog.locator('.el-dialog__title, .el-dialog__header').first().textContent()
       expect(title).toMatch(/反馈|详情|Detail/i)
@@ -108,24 +105,21 @@ test.describe('07-患者沟通', () => {
       }
 
       const detailBtn = targetRow.getByRole('button', { name: '详情' })
-      if ((await detailBtn.count()) === 0) { test.fixme(); return }
+      await expect(detailBtn.first()).toBeVisible({ timeout: 5_000 })
       await detailBtn.first().click()
 
       const dialog = page.locator('.el-dialog')
-      if (!(await dialog.isVisible({ timeout: 10_000 }).catch(() => false))) {
-        test.fixme()
-        return
-      }
+      await expect(dialog).toBeVisible({ timeout: 10_000 })
       // 回复输入框
       const replyInput = dialog.locator('textarea, .reply-input, .el-textarea textarea').first()
-      if ((await replyInput.count()) === 0) { test.fixme(); return }
+      await expect(replyInput).toBeVisible({ timeout: 5_000 })
       const replyText = `${uniqueName(E2E_REPLY_PREFIX)} 已安排门诊复查，跟进处理中`
       await replyInput.fill(replyText)
       // 提交按钮：回复并标记 / 提交 / 回复
       const submitBtn = dialog
         .getByRole('button', { name: /回复并标记|提交回复|提交|回复|确认/ })
         .first()
-      if ((await submitBtn.count()) === 0) { test.fixme(); return }
+      await expect(submitBtn).toBeVisible({ timeout: 5_000 })
       await submitBtn.click()
       const msg = adminMessage(page)
       const visible = await msg.isVisible({ timeout: 20_000 }).catch(() => false)
