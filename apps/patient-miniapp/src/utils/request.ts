@@ -2,7 +2,7 @@ import { getToken, removeToken } from './token'
 
 // MOCK 开关：接口就绪后设为 false 并填写 API_BASE_URL
 export const USE_MOCK = true
-export const API_BASE_URL = '' // 接口就绪后填，如 'https://api.bracesync.com'
+export const API_BASE_URL = 'https://api.hbksd.com.cn'
 
 interface RequestOptions {
   url: string
