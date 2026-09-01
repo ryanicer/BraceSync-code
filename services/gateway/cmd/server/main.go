@@ -15,6 +15,7 @@ import (
 //   - /healthz               存活探针（免鉴权）
 //   - /api/v1/*（JWT 组）     alerts（T028）+ user/device/data/msg 四服务全量端点
 //   - /api/v1/device/*（验签组）单帧上报/批量补传（data-service）+ 校时（本地）
+//   - /api/v1/devices/:id/provision-key（裸组）配网密钥派生（T067，联调期免 JWT）
 func setupRouter() *gin.Engine {
 	r := gin.Default()
 	r.GET("/healthz", func(c *gin.Context) {
@@ -24,6 +25,7 @@ func setupRouter() *gin.Engine {
 	agt := loadGatewayAuth()           // JWT_SECRET + 设备密钥提供器（环境变量注入，不入库）
 	registerAPIProxies(r, agt)         // T032：/api/v1 全量路由 + 统一 JWT 鉴权 + 端点级 RBAC（T039-H2）
 	registerDeviceReportRoutes(r, agt) // T032：设备域路由 + HMAC 验签
+	registerProvisionRoutes(r, agt)    // T067：配网密钥端点（裸组，联调期免 JWT/RBAC）
 	// TODO(Phase 2)：限流（令牌桶 IP/用户/设备三维）、审计埋点
 	return r
 }

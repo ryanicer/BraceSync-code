@@ -83,6 +83,18 @@ func registerDeviceReportRoutes(r *gin.Engine, agt *gatewayAuth) {
 	log.Info().Msg("device report routes registered (device-signature auth)")
 }
 
+// registerProvisionRoutes 配网端点（T067：联调期不强制 JWT/RBAC，硬件清单未定义鉴权）。
+// TODO(T068)：联调后收紧鉴权（JWT + admin 角色或设备签名）。
+//
+// 用裸组（无 jwtAuth/roleAuthz）注册，避开 /api/v1 JWT 组的中间件链；
+// gin radix tree：/devices/:deviceId/provision-key 与 /devices/:deviceId/bind 终段不同，无路由冲突。
+func registerProvisionRoutes(r *gin.Engine, agt *gatewayAuth) {
+	prov := r.Group("/api/v1") // 裸组：无 jwtAuth/roleAuthz
+	registerServiceRoutes(prov, envOrURL("DEVICE_SERVICE_URL", defaultDeviceServiceURL), "device-service",
+		[]proxyRoute{{http.MethodPost, "/devices/:deviceId/provision-key"}}) // T067
+	log.Info().Msg("provision-key route registered (no-auth for integration)")
+}
+
 // loadGatewayAuth 组装鉴权依赖：JWT_SECRET + 设备密钥提供器。
 // T039-H1：空密钥不再降级关闭鉴权——main 启动即拒绝（log.Fatal），
 // 中间件层 fail-closed 401 兜底（middleware.go jwtAuth）。

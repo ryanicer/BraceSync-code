@@ -10,6 +10,7 @@
 //	POST /api/v1/devices/:deviceId/rebind         换绑（旧绑定历史可追溯）
 //	POST /api/v1/devices/:deviceId/unbind         解绑（幂等）
 //	POST /api/v1/devices/:deviceId/wifi           WiFi 配置状态（wifi_ssid 维护）
+//	POST /api/v1/devices/:deviceId/provision-key  配网密钥派生（T067，HKDF-SHA256 16B→32hex）
 //	POST /api/v1/install-records                  新建安装记录（技师安装流程）
 //	GET  /api/v1/install-records                  安装记录分页列表（T030：姓名 join）
 //	POST /api/v1/baselines                        校准基线落库（契约 saveBaseline）
@@ -63,6 +64,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/devices/:deviceId/rebind", h.rebind)
 		v1.POST("/devices/:deviceId/unbind", h.unbind)
 		v1.POST("/devices/:deviceId/wifi", h.setWifi)
+		v1.POST("/devices/:deviceId/provision-key", h.provisionKey) // T067
 		v1.POST("/install-records", h.createInstall)
 		v1.POST("/baselines", h.saveBaseline)
 		h.registerListRoutes(v1) // T030：GET /devices 列表 + GET /install-records 列表
@@ -245,6 +247,18 @@ func (h *Handler) setWifi(c *gin.Context) {
 		return
 	}
 	ok(c, nil)
+}
+
+// provisionKey 配网密钥派生（T067，硬件清单 §2.1 HKDF-SHA256 16B→32hex）。
+// 联调期由 gateway 裸组注册（不强制 JWT）；未注册 device → 20404。
+// TODO(T068)：鉴权收紧 + expires_in_sec 真实 enforcement。
+func (h *Handler) provisionKey(c *gin.Context) {
+	keyHex, appErr := h.svc.GetProvisionKey(c.Request.Context(), c.Param("deviceId"))
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	ok(c, gin.H{"provision_key_hex": keyHex, "expires_in_sec": service.ProvisionKeyExpiresInSec})
 }
 
 // createInstall 新建安装记录（技师安装流程 bind → matrix → save-baseline → complete）
