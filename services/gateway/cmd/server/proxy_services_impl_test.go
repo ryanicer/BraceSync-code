@@ -111,3 +111,18 @@ func TestFullRoutes_BackendDown_502WithJWT(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, code)
 	assert.Contains(t, body, "user-service unavailable")
 }
+
+// TestFullRoutes_ProvisionKeyBareGroup T067：provision-key 端点裸组注册，
+// 不经 JWT/RBAC 中间件——无 Bearer 也应 200 并转发 device-service。
+func TestFullRoutes_ProvisionKeyBareGroup(t *testing.T) {
+	deviceBackend, deviceReceived := captureBackend(t)
+	gw := startFullGateway(t, "http://127.0.0.1:1", deviceBackend.URL,
+		"http://127.0.0.1:1", "http://127.0.0.1:1", "http://127.0.0.1:1", testJWTSecretMain)
+
+	// 无 JWT Bearer → 裸组放行（联调期清单未定义鉴权）
+	code, _ := httpDoFull(t, http.MethodPost, gw.URL+"/api/v1/devices/DEV-PROV/provision-key", "", nil)
+	require.Equal(t, http.StatusOK, code, "provision-key 裸组免 JWT")
+	require.Len(t, *deviceReceived, 1)
+	assert.Contains(t, (*deviceReceived)[0], "POST /api/v1/devices/DEV-PROV/provision-key",
+		"路径透传 device-service")
+}

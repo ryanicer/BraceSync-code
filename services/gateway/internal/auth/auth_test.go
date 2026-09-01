@@ -6,6 +6,10 @@
 //	当前阶段（T002）用例 **允许红**——DeviceSigVerifier 为桩返回 nil。
 //	T003 阶段 Winner 将据此使用例转绿，目标 ≥90% 分支覆盖。
 //
+// T067：签名串对齐硬件清单 §2.2 的 6 行 \n 分隔格式
+//
+//	{METHOD}\n{path}\n{device_id}\n{timestamp_unix_sec}\n{nonce}\n{body_sha256_hex}
+//
 // 验签流程：
 //
 //	S1: 合法签名 → 通过
@@ -25,6 +29,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// authTestNonce 32 hex 测试固定 nonce（硬件清单 §2.2）
+const authTestNonce = "0123456789abcdef0123456789abcdef"
+
 // ============================================================
 // S5: RFC 4231 TC2 原语向量（自校验 HMAC-SHA256）
 // ============================================================
@@ -39,13 +46,14 @@ func TestS5_RFC4231TC2(t *testing.T) {
 	assert.Equal(t, expectedHex, sig, "HMAC-SHA256 RFC 4231 TC2 mismatch")
 }
 
-// S5b: 签名字符串格式验证
+// S5b: 签名字符串格式验证（T067：6 行 \n 分隔格式）
 func TestBuildSignString(t *testing.T) {
 	ts := time.Unix(1723028400, 0)
-	payload := auth.BuildSignString("POST", "/api/v1/device/report", `{"device_id":"DEV001"}`, ts)
+	payload := auth.BuildSignString("POST", "/api/v1/device/report", "DEV001", authTestNonce, `{"device_id":"DEV001"}`, ts)
 
-	expected := "POST/api/v1/device/report1723028400{\"device_id\":\"DEV001\"}"
-	assert.Equal(t, expected, payload, "sign string format should match device-protocol §4")
+	expected := "POST\n/api/v1/device/report\nDEV001\n1723028400\n" + authTestNonce + "\n" +
+		auth.BodySHA256Hex(`{"device_id":"DEV001"}`)
+	assert.Equal(t, expected, payload, "sign string format should match device-protocol §2.2 (6-line)")
 }
 
 // ============================================================
@@ -59,7 +67,7 @@ func TestS1_ValidSignature(t *testing.T) {
 	ts := time.Now()
 
 	// 生成合法签名
-	signStr := auth.BuildSignString(method, path, body, ts)
+	signStr := auth.BuildSignString(method, path, "DEV_SIM_001", authTestNonce, body, ts)
 	sig := auth.HMACSHA256(secret, signStr)
 
 	// 验证签名
@@ -82,11 +90,11 @@ func TestS2_TamperedBody(t *testing.T) {
 	ts := time.Now()
 
 	// 使用原始 body 生成签名
-	origSignStr := auth.BuildSignString(method, path, body, ts)
+	origSignStr := auth.BuildSignString(method, path, "DEV_SIM_001", authTestNonce, body, ts)
 	sig := auth.HMACSHA256(secret, origSignStr)
 
 	// 验证篡改后的 body
-	tamperedSignStr := auth.BuildSignString(method, path, tamperedBody, ts)
+	tamperedSignStr := auth.BuildSignString(method, path, "DEV_SIM_001", authTestNonce, tamperedBody, ts)
 	recomputed := auth.HMACSHA256(secret, tamperedSignStr)
 
 	assert.NotEqual(t, sig, recomputed, "tampered body should produce different signature")
@@ -101,8 +109,8 @@ func TestS2_TamperedTimestamp(t *testing.T) {
 	ts1 := time.Unix(1723028400, 0)
 	ts2 := time.Unix(1723028500, 0) // 不同时间戳
 
-	sig1 := auth.HMACSHA256(secret, auth.BuildSignString("POST", "/api/v1/device/report", body, ts1))
-	sig2 := auth.HMACSHA256(secret, auth.BuildSignString("POST", "/api/v1/device/report", body, ts2))
+	sig1 := auth.HMACSHA256(secret, auth.BuildSignString("POST", "/api/v1/device/report", "DEV_SIM_001", authTestNonce, body, ts1))
+	sig2 := auth.HMACSHA256(secret, auth.BuildSignString("POST", "/api/v1/device/report", "DEV_SIM_001", authTestNonce, body, ts2))
 
 	assert.NotEqual(t, sig1, sig2, "different timestamps should produce different signatures")
 }
@@ -204,7 +212,7 @@ func TestS7_DeviceNotBound(t *testing.T) {
 // ============================================================
 func TestHMACDeterminism(t *testing.T) {
 	secret := "test_secret"
-	signStr := auth.BuildSignString("POST", "/api/v1/device/report", "{}", time.Unix(1723028400, 0))
+	signStr := auth.BuildSignString("POST", "/api/v1/device/report", "DEV001", authTestNonce, "{}", time.Unix(1723028400, 0))
 
 	sig1 := auth.HMACSHA256(secret, signStr)
 	sig2 := auth.HMACSHA256(secret, signStr)
@@ -215,10 +223,10 @@ func TestHMACDeterminism(t *testing.T) {
 func TestHMACDifferentInputs(t *testing.T) {
 	secret := "test_secret"
 
-	sig1 := auth.HMACSHA256(secret, auth.BuildSignString("POST", "/api/v1/device/report", "body1", time.Unix(1, 0)))
-	sig2 := auth.HMACSHA256(secret, auth.BuildSignString("POST", "/api/v1/device/report", "body2", time.Unix(1, 0)))
-	sig3 := auth.HMACSHA256(secret, auth.BuildSignString("GET", "/api/v1/device/report", "body1", time.Unix(1, 0)))
-	sig4 := auth.HMACSHA256("other_secret", auth.BuildSignString("POST", "/api/v1/device/report", "body1", time.Unix(1, 0)))
+	sig1 := auth.HMACSHA256(secret, auth.BuildSignString("POST", "/api/v1/device/report", "DEV001", authTestNonce, "body1", time.Unix(1, 0)))
+	sig2 := auth.HMACSHA256(secret, auth.BuildSignString("POST", "/api/v1/device/report", "DEV001", authTestNonce, "body2", time.Unix(1, 0)))
+	sig3 := auth.HMACSHA256(secret, auth.BuildSignString("GET", "/api/v1/device/report", "DEV001", authTestNonce, "body1", time.Unix(1, 0)))
+	sig4 := auth.HMACSHA256("other_secret", auth.BuildSignString("POST", "/api/v1/device/report", "DEV001", authTestNonce, "body1", time.Unix(1, 0)))
 
 	assert.NotEqual(t, sig1, sig2, "different body → different sig")
 	assert.NotEqual(t, sig1, sig3, "different method → different sig")

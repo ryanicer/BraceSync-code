@@ -146,6 +146,7 @@ func normalPressures() [20]int {
 func sendFrame(url, deviceID, secret string, frame Frame) error {
 	body, _ := json.Marshal(frame)
 	ts := time.Now()
+	nonce := RandomNonce() // T067：每请求 32 hex nonce
 
 	req, err := http.NewRequest("POST", url+"/api/v1/device/report", bytes.NewReader(body))
 	if err != nil {
@@ -154,7 +155,8 @@ func sendFrame(url, deviceID, secret string, frame Frame) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Device-Id", deviceID)
 	req.Header.Set("X-Timestamp", fmt.Sprintf("%d", ts.Unix()))
-	req.Header.Set("X-Signature", SignDeviceRequest(secret, "POST", "/api/v1/device/report", string(body), ts))
+	req.Header.Set("X-Nonce", nonce)
+	req.Header.Set("X-Signature", SignDeviceRequest(secret, "POST", "/api/v1/device/report", deviceID, nonce, string(body), ts))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -1,9 +1,9 @@
 // Package auth — DeviceSigVerifier 实现（T032：T002 桩转绿）
 //
-// 验签流程（对齐 T007 约定与 device-simulator sign.go 参考实现）：
+// 验签流程（T067 对齐硬件清单 §2.2 与 device-simulator sign.go 参考实现）：
 //  1. X-Timestamp 解析失败 / 超出 ±SignatureTimeWindow → 20402（时钟异常，
 //     设备按协议 §4.4 强制校时；与签名错误 20401 区分错误码）
-//  2. 签名串 = method + path + timestamp + body（BuildSignString），
+//  2. 签名串 = 6 行 \n 分隔格式（BuildSignString，含 device_id/nonce/body_sha256_hex），
 //     HMAC-SHA256(device_secret) 常量时间比对 → 不一致 20401
 //
 // 设备注册状态（20404）/绑定状态（20409）不在本函数职责内——由调用方
@@ -18,9 +18,10 @@ import (
 )
 
 // VerifySignature 验证设备请求签名（T002 桩转绿）。
-// deviceID/deviceSecret 由调用方先行解析（密钥查询失败即 20404，不进入本函数）。
+// deviceID/deviceSecret/nonce 由调用方先行解析（密钥查询失败即 20404，不进入本函数）。
+// nonce 取自 X-Nonce header，参与签名串（硬件清单 §2.2）。
 // 返回 *VerifyResult 永不为 nil：Valid=true 或携带 ErrorCode。
-func (v *DeviceSigVerifier) VerifySignature(method, path, body, timestampStr, signature, deviceID, deviceSecret string, serverTime time.Time) *VerifyResult {
+func (v *DeviceSigVerifier) VerifySignature(method, path, body, timestampStr, signature, deviceID, deviceSecret, nonce string, serverTime time.Time) *VerifyResult {
 	ts, err := strconv.ParseInt(timestampStr, 10, 64)
 	if err != nil {
 		return &VerifyResult{Valid: false, ErrorCode: "20402", ErrorMessage: "invalid X-Timestamp"}
@@ -31,7 +32,7 @@ func (v *DeviceSigVerifier) VerifySignature(method, path, body, timestampStr, si
 			ErrorMessage: "timestamp outside ±" + strconv.Itoa(SignatureTimeWindow) + "min window"}
 	}
 
-	want := HMACSHA256(deviceSecret, BuildSignString(method, path, body, deviceTime))
+	want := HMACSHA256(deviceSecret, BuildSignString(method, path, deviceID, nonce, body, deviceTime))
 	if !hmac.Equal([]byte(want), []byte(signature)) {
 		return &VerifyResult{Valid: false, ErrorCode: "20401", ErrorMessage: "signature mismatch"}
 	}

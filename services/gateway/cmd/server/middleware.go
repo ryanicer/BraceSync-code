@@ -138,8 +138,10 @@ func deviceSigAuth(agt *gatewayAuth) gin.HandlerFunc {
 			return
 		}
 
+		// T067：X-Nonce 参与 6 行签名串（硬件清单 §2.2）；缺失则 nonce=""，与客户端不一致 → 20401。
+		// VerifyNonce 防重放仍恒放行（TODO：Redis 接入后实现）。
 		res := agt.verifier.VerifySignature(c.Request.Method, c.Request.URL.Path, string(body),
-			c.GetHeader("X-Timestamp"), c.GetHeader("X-Signature"), deviceID, secret, agt.now())
+			c.GetHeader("X-Timestamp"), c.GetHeader("X-Signature"), deviceID, secret, c.GetHeader("X-Nonce"), agt.now())
 		if res == nil || !res.Valid {
 			code := 20401
 			if res != nil && res.ErrorCode != "" {
