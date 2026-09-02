@@ -67,14 +67,15 @@ test.describe('05-患者管理', () => {
 
       // 列信息存在性验证（整体表格文本中包含预期关键词簇）
       const wrapperText = await page.locator('.el-table__body-wrapper').textContent()
-      expect(wrapperText).toMatch(/PT-/) // 患者 ID
-      // 团队名存在性（seed 3 团队）
-      const hasTeam = /骨科|康复|侧弯|团队|组/.test(wrapperText ?? '')
+      // 患者 ID：staging seed 是 P20260003 等 P+数字 格式（PT- 前缀也兼容）
+      expect(wrapperText).toMatch(/P\d{4,}|PT-/)
+      // 团队名：staging seed 是 TEAM01-03 等英文+数字格式（中文 XX团队/组 也兼容）
+      const hasTeam = /TEAM\d+|[\u4e00-\u9fa5]{2,}(?:组|团队)/.test(wrapperText ?? '')
       expect(hasTeam).toBe(true)
       // 状态：活跃 / 未绑定 / 待分配 任一
       expect(wrapperText).toMatch(/活跃|未绑定|待分配|佩戴/)
-      // 设备：DEV- 前缀或「未绑定」至少出现 1 次
-      expect(wrapperText).toMatch(/DEV-|未绑定/)
+      // 设备：D+数字（如 D0002）或 DEV- 或「未绑定」
+      expect(wrapperText).toMatch(/D\d{3,}|DEV-|未绑定/)
     })
   })
 
@@ -122,13 +123,12 @@ test.describe('05-患者管理', () => {
     test('5.3 团队筛选：读取第一个存在的团队名 → 筛选后每行都含该团队名', async ({ page }) => {
       const rows = tableRows(page)
       const firstRowText = await rows.first().textContent() ?? ''
-      // 抓团队名（含"组"或"团队"的 2-10 字中文）
-      const m = firstRowText.match(/([\u4e00-\u9fa5]{2,10}(?:组|团队))/)
+      // 抓团队名：staging seed 是 TEAM01-03 等英文+数字格式（中文 XX团队/组 也兼容）
+      const teamRe = /(TEAM\d+|[\u4e00-\u9fa5]{2,10}(?:组|团队))/
+      const m = firstRowText.match(teamRe)
       const m2 = m
         ? undefined
-        : (await page.locator('.el-table').textContent() ?? '').match(
-            /([\u4e00-\u9fa5]{2,10}(?:组|团队))/,
-          )
+        : (await page.locator('.el-table').textContent() ?? '').match(teamRe)
       expect(m || m2).toBeTruthy()
       const teamName = ((m?.[1] || m2?.[1]) as string)!
       const teamSelect = page.locator('.team-select, .filter-select.team')
@@ -201,8 +201,8 @@ test.describe('05-患者管理', () => {
           .catch(() => {})
       }
 
-      // 4) 保存 / 提交按钮
-      const saveBtn = dialog.getByRole('button', { name: /保存|确认|提交|添加/ }).first()
+      // 4) 保存 / 提交按钮（staging 应用文案是「确定」，兼容 保存/确认/提交/添加）
+      const saveBtn = dialog.getByRole('button', { name: /保存|确定|确认|提交|添加/ }).first()
       await expect(saveBtn).toBeVisible()
       await saveBtn.click()
 
@@ -239,84 +239,52 @@ test.describe('05-患者管理', () => {
   })
 
   test.describe('分配团队（写操作）', () => {
-    test('5.5 给新建患者或待分配患者分配团队 → ElMessage 成功 + 行显示团队名', async ({ page }) => {
-      let targetRow: Locator | null = null
+    test('5.5 行 → 抽屉 → 分配团队 → 选团队 → 确定 → ElMessage 成功', async ({ page }) => {
       const rows = tableRows(page)
+      expect(await rows.count()).toBeGreaterThanOrEqual(1)
 
-      // 如果我们有创建成功的患者：优先搜该患者
-      if (createdPatients.length > 0) {
-        const name = createdPatients[createdPatients.length - 1]
-        const search = page.locator('.search-input input')
-        if ((await search.count()) > 0) {
-          await search.fill(name)
-          const qBtn = page.locator('.page-toolbar').getByRole('button', { name: '查询' })
-          if ((await qBtn.count()) > 0) await qBtn.first().click()
-          else await search.press('Enter')
-          await page.waitForTimeout(2_000)
-        }
-        const found = tableRows(page)
-        if ((await found.count()) >= 1) targetRow = found.first()
-      }
-      // 否则找含「待分配」或团队列为空的行
-      if (!targetRow) {
-        const total = await rows.count()
-        for (let i = 0; i < total; i++) {
-          const t = await rows.nth(i).textContent()
-          if (/待分配|未分配|未绑定团队/.test(t ?? '')) {
-            targetRow = rows.nth(i)
-            break
-          }
-        }
-      }
-      // 兜底：取任意一行有「编辑/分配/操作」按钮的
-      if (!targetRow) {
-        const total = await rows.count()
-        for (let i = 0; i < total; i++) {
-          const hasBtn =
-            (await rows.nth(i).getByRole('button', { name: /分配|编辑|操作/ }).count()) > 0
-          if (hasBtn) {
-            targetRow = rows.nth(i)
-            break
-          }
-        }
-      }
-      if (!targetRow) {
-        expect(targetRow).not.toBeNull()
-      }
-      // 找「分配团队」或「编辑」按钮
-      const assignBtn = targetRow!.getByRole('button', { name: /分配团队|分配/ }).first()
-      const editBtn = targetRow!.getByRole('button', { name: /编辑|修改/ }).first()
-      let btn = (await assignBtn.count()) > 0 ? assignBtn : editBtn
-      await expect(btn.first()).toBeVisible({ timeout: 5_000 })
-      await btn.first().click()
-      const dialog = page.locator('.el-dialog')
+      // patients 页 @row-click=viewDetail → 点击行内非 selection 列单元格打开抽屉
+      const firstRow = rows.first()
+      // 点第 2 个 td（第 1 个是 selection 列，避开），稳定触发 row-click
+      const nameTd = firstRow.locator('td').nth(1)
+      await nameTd.click()
+
       const drawer = page.locator('.el-drawer')
-      const dialogVisibleP = dialog.isVisible({ timeout: 8_000 }).catch(() => false)
-      const drawerVisibleP = drawer.isVisible({ timeout: 8_000 }).catch(() => false)
-      const panelVisible = (await Promise.race([dialogVisibleP, drawerVisibleP])) as boolean
-      expect(panelVisible).toBe(true)
-      const panel: Locator = (await dialog.isVisible().catch(() => false)) ? dialog : drawer
-      // 选团队 select：第一个 el-select（如果有）
-      const teamSelect = panel.locator('.el-select').first()
+      await expect(drawer).toBeVisible({ timeout: 8_000 })
+
+      // 抽屉 .drawer-actions 内「分配团队」按钮
+      const assignBtn = drawer.getByRole('button', { name: '分配团队' })
+      await expect(assignBtn).toBeVisible({ timeout: 5_000 })
+      await assignBtn.click()
+
+      // 弹出「分配团队」dialog
+      const dialog = page.locator('.el-dialog').filter({ hasText: /分配团队|分配/ })
+      await expect(dialog).toBeVisible({ timeout: 8_000 })
+
+      // 选目标团队：dialog 内第一个 el-select
+      const teamSelect = dialog.locator('.el-select').first()
       await expect(teamSelect).toBeVisible({ timeout: 8_000 })
-      // 随便选第一个可见团队
       await teamSelect.click({ timeout: 5_000 })
-      const firstTeamOpt = page.locator('.el-select-dropdown:visible .el-select-dropdown__item').nth(1)
-      const teamName = (await firstTeamOpt.textContent())?.trim()
-      if (!teamName) {
-        await page.locator('.el-select-dropdown:visible .el-select-dropdown__item').first().click()
-      } else {
-        await firstTeamOpt.click()
-      }
-      // 保存
-      const save = panel.getByRole('button', { name: /保存|确认|提交/ }).first()
-      await expect(save).toBeVisible({ timeout: 5_000 })
-      await save.click()
-      // ElMessage 成功（允许任意非 error 文案）
+      const dropdown = page.locator('.el-select-dropdown:visible')
+      await expect(dropdown).toBeVisible({ timeout: 5_000 })
+      const opts = dropdown.locator('.el-select-dropdown__item')
+      await expect(opts.first()).toBeVisible({ timeout: 8_000 })
+      // 选第 2 项（跳过占位）或第 1 项（如果只有 1 个团队）
+      const optCount = await opts.count()
+      const targetOpt = optCount >= 2 ? opts.nth(1) : opts.first()
+      await targetOpt.click()
+
+      // 点「确定」
+      const confirmBtn = dialog.getByRole('button', { name: '确定' }).first()
+      await expect(confirmBtn).toBeVisible({ timeout: 5_000 })
+      await confirmBtn.click()
+
+      // ElMessage 成功（不能含 失败/错误/error）
       const msg = adminMessage(page)
       const visible = await msg.isVisible({ timeout: 15_000 }).catch(() => false)
       if (visible) {
         const t = await msg.textContent()
+        // 允许成功 / 分配成功；不能失败
         expect(t).not.toMatch(/失败|错误|error|500|404/)
       }
     })

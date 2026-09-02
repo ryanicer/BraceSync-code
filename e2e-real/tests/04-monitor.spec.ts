@@ -109,7 +109,11 @@ test.describe('04-实时监控', () => {
       // 获取第 0、1、2 个患者名（跳过可能的 "请选择" 占位）
       const countOpt = await options.count()
       expect(countOpt).toBeGreaterThanOrEqual(5)
-      // 点击空白处关闭下拉（先不选）
+      // 先读取要切换的患者名（下拉还开着，否则后面 options.nth(1).textContent() 会超时）
+      const opt1Text = (await options.nth(1).textContent()) ?? ''
+      const opt2Text = (await options.nth(2).textContent()) ?? ''
+      expect(opt1Text.length).toBeGreaterThan(0)
+      // 关闭下拉
       await page.locator('.card-title').first().click()
       await page.locator('.el-select-dropdown:visible').waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {})
 
@@ -121,7 +125,7 @@ test.describe('04-实时监控', () => {
       await pickSelectOption(
         page,
         page.locator('.patient-card .el-select').first(),
-        (await options.nth(1).textContent()) ?? '',
+        opt1Text,
       )
       // 等待状态或时间戳变化
       await expect(page.locator('.update-time')).not.toHaveText(tsBefore ?? '', {
@@ -131,13 +135,13 @@ test.describe('04-实时监控', () => {
         await expect(page.locator('.status-indicator')).toBeVisible()
       })
 
-      // 3) 再切一次（取第 2 个患者）
+      // 3) 再切一次（用提前取的 opt2Text，避免下拉已关闭时再读 options）
       const tsMid = await page.locator('.update-time').textContent()
       await page.waitForTimeout(1_100)
       await pickSelectOption(
         page,
         page.locator('.patient-card .el-select').first(),
-        (await options.nth(2).textContent()) ?? '',
+        opt2Text,
       )
       // 页面仍在 /monitor
       expect(new URL(page.url()).pathname).toContain('/monitor')
