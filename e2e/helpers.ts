@@ -38,7 +38,7 @@ export const loginPage = (page: Page) => ({
   smsBtn: page.locator('.sms-btn').first(),
   checkbox: page.locator('.checkbox').first(),
   loginBtn: page.locator('.btn-primary').first(),
-  wechatBtn: page.locator('.wechat-login-btn').first(), // T074 微信登录按钮（留 Ella 新用例）
+  wechatBtn: page.locator('.btn-wechat').first(), // T074 微信登录按钮（login/index.vue L41 class=btn-wechat；留 Ella 新用例）
 })
 
 /** 完成一次 mock 登录并等待跳转到 monitor */

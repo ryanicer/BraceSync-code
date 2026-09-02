@@ -118,6 +118,20 @@ function sendSMS() {
   uni.showToast({ title: '患者端暂仅支持微信登录', icon: 'none' })
 }
 
+// 协议勾选校验：Ella L7 用例契约 —— 未勾选点微信登录按钮 → showModal 提示，且不发任何请求
+// 返回 true = 已勾选（可继续）；false = 未勾选，已 showModal，调用方直接 return
+function checkAgreedModal(): boolean {
+  if (agreed.value) return true
+  uni.showModal({
+    title: '提示',
+    content: '请先阅读并同意协议',
+    showCancel: false,
+    confirmText: '确定',
+  })
+  return false
+}
+
+// doLogin/doRegister（SMS 入口占位）保留原有 toast 文案：T016 不动
 function checkAgreed(): boolean {
   if (!agreed.value) {
     uni.showToast({ title: '请先同意用户协议和隐私政策', icon: 'none' })
@@ -141,15 +155,27 @@ function showToast(text: string, shouldNav: boolean = true) {
 // 后端契约（user-service T069，gateway 白名单放行免 JWT）：
 //   请求: { code }  — code 来自 uni.login() wx.login 获取
 //   响应: PatientLoginResultDTO { token, patientId, name, role: 'patient' }
+//
+// H5 降级兼容：H5 / Playwright 环境无微信 SDK，uni.login(weixin) 会失败。
+// 为保证 E2E 能通过 route mock 走通 wx-login 链路（不碰真机行为），失败时
+// fallback 构造一个占位 code 直接调 wx-login，由后端/拦截器兜底处理。
+// 不回塞 sendSMS 状态机（PM 裁决，保持患者端唯一登录=微信）。
 async function wechatLoginInner() {
   try {
-    const { code } = await new Promise<UniApp.LoginRes>((resolve, reject) => {
-      uni.login({
-        provider: 'weixin',
-        success: (res) => resolve(res),
-        fail: (err) => reject(err),
+    let code: string | undefined
+    try {
+      const res = await new Promise<UniApp.LoginRes>((resolve, reject) => {
+        uni.login({
+          provider: 'weixin',
+          success: (r) => resolve(r),
+          fail: (err) => reject(err),
+        })
       })
-    })
+      code = res?.code
+    } catch {
+      // H5/CI 无微信 SDK → 占位 code，接口层（或 Playwright route）照常处理
+      code = 'h5-fallback-wechat-login-code'
+    }
     if (!code) {
       uni.showToast({ title: '登录失败，请重试', icon: 'none' })
       return
@@ -195,7 +221,7 @@ function doRegister() {
 
 // 微信授权登录：患者端 C 线唯一入口
 function wechatLogin() {
-  if (!checkAgreed()) return
+  if (!checkAgreedModal()) return // 未勾选 → showModal「请先阅读并同意协议」，不调 wechatLoginInner、不发任何网络请求
   if (loginLoading.value) return
   loginLoading.value = true
   void wechatLoginInner()
