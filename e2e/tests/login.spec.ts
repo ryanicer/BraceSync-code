@@ -31,20 +31,41 @@ test('L1-微信登录按钮可见可用', async ({ page }) => {
 })
 
 // ---------------------------------------------------------------------
-// L7: 协议勾选前按钮 disabled，勾选后 enabled
+// L7: 协议勾选前点击→uni.showModal(不使用微信登录),勾选后→wx-login
 // ---------------------------------------------------------------------
-test('L7-协议勾选激活按钮', async ({ page }) => {
+test('L7-协议勾选前未同意弹出 Modal，勾选后可登录', async ({ page }) => {
   const el = loginPage(page)
   
-  // 初始 disabled
-  await expect(el.wechatBtn).toBeDisabled()
+  // Step 1: 初始为已勾选状态，先取消勾选
+  await expect(el.checkbox).toHaveClass(/checkbox-checked/)
+  await el.checkbox.click()
+  await expect(el.checkbox).not.toHaveClass(/checkbox-checked/)
   
-  // 勾选协议
+  // Step 2: 点击微信按钮 → showModal 出现（不发请求）
+  let wxLoginCalled = false
+  await page.route('/api/v1/patient/wx-login', () => { wxLoginCalled = true }).dispose()
+  await page.route('/api/v1/patient/wx-login', async route => {
+    throw new Error('不应调用 wx-login') // Modal 拦截应阻止请求
+  })
+  
+  await el.wechatBtn.click()
+  
+  // Modal 标题 + 内容断言（来自 login/index.vue L181-182）
+  await expect(page.locator('uni-modal').filter({ hasText: /请使用微信登录/ })).toBeVisible()
+  
+  // wx-login route 零命中
+  expect(wxLoginCalled).toBe(false)
+  
+  // Step 3: 重新勾选协议 → 点击按钮 → 正常跳转
   await el.checkbox.click()
   await expect(el.checkbox).toHaveClass(/checkbox-checked/)
   
-  // 按钮 enabled
-  await expect(el.wechatBtn).toBeEnabled()
+  await page.route('/api/v1/patient/wx-login', async (route) => {
+    return route.fulfill({ json: { token: MOCK_TOKEN, ...MOCK_PATIENT } })
+  })
+  
+  await el.wechatBtn.click()
+  await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
 })
 
 // ---------------------------------------------------------------------
@@ -69,16 +90,16 @@ test('L4-L2-点击微信按钮跳转 monitor 并写入 storage', async ({ page }
   await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
   await expect(page.getByText('实时监测').first()).toBeVisible()
   
-  // 断言 storage 写入
-  const storage = await page.context().storageState()
-  expect(storage).toHaveProperty('tokens') // T074 基建已注入 bracesync_token
+  // 断言 localStorage 已写入 bracesync_token（T074 setupPatientE2E 注入）
+  const token = await page.evaluate(() => localStorage.getItem('bracesync_token'))
+  expect(token).toBe(MOCK_TOKEN)
   
   // 断言请求体包含 fallback code（核心契约）
   expect(capturedReq.code).toBe('h5-fallback-wechat-login-code')
 })
 
 // ---------------------------------------------------------------------
-// L3: 接口失败 toast+ 不跳转
+// L3: 接口失败 toast+ 不跳转（toast 文案：登录失败，请重试）
 // ---------------------------------------------------------------------
 test('L3-接口失败显示 toast 且不跳转', async ({ page }) => {
   await page.route('/api/v1/patient/wx-login', async (route) => {
@@ -89,15 +110,15 @@ test('L3-接口失败显示 toast 且不跳转', async ({ page }) => {
   await el.checkbox.click()
   await el.wechatBtn.click()
   
-  // Toast 显示（错误提示）
-  await expect(page.locator('uni-toast').filter({ hasText: /登录失败 | 服务器错误/ })).toBeVisible()
+  // Toast 显示（来自 login/index.vue L170）
+  await expect(page.locator('uni-toast').filter({ hasText: /登录失败，请重试/ })).toBeVisible()
   
   // 仍停留在 login
   await expect(page).toHaveURL(/pages\/login/)
 })
 
 // ---------------------------------------------------------------------
-// L6: 登录失败后可重试
+// L6: 登录失败后可重试（toast 文案：登录失败，请重试）
 // ---------------------------------------------------------------------
 test('L6-登录失败后可重试', async ({ page }) => {
   let callCount = 0
@@ -116,9 +137,9 @@ test('L6-登录失败后可重试', async ({ page }) => {
   const el = loginPage(page)
   await el.checkbox.click()
   
-  // 第一次点击 - 失败
+  // 第一次点击 - 失败（toast 文案来自 login/index.vue L170）
   await el.wechatBtn.click()
-  await expect(page.locator('uni-toast')).toBeVisible()
+  await expect(page.locator('uni-toast').filter({ hasText: /登录失败，请重试/ })).toBeVisible()
   await expect(page).toHaveURL(/pages\/login/)
   
   // 第二次点击 - 成功
@@ -128,26 +149,30 @@ test('L6-登录失败后可重试', async ({ page }) => {
 })
 
 // ---------------------------------------------------------------------
-// L8: 点击后按钮进入 loading 且 disabled（防重复点击）
+// L8: 点击后进入加载态，1s 内第二次点击不产生第二个请求（防重）
 // ---------------------------------------------------------------------
-test('L8-点击后按钮进入 loading 且 disabled', async ({ page }) => {
+test('L8-点击后按钮防重复点击', async ({ page }) => {
   const el = loginPage(page)
   await el.checkbox.click()
   
-  // Mock 模拟延迟请求
+  let requestCount = 0
+  
   await page.route('/api/v1/patient/wx-login', async (route) => {
+    requestCount++
     await new Promise(resolve => setTimeout(resolve, 1000))
     return route.fulfill({ json: { token: MOCK_TOKEN, ...MOCK_PATIENT } })
   })
   
+  // 快速连续点击 3 次（模拟用户急躁行为）
+  await el.wechatBtn.click()
+  await el.wechatBtn.click()
   await el.wechatBtn.click()
   
-  // 按钮 loading 样式 + disabled
-  await expect(el.wechatBtn).toHaveClass(/loading/)
-  await expect(el.wechatBtn).toBeDisabled()
+  // 只产生一个请求（loginLoading.value guard）
+  expect(requestCount).toBe(1)
   
-  // 防止重复点击 - 显示加载文案
-  await expect(el.wechatBtn).toHaveText(/正在加载 | 加载中/)
+  // 最终仍跳转到 monitor
+  await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
 })
 
 // ---------------------------------------------------------------------
