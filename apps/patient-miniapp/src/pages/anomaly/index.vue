@@ -78,8 +78,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
-import { USE_MOCK, request } from '../../utils/request'
-import { mockPatientAlerts } from '../../mock/alerts'
+import { request } from '../../utils/request'
+import { useAuthStore } from '../../stores/auth'
 
 // 数据
 const alerts = ref<Alert[]>([])
@@ -87,8 +87,7 @@ const filter = ref<'all' | 'pressure' | 'wear'>('all')
 const loading = ref(false)
 const error = ref('')
 
-// 患者 ID（mock 硬编码，真实环境从登录态获取）
-const PATIENT_ID = 'PT-001'
+const authStore = useAuthStore()
 
 // 过滤：pressure = pressure_high + pressure_fluctuation + sensor_drift，wear = wear_interrupt
 const filteredAlerts = computed(() => {
@@ -128,26 +127,26 @@ function formatTime(iso: string): string {
   return `${month}/${day} ${h}:${m}`
 }
 
-// 加载数据
+// 加载真实告警：alert-service GET /api/v1/alerts?patientId=xxx&page=&pageSize=
+// 患者 ID 改为从登录态 authStore.patientId 获取（T074 真实登录注入）
 async function loadAlerts() {
   loading.value = true
   error.value = ''
   try {
-    if (USE_MOCK) {
-      alerts.value = mockPatientAlerts()
-    } else {
-      // 契约方案 A: GET /api/v1/alerts?patientId=xxx（alert-service 公开查询）
-      // 契约方案 B: GET /api/v1/patients/{patientId}/realtime（data-service 快照中 alerts 数组，当前恒空）
-      // 优先走方案 A，alert-service 提供完整分页
-      const res = await request<PaginatedResponse<Alert>>({
-        url: '/api/v1/alerts',
-        method: 'GET',
-        data: { patientId: PATIENT_ID, page: 1, pageSize: 50 },
-      })
-      alerts.value = res.list
+    const patientId = authStore.patientId
+    if (!patientId) {
+      error.value = '请先登录'
+      return
     }
+    const res = await request<PaginatedResponse<Alert>>({
+      url: '/api/v1/alerts',
+      method: 'GET',
+      data: { patientId, page: 1, pageSize: 100 },
+    })
+    alerts.value = res?.list ?? []
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '加载失败'
+    alerts.value = []
   } finally {
     loading.value = false
   }
@@ -172,7 +171,7 @@ function viewDetail(alert: Alert) {
 }
 
 onMounted(() => {
-  loadAlerts()
+  void loadAlerts()
 })
 </script>
 

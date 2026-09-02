@@ -1,7 +1,7 @@
 import { getToken, removeToken } from './token'
 
-// MOCK 开关：接口就绪后设为 false 并填写 API_BASE_URL
-export const USE_MOCK = true
+// MOCK 开关：T074 切换真实模式 — 生产部署 USE_MOCK=false，API_BASE_URL 指向网关域名
+export const USE_MOCK = false
 export const API_BASE_URL = 'https://api.hbksd.com.cn'
 
 interface RequestOptions {

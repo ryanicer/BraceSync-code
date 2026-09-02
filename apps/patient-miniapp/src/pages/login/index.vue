@@ -90,6 +90,15 @@
 <script setup lang="ts">
 import { ref, onUnmounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
+import { request } from '../../utils/request'
+
+// 患者登录响应：POST /api/v1/patient/wx-login 返回（契约 user-service model.PatientLoginResultDTO）
+interface WxLoginResp {
+  token: string
+  patientId: string
+  name: string
+  role: string
+}
 
 const authStore = useAuthStore()
 const activeTab = ref<'login' | 'register'>('login')
@@ -102,23 +111,11 @@ const agreed = ref(true)
 const smsCountdown = ref(0)
 const toastVisible = ref(false)
 const toastText = ref('')
+const loginLoading = ref(false)
 let smsTimer: ReturnType<typeof setInterval> | null = null
 
 function sendSMS() {
-  if (smsCountdown.value > 0) return
-  if (!/^1\d{10}$/.test(phone.value)) {
-    uni.showToast({ title: '请输入正确的手机号', icon: 'none' })
-    return
-  }
-  smsCountdown.value = 60
-  smsTimer = setInterval(() => {
-    smsCountdown.value--
-    if (smsCountdown.value <= 0 && smsTimer) {
-      clearInterval(smsTimer)
-      smsTimer = null
-    }
-  }, 1000)
-  uni.showToast({ title: '验证码已发送（mock）', icon: 'none' })
+  uni.showToast({ title: '患者端暂仅支持微信登录', icon: 'none' })
 }
 
 function checkAgreed(): boolean {
@@ -129,55 +126,79 @@ function checkAgreed(): boolean {
   return true
 }
 
-function showToast(text: string) {
+function showToast(text: string, shouldNav: boolean = true) {
   toastText.value = text
   toastVisible.value = true
   setTimeout(() => {
     toastVisible.value = false
-    uni.switchTab({ url: '/pages/monitor/index' })
+    if (shouldNav) {
+      uni.switchTab({ url: '/pages/monitor/index' })
+    }
   }, 1500)
 }
 
-// MOCK: 跳过验证直接登录
-// 替换计划: utils/request.ts 设 USE_MOCK=false，接 user-service POST /api/v1/auth/login
-function doLogin() {
+// 真实登录：wx.login() → POST /api/v1/patient/wx-login → authStore.login
+// 后端契约（user-service T069，gateway 白名单放行免 JWT）：
+//   请求: { code }  — code 来自 uni.login() wx.login 获取
+//   响应: PatientLoginResultDTO { token, patientId, name, role: 'patient' }
+async function wechatLoginInner() {
+  try {
+    const { code } = await new Promise<UniApp.LoginRes>((resolve, reject) => {
+      uni.login({
+        provider: 'weixin',
+        success: (res) => resolve(res),
+        fail: (err) => reject(err),
+      })
+    })
+    if (!code) {
+      uni.showToast({ title: '登录失败，请重试', icon: 'none' })
+      return
+    }
+    const resp = await request<WxLoginResp>({
+      url: '/api/v1/patient/wx-login',
+      method: 'POST',
+      data: { code },
+    })
+    if (!resp || !resp.token || !resp.patientId) {
+      uni.showToast({ title: '登录失败，请重试', icon: 'none' })
+      return
+    }
+    authStore.login(resp.token, resp.patientId)
+    showToast('登录成功，正在跳转...')
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '登录失败，请重试'
+    uni.showToast({ title: msg, icon: 'none' })
+  } finally {
+    loginLoading.value = false
+  }
+}
+
+// T074：患者端只走 POST /api/v1/patient/wx-login（微信静默授权）；
+// 后端无手机号/验证码/密码患者登录通道，故在此引导用户点击下方微信登录。
+function requireWechatLogin() {
   if (!checkAgreed()) return
-  if (!/^1\d{10}$/.test(phone.value)) {
-    uni.showToast({ title: '请输入正确的手机号', icon: 'none' })
-    return
-  }
-  if (!smsCode.value) {
-    uni.showToast({ title: '请输入验证码', icon: 'none' })
-    return
-  }
-  authStore.login('mock-token-001', 'pat-001')
-  showToast('登录成功，正在跳转...')
+  uni.showModal({
+    title: '请使用微信登录',
+    content: '患者端当前仅支持微信授权登录，请点击下方「微信授权登录」按钮完成登录。',
+    showCancel: false,
+    confirmText: '我知道了',
+  })
+}
+
+function doLogin() {
+  requireWechatLogin()
 }
 
 function doRegister() {
-  if (!checkAgreed()) return
-  if (!/^1\d{10}$/.test(phone.value)) {
-    uni.showToast({ title: '请输入正确的手机号', icon: 'none' })
-    return
-  }
-  if (!password.value || password.value.length < 6 || password.value.length > 16) {
-    uni.showToast({ title: '密码需为 6-16 位', icon: 'none' })
-    return
-  }
-  if (password.value !== confirmPassword.value) {
-    uni.showToast({ title: '两次密码不一致', icon: 'none' })
-    return
-  }
-  authStore.login('mock-token-001', 'pat-001')
-  showToast('注册成功，正在跳转...')
+  requireWechatLogin()
 }
 
-// MOCK: 微信授权登录
-// 替换计划: uni.login 获取 code -> user-service POST /api/v1/auth/wechat
+// 微信授权登录：患者端 C 线唯一入口
 function wechatLogin() {
   if (!checkAgreed()) return
-  authStore.login('mock-token-001', 'pat-001')
-  showToast('微信授权登录成功，正在跳转...')
+  if (loginLoading.value) return
+  loginLoading.value = true
+  void wechatLoginInner()
 }
 
 onUnmounted(() => {

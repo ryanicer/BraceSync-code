@@ -12,7 +12,7 @@
     </view>
 
     <view v-if="activeTab === 'wearing'" class="section">
-      <view class="wearing-list">
+      <view v-if="wearingData.length > 0" class="wearing-list">
         <template v-for="month in wearingByMonth" :key="month.label">
           <view class="month-header"><text>{{ month.label }}</text></view>
           <view v-for="item in month.items" :key="item.date" class="wearing-row">
@@ -28,10 +28,14 @@
           </view>
         </template>
       </view>
+      <view v-else class="card empty-card">
+        <text class="empty-text">{{ wearingError || '暂无佩戴数据' }}</text>
+        <text class="empty-sub" v-if="!wearingError">持续佩戴后将自动记录，敬请期待</text>
+      </view>
     </view>
 
     <view v-else class="section pressure-section">
-      <view class="pressure-list">
+      <view v-if="pressureData.length > 0" class="pressure-list">
         <view v-for="(group, gi) in pressureData" :key="group.date" class="p-group">
           <view class="p-group-header" @click="toggleGroup(gi)">
             <text class="p-group-date">{{ group.date }}</text>
@@ -53,21 +57,52 @@
           </view>
         </view>
       </view>
+      <view v-else class="card empty-card">
+        <text class="empty-text">{{ pressureError || '暂无压力异常' }}</text>
+        <text class="empty-sub" v-if="!pressureError">一切正常，请继续坚持佩戴</text>
+      </view>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { mockWearingData, mockPressureAnomalies } from '../../mock/history'
-import type { WearingRecord, PressureAnomaly } from '../../mock/history'
+import { ref, computed, onMounted } from 'vue'
+import { request } from '../../utils/request'
+import { useAuthStore } from '../../stores/auth'
+import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
 
-// MOCK 数据
-// 替换计划: 佩戴数据接 data-service 聚合查询，压力异常接 alert-service getAlerts
-const wearingData = ref<WearingRecord[]>(mockWearingData())
-const pressureData = ref<PressureAnomaly[]>(mockPressureAnomalies())
+// 佩戴记录（患者端查询契约：当前后端缺少专门日聚合端点，留空显示"暂无数据"）
+// 后续可接入 data-service 患者日佩戴统计端点后再放开
+export interface WearingRecord {
+  date: string
+  hours: number
+  status: 'ok' | 'warn' | 'error'
+  label: string
+}
+
+export interface PressureAnomalyItem {
+  point: string
+  type: string
+  level: 'warn' | 'error'
+  detail: string
+  threshold: string
+  meta: string
+}
+
+export interface PressureAnomaly {
+  date: string
+  items: PressureAnomalyItem[]
+}
+
+const authStore = useAuthStore()
+
+// 数据
+const wearingData = ref<WearingRecord[]>([])
+const pressureData = ref<PressureAnomaly[]>([])
 const activeTab = ref<'wearing' | 'pressure'>('wearing')
 const expandedGroups = ref<number[]>([0, 1, 2])
+const wearingError = ref('')
+const pressureError = ref('')
 
 const wearingByMonth = computed(() => {
   const groups: { label: string; items: WearingRecord[] }[] = []
@@ -107,6 +142,68 @@ function toggleGroup(idx: number) {
     expandedGroups.value.push(idx)
   }
 }
+
+// 将 alert-service Alert 转为 UI 的 PressureAnomaly（按日期分组）
+function alertsToPressureAnomalies(alerts: Alert[]): PressureAnomaly[] {
+  const byDate = new Map<string, PressureAnomalyItem[]>()
+  for (const a of alerts) {
+    // 仅按压力类告警聚合（过滤 wear_interrupt 给异常事件页展示）
+    if (a.type === 'wear_interrupt') continue
+    const date = a.createdAt ? a.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10)
+    const thresholdTxt = a.thresholdValue != null ? `>${a.thresholdValue}N` : '阈值'
+    const actualTxt = a.actualValue != null ? `${a.actualValue}N` : ''
+    const item: PressureAnomalyItem = {
+      point: a.sensorPoint || 'P??',
+      type: a.type === 'pressure_high' ? '偏高' : a.type === 'pressure_fluctuation' ? '压力波动' : a.type,
+      level: a.severity === 'critical' ? 'error' : 'warn',
+      detail: a.detail || a.message || (actualTxt ? `峰值 ${actualTxt}` : '压力异常'),
+      threshold: thresholdTxt,
+      meta: actualTxt ? `实际值 ${actualTxt} · ${a.processNote ? a.processNote : a.resolvedStatus === 'resolved' ? '已恢复' : '关注'}` : a.resolvedStatus === 'resolved' ? '已恢复' : '关注中',
+    }
+    if (!byDate.has(date)) byDate.set(date, [])
+    byDate.get(date)!.push(item)
+  }
+  const arr: PressureAnomaly[] = []
+  for (const [date, items] of byDate) {
+    arr.push({ date, items })
+  }
+  arr.sort((x, y) => (x.date < y.date ? 1 : -1))
+  return arr
+}
+
+// 加载真实压力异常：GET /api/v1/alerts?patientId=xxx
+async function loadPressure() {
+  pressureError.value = ''
+  try {
+    const patientId = authStore.patientId
+    if (!patientId) {
+      pressureError.value = '请先登录'
+      pressureData.value = []
+      return
+    }
+    const res = await request<PaginatedResponse<Alert>>({
+      url: '/api/v1/alerts',
+      method: 'GET',
+      data: { patientId, page: 1, pageSize: 200 },
+    })
+    pressureData.value = alertsToPressureAnomalies(res?.list ?? [])
+  } catch (e: unknown) {
+    pressureError.value = e instanceof Error ? e.message : '加载失败'
+    pressureData.value = []
+  }
+}
+
+// 加载佩戴数据：当前后端未开放患者端日聚合端点（daily-wear 查询仅 admin）
+// 故此处暂时返回空列表，并在 UI 提示"持续佩戴后将自动记录"，自报须声明。
+function loadWearing() {
+  wearingError.value = ''
+  wearingData.value = []
+}
+
+onMounted(() => {
+  void loadPressure()
+  loadWearing()
+})
 </script>
 
 <style scoped>
