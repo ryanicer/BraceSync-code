@@ -403,6 +403,9 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 }
 
 // getRealtimeFromDB DB 优先实时快照：pressure_records 最新行驱动，Redis 仅补充状态与今日统计
+// 口径对齐 Redis 路径：maxPressure/maxPoint 取 stat:today（当日全量最大），
+// 热力图 & PressureRecords 取 pressure_records 最新行（实时帧），
+// stat:today 为空时回退到最新帧的 max（避免前端空值）。
 func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot) (*model.RealtimeSnapshot, *model.AppError) {
 	rec, hasRecord, err := s.latest.GetLatestRecord(ctx, patientID)
 	if err != nil {
@@ -414,9 +417,31 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 	}
 
 	snapshot.PressureRecords = []model.PressureRecordDTO{rec.ToDTO()}
-	snapshot.MaxPressure = float64(rec.MaxPressure)
-	snapshot.MaxPoint = rec.MaxPoint()
 	snapshot.PressureHeatmap = model.BuildHeatmap(rec.Points)
+
+	// 一次性读 stat:today：wear_minutes / max_pressure / max_point / abnormal_count
+	if stats, stErr := s.cache.GetStatToday(ctx, patientID); stErr == nil {
+		if v, e := strconv.Atoi(stats["wear_minutes"]); e == nil {
+			snapshot.TodayHours = float64(v) / 60.0
+		}
+		if v, e := strconv.ParseFloat(stats["max_pressure"], 64); e == nil && v > 0 {
+			snapshot.MaxPressure = v
+		} else {
+			snapshot.MaxPressure = float64(rec.MaxPressure)
+		}
+		if stats["max_point"] != "" {
+			snapshot.MaxPoint = stats["max_point"]
+		} else {
+			snapshot.MaxPoint = rec.MaxPoint()
+		}
+		if v, e := strconv.Atoi(stats["abnormal_count"]); e == nil {
+			snapshot.Events = v
+		}
+	} else {
+		// stat:today 回退：用最新帧兜底（防止首次上报当日无 rollup 时前端空白）
+		snapshot.MaxPressure = float64(rec.MaxPressure)
+		snapshot.MaxPoint = rec.MaxPoint()
+	}
 
 	// 状态推导：abnormal 优先；Redis lastseen ≤2h → online；否则 DB ts ≤2h → online
 	if dbStatus == "abnormal" {
@@ -427,15 +452,6 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 		snapshot.Status = "online"
 	}
 
-	// 今日统计补充（Redis stat:today，失败默认 0）
-	if stats, stErr := s.cache.GetStatToday(ctx, patientID); stErr == nil {
-		if v, e := strconv.Atoi(stats["wear_minutes"]); e == nil {
-			snapshot.TodayHours = float64(v) / 60.0
-		}
-		if v, e := strconv.Atoi(stats["abnormal_count"]); e == nil {
-			snapshot.Events = v
-		}
-	}
 	return snapshot, nil
 }
 
