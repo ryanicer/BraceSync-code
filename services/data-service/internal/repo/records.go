@@ -175,6 +175,35 @@ func (r *RecordRepo) QueryHistory(ctx context.Context, patientID string, from, t
 	return list, total, rows.Err()
 }
 
+const latestRecordSQL = `
+SELECT record_id, device_id, patient_id, ts,
+  p01,p02,p03,p04,p05,p06,p07,p08,p09,p10,
+  p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,
+  max_pressure, upload_time
+FROM pressure_records
+WHERE patient_id = $1
+ORDER BY ts DESC
+LIMIT 1`
+
+// GetLatestRecord 查询患者最新一条 pressure_records（命中 idx_pr_patient_ts）
+func (r *RecordRepo) GetLatestRecord(ctx context.Context, patientID string) (model.PressureRecord, bool, error) {
+	rec := model.PressureRecord{}
+	dest := make([]any, 0, model.PointCount+6)
+	dest = append(dest, &rec.RecordID, &rec.DeviceID, &rec.PatientID, &rec.Ts)
+	for i := 0; i < model.PointCount; i++ {
+		dest = append(dest, &rec.Points[i])
+	}
+	dest = append(dest, &rec.MaxPressure, &rec.UploadTime)
+	err := r.pool.QueryRow(ctx, latestRecordSQL, patientID).Scan(dest...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return rec, false, nil
+	}
+	if err != nil {
+		return rec, false, err
+	}
+	return rec, true, nil
+}
+
 // frameArgs 组装 23 个插入参数
 func frameArgs(deviceID, patientID string, f PendingFrame) []any {
 	args := make([]any, 0, 23)

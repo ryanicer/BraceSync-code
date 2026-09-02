@@ -49,6 +49,12 @@ type rollupTask struct {
 	QueuedAt  string `json:"queued_at"`
 }
 
+// latestRecordStore DB 优先实时快照数据源（*repo.RecordRepo 实现；
+// 测试 stub 不实现时 latest=nil，GetRealtime 走 Redis 回退）
+type latestRecordStore interface {
+	GetLatestRecord(ctx context.Context, patientID string) (rec model.PressureRecord, exists bool, err error)
+}
+
 // RecordService 设备上报主链路编排
 type RecordService struct {
 	records repo.RecordStore
@@ -57,6 +63,7 @@ type RecordService struct {
 	cache   repo.CacheStore
 	alerts  AlertEvaluator
 	limiter *RateLimiter
+	latest  latestRecordStore // 构造时从 records 类型断言；nil 时 GetRealtime 走 Redis 回退
 
 	alertTimeout time.Duration
 	now          func() time.Time
@@ -67,7 +74,7 @@ type RecordService struct {
 
 // NewRecordService 组装 RecordService
 func NewRecordService(records repo.RecordStore, devices repo.DeviceStore, configs repo.ConfigStore, cache repo.CacheStore, alerts AlertEvaluator, limiter *RateLimiter) *RecordService {
-	return &RecordService{
+	svc := &RecordService{
 		records:      records,
 		devices:      devices,
 		configs:      configs,
@@ -77,6 +84,10 @@ func NewRecordService(records repo.RecordStore, devices repo.DeviceStore, config
 		alertTimeout: DefaultAlertTimeout,
 		now:          time.Now,
 	}
+	if l, ok := records.(latestRecordStore); ok {
+		svc.latest = l
+	}
+	return svc
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -364,13 +375,13 @@ func (s *RecordService) GetHistory(ctx context.Context, patientID, period, date 
 	return &model.HistoryPage{List: list, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-// GetRealtime 实时快照：读 Redis（lastseen / rt:frame / stat:today），零 DB 明细命中
+// GetRealtime 实时快照：DB 优先（pressure_records 最新行），无 DB reader 时走 Redis 回退
 func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*model.RealtimeSnapshot, *model.AppError) {
 	snapshot := &model.RealtimeSnapshot{
 		Status:          "offline",
 		MaxPoint:        "",
 		PressureRecords: []model.PressureRecordDTO{},
-		Alerts:          []any{}, // 今日告警明细由 alert-service 提供；此处仅 Redis 摘要
+		Alerts:          []any{},
 	}
 
 	deviceID, dbStatus, exists, err := s.devices.GetDeviceByPatient(ctx, patientID)
@@ -379,17 +390,65 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 	}
 	if !exists {
 		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
-		return snapshot, nil // 未绑定设备：返回空快照，heatmap 走 seed
+		return snapshot, nil // 未绑定设备
 	}
 
-	// 状态推导（架构 §4.6 查询时实时推导）：abnormal 优先，其次 lastseen ≤2h 判 online
+	// DB 优先路径（*repo.RecordRepo 实现 GetLatestRecord 时）
+	if s.latest != nil {
+		return s.getRealtimeFromDB(ctx, patientID, deviceID, dbStatus, snapshot)
+	}
+
+	// Redis 回退路径（测试 stub 无 GetLatestRecord 时走旧逻辑）
+	return s.getRealtimeFromRedis(ctx, patientID, deviceID, dbStatus, snapshot)
+}
+
+// getRealtimeFromDB DB 优先实时快照：pressure_records 最新行驱动，Redis 仅补充状态与今日统计
+func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot) (*model.RealtimeSnapshot, *model.AppError) {
+	rec, hasRecord, err := s.latest.GetLatestRecord(ctx, patientID)
+	if err != nil {
+		return nil, model.ErrInternal("read latest record: %v", err)
+	}
+	if !hasRecord {
+		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
+		return snapshot, nil // 有设备但无上报记录
+	}
+
+	snapshot.PressureRecords = []model.PressureRecordDTO{rec.ToDTO()}
+	snapshot.MaxPressure = float64(rec.MaxPressure)
+	snapshot.MaxPoint = rec.MaxPoint()
+	snapshot.PressureHeatmap = model.BuildHeatmap(rec.Points)
+
+	// 状态推导：abnormal 优先；Redis lastseen ≤2h → online；否则 DB ts ≤2h → online
+	if dbStatus == "abnormal" {
+		snapshot.Status = "abnormal"
+	} else if lastseen, ok, lsErr := s.cache.GetLastSeen(ctx, deviceID); lsErr == nil && ok && s.now().Sub(lastseen) <= 2*time.Hour {
+		snapshot.Status = "online"
+	} else if s.now().Sub(rec.Ts) <= 2*time.Hour {
+		snapshot.Status = "online"
+	}
+
+	// 今日统计补充（Redis stat:today，失败默认 0）
+	if stats, stErr := s.cache.GetStatToday(ctx, patientID); stErr == nil {
+		if v, e := strconv.Atoi(stats["wear_minutes"]); e == nil {
+			snapshot.TodayHours = float64(v) / 60.0
+		}
+		if v, e := strconv.Atoi(stats["abnormal_count"]); e == nil {
+			snapshot.Events = v
+		}
+	}
+	return snapshot, nil
+}
+
+// getRealtimeFromRedis Redis 回退路径（issue 879 前旧逻辑，测试 stub 走此路径）
+func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot) (*model.RealtimeSnapshot, *model.AppError) {
+	// 状态推导：abnormal 优先，其次 lastseen ≤2h 判 online
 	if dbStatus == "abnormal" {
 		snapshot.Status = "abnormal"
 	} else if lastseen, ok, lsErr := s.cache.GetLastSeen(ctx, deviceID); lsErr == nil && ok && s.now().Sub(lastseen) <= 2*time.Hour {
 		snapshot.Status = "online"
 	}
 
-	// 最新帧（rt:frame，零 DB）→ 同时产出 PressureRecords 与热力图 20 点
+	// 最新帧（rt:frame）→ PressureRecords 与热力图
 	frameJSON, err := s.cache.GetRealtimeFrame(ctx, deviceID)
 	if err != nil {
 		return nil, model.ErrInternal("read rt:frame: %v", err)
@@ -412,7 +471,6 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 					heatmapReady = true
 				}
 			}
-			// PressureRecords 总是构建（即便 points 短，PressureRecord 逻辑保留原有对不齐能力）
 			var points [model.PointCount]float32
 			for i := 0; i < model.PointCount && i < len(rf.Points); i++ {
 				points[i] = float32(rf.Points[i])
