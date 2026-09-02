@@ -21,6 +21,7 @@ const (
 	CodeForbidden    = 10403 // 无权限（如非医生保存矫形方案）
 	CodeNotFound     = 10404 // 用户域资源不存在（patient/technician/feedback/role…）
 	CodeConflict     = 10409 // 状态冲突（手机号重复等）
+	CodeWXUnavail    = 10502 // 微信 jscode2session 下游不可用（HTTP 502 语义）
 	CodeInternal     = 90001 // 系统内部错误（DB/加密配置等）
 )
 
@@ -59,6 +60,11 @@ func ErrConflict(format string, args ...any) *AppError {
 
 func ErrInternal(format string, args ...any) *AppError {
 	return newAppError(CodeInternal, 500, format, args...)
+}
+
+// NewWXServiceUnavailable 微信服务端不可用（jscode2session 网络/HTTP 错误）
+func NewWXServiceUnavailable(format string, args ...any) *AppError {
+	return newAppError(CodeWXUnavail, 502, format, args...)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -331,4 +337,13 @@ type TeamMemberDTO struct {
 	PatientCount int    `json:"patientCount"`
 	JoinTime     string `json:"joinTime"`
 	Status       string `json:"status"`
+}
+
+// ─────────────────────────────────────────────────────────────
+// 微信登录（T069 患者端小程序）
+// ─────────────────────────────────────────────────────────────
+
+// WXLoginRequestDTO 患者端微信登录请求（小程序 wx.login 返回的 code）
+type WXLoginRequestDTO struct {
+	Code string `json:"code"` // 必填，wx.login() 签发的临时登录凭证
 }

@@ -31,6 +31,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -48,6 +49,7 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/phone"
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
+	"github.com/bracesync/bracesync/services/user-service/internal/wechat"
 )
 
 // headerUserID gateway 鉴权通过后注入的操作人身份头（架构 §5.2）
@@ -60,16 +62,36 @@ var presetRoles = map[string]struct{}{
 	"ROLE_CS":     {},
 }
 
-// Handler HTTP 处理器（signer/phoneCipher 允许为 nil：对应登录/技师写入返回 500 配置错误）
+// Handler HTTP 处理器（signer/phoneCipher 允许为 nil：对应登录/技师写入返回 500 配置错误；
+// wxClient 允许为 nil：/patient/wx-login 返回 500，不影响其他登录端点）
 type Handler struct {
-	store  repo.Store
-	signer *token.Signer
-	phone  *phone.Cipher
+	store    repo.Store
+	signer   *token.Signer
+	phone    *phone.Cipher
+	wxClient wxClientI // 接口化：单测注入内存 fake；生产为 *wechat.Client
 }
 
-// New 创建 Handler
+// New 创建 Handler（保持三参签名兼容现有测试与调用方；main.go 通过 SetWXClient 注入真实客户端）。
+// 缺失 signer：登录端点返回 500；缺失 phoneCipher：技师写入端点返回 500；
+// wxClient 需显式 SetWXClient 注入，未注入时 /patient/wx-login 返回 500（不影响其他端点）。
 func New(store repo.Store, signer *token.Signer, phoneCipher *phone.Cipher) *Handler {
-	return &Handler{store: store, signer: signer, phone: phoneCipher}
+	return &Handler{store: store, signer: signer, phone: phoneCipher, wxClient: nil}
+}
+
+// SetWXClient 注入微信登录客户端（nil 视为未配置）
+// 供 cmd/server 在 main.go 内做可选注入，保持 New 三参签名不破坏既有 test。
+func (h *Handler) SetWXClient(wx *wechat.Client) {
+	if wx == nil {
+		h.wxClient = nil
+		return
+	}
+	h.wxClient = wx // *wechat.Client 实现 wxClientI
+}
+
+// wxClientI 仅暴露 DoCode2Session 的最小接口：
+// handler_impl_test 可用内存 fake 轻量注入；生产 *wechat.Client 自然实现。
+type wxClientI interface {
+	DoCode2Session(ctx context.Context, code string) (*wechat.Code2SessionResult, error)
 }
 
 // Router 组装路由（可测试）
@@ -86,6 +108,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/auth/login", h.login)
 		v1.POST("/tech/login", h.techLogin)       // T037 技师登录（免 JWT）
 		v1.POST("/patient/login", h.patientLogin) // T037 患者登录（免 JWT）
+		v1.POST("/patient/wx-login", h.wxLogin)   // T069 患者端微信登录（免 JWT）
 
 		v1.GET("/admin/patients", h.listPatients)
 		v1.GET("/admin/patients/:patientId", h.getPatient)
@@ -334,6 +357,97 @@ func (h *Handler) patientLogin(c *gin.Context) {
 		Token:     tk,
 		PatientID: patient.PatientID,
 		Name:      patient.Name,
+		Role:      "patient",
+	})
+}
+
+// ─────────────────────────────────────────────────────────────
+// 微信登录（T069 患者端小程序）
+//
+// POST /api/v1/patient/wx-login — 入参 {code} → 调 jscode2session →
+// 按 openid 查/建患者（status=active）→ 签发 patient JWT
+// 失败统一 401/400/500/502 映射（见 T069 计划 §5 错误表）
+// ─────────────────────────────────────────────────────────────
+
+type wxLoginRequest struct {
+	Code string `json:"code"`
+}
+
+// wxLogin 患者端微信登录（T069）
+func (h *Handler) wxLogin(c *gin.Context) {
+	var req wxLoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	if req.Code == "" {
+		fail(c, model.ErrInvalidParam("code is required"))
+		return
+	}
+	if h.wxClient == nil {
+		fail(c, model.ErrInternal("WX_APPID/WX_APP_SECRET not configured; wechat login disabled"))
+		return
+	}
+
+	sess, err := h.wxClient.DoCode2Session(c.Request.Context(), req.Code)
+	if err != nil {
+		var we *wechat.WechatError
+		if errors.As(err, &we) {
+			fail(c, model.ErrUnauthorized("wechat code invalid: errcode=%d errmsg=%s", we.ErrCode, we.ErrMsg))
+			return
+		}
+		fail(c, model.NewWXServiceUnavailable("wechat service unavailable"))
+		return
+	}
+
+	row, qErr := h.store.GetPatientByWXOpenID(c.Request.Context(), sess.OpenID)
+	if qErr != nil {
+		fail(c, model.ErrInternal("query patient by openid failed"))
+		return
+	}
+	if row == nil {
+		// 首次登录：创建患者
+		row, err = h.store.CreatePatientByWXOpenID(c.Request.Context(), sess.OpenID)
+		if err != nil {
+			// 并发竞态：另一请求抢先插入 → 回退再查一次（幂等 upsert 语义）
+			if errors.Is(err, repo.ErrWXOpenIDExists) {
+				row, qErr = h.store.GetPatientByWXOpenID(c.Request.Context(), sess.OpenID)
+				if qErr != nil {
+					fail(c, model.ErrInternal("query patient by openid failed after conflict"))
+					return
+				}
+				if row == nil {
+					// 极端：事务回滚等导致 Get 仍 nil → 仅额外重试 Create 一次
+					row, err = h.store.CreatePatientByWXOpenID(c.Request.Context(), sess.OpenID)
+					if err != nil {
+						fail(c, model.ErrInternal("create patient by openid failed"))
+						return
+					}
+				}
+			} else {
+				fail(c, model.ErrInternal("create patient by openid failed"))
+				return
+			}
+		}
+	}
+	if row.Status != "active" {
+		// 不区分"禁用/不存在"统一 401 文案，防账号枚举（与 patientLogin 同口径）
+		fail(c, model.ErrUnauthorized("invalid credentials"))
+		return
+	}
+	if h.signer == nil {
+		fail(c, model.ErrInternal("JWT_SECRET not configured"))
+		return
+	}
+	tk, err := h.signer.SignWithTeam(row.PatientID, row.Name, "", "patient")
+	if err != nil {
+		fail(c, model.ErrInternal("sign token failed"))
+		return
+	}
+	ok(c, model.PatientLoginResultDTO{
+		Token:     tk,
+		PatientID: row.PatientID,
+		Name:      row.Name,
 		Role:      "patient",
 	})
 }
@@ -1284,8 +1398,8 @@ func (h *Handler) createPatient(c *gin.Context) {
 	}
 	row, err := h.store.CreatePatient(c.Request.Context(), repo.PatientInput{
 		Name:      name,
-		PhoneEnc:  enc,
-		PhoneHash: hash,
+		PhoneEnc:  &enc,
+		PhoneHash: &hash,
 		Gender:    req.Gender,
 		Age:       req.Age,
 		Diagnosis: req.Diagnosis,

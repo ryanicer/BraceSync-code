@@ -20,6 +20,10 @@ var ErrPatientExists = errors.New("patient already exists")
 // store.AssignPatientTeam 返回此 sentinel，handler 映射为 404 CodeNotFound。
 var ErrPatientNotFound = errors.New("patient not found")
 
+// ErrWXOpenIDExists 创建微信患者 openid 冲突（并发竞态下 idx_patients_wx_openid
+// 命中 23505；handler 据此回退 GetPatientByWXOpenID 重试 1 次实现幂等 upsert）。
+var ErrWXOpenIDExists = errors.New("patient wx_openid already exists")
+
 // ─────────────────────────────────────────────────────────────
 // T059 团队/成员写操作 sentinel 错误（handler 据此映射 HTTP code）
 // ─────────────────────────────────────────────────────────────
@@ -261,12 +265,13 @@ type TechInput struct {
 	TeamID    *string
 }
 
-// PatientInput 创建患者入参（T057 写功能契约）。Name 必填；PhoneEnc/PhoneHash 必填
-// （由 handler 层 preparePhone 加密+哈希后传入，与 TechInput 模式一致）；其余可空指针。
+// PatientInput 创建患者入参（T057 写功能契约；T069 扩展可空 phone 支持微信-only 用户）。
+// Name 必填；PhoneEnc/PhoneHash 为 nil 表示微信-only 用户（对应 DB 列 NULL，
+// 迁移 000008 已解除 NOT NULL 约束）；其余可空指针。
 type PatientInput struct {
 	Name      string
-	PhoneEnc  []byte // AES-GCM 密文（handler.preparePhone 生成）
-	PhoneHash string // SHA-256 hex（handler.preparePhone 生成；store 据此查重）
+	PhoneEnc  *[]byte // AES-GCM 密文（handler.preparePhone 生成；为 nil=微信-only 无手机号）
+	PhoneHash *string // SHA-256 hex（handler.preparePhone 生成；为 nil=微信-only 无手机号）
 	Gender    *string
 	Age       *int
 	Diagnosis *string
@@ -299,6 +304,12 @@ type Store interface {
 	UpdateAdminPasswordHash(ctx context.Context, adminID string, newHash string) error
 	GetTechByPhoneHash(ctx context.Context, phoneHash string) (*TechLoginRow, error)
 	GetPatientByPhoneHash(ctx context.Context, phoneHash string) (*PatientLoginRow, error)
+	// GetPatientByWXOpenID T069：按微信 openid 查患者登录行；不存在返回 (nil, nil)
+	GetPatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error)
+	// CreatePatientByWXOpenID T069：按 openid 创建微信-only 患者。
+	// 默认 name="微信用户" status="active" 其余字段 NULL；并发下 openid 唯一冲突返回
+	// ErrWXOpenIDExists（handler 据此回退 Get 1 次实现幂等 upsert）
+	CreatePatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error)
 	RoleScope(ctx context.Context, roleID string) (scope string, err error)
 	DoctorIDByAdmin(ctx context.Context, adminID string) (doctorID string, ok bool, err error)
 
