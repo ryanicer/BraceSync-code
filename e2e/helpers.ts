@@ -14,7 +14,7 @@ import { URL } from 'node:url'
  *
  * T074 基建新增：setupPatientE2E(page, { withLogin })
  *  - 页面初始化前注入 bracesync_token / bracesync_patient_id（H5 uni.storage = localStorage）
- *  - page.route 拦截 **/api/v1/** 返回契约 fixture（realtime/records/alerts/daily-wear/unbind/wx-login）
+ *  - page.route 拦截 api/v1 全路径请求返回契约 fixture（realtime/records/alerts/daily-wear/unbind/wx-login）
  *  - 属于"测试基建 setup"，不触碰任何断言（断言归 Ella）
  */
 
