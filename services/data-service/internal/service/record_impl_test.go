@@ -226,3 +226,134 @@ func TestGetRealtimeDBFirst_AbnormalDevice(t *testing.T) {
 	assert.Equal(t, "abnormal", snap.Status)
 	require.Len(t, snap.PressureRecords, 1) // abnormal 仍有数据
 }
+
+// ── T076 DailyWearService 测试 ────────────────────────────────
+
+// fakeDailyWearStore DailyWearStatsStore 内存实现（仅 QueryRange 有意义）
+type fakeDailyWearStore struct {
+	rows      []model.DailyWearStats
+	queryErr  error
+	lastPID   string
+	lastFrom  time.Time
+	lastTo    time.Time
+}
+
+func (f *fakeDailyWearStore) Upsert(_ context.Context, _ []model.DailyWearStats) error { return nil }
+func (f *fakeDailyWearStore) AggregateDate(_ context.Context, _, _ time.Time, _ int) ([]model.DailyWearStats, error) {
+	return nil, nil
+}
+func (f *fakeDailyWearStore) ListPatientsWithStats(_ context.Context, _, _ time.Time) ([]string, error) {
+	return nil, nil
+}
+func (f *fakeDailyWearStore) QueryRange(_ context.Context, pid string, from, to time.Time) ([]model.DailyWearStats, error) {
+	f.lastPID = pid
+	f.lastFrom = from
+	f.lastTo = to
+	if f.queryErr != nil {
+		return nil, f.queryErr
+	}
+	cst := model.CSTZone()
+	var out []model.DailyWearStats
+	for _, r := range f.rows {
+		// 对齐真实 SQL：patient_id 精确匹配
+		if r.PatientID != pid {
+			continue
+		}
+		// 用 CST stat_date 判定：[from, to) 半开区间匹配
+		s := time.Date(r.StatDate.In(cst).Year(), r.StatDate.In(cst).Month(), r.StatDate.In(cst).Day(), 0, 0, 0, 0, cst).UTC()
+		e := s.AddDate(0, 0, 1)
+		if s.Before(to) && e.After(from) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// newDailyWearStatsTestRow 构造一条 DailyWearStats 测试数据（stat_date 为 CST 当日）
+func newDailyWearStatsTestRow(pid, dateCST string, wearMin, frameCount, abnormal int, avgP, maxP float32, maxPoint string) model.DailyWearStats {
+	d, _ := time.ParseInLocation("2006-01-02", dateCST, model.CSTZone())
+	return model.DailyWearStats{
+		PatientID:     pid,
+		StatDate:      d,
+		WearMinutes:   wearMin,
+		AvgPressure:   avgP,
+		MaxPressure:   maxP,
+		MaxPoint:      maxPoint,
+		FrameCount:    frameCount,
+		AbnormalCount: abnormal,
+	}
+}
+
+// newDailyWearSvcWithNow 装配带 fake now 的 DailyWearService
+func newDailyWearSvcWithNow(store repo.DailyWearStatsStore, now time.Time) *DailyWearService {
+	svc := NewDailyWearService(store)
+	svc.now = func() time.Time { return now }
+	return svc
+}
+
+func TestDailyWearService_HasData(t *testing.T) {
+	fakeNow := time.Date(2026, 9, 2, 10, 0, 0, 0, model.CSTZone()) // CST
+	store := &fakeDailyWearStore{
+		rows: []model.DailyWearStats{
+			newDailyWearStatsTestRow("P1", "2026-08-27", 1200, 40, 1, 12.5, 45.0, "P05"),
+			newDailyWearStatsTestRow("P1", "2026-08-31", 1320, 44, 2, 15.0, 50.0, "P12"),
+			newDailyWearStatsTestRow("P1", "2026-09-02", 360, 12, 0, 10.0, 33.0, ""), // MaxPoint 空
+			newDailyWearStatsTestRow("P2", "2026-09-02", 100, 5, 0, 5.0, 20.0, "P01"),   // 不同患者，应过滤
+		},
+	}
+	svc := newDailyWearSvcWithNow(store, fakeNow)
+
+	// 默认区间：end=今日(2026-09-02)，start=end-6d=2026-08-27 → 7 天
+	list, appErr := svc.GetDailyWear(context.Background(), "P1", "", "")
+	require.Nil(t, appErr)
+	require.Len(t, list, 3, "应命中 2026-08-27/08-31/09-02 三条，排除 P2")
+
+	// 日期升序校验（QueryRange SQL ORDER BY stat_date ASC）
+	assert.Equal(t, "2026-08-27", list[0].Date)
+	assert.Equal(t, "2026-08-31", list[1].Date)
+	assert.Equal(t, "2026-09-02", list[2].Date)
+
+	// 字段映射完整
+	assert.Equal(t, 1200, list[0].WearMinutes)
+	assert.Equal(t, float32(12.5), list[0].AvgPressure)
+	assert.Equal(t, float32(45.0), list[0].MaxPressure)
+	assert.Equal(t, "P05", list[0].MaxPoint)
+	assert.Equal(t, 40, list[0].FrameCount)
+	assert.Equal(t, 1, list[0].AbnormalCount)
+
+	// 空 MaxPoint → 空串（COALESCE 兜底语义）
+	assert.Equal(t, "", list[2].MaxPoint)
+	assert.Equal(t, "P1", store.lastPID)
+}
+
+func TestDailyWearService_Empty(t *testing.T) {
+	fakeNow := time.Date(2026, 9, 2, 10, 0, 0, 0, model.CSTZone())
+	store := &fakeDailyWearStore{}
+	svc := newDailyWearSvcWithNow(store, fakeNow)
+
+	list, appErr := svc.GetDailyWear(context.Background(), "P-NEW", "2026-09-01", "2026-09-02")
+	require.Nil(t, appErr)
+	require.NotNil(t, list, "空集仍返回非 nil slice")
+	assert.Len(t, list, 0)
+}
+
+func TestDailyWearService_InvalidStartDate(t *testing.T) {
+	fakeNow := time.Date(2026, 9, 2, 10, 0, 0, 0, model.CSTZone())
+	svc := newDailyWearSvcWithNow(&fakeDailyWearStore{}, fakeNow)
+
+	_, appErr := svc.GetDailyWear(context.Background(), "P1", "2026/09/02", "")
+	require.NotNil(t, appErr)
+	assert.Equal(t, model.CodeQueryParam, appErr.Code)
+	assert.Equal(t, 400, appErr.HTTPStatus)
+}
+
+func TestDailyWearService_RangeTooLong(t *testing.T) {
+	fakeNow := time.Date(2026, 9, 2, 10, 0, 0, 0, model.CSTZone())
+	svc := newDailyWearSvcWithNow(&fakeDailyWearStore{}, fakeNow)
+
+	// 180 天 → 超过 maxDailyWearDays=90
+	_, appErr := svc.GetDailyWear(context.Background(), "P1", "2026-01-01", "2026-06-30")
+	require.NotNil(t, appErr)
+	assert.Equal(t, model.CodeQueryParam, appErr.Code)
+	assert.Contains(t, appErr.Message, "exceeds max 90 days")
+}

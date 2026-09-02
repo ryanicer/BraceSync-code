@@ -646,3 +646,83 @@ func toPendingFrame(ts time.Time, points []float64, battery, faultCode int) repo
 	}
 	return repo.PendingFrame{Ts: ts, Points: arr, Battery: battery, FaultCode: faultCode}
 }
+
+// ─────────────────────────────────────────────────────────────
+// T076：患者日佩戴聚合查询（daily_wear_stats 单患者范围查询）
+// ─────────────────────────────────────────────────────────────
+
+// maxDailyWearDays 单趟查询最大天数（防大面积聚合扫表，对齐 dashboard maxTrendDays=90）
+const maxDailyWearDays = 90
+
+// DailyWearService 患者视角的日佩戴聚合查询（数据源：repo.DailyWearStatsStore）
+type DailyWearService struct {
+	store repo.DailyWearStatsStore
+	now   func() time.Time
+}
+
+// NewDailyWearService 组装 DailyWearService（store 注入 RollupRepo）
+func NewDailyWearService(store repo.DailyWearStatsStore) *DailyWearService {
+	return &DailyWearService{store: store, now: time.Now}
+}
+
+// GetDailyWear 按日期范围（闭区间，YYYY-MM-DD，Asia/Shanghai 切日）返回 daily_wear_stats。
+// 参数规则：
+//   - start 空 → 缺省 end-6 天（默认近 7 天）；end 空 → 缺省今日。
+//   - 日期格式必须为 "2006-01-02"（CST）。
+//   - start > end 自动交换。
+//   - 实际天数 > maxDailyWearDays → CodeQueryParam 400。
+func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr, endStr string) ([]*model.DailyWearDayDTO, *model.AppError) {
+	nowCST := s.now().In(model.CSTZone())
+
+	// 缺省：end=今日，start=end-6d（近 7 日含今日，对齐 dashboard wear-trend）
+	if endStr == "" {
+		endStr = nowCST.Format("2006-01-02")
+	}
+	endDay, err := time.ParseInLocation("2006-01-02", endStr, model.CSTZone())
+	if err != nil {
+		return nil, model.ErrQueryParam("invalid end date %q (expect YYYY-MM-DD)", endStr)
+	}
+	if startStr == "" {
+		startStr = endDay.AddDate(0, 0, -6).Format("2006-01-02")
+	}
+	startDay, err := time.ParseInLocation("2006-01-02", startStr, model.CSTZone())
+	if err != nil {
+		return nil, model.ErrQueryParam("invalid start date %q (expect YYYY-MM-DD)", startStr)
+	}
+	if startDay.After(endDay) {
+		startDay, endDay = endDay, startDay
+	}
+
+	days := int(endDay.Sub(startDay).Hours()/24) + 1 // 闭区间 +1
+	if days > maxDailyWearDays {
+		return nil, model.ErrQueryParam("date range %d days exceeds max %d days", days, maxDailyWearDays)
+	}
+	if patientID == "" {
+		return nil, model.ErrQueryParam("patientId is required")
+	}
+
+	// UTC 时间窗与 QueryRange/RollupService.aggregateAndUpsert 一致：
+	//   [CST 当日 00:00 → UTC, 次日 CST 00:00 → UTC)
+	fromUTC := startDay.UTC()
+	toUTC := endDay.AddDate(0, 0, 1).UTC()
+
+	rows, err := s.store.QueryRange(ctx, patientID, fromUTC, toUTC)
+	if err != nil {
+		log.Error().Err(err).Str("patient_id", patientID).Msg("daily-wear query failed")
+		return nil, model.ErrInternal("query daily wear stats failed")
+	}
+
+	out := make([]*model.DailyWearDayDTO, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, &model.DailyWearDayDTO{
+			Date:          r.StatDate.In(model.CSTZone()).Format("2006-01-02"),
+			WearMinutes:   r.WearMinutes,
+			AvgPressure:   r.AvgPressure,
+			MaxPressure:   r.MaxPressure,
+			MaxPoint:      r.MaxPoint, // QueryRange SQL COALESCE(max_point, '') 兜底空串
+			FrameCount:    r.FrameCount,
+			AbnormalCount: r.AbnormalCount,
+		})
+	}
+	return out, nil
+}
