@@ -73,9 +73,10 @@ func registerServiceRoutes(api *gin.RouterGroup, targetURL, serviceName string, 
 // userServiceRoutes T030 admin 域用户侧端点（patients/teams/doctors/technicians/feedbacks/
 // orthosis/feeling-logs/roles/settings/login，全部 user-service 归属）
 var userServiceRoutes = []proxyRoute{
-	{http.MethodPost, "/auth/login"},    // T030 #9 admin 登录（免 JWT 白名单）
-	{http.MethodPost, "/tech/login"},    // T037 技师登录（免 JWT 白名单）
-	{http.MethodPost, "/patient/login"}, // T037 患者登录（免 JWT 白名单）
+	{http.MethodPost, "/auth/login"},       // T030 #9 admin 登录（免 JWT 白名单）
+	{http.MethodPost, "/tech/login"},       // T037 技师登录（免 JWT 白名单）
+	{http.MethodPost, "/patient/login"},    // T037 患者登录（免 JWT 白名单）
+	{http.MethodPost, "/patient/wx-login"}, // T069 患者微信小程序登录（免 JWT 白名单）
 
 	{http.MethodGet, "/admin/patients"},                     // T030 #1
 	{http.MethodGet, "/admin/patients/:patientId"},          // T030 #2

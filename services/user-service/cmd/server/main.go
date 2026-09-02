@@ -6,6 +6,8 @@
 //	DB_URL        PostgreSQL DSN
 //	JWT_SECRET    登录 token 签发密钥（与 gateway 共享，Phase 1 JWT 校验复用）
 //	PHONE_ENC_KEY 手机号 AES-GCM 加密密钥（64 位 hex）；未配置时技师新建/编辑返回 500
+//	WX_APPID      患者端小程序 AppID；缺失则 /patient/wx-login 返回 500（不影响其他登录端点）
+//	WX_APP_SECRET 患者端小程序 AppSecret；缺失同上（与 WX_APPID 配对）
 //	GIN_MODE      release 关闭调试日志
 package main
 
@@ -25,6 +27,7 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/phone"
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
+	"github.com/bracesync/bracesync/services/user-service/internal/wechat"
 )
 
 // tokenTTL 登录 token 有效期（运营后台一个工作日口径）
@@ -79,7 +82,21 @@ func main() {
 		log.Warn().Msg("PHONE_ENC_KEY not set: technician create/update disabled")
 	}
 
+	// 微信登录客户端（WX_APPID + WX_APP_SECRET 均存在才启用；缺失仅 /patient/wx-login 降级 500）
+	var wxClient *wechat.Client
+	if appID := os.Getenv("WX_APPID"); appID != "" {
+		if secret := os.Getenv("WX_APP_SECRET"); secret != "" {
+			wxClient = wechat.NewClient(appID, secret)
+			log.Info().Msg("wechat login client initialized")
+		} else {
+			log.Warn().Msg("WX_APPID set but WX_APP_SECRET missing: wechat login disabled")
+		}
+	} else {
+		log.Warn().Msg("WX_APPID not set: wechat login disabled")
+	}
+
 	h := handler.New(repo.NewPGStore(pool), signer, phoneCipher)
+	h.SetWXClient(wxClient) // 可选注入：nil 视为未配置，/patient/wx-login 降级 500
 
 	port := envOr("PORT", "8081")
 	server := &http.Server{Addr: ":" + port, Handler: h.Router()}

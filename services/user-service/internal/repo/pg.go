@@ -95,6 +95,44 @@ func (s *PGStore) GetPatientByPhoneHash(ctx context.Context, phoneHash string) (
 	return &p, nil
 }
 
+// GetPatientByWXOpenID T069：按微信 openid 查患者登录行；不存在返回 (nil, nil)
+func (s *PGStore) GetPatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT patient_id, name, password_hash, status
+		 FROM patients WHERE wx_openid = $1`, openid)
+	var p PatientLoginRow
+	err := row.Scan(&p.PatientID, &p.Name, &p.PasswordHash, &p.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// CreatePatientByWXOpenID T069：按 openid 创建微信-only 新患者。
+// 默认 name="微信用户"、status="active"，其余字段 NULL；并发唯一冲突返回
+// ErrWXOpenIDExists（handler 据此重试 Get 实现幂等 upsert）。
+func (s *PGStore) CreatePatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error) {
+	patientID, err := newPatientID()
+	if err != nil {
+		return nil, err
+	}
+	_, execErr := s.pool.Exec(ctx,
+		`INSERT INTO patients (patient_id, name, wx_openid, status)
+		 VALUES ($1, '微信用户', $2, 'active')`,
+		patientID, openid)
+	if execErr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(execErr, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrWXOpenIDExists
+		}
+		return nil, execErr
+	}
+	return s.GetPatientByWXOpenID(ctx, openid)
+}
+
 // RoleScope 读角色数据范围（permissions_json->>'scope'）；角色不存在返回空串
 func (s *PGStore) RoleScope(ctx context.Context, roleID string) (string, error) {
 	row := s.pool.QueryRow(ctx, `SELECT permissions_json->>'scope' FROM roles WHERE role_id = $1`, roleID)
@@ -650,15 +688,20 @@ func newPatientID() (string, error) {
 	return "P" + time.Now().Format("2006") + hex.EncodeToString(buf), nil
 }
 
-// CreatePatient 创建患者（phone_hash 查重 → INSERT → 回读 join 行）
+// CreatePatient 创建患者（phone_hash 查重 → INSERT → 回读 join 行）。
+// T069 扩展：PhoneEnc/PhoneHash 为 nil 表示微信-only 无手机号用户，
+// 查重步骤跳过（phone_hash IS NULL 不参与 uk 冲突语义，INSERT 直接写 NULL）。
 func (s *PGStore) CreatePatient(ctx context.Context, in PatientInput) (*PatientRow, error) {
-	var taken bool
-	if err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM patients WHERE phone_hash = $1)`, in.PhoneHash).Scan(&taken); err != nil {
-		return nil, err
-	}
-	if taken {
-		return nil, ErrPatientExists
+	// phone_hash 非空时走原有查重（T057 旧语义）；为 nil（微信-only）跳过查重
+	if in.PhoneHash != nil {
+		var taken bool
+		if err := s.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM patients WHERE phone_hash = $1)`, *in.PhoneHash).Scan(&taken); err != nil {
+			return nil, err
+		}
+		if taken {
+			return nil, ErrPatientExists
+		}
 	}
 	patientID, err := newPatientID()
 	if err != nil {

@@ -58,7 +58,7 @@ func authWhitelisted(method, path string) bool {
 		return false
 	}
 	switch path {
-	case "/api/v1/auth/login", "/api/v1/tech/login", "/api/v1/patient/login":
+	case "/api/v1/auth/login", "/api/v1/tech/login", "/api/v1/patient/login", "/api/v1/patient/wx-login":
 		return true
 	}
 	return false
