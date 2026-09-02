@@ -65,7 +65,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/patients/:patientId/records", h.getHistory)
 		v1.GET("/patients/:patientId/realtime", h.getRealtime)
 		v1.GET("/patients/:patientId/health-reports", h.getHealthReports) // T030
-		v1.GET("/patients/:patientId/daily-wear", h.getDailyWear)        // T076
+		v1.GET("/patients/:patientId/daily-wear", h.getDailyWear)         // T076
 		h.registerDashboardRoutes(v1)                                     // T033 admin Dashboard 6 端点
 	}
 	return r
@@ -181,8 +181,9 @@ type DailyWearQuerier interface {
 func (h *Handler) SetDailyWearQuerier(q DailyWearQuerier) { h.dailyWear = q }
 
 // getDailyWear GET /api/v1/patients/:patientId/daily-wear
-//  ?start=YYYY-MM-DD&end=YYYY-MM-DD（闭区间，Asia/Shanghai 切日；缺省 end=今日 start=end-6d）
-//  水平鉴权：ROLE_ADMIN 允许任意；其余角色仅当 X-User-Id == patientId 允许（否则 403）
+//
+//	?start=YYYY-MM-DD&end=YYYY-MM-DD（闭区间，Asia/Shanghai 切日；缺省 end=今日 start=end-6d）
+//	水平鉴权：ROLE_ADMIN 允许任意；其余角色仅当 X-User-Id == patientId 允许（否则 403）
 func (h *Handler) getDailyWear(c *gin.Context) {
 	if h.dailyWear == nil {
 		fail(c, model.ErrInternal("daily-wear querier not configured"))

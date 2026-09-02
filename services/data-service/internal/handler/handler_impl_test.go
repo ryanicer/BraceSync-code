@@ -19,11 +19,11 @@ func init() { gin.SetMode(gin.TestMode) }
 
 // fakeDailyWearQuerier DailyWearQuerier 内存实现（用于端点测试）
 type fakeDailyWearQuerier struct {
-	list       []*model.DailyWearDayDTO
-	err        *model.AppError
-	lastPID    string
-	lastStart  string
-	lastEnd    string
+	list      []*model.DailyWearDayDTO
+	err       *model.AppError
+	lastPID   string
+	lastStart string
+	lastEnd   string
 }
 
 func (f *fakeDailyWearQuerier) GetDailyWear(_ context.Context, pid, start, end string) ([]*model.DailyWearDayDTO, *model.AppError) {
@@ -63,7 +63,7 @@ func TestGetDailyWear_HappyPath(t *testing.T) {
 	assert.Equal(t, "2026-09-02", q.lastEnd)
 
 	var resp struct {
-		Code int                       `json:"code"`
+		Code int                      `json:"code"`
 		Data []*model.DailyWearDayDTO `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))

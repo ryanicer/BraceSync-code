@@ -231,11 +231,11 @@ func TestGetRealtimeDBFirst_AbnormalDevice(t *testing.T) {
 
 // fakeDailyWearStore DailyWearStatsStore 内存实现（仅 QueryRange 有意义）
 type fakeDailyWearStore struct {
-	rows      []model.DailyWearStats
-	queryErr  error
-	lastPID   string
-	lastFrom  time.Time
-	lastTo    time.Time
+	rows     []model.DailyWearStats
+	queryErr error
+	lastPID  string
+	lastFrom time.Time
+	lastTo   time.Time
 }
 
 func (f *fakeDailyWearStore) Upsert(_ context.Context, _ []model.DailyWearStats) error { return nil }
@@ -297,8 +297,8 @@ func TestDailyWearService_HasData(t *testing.T) {
 		rows: []model.DailyWearStats{
 			newDailyWearStatsTestRow("P1", "2026-08-27", 1200, 40, 1, 12.5, 45.0, "P05"),
 			newDailyWearStatsTestRow("P1", "2026-08-31", 1320, 44, 2, 15.0, 50.0, "P12"),
-			newDailyWearStatsTestRow("P1", "2026-09-02", 360, 12, 0, 10.0, 33.0, ""), // MaxPoint 空
-			newDailyWearStatsTestRow("P2", "2026-09-02", 100, 5, 0, 5.0, 20.0, "P01"),   // 不同患者，应过滤
+			newDailyWearStatsTestRow("P1", "2026-09-02", 360, 12, 0, 10.0, 33.0, ""),  // MaxPoint 空
+			newDailyWearStatsTestRow("P2", "2026-09-02", 100, 5, 0, 5.0, 20.0, "P01"), // 不同患者，应过滤
 		},
 	}
 	svc := newDailyWearSvcWithNow(store, fakeNow)
