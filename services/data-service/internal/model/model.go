@@ -48,6 +48,7 @@ const (
 	CodeDeviceUnbound    = 20409 // 设备未绑定患者
 	CodeRateLimited      = 20429 // 限流（设备按 Retry-After 退避）
 	CodeQueryParam       = 30001 // 数据域：查询参数非法
+	CodeForbidden        = 403   // 越权访问（水平越权 / 无数据权限）
 	CodeInternal         = 90001 // 系统内部错误
 )
 
@@ -93,6 +94,10 @@ func ErrRateLimited(retryAfterSec int) *AppError {
 
 func ErrQueryParam(format string, args ...any) *AppError {
 	return newAppError(CodeQueryParam, 400, format, args...)
+}
+
+func ErrForbidden(format string, args ...any) *AppError {
+	return newAppError(CodeForbidden, 403, format, args...)
 }
 
 func ErrInternal(format string, args ...any) *AppError {
@@ -358,6 +363,17 @@ type DailyWearStats struct {
 	FrameCount    int
 	AbnormalCount int
 	UpdatedAt     time.Time
+}
+
+// DailyWearDayDTO 患者日佩戴聚合响应（对齐 daily_wear_stats 表列 + camelCase 契约）
+type DailyWearDayDTO struct {
+	Date          string  `json:"date"`          // YYYY-MM-DD（Asia/Shanghai 切日）
+	WearMinutes   int     `json:"wearMinutes"`   // 佩戴分钟数
+	AvgPressure   float32 `json:"avgPressure"`   // 日均压力
+	MaxPressure   float32 `json:"maxPressure"`   // 日最大压力
+	MaxPoint      string  `json:"maxPoint"`      // 最大点位（P01..P20，空串兜底）
+	FrameCount    int     `json:"frameCount"`    // 日帧总数
+	AbnormalCount int     `json:"abnormalCount"` // 日异常/告警数
 }
 
 // HealthReport health_reports 表行（PRD §7A.11 健康报告）

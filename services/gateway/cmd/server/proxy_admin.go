@@ -116,11 +116,12 @@ var deviceServiceRoutes = []proxyRoute{
 }
 
 // dataServiceRoutes 患者数据查询（realtime/records 既有契约 + T030 health-reports +
-// T033 admin Dashboard 6 聚合查询端点）
+// T033 admin Dashboard 6 聚合查询端点 + T076 患者日佩戴聚合）
 var dataServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/patients/:patientId/realtime"},
 	{http.MethodGet, "/patients/:patientId/records"},
 	{http.MethodGet, "/patients/:patientId/health-reports"},
+	{http.MethodGet, "/patients/:patientId/daily-wear"}, // T076：患者日佩戴聚合（患者自查 + admin 任意）
 
 	// T033：admin Dashboard（KPI/趋势/排行/分布，data-service 聚合层）
 	{http.MethodGet, "/admin/dashboard/kpi"},

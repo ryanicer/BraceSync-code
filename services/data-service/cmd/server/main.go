@@ -115,6 +115,10 @@ func main() {
 	dashboardSvc := service.NewDashboardService(repo.NewDashboardRepo(pool), repo.NewDashboardCache(rdbClient))
 	h.SetDashboardQuerier(dashboardSvc)
 
+	// T076：患者日佩戴聚合端点（数据源 daily_wear_stats，患者自查 + admin 任意）
+	dailyWearSvc := service.NewDailyWearService(rollupRepo)
+	h.SetDailyWearQuerier(dailyWearSvc)
+
 	router := h.Router()
 	server := &http.Server{Addr: ":" + port, Handler: router}
 
