@@ -50,8 +50,8 @@ test('L7-协议勾选前未同意弹出 Modal，勾选后可登录', async ({ pa
   
   await el.wechatBtn.click()
   
-  // Modal 标题 + 内容断言（来自 login/index.vue L181-182）
-  await expect(page.locator('uni-modal').filter({ hasText: /请使用微信登录/ })).toBeVisible()
+  // Modal 标题 + 内容断言（来自 login/index.vue L123 checkAgreedModal）
+  await expect(page.locator('uni-modal').filter({ hasText: /请先阅读并同意协议/ })).toBeVisible()
   
   // wx-login route 零命中
   expect(wxLoginCalled).toBe(false)
