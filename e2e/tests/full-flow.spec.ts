@@ -1,11 +1,13 @@
 import { test, expect } from '@playwright/test'
-import { switchTabBy, fillUniInput, HOTSPOT_NAME, loginPage, TEST_PHONE, TEST_SMS_CODE } from '../helpers'
+import { switchTabBy, fillUniInput, HOTSPOT_NAME, loginPage, TEST_PHONE, TEST_SMS_CODE, setupPatientE2E } from '../helpers'
 
 /**
  * 全链路：login → monitor → history → device → wifi-setup → 配网成功（一次跑通）
+ * T074 真实模式基建：test 顶部注册 route mock（断言体不动，登录链路留 Ella 重写 login.spec/full-flow.spec）
  */
 test('患者端核心全链路：登录到配网成功', async ({ page }) => {
   test.setTimeout(120_000)
+  await setupPatientE2E(page, { withLogin: false })
 
   // ===== 1. login =====
   await page.goto('/#/pages/login/index')

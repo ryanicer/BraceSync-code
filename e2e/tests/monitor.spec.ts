@@ -1,12 +1,14 @@
 import { test, expect, type Page } from '@playwright/test'
-import { routes } from '../helpers'
+import { routes, modal, setupPatientE2E } from '../helpers'
 
 /**
  * monitor 页：日/周/月切换、热力图渲染（4×5 网格）、点选联动数值、下拉刷新
  * mock 数据：20 个传感器点（P01-P20），P12 固定 42.18N
+ * T074 真实模式基建：beforeEach 顶部注入登录态 + route 拦截（setupPatientE2E），断言体不动
  */
 
 test.beforeEach(async ({ page }) => {
+  await setupPatientE2E(page, { withLogin: true })
   await page.goto(routes.monitor)
   await expect(page.getByText('压力分布热力图')).toBeVisible()
 })

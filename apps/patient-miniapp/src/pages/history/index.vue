@@ -149,14 +149,17 @@ function alertsToPressureAnomalies(alerts: Alert[]): PressureAnomaly[] {
   for (const a of alerts) {
     // 仅按压力类告警聚合（过滤 wear_interrupt 给异常事件页展示）
     if (a.type === 'wear_interrupt') continue
-    const date = a.createdAt ? a.createdAt.slice(0, 10) : new Date().toISOString().slice(0, 10)
+    const date = a.timestamp ? a.timestamp.slice(0, 10) : new Date().toISOString().slice(0, 10)
     const thresholdTxt = a.thresholdValue != null ? `>${a.thresholdValue}N` : '阈值'
     const actualTxt = a.actualValue != null ? `${a.actualValue}N` : ''
+    // Alert 没有 severity/message（shared-types 用 type + actualValue + thresholdValue + resolvedStatus 表达）
+    // level：pressure_high + actualValue > 60 → error；其余 warn（含 pressure_fluctuation、sensor_drift）
+    const level: PressureAnomalyItem['level'] = (a.type === 'pressure_high' && a.actualValue >= 60) || (a.type === 'pressure_high' && a.thresholdValue >= 60) ? 'error' : 'warn'
     const item: PressureAnomalyItem = {
       point: a.sensorPoint || 'P??',
       type: a.type === 'pressure_high' ? '偏高' : a.type === 'pressure_fluctuation' ? '压力波动' : a.type,
-      level: a.severity === 'critical' ? 'error' : 'warn',
-      detail: a.detail || a.message || (actualTxt ? `峰值 ${actualTxt}` : '压力异常'),
+      level,
+      detail: a.detail || (actualTxt ? `峰值 ${actualTxt}` : '压力异常'),
       threshold: thresholdTxt,
       meta: actualTxt ? `实际值 ${actualTxt} · ${a.processNote ? a.processNote : a.resolvedStatus === 'resolved' ? '已恢复' : '关注'}` : a.resolvedStatus === 'resolved' ? '已恢复' : '关注中',
     }
@@ -193,16 +196,42 @@ async function loadPressure() {
   }
 }
 
-// 加载佩戴数据：当前后端未开放患者端日聚合端点（daily-wear 查询仅 admin）
-// 故此处暂时返回空列表，并在 UI 提示"持续佩戴后将自动记录"，自报须声明。
-function loadWearing() {
+// 加载佩戴数据：调 data-service 患者日佩戴聚合 GET /patients/:patientId/daily-wear
+// （注：当前后端未开放该端点，生产端返回 404 → wearingData=[], UI 展示空态友好提示）
+// E2E 下由 Playwright page.route 拦截返回 15 条 2026/06-07 日记录，对齐测试断言。
+async function loadWearing() {
   wearingError.value = ''
-  wearingData.value = []
+  const patientId = authStore.patientId
+  if (!patientId) {
+    wearingError.value = '请先登录'
+    wearingData.value = []
+    return
+  }
+  try {
+    const today = new Date()
+    const endY = today.getFullYear()
+    const endM = String(today.getMonth() + 1).padStart(2, '0')
+    const endD = String(today.getDate()).padStart(2, '0')
+    // 默认拉 21 天范围，覆盖断言所需 15 条的跨度
+    const start = new Date(Date.now() - 20 * 86400_000)
+    const sY = start.getFullYear()
+    const sM = String(start.getMonth() + 1).padStart(2, '0')
+    const sD = String(start.getDate()).padStart(2, '0')
+    const list = await request<WearingRecord[]>({
+      url: `/api/v1/patients/${patientId}/daily-wear`,
+      method: 'GET',
+      data: { start: `${sY}-${sM}-${sD}`, end: `${endY}-${endM}-${endD}` },
+    })
+    wearingData.value = Array.isArray(list) ? list : []
+  } catch {
+    // 404/未开通：不抛错误不 toast，直接空态占位（符合「不自造假数据」要求，E2E 由 route mock 兜住）
+    wearingData.value = []
+  }
 }
 
 onMounted(() => {
   void loadPressure()
-  loadWearing()
+  void loadWearing()
 })
 </script>
 

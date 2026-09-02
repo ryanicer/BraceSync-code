@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test'
-import { routes, loginPage, toast, fillUniInput, TEST_PHONE, TEST_SMS_CODE } from '../helpers'
+import { routes, loginPage, toast, fillUniInput, TEST_PHONE, TEST_SMS_CODE, setupPatientE2E } from '../helpers'
 
 /**
  * login 页：手机号+验证码输入、60s 倒计时、协议勾选、登录跳转 monitor
  * 对齐 T016 自报功能清单（mock 登录，不依赖后端）
+ * T074 真实模式基建：beforeEach 顶部注册 route mock，登录断言体不动（留 Ella 转微信登录新流程）
  */
 
 test.beforeEach(async ({ page }) => {
+  await setupPatientE2E(page, { withLogin: false })
   await page.goto(routes.login)
 })
 
