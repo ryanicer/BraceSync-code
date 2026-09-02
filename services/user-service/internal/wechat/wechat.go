@@ -89,7 +89,7 @@ func (c *Client) DoCode2Session(ctx context.Context, code string) (*Code2Session
 	if err != nil {
 		return nil, fmt.Errorf("http do: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
