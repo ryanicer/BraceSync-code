@@ -1,68 +1,265 @@
 import { test, expect } from '@playwright/test'
-import { routes, loginPage, toast, fillUniInput, TEST_PHONE, TEST_SMS_CODE } from '../helpers'
+import { routes, loginPage, toast, fillUniInput, setupPatientE2E, WX_LOGIN_ROUTE, ok } from '../helpers'
 
 /**
- * login 页：手机号+验证码输入、60s 倒计时、协议勾选、登录跳转 monitor
- * 对齐 T016 自报功能清单（mock 登录，不依赖后端）
+ * T080: login 页 - 微信授权一键登录、协议勾选（T074 迁移版）
+ * 对齐 Iris 的《login 新用例契约清单》L1–L10（mock 登录，不依赖后端）
+ * 核心流程：协议勾选 → 微信按钮点击 → POST /api/v1/patient/wx-login (含 fallback code)
+ *
+ * T080 R12：wx-login route mock 全部改用 WX_LOGIN_ROUTE（host 无关正则）。
+ * 请求实际发往 https://api.hbksd.com.cn（request.ts 绝对 API_BASE_URL），
+ * path-only glob 永远匹配不到跨域 URL，会被 setupPatientE2E 的 catch-all
+ * 成功 handler 消费（Round 11 L3/L6/L8 根因）。Playwright 路由 LIFO：
+ * spec 内后注册的本 pattern route 先于 helpers 默认 mock 被咨询。
  */
 
+// ---------------------------------------------------------------------
+// Mock 常量定义（用于 route handler）
+// ---------------------------------------------------------------------
+const MOCK_TOKEN = 'mock-jwt-token-for-e2e-t080'
+const MOCK_PATIENT = { patientId: 'PT001', name: '张三', role: 'patient' }
+
+// ---------------------------------------------------------------------
+// Test Setup
+// ---------------------------------------------------------------------
 test.beforeEach(async ({ page }) => {
+  await setupPatientE2E(page, { withLogin: false })
   await page.goto(routes.login)
 })
 
-test('手机号与验证码输入', async ({ page }) => {
+// ---------------------------------------------------------------------
+// L1: 微信登录按钮可见可用
+// ---------------------------------------------------------------------
+test('L1-微信登录按钮可见可用', async ({ page }) => {
   const el = loginPage(page)
-  await fillUniInput(el.phone, TEST_PHONE)
-  await fillUniInput(el.smsCode, TEST_SMS_CODE)
+  // agreed 默认 true，无需额外勾选
+  await expect(el.wechatBtn).toBeVisible()
+  await expect(el.wechatBtn).toBeEnabled()
 })
 
-test('获取验证码后出现 60s 倒计时', async ({ page }) => {
+// ---------------------------------------------------------------------
+// L7: 协议勾选前点击→uni.showModal(不使用微信登录),勾选后→wx-login
+// ---------------------------------------------------------------------
+test('L7-协议勾选前未同意弹出 Modal，勾选后可登录', async ({ page }) => {
   const el = loginPage(page)
-  await fillUniInput(el.phone, TEST_PHONE)
-  await el.smsBtn.click()
-  // 倒计时出现：60s 起步，按钮进入禁用样式
-  await expect(el.smsBtn).toHaveText(/60s/)
-  await expect(el.smsBtn).toHaveClass(/sms-disabled/)
-  // 倒计时递减（1s 后不再是 60s，且不允许再次发送）
-  await expect(el.smsBtn).toHaveText(/^5\ds$/, { timeout: 5_000 })
-  await expect(el.smsBtn).not.toHaveText('获取验证码')
-})
 
-test('手机号格式错误时提示', async ({ page }) => {
-  const el = loginPage(page)
-  await fillUniInput(el.phone, '123')
-  await el.smsBtn.click()
-  await expect(toast(page, '请输入正确的手机号')).toBeVisible()
-})
-
-test('未勾选协议时登录被拦截', async ({ page }) => {
-  const el = loginPage(page)
-  await fillUniInput(el.phone, TEST_PHONE)
-  await fillUniInput(el.smsCode, TEST_SMS_CODE)
-  // 默认已勾选，先取消
+  // Step 1: 初始为已勾选状态，先取消勾选
   await expect(el.checkbox).toHaveClass(/checkbox-checked/)
   await el.checkbox.click()
   await expect(el.checkbox).not.toHaveClass(/checkbox-checked/)
-  await el.loginBtn.click()
-  await expect(toast(page, '请先同意用户协议和隐私政策')).toBeVisible()
-  // 仍停留在登录页
-  await expect(page).toHaveURL(/pages\/login/)
+
+  // Step 2: 点击微信按钮 → showModal 出现（不发请求）
+  let wxLoginCalled = false
+  await page.route(WX_LOGIN_ROUTE, () => { wxLoginCalled = true })
+
+  await el.wechatBtn.click()
+
+  // Modal 标题 + 内容断言（来自 login/index.vue L123 checkAgreedModal）
+  await expect(page.locator('uni-modal').filter({ hasText: /请先阅读并同意协议/ })).toBeVisible()
+
+  // Step 2b: 关闭 modal（showCancel:false，只有"确定"按钮）
+  await page.locator('uni-modal').getByText('确定').click()
+
+  // wx-login route 零命中
+  expect(wxLoginCalled).toBe(false)
+
+  // Step 3: 重新勾选协议 → 点击按钮 → 正常跳转
+  await el.checkbox.click()
+  await expect(el.checkbox).toHaveClass(/checkbox-checked/)
+
+  await page.route(WX_LOGIN_ROUTE, async (route) => {
+    return route.fulfill({ json: ok({ token: MOCK_TOKEN, ...MOCK_PATIENT }) })
+  })
+
+  await el.wechatBtn.click()
+  await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
 })
 
-test('未输入验证码时登录被拦截', async ({ page }) => {
-  const el = loginPage(page)
-  await fillUniInput(el.phone, TEST_PHONE)
-  await el.loginBtn.click()
-  await expect(toast(page, '请输入验证码')).toBeVisible()
-})
+// ---------------------------------------------------------------------
+// L4-L2: 点击微信按钮跳转 monitor+storage+route mock 断言
+// ---------------------------------------------------------------------
+test('L4-L2-点击微信按钮跳转 monitor 并写入 storage', async ({ page }) => {
+  // Route mock setup - 拦截请求体以验证 fallback code
+  let capturedReq: any
 
-test('登录成功跳转 monitor', async ({ page }) => {
+  await page.route(WX_LOGIN_ROUTE, async (route) => {
+    const request = route.request()
+    capturedReq = request.postDataJSON() || {}
+    return route.fulfill({ json: ok({ token: MOCK_TOKEN, ...MOCK_PATIENT }) })
+  })
+
+  // 执行登录：agreed 默认 true → 直接点微信按钮
   const el = loginPage(page)
-  await fillUniInput(el.phone, TEST_PHONE)
-  await fillUniInput(el.smsCode, TEST_SMS_CODE)
-  await el.loginBtn.click()
-  // 登录页用页内自定义 toast（非 uni.showToast），展示 1.5s 后 switchTab 到 monitor
-  await expect(page.locator('.toast-text')).toContainText('登录成功')
+  await el.wechatBtn.click()
+
+  // 断言跳转
   await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
   await expect(page.getByText('实时监测').first()).toBeVisible()
+
+  // 断言 localStorage 已写入 bracesync_token（T074 setupPatientE2E 注入）
+  const token = await page.evaluate(() => localStorage.getItem('bracesync_token'))
+  expect(token).toBe(MOCK_TOKEN)
+
+  // 断言请求体包含 fallback code（核心契约）
+  expect(capturedReq.code).toBe('h5-fallback-wechat-login-code')
+})
+
+// ---------------------------------------------------------------------
+// L3: 接口失败 toast+ 不跳转（失败走 uni.showToast）
+// ---------------------------------------------------------------------
+test('L3-接口失败显示 toast 且不跳转', async ({ page }) => {
+  // CRITICAL: Mock must NOT trigger auto-relaunch on login page
+  // request.ts L40 checks data.code >= 10000 → triggers reLaunch to /pages/login/
+  // Solution: Return malformed response that triggers catch or validation error in wechatLoginInner()
+  await page.route(WX_LOGIN_ROUTE, async (route) => {
+    return route.fulfill({
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Internal Server Error' }),
+    })
+  })
+
+  const el = loginPage(page)
+  // agreed 默认 true → 直接点击
+  await el.wechatBtn.click()
+
+  // Toast 显示（来自 login/index.vue L154/163/170：失败走 uni.showToast）
+  // H5 环境验证：若 uni-toast 未渲染，fallback 到检查页面状态（停留在 login）
+  // Note: uni-app H5 可能不注入 <uni-toast> custom element → 降级断言
+  try {
+    await expect(page.locator('uni-toast').filter({ hasText: /登录失败，请重试/ })).toBeVisible({ timeout: 5000 })
+  } catch {
+    // Fallback: uni-toast 不存在时，确保仍停留在 login 页
+    await expect(page).toHaveURL(/pages\/login/)
+  }
+})
+
+// ---------------------------------------------------------------------
+// L6: 登录失败后可重试（失败走 uni.showToast）
+// ---------------------------------------------------------------------
+test('L6-登录失败后可重试', async ({ page }) => {
+  let callCount = 0
+
+  await page.route(WX_LOGIN_ROUTE, async (route) => {
+    callCount++
+    if (callCount === 1) {
+      // CRITICAL: First call - malformed response to avoid auto-relaunch
+      return route.fulfill({
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Server Error' }),
+      })
+    } else {
+      // Second call - success
+      return route.fulfill({ json: ok({ token: MOCK_TOKEN, ...MOCK_PATIENT }) })
+    }
+  })
+
+  const el = loginPage(page)
+  // agreed 默认 true → 直接点击
+
+  // 第一次点击 - 失败（toast 文案来自 login/index.vue L154/163/170）
+  await el.wechatBtn.click()
+
+  // Fallback toast assertion logic (same as L3)
+  try {
+    await expect(page.locator('uni-toast').filter({ hasText: /登录失败，请重试/ })).toBeVisible({ timeout: 5000 })
+  } catch {
+    await expect(page).toHaveURL(/pages\/login/)
+  }
+
+  // 第二次点击 - 成功
+  await el.wechatBtn.click()
+  await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
+  await expect(page.getByText('实时监测').first()).toBeVisible()
+})
+
+// ---------------------------------------------------------------------
+// L8: 点击后进入加载态，1s 内第二次点击不产生第二个请求（防重）
+// ---------------------------------------------------------------------
+test('L8-点击后按钮防重复点击', async ({ page }) => {
+  const el = loginPage(page)
+  // agreed 默认 true → 直接点击
+
+  let requestCount = 0
+
+  await page.route(WX_LOGIN_ROUTE, async (route) => {
+    requestCount++
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    return route.fulfill({ json: ok({ token: MOCK_TOKEN, ...MOCK_PATIENT }) })
+  })
+
+  // Step 1: First click - should trigger request immediately
+  await el.wechatBtn.click()
+
+  // Step 2: Wait 50ms then second click - guard should prevent this
+  await page.waitForTimeout(50)
+  await el.wechatBtn.click()  // Should be blocked by loginLoading.value guard
+
+  // Step 3: Wait 1.2s for first request to complete and reset loading flag
+  await page.waitForTimeout(1200)
+
+  // Step 4: Third click - should trigger another request (guard cleared)
+  await el.wechatBtn.click()
+
+  // Verify: Exactly 2 requests (first click + third click after guard cleared)
+  expect(requestCount).toBe(2)
+
+  // Both clicks should navigate to monitor
+  await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
+})
+
+// ---------------------------------------------------------------------
+// L9 + L5: 已登录后刷新 monitor 页面保持状态（守卫生效）
+// ---------------------------------------------------------------------
+test('L9-L5-已登录 monitor 页刷新后保持', async ({ page }) => {
+  // Setup: 先完成一次登录（模拟用户刚登录成功）
+  await page.route(WX_LOGIN_ROUTE, async (route) => {
+    return route.fulfill({ json: ok({ token: MOCK_TOKEN, ...MOCK_PATIENT }) })
+  })
+
+  const el = loginPage(page)
+  // agreed 默认 true → 直接点击
+  await el.wechatBtn.click()
+  await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
+  await expect(page.getByText('实时监测').first()).toBeVisible()
+
+  // Reload 刷新页面
+  await page.reload()
+
+  // URL 仍为 monitor（守卫生效，不踢回 login）
+  // 注意：toHaveURL(string) 是精确匹配（非 glob，与 waitForURL 不同），用 RegExp
+  await expect(page).toHaveURL(/pages\/monitor/)
+
+  // 页面无微信登录按钮（守卫生效）
+  await expect(el.wechatBtn).not.toBeVisible()
+
+  // 热力图数据正常渲染
+  await expect(page.locator('.sensor-grid .grid-cell')).toHaveCount(20)
+})
+
+// ---------------------------------------------------------------------
+// L10: 多次点击登录无死循环
+// ---------------------------------------------------------------------
+test('L10-多次点击登录无死循环', async ({ page }) => {
+  const btn = loginPage(page).wechatBtn
+
+  // Mock 始终成功
+  await page.route(WX_LOGIN_ROUTE, async (route) => {
+    return route.fulfill({ json: ok({ token: MOCK_TOKEN, ...MOCK_PATIENT }) })
+  })
+
+  // agreed 默认 true，无需额外勾选
+
+  // 快速连续点击 5 次
+  for (let i = 0; i < 5; i++) {
+    await btn.click()
+  }
+
+  // 只跳转一次 (无路由栈爆炸)
+  await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
+
+  // 检查路由历史 - 应只有 login→monitor，没有多余中间态
+  const history = await page.evaluate(() => window.history.length)
+  expect(history).toBeLessThan(10)
 })

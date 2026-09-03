@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test'
-import { routes, fillUniInput, HOTSPOT_NAME } from '../helpers'
+import { routes, fillUniInput, HOTSPOT_NAME, setupPatientE2E } from '../helpers'
 
 /**
  * wifi-setup 页：4 步引导、热点复制、密码显隐、配网成功状态
  * BLE 在 H5 下全 mock（utils/ble.ts）：连接 1s + 5 步进度 ×1.2s + 0.8s ≈ 9s 到成功页
+ * T074 真实模式基建：beforeEach 顶部注入登录态
  */
 
 test.beforeEach(async ({ page }) => {
+  await setupPatientE2E(page, { withLogin: true })
   await page.goto(routes.wifiSetup)
   await expect(page.getByText('WiFi 配网')).toBeVisible()
 })

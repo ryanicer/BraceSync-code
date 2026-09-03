@@ -1,19 +1,25 @@
 import { test, expect } from '@playwright/test'
-import { switchTabBy, fillUniInput, HOTSPOT_NAME, loginPage, TEST_PHONE, TEST_SMS_CODE } from '../helpers'
+import { switchTabBy, fillUniInput, HOTSPOT_NAME, loginPage, setupPatientE2E } from '../helpers'
 
 /**
- * 全链路：login → monitor → history → device → wifi-setup → 配网成功（一次跑通）
+ * T080: 全链路 - 微信登录契约版（T074 迁移）
+ * 登录流程：协议勾选 → 微信按钮点击 → POST /api/v1/patient/wx-login
+ * T074 真实模式基建：test 顶部注册 route mock（断言体不动）
  */
-test('患者端核心全链路：登录到配网成功', async ({ page }) => {
+test('患者端核心全链路：微信登录到配网成功', async ({ page }) => {
   test.setTimeout(120_000)
+  await setupPatientE2E(page, { withLogin: false })
 
-  // ===== 1. login =====
+  // ===== 1. login (WeChat contract) =====
   await page.goto('/#/pages/login/index')
   const el = loginPage(page)
-  await fillUniInput(el.phone, TEST_PHONE)
-  await fillUniInput(el.smsCode, TEST_SMS_CODE)
-  await el.loginBtn.click()
-  await expect(page.locator('.toast-text')).toContainText('登录成功')
+  
+  // agreed 默认 true → 直接点击微信按钮
+  await el.wechatBtn.click()
+  
+  // 成功路径走自定义 toast (login/index.vue L83-86: <view class="toast">
+  // 失败路径才走 uni.showToast，所以这里用 .toast-text 断言
+  await expect(page.locator('.toast-text').filter({ hasText: /登录成功/ })).toBeVisible({ timeout: 5000 })
   await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
 
   // ===== 2. monitor：热力图 + 点选 + 日/周切换 =====

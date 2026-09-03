@@ -1,10 +1,21 @@
-import { expect, type Page, type Locator } from '@playwright/test'
+import { expect, test, type Page, type Locator } from '@playwright/test'
+import {
+  ok, wxLoginResp, realtimeSnapshot, pressureRecords, wearing15,
+  pressureAlerts7groups, alertsPage, unbindOk,
+  E2E_TOKEN_KEY, E2E_PATIENT_ID_KEY, E2E_TOKEN, E2E_PATIENT_ID,
+} from '../apps/patient-miniapp/tests/e2e/fixtures/patient'
+import { URL } from 'node:url'
 
 /**
- * 患者端 e2e 公共工具（T016 mock 数据基线）
+ * 患者端 e2e 公共工具（T016 mock 数据基线 + T074 真实模式 API 拦截基建）
  *
  * 选择器约定：T016 未加 data-testid（红线：不改 apps/patient-miniapp 业务代码），
  * 全部基于 class + 文案定位。Iris 后续补 data-testid 时在此统一迁移。
+ *
+ * T074 基建新增：setupPatientE2E(page, { withLogin })
+ *  - 页面初始化前注入 bracesync_token / bracesync_patient_id（H5 uni.storage = localStorage）
+ *  - page.route 拦截 api/v1 全路径请求返回契约 fixture（realtime/records/alerts/daily-wear/unbind/wx-login）
+ *  - 属于"测试基建 setup"，不触碰任何断言（断言归 Ella）
  */
 
 export const TEST_PHONE = '13800138000'
@@ -27,6 +38,7 @@ export const loginPage = (page: Page) => ({
   smsBtn: page.locator('.sms-btn').first(),
   checkbox: page.locator('.checkbox').first(),
   loginBtn: page.locator('.btn-primary').first(),
+  wechatBtn: page.locator('.btn-wechat').first(), // T074 微信登录按钮（login/index.vue L41 class=btn-wechat；留 Ella 新用例）
 })
 
 /** 完成一次 mock 登录并等待跳转到 monitor */
@@ -68,3 +80,169 @@ export async function fillUniInput(input: Locator, value: string) {
 export async function switchTabBy(page: Page, text: string) {
   await page.locator('uni-tabbar').getByText(text, { exact: true }).click()
 }
+
+// ---------------------------------------------------------------------
+// T074 真实模式基建：登录态注入 + page.route 拦截（Playwright H5）
+// ---------------------------------------------------------------------
+/**
+ * 在每个 spec 的 beforeEach 第一行调用：
+ *   test.beforeEach(async ({ page }) => {
+ *     await setupPatientE2E(page, { withLogin: true })   // monitor/device/history 直接进
+ *     // 或 { withLogin: false }                         // login.spec 自己测登录
+ *     await page.goto(routes.monitor)
+ *   })
+ *
+ * withLogin=true 时：addInitScript 里写入 storage（H5 端 uni.setStorageSync = localStorage），
+ *                    utils/token.ts 的读取 key 严格一致。
+ */
+// ---------------------------------------------------------------------
+// T080 Round10：失败自动 dump 观测数据（页面 window.__E2E_* 数组 + DOM state 机）
+// ---------------------------------------------------------------------
+// 每个本文件被 import 的 spec 文件在模块加载时都会注册下面这个 afterEach（Playwright
+// 允许在模块顶层调用 test.afterEach，等价于写在 spec 文件里）。因此无需改动任何
+// spec 代码 / 断言，即可让 CI 在用例失败时把 T080 留痕数据打进 stdout。
+const obsPages = new Set<Page>()
+
+function registerObsDump(page: Page) {
+  obsPages.add(page)
+  page.on('close', () => obsPages.delete(page))
+}
+
+test.afterEach(async () => {
+  const info = test.info()
+  const failed = info.status !== info.expectedStatus
+  if (!failed || obsPages.size === 0) {
+    obsPages.clear()
+    return
+  }
+  console.log(
+    `[obs-dump] test="${info.title}" status=${info.status} — dumping E2E observables (${obsPages.size} page(s))`,
+  )
+  for (const page of obsPages) {
+    try {
+      const dump = await page.evaluate(() => {
+        const w = window as unknown as {
+          __E2E_REQUEST_EVENTS__?: unknown[]
+          __E2E_WXLOGIN_EVENTS__?: unknown[]
+        }
+        return {
+          url: location.hash || location.pathname,
+          dataE2EState: document
+            .querySelector('[data-e2e-state]')
+            ?.getAttribute('data-e2e-state') ?? null,
+          requestEvents: w.__E2E_REQUEST_EVENTS__ ?? [],
+          wxLoginEvents: w.__E2E_WXLOGIN_EVENTS__ ?? [],
+        }
+      })
+      console.log('[obs-dump]', JSON.stringify(dump, null, 2))
+    } catch (e) {
+      // 页面可能已关闭/崩溃 —— 打印原因即可，不能让 dump 反过来弄挂 afterEach
+      console.log('[obs-dump] (page unavailable)', String(e).slice(0, 120))
+    }
+  }
+  obsPages.clear()
+})
+
+// ---------------------------------------------------------------------
+// T080 R12：wx-login 路由覆盖基建
+// ---------------------------------------------------------------------
+/** wx-login 专用路由匹配模式：请求实际发往 https://api.hbksd.com.cn（request.ts 绝对地址），
+ *  path-only glob 会与 baseURL(localhost:5173) 合并后永远匹配不到跨域请求。
+ *  spec 在 setupPatientE2E 之后用本 pattern 注册（Playwright LIFO：后注册先咨询），
+ *  即可覆盖 helpers 默认成功 mock。 */
+export const WX_LOGIN_ROUTE = /\/api\/v1\/patient\/wx-login$/
+/** 网关信封包装（{code:0, message, data}）：request.ts 只认 code===0，成功 mock 必须包裹 */
+export { ok } from '../apps/patient-miniapp/tests/e2e/fixtures/patient'
+
+export async function setupPatientE2E(page: Page, opts: { withLogin?: boolean } = {}) {
+  const withLogin = opts.withLogin ?? true
+
+  // T080 Round10：页面 console 全量转发到 CI stdout（Playwright 默认不转发页面 console，
+  // 含 console.warn —— 这是 Round9 [OBS] marker "零命中" 的直接原因）
+  page.on('console', (m) => {
+    console.log('[page-console]', `[${m.type()}]`, m.text())
+  })
+  registerObsDump(page)
+
+  // 1. storage 注入（在页面任何脚本前执行，保证 authStore 初始化已读登录态）
+  await page.addInitScript(
+    ({ tokenKey, pidKey, token, pid, login }) => {
+      try {
+        // uni-app H5: uni.setStorageSync 底层就是 localStorage.setItem（可直接写）
+        // 若存在全局 uni 对象则优先调 uni API 保持行为一致
+        const write = (k: string, v: string) => {
+          try {
+            // @ts-ignore
+            if (typeof uni !== 'undefined' && uni.setStorageSync) { /* @ts-ignore */ uni.setStorageSync(k, v); return }
+          } catch {/* ignore */}
+          try { window.localStorage.setItem(k, v) } catch {/* ignore */}
+        }
+        if (login) {
+          write(tokenKey, token)
+          write(pidKey, pid)
+        }
+      } catch {/* ignore */}
+    },
+    {
+      tokenKey: E2E_TOKEN_KEY,
+      pidKey: E2E_PATIENT_ID_KEY,
+      token: E2E_TOKEN,
+      pid: E2E_PATIENT_ID,
+      login: withLogin,
+    },
+  )
+
+  // 2. page.route：真实模式下各页面 API 请求 → 返回 fixture
+  //    匹配顺序：精确 path 命中即返回；未命中继续（避免影响未用到的端点）
+  await page.route(/\/api\/v1\//, async (route) => {
+    const req = route.request()
+    const url = new URL(req.url())
+    const method = req.method().toUpperCase()
+    const q = url.searchParams
+
+    // ——— POST /api/v1/patient/wx-login（登录按钮用）
+    if (method === 'POST' && url.pathname === '/api/v1/patient/wx-login') {
+      try {
+        const body = req.postDataJSON() as { code?: string } | undefined
+        return route.fulfill({ json: wxLoginResp(body?.code) })
+      } catch {
+        return route.fulfill({ json: wxLoginResp() })
+      }
+    }
+
+    // ——— GET /api/v1/patients/:patientId/realtime
+    const mRealtime = url.pathname.match(/^\/api\/v1\/patients\/([^/]+)\/realtime$/)
+    if (method === 'GET' && mRealtime) {
+      return route.fulfill({ json: realtimeSnapshot() })
+    }
+
+    // ——— GET /api/v1/patients/:patientId/records?period=day|week|month&date=YYYY-MM-DD
+    const mRecords = url.pathname.match(/^\/api\/v1\/patients\/([^/]+)\/records$/)
+    if (method === 'GET' && mRecords) {
+      return route.fulfill({ json: ok(pressureRecords(q.get('period') || 'day', q.get('date') || '')) })
+    }
+
+    // ——— GET /api/v1/patients/:patientId/daily-wear（history 佩戴）
+    const mWear = url.pathname.match(/^\/api\/v1\/patients\/([^/]+)\/daily-wear$/)
+    if (method === 'GET' && mWear) {
+      return route.fulfill({ json: ok(wearing15()) })
+    }
+
+    // ——— GET /api/v1/alerts?patientId=xxx（anomaly + history 压力）
+    if (method === 'GET' && url.pathname === '/api/v1/alerts') {
+      const pg = parseInt(q.get('page') || '1', 10) || 1
+      const psz = parseInt(q.get('pageSize') || '200', 10) || 200
+      return route.fulfill({ json: alertsPage(pressureAlerts7groups(), pg, psz) })
+    }
+
+    // ——— POST /api/v1/devices/:deviceId/unbind（device 解绑）
+    const mUnbind = url.pathname.match(/^\/api\/v1\/devices\/([^/]+)\/unbind$/)
+    if (method === 'POST' && mUnbind) {
+      return route.fulfill({ json: unbindOk() })
+    }
+
+    // 其它端点继续（走网络或 404 —— 符合"只 mock E2E 用到的端点"原则）
+    await route.fallback()
+  })
+}
+
