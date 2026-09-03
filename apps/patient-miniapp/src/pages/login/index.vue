@@ -55,8 +55,6 @@
       <view
         class="btn-wechat"
         :class="{ 'btn-wechat-disabled': loginLoading }"
-        :disabled="loginLoading"
-        :aria-disabled="loginLoading"
         role="button"
         @click="wechatLogin"
       >
@@ -308,9 +306,9 @@ function doRegister() {
 // 确定性守卫（对应 L8 requestCount flaky 修复）：
 //   0) WX_CLICK marker：同步写入 DOM + 观测（连点 3 次必留痕，哪怕后续 guard 拦）
 //   1) 协议守卫 checkAgreedModal（未勾选 → WX_UNCHECKED + 不发请求）
-//   2) JS guard：loginLoading.value
-//   3) DOM 可观测 guard：aria-disabled + pointer-events:none + disabled
-//   4) pending Promise 合并器：同一帧内 3 连点只触发 1 次 request（幂等去重）
+//   2) JS guard：loginLoading.value（click 必须能到达 handler，故不做 DOM 级阻断，
+//      仅保留 .btn-wechat-disabled 视觉禁用态）
+//   3) pending Promise 合并器：同一帧内 3 连点只触发 1 次 request（幂等去重）
 function wechatLogin() {
   // 先写 marker 再做任何守卫 — L8 requestCount=0 情况下 CI 也能证明"按钮事件确实到了"
   setE2E('WX_CLICK', { t: Date.now() })
@@ -373,8 +371,8 @@ onUnmounted(() => {
 .btn-wechat { width: 100%; padding: 26rpx 0; background: #07C160; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; gap: 16rpx; user-select: none; }
 .btn-wechat text { color: #fff; font-size: 30rpx; font-weight: 500; }
 .wechat-icon { font-size: 36rpx; }
-/* H5 确定性禁用态：让 Playwright click() 在内置 enabled 检查时等待，并阻止底层事件派发 */
-.btn-wechat-disabled { opacity: 0.6; pointer-events: none; }
+/* 加载中视觉态（仅样式；防重复提交由 JS guard 保证，E2E L8 契约要求 click 到达 handler） */
+.btn-wechat-disabled { opacity: 0.6; }
 .switch-to-login { text-align: center; margin-top: 24rpx; }
 .muted-text { font-size: 24rpx; color: #94a3b8; }
 .link-text { font-size: 24rpx; color: #2563EB; }

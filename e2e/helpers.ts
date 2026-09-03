@@ -143,6 +143,17 @@ test.afterEach(async () => {
   obsPages.clear()
 })
 
+// ---------------------------------------------------------------------
+// T080 R12：wx-login 路由覆盖基建
+// ---------------------------------------------------------------------
+/** wx-login 专用路由匹配模式：请求实际发往 https://api.hbksd.com.cn（request.ts 绝对地址），
+ *  path-only glob 会与 baseURL(localhost:5173) 合并后永远匹配不到跨域请求。
+ *  spec 在 setupPatientE2E 之后用本 pattern 注册（Playwright LIFO：后注册先咨询），
+ *  即可覆盖 helpers 默认成功 mock。 */
+export const WX_LOGIN_ROUTE = /\/api\/v1\/patient\/wx-login$/
+/** 网关信封包装（{code:0, message, data}）：request.ts 只认 code===0，成功 mock 必须包裹 */
+export { ok } from '../apps/patient-miniapp/tests/e2e/fixtures/patient'
+
 export async function setupPatientE2E(page: Page, opts: { withLogin?: boolean } = {}) {
   const withLogin = opts.withLogin ?? true
 
