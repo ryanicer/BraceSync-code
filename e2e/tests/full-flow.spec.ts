@@ -14,8 +14,7 @@ test('患者端核心全链路：微信登录到配网成功', async ({ page }) 
   await page.goto('/#/pages/login/index')
   const el = loginPage(page)
   
-  // 协议勾选 + 微信登录
-  await el.checkbox.click()
+  // agreed 默认 true → 直接点击微信按钮
   await el.wechatBtn.click()
   await expect(page.locator('uni-toast').filter({ hasText: /登录成功/ })).toBeVisible()
   await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
