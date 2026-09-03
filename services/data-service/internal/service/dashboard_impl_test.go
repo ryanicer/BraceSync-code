@@ -452,7 +452,7 @@ func TestServiceGetTeamRanking_AvgDailyWearCap(t *testing.T) {
 	store := &mockDashboardStore{
 		teamRows: []repo.RankingRow{
 			{Name: "TEAM-A", PatientCount: 10, AvgWearMin: 26730, Compliance: 80}, // 异常大
-			{Name: "TEAM-B", PatientCount: 5, AvgWearMin: 720, Compliance: 60},   // 正常值
+			{Name: "TEAM-B", PatientCount: 5, AvgWearMin: 720, Compliance: 60},    // 正常值
 		},
 	}
 	svc := NewDashboardService(store, nil)

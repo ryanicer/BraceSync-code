@@ -155,7 +155,7 @@ func (s *DashboardService) GetKPI(ctx context.Context, period string) (*Dashboar
 		TotalPatients:    row.TotalPatients,
 		TodayActiveWear:  row.ActiveWear,
 		TodayAlerts:      row.AlertCount,
-		AvgWearHours:     min(round2(row.AvgWearMinutes / 60), 24),
+		AvgWearHours:     min(round2(row.AvgWearMinutes/60), 24),
 		DeviceOnlineRate: round2(row.DeviceOnlineRate),
 		MonthNewPatients: row.MonthNewPatients,
 	}
@@ -252,7 +252,7 @@ func (s *DashboardService) GetTeamRanking(ctx context.Context) ([]TeamRankingDTO
 			Rank:           i + 1,
 			TeamName:       r.Name,
 			PatientCount:   r.PatientCount,
-			AvgDailyWear:   min(round2(r.AvgWearMin / 60), 24),
+			AvgDailyWear:   min(round2(r.AvgWearMin/60), 24),
 			ComplianceRate: round2(r.Compliance),
 		})
 	}
