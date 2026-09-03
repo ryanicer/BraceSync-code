@@ -1,0 +1,61 @@
+import type { InstallRecord } from '@bracesync/shared-types'
+
+export function mockInstallRecords(): InstallRecord[] {
+  return [
+    {
+      installId: 'inst-001',
+      deviceId: 'PRS-ML05-RC-002',
+      patientId: 'pat-001',
+      techId: 'tech-001',
+      calibrateTime: '2026-08-09T10:30:00Z',
+      baselineId: 'bl-001',
+      notes: '患者适应良好，传感器 P12 压力偏高需关注',
+      signatureUrl: '',
+      wifiStatus: 'connected',
+    },
+    {
+      installId: 'inst-002',
+      deviceId: 'PRS-ML05-RC-003',
+      patientId: 'pat-002',
+      techId: 'tech-001',
+      calibrateTime: '2026-08-08T14:00:00Z',
+      baselineId: 'bl-002',
+      notes: '常规安装，无异常',
+      signatureUrl: '',
+      wifiStatus: 'connected',
+    },
+    {
+      installId: 'inst-003',
+      deviceId: 'PRS-ML05-RC-005',
+      patientId: 'pat-003',
+      techId: 'tech-001',
+      calibrateTime: '2026-08-07T09:15:00Z',
+      baselineId: 'bl-003',
+      notes: '传感器 P07 校准偏差较大，已重新校准',
+      signatureUrl: '',
+      wifiStatus: 'unconfigured',
+    },
+    {
+      installId: 'inst-004',
+      deviceId: 'PRS-ML05-RC-008',
+      patientId: 'pat-005',
+      techId: 'tech-001',
+      calibrateTime: '2026-08-05T11:00:00Z',
+      baselineId: 'bl-004',
+      notes: '',
+      signatureUrl: '',
+      wifiStatus: 'connected',
+    },
+    {
+      installId: 'inst-005',
+      deviceId: 'PRS-ML05-RC-010',
+      patientId: 'pat-006',
+      techId: 'tech-001',
+      calibrateTime: '2026-08-03T16:20:00Z',
+      baselineId: null,
+      notes: 'WiFi 配置待完成',
+      signatureUrl: '',
+      wifiStatus: 'unconfigured',
+    },
+  ]
+}
