@@ -1,4 +1,4 @@
-import { expect, type Page, type Locator } from '@playwright/test'
+import { expect, test, type Page, type Locator } from '@playwright/test'
 import {
   ok, wxLoginResp, realtimeSnapshot, pressureRecords, wearing15,
   pressureAlerts7groups, alertsPage, unbindOk,
@@ -95,8 +95,63 @@ export async function switchTabBy(page: Page, text: string) {
  * withLogin=true 时：addInitScript 里写入 storage（H5 端 uni.setStorageSync = localStorage），
  *                    utils/token.ts 的读取 key 严格一致。
  */
+// ---------------------------------------------------------------------
+// T080 Round10：失败自动 dump 观测数据（页面 window.__E2E_* 数组 + DOM state 机）
+// ---------------------------------------------------------------------
+// 每个本文件被 import 的 spec 文件在模块加载时都会注册下面这个 afterEach（Playwright
+// 允许在模块顶层调用 test.afterEach，等价于写在 spec 文件里）。因此无需改动任何
+// spec 代码 / 断言，即可让 CI 在用例失败时把 T080 留痕数据打进 stdout。
+const obsPages = new Set<Page>()
+
+function registerObsDump(page: Page) {
+  obsPages.add(page)
+  page.on('close', () => obsPages.delete(page))
+}
+
+test.afterEach(async () => {
+  const info = test.info()
+  const failed = info.status !== info.expectedStatus
+  if (!failed || obsPages.size === 0) {
+    obsPages.clear()
+    return
+  }
+  console.log(
+    `[obs-dump] test="${info.title}" status=${info.status} — dumping E2E observables (${obsPages.size} page(s))`,
+  )
+  for (const page of obsPages) {
+    try {
+      const dump = await page.evaluate(() => {
+        const w = window as unknown as {
+          __E2E_REQUEST_EVENTS__?: unknown[]
+          __E2E_WXLOGIN_EVENTS__?: unknown[]
+        }
+        return {
+          url: location.hash || location.pathname,
+          dataE2EState: document
+            .querySelector('[data-e2e-state]')
+            ?.getAttribute('data-e2e-state') ?? null,
+          requestEvents: w.__E2E_REQUEST_EVENTS__ ?? [],
+          wxLoginEvents: w.__E2E_WXLOGIN_EVENTS__ ?? [],
+        }
+      })
+      console.log('[obs-dump]', JSON.stringify(dump, null, 2))
+    } catch (e) {
+      // 页面可能已关闭/崩溃 —— 打印原因即可，不能让 dump 反过来弄挂 afterEach
+      console.log('[obs-dump] (page unavailable)', String(e).slice(0, 120))
+    }
+  }
+  obsPages.clear()
+})
+
 export async function setupPatientE2E(page: Page, opts: { withLogin?: boolean } = {}) {
   const withLogin = opts.withLogin ?? true
+
+  // T080 Round10：页面 console 全量转发到 CI stdout（Playwright 默认不转发页面 console，
+  // 含 console.warn —— 这是 Round9 [OBS] marker "零命中" 的直接原因）
+  page.on('console', (m) => {
+    console.log('[page-console]', `[${m.type()}]`, m.text())
+  })
+  registerObsDump(page)
 
   // 1. storage 注入（在页面任何脚本前执行，保证 authStore 初始化已读登录态）
   await page.addInitScript(
