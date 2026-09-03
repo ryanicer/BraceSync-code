@@ -1,6 +1,6 @@
 // BLE 近场调试工具：扩展自 T016 患者端 ble.ts
 // 新增：校准数据读写、offset_values 采集
-// H5 dev 模式下 BLE API 不可用，用 mock 模拟流程
+// H5 dev 模式下 BLE API 不可用 → 蓝牙相关方法抛错由上层处理；discoverDevices 返回空数组
 
 // 检查是否在 H5 环境（BLE 不可用）
 function isH5(): boolean {
@@ -12,10 +12,11 @@ function isH5(): boolean {
   // #endif
 }
 
+const H5_BLUETOOTH_ERROR = '蓝牙功能仅支持真机使用，请在手机上操作'
+
 export async function initBluetooth(): Promise<boolean> {
   if (isH5()) {
-    console.log('[BLE Mock] initBluetooth - H5 mode, skipping')
-    return true
+    throw new Error(H5_BLUETOOTH_ERROR)
   }
   return new Promise((resolve, reject) => {
     uni.openBluetoothAdapter({
@@ -27,27 +28,47 @@ export async function initBluetooth(): Promise<boolean> {
 
 export async function discoverDevices(): Promise<{ deviceId: string; name: string; RSSI: number }[]> {
   if (isH5()) {
-    return [
-      { deviceId: 'PRS-ML05-RC-001', name: 'PRS-ML05-RC-001', RSSI: -45 },
-    ]
+    // H5 不造假设备，返回空数组由上层展示空态
+    return []
   }
   return new Promise((resolve, reject) => {
+    const found = new Map<string, { deviceId: string; name: string; RSSI: number }>()
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      uni.stopBluetoothDevicesDiscovery({ fail: () => {} })
+      uni.offBluetoothDeviceFound()
+    }
+
     uni.startBluetoothDevicesDiscovery({
+      allowDuplicatesKey: false,
       success: () => {
         uni.onBluetoothDeviceFound((res) => {
-          resolve(res.devices as unknown as { deviceId: string; name: string; RSSI: number }[])
+          for (const dev of res.devices) {
+            const d = dev as unknown as { deviceId: string; name: string; RSSI: number }
+            // 只保留有名称的设备（过滤系统广播）
+            if (d.name) found.set(d.deviceId, d)
+          }
         })
+        // 3 秒收集窗口后 stop 并 resolve
+        timer = setTimeout(() => {
+          cleanup()
+          resolve(Array.from(found.values()))
+        }, 3000)
       },
-      fail: (err) => reject(new Error(`设备扫描失败: ${err.errMsg}`)),
+      fail: (err) => {
+        cleanup()
+        reject(new Error(`设备扫描失败: ${err.errMsg}`))
+      },
     })
   })
 }
 
 export async function createBLEConnection(deviceId: string): Promise<boolean> {
   if (isH5()) {
-    console.log(`[BLE Mock] createBLEConnection - ${deviceId}`)
-    await new Promise(r => setTimeout(r, 1000))
-    return true
+    throw new Error(H5_BLUETOOTH_ERROR)
   }
   return new Promise((resolve, reject) => {
     uni.createBLEConnection({
@@ -60,9 +81,7 @@ export async function createBLEConnection(deviceId: string): Promise<boolean> {
 
 export async function writeWiFiConfig(ssid: string, password: string): Promise<boolean> {
   if (isH5()) {
-    console.log(`[BLE Mock] writeWiFiConfig - SSID: ${ssid}`)
-    await new Promise(r => setTimeout(r, 300))
-    return true
+    throw new Error(H5_BLUETOOTH_ERROR)
   }
   const payload = JSON.stringify({ ssid, password })
   const buffer = new TextEncoder().encode(payload)
@@ -73,8 +92,7 @@ export async function writeWiFiConfig(ssid: string, password: string): Promise<b
 
 export async function closeBLEConnection(deviceId: string): Promise<void> {
   if (isH5()) {
-    console.log(`[BLE Mock] closeBLEConnection - ${deviceId}`)
-    return
+    throw new Error(H5_BLUETOOTH_ERROR)
   }
   return new Promise((resolve) => {
     uni.closeBLEConnection({
@@ -90,12 +108,7 @@ export async function closeBLEConnection(deviceId: string): Promise<void> {
 /** 读取设备校准 offset_values（20 点） */
 export async function readCalibrationData(deviceId: string): Promise<number[]> {
   if (isH5()) {
-    console.log(`[BLE Mock] readCalibrationData - ${deviceId}`)
-    await new Promise(r => setTimeout(r, 800))
-    // 返回 20 个模拟 offset 值（范围 -0.5 ~ 0.5N）
-    return Array.from({ length: 20 }, (_, i) =>
-      parseFloat((Math.sin(i * 0.7) * 0.3 + (Math.random() - 0.5) * 0.2).toFixed(2))
-    )
+    throw new Error(H5_BLUETOOTH_ERROR)
   }
   // 真机：通过 BLE GATT 读取校准特征值
   return []
@@ -104,9 +117,7 @@ export async function readCalibrationData(deviceId: string): Promise<number[]> {
 /** 写入校准命令到设备 */
 export async function writeCalibrationCommand(deviceId: string, command: 'start' | 'stop'): Promise<boolean> {
   if (isH5()) {
-    console.log(`[BLE Mock] writeCalibrationCommand - ${command}`)
-    await new Promise(r => setTimeout(r, 500))
-    return true
+    throw new Error(H5_BLUETOOTH_ERROR)
   }
   return true
 }
@@ -114,9 +125,7 @@ export async function writeCalibrationCommand(deviceId: string, command: 'start'
 /** 读取设备固件版本 */
 export async function readFirmwareVersion(deviceId: string): Promise<string> {
   if (isH5()) {
-    console.log(`[BLE Mock] readFirmwareVersion - ${deviceId}`)
-    await new Promise(r => setTimeout(r, 300))
-    return 'v1.2.3'
+    throw new Error(H5_BLUETOOTH_ERROR)
   }
   return ''
 }

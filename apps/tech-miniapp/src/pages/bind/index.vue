@@ -77,7 +77,7 @@ import { ref, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { useDeviceStore } from '../../stores/device'
 import { discoverDevices, initBluetooth, createBLEConnection } from '../../utils/ble'
-import { mockScanResults } from '../../mock/device'
+import { request } from '../../utils/request'
 
 const authStore = useAuthStore()
 const deviceStore = useDeviceStore()
@@ -108,34 +108,44 @@ async function bindManual() {
     uni.showToast({ title: '请输入设备 ID', icon: 'none' })
     return
   }
-  // MOCK: 直接绑定成功
-  // 替换计划: 接 device-service POST /api/v1/devices/bind
-  deviceStore.setDevice({
-    deviceId: devId,
-    model: 'PRS-ML05-RC',
-    firmwareVersion: 'v1.2.3',
-    patientId: patientId.value || null,
-    wifiSsid: null,
-    bindTime: null,
-    status: 'unbound',
-    lastReportAt: null,
-  })
-  showToast('设备绑定成功')
-  setTimeout(() => {
-    uni.navigateTo({ url: '/pages/matrix/index' })
-  }, 1200)
+  try {
+    uni.showLoading({ title: '绑定中...' })
+    // 契约: POST /api/v1/devices/:deviceId/bind —— 操作人由网关鉴权后注入
+    const data = await request<{ deviceId: string; status: string }>({
+      url: `/api/v1/devices/${devId}/bind`,
+      method: 'POST',
+      data: { patientId: patientId.value || undefined },
+    })
+    uni.hideLoading()
+    deviceStore.setDevice({
+      deviceId: data.deviceId || devId,
+      model: 'PRS-ML05-RC',
+      firmwareVersion: 'v1.2.3',
+      patientId: patientId.value || null,
+      wifiSsid: null,
+      bindTime: new Date().toISOString(),
+      status: data.status || 'unbound',
+      lastReportAt: null,
+    })
+    showToast('设备绑定成功')
+    setTimeout(() => {
+      uni.navigateTo({ url: '/pages/matrix/index' })
+    }, 1200)
+  } catch (e) {
+    uni.hideLoading()
+    uni.showToast({ title: e instanceof Error ? e.message : '绑定失败', icon: 'none' })
+  }
 }
 
 async function scanBLE() {
   scanning.value = true
+  scanResults.value = []
   try {
     await initBluetooth()
-    // MOCK: 使用模拟扫描结果
-    // 替换计划: 真机环境使用 discoverDevices()
-    await new Promise(r => setTimeout(r, 1500))
-    scanResults.value = mockScanResults()
+    // 真机环境：调用 discoverDevices() 进行真实 BLE 扫描（3s 收集窗口）
+    scanResults.value = await discoverDevices()
   } catch (e) {
-    uni.showToast({ title: '扫描失败，请开启蓝牙', icon: 'none' })
+    uni.showToast({ title: e instanceof Error ? e.message : '扫描失败，请开启蓝牙', icon: 'none' })
   } finally {
     scanning.value = false
   }

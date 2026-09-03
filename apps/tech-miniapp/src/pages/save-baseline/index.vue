@@ -71,15 +71,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useInstallStore } from '../../stores/install'
-import { mockBaseline } from '../../mock/baseline'
 
 const installStore = useInstallStore()
 const saved = ref(false)
 
-// MOCK: 从 installStore 或 mock 获取 offset_values
-// 替换计划: 接 device-service GET /api/v1/baselines/{deviceId}/latest
+// 从 installStore 获取 offset_values（必须来自 matrix 步骤流转时的 BLE 采集）
 const offsetValues = ref<number[]>(
-  installStore.currentBaseline?.offsetValues || mockBaseline().offsetValues
+  installStore.currentBaseline?.offsetValues ?? []
 )
 
 function isOutOfRange(v: number): boolean {
@@ -128,7 +126,7 @@ function goBack() {
 
 onMounted(() => {
   if (offsetValues.value.length === 0) {
-    offsetValues.value = mockBaseline().offsetValues
+    uni.showToast({ title: '请先完成设备校准', icon: 'none' })
   }
 })
 </script>
