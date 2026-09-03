@@ -1,6 +1,6 @@
 {
   "name": "矫治通 · 技师端",
-  "appid": "",
+  "appid": "wx296778df7c1b1503",
   "description": "矫形支具安装与调试（技师端）",
   "versionName": "1.0.0",
   "versionCode": "100",
@@ -11,7 +11,7 @@
     "router": { "mode": "hash" }
   },
   "mp-weixin": {
-    "appid": "",
+    "appid": "wx296778df7c1b1503",
     "setting": { "urlCheck": false },
     "usingComponents": true
   }
