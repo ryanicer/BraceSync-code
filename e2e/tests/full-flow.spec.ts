@@ -16,7 +16,10 @@ test('患者端核心全链路：微信登录到配网成功', async ({ page }) 
   
   // agreed 默认 true → 直接点击微信按钮
   await el.wechatBtn.click()
-  await expect(page.locator('uni-toast').filter({ hasText: /登录成功，正在跳转/ })).toBeVisible()
+  
+  // 成功路径走自定义 toast (login/index.vue L83-86: <view class="toast">
+  // 失败路径才走 uni.showToast，所以这里用 .toast-text 断言
+  await expect(page.locator('.toast-text').filter({ hasText: /登录成功/ })).toBeVisible({ timeout: 5000 })
   await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
 
   // ===== 2. monitor：热力图 + 点选 + 日/周切换 =====
