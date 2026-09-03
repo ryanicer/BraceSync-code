@@ -155,7 +155,7 @@ func (s *DashboardService) GetKPI(ctx context.Context, period string) (*Dashboar
 		TotalPatients:    row.TotalPatients,
 		TodayActiveWear:  row.ActiveWear,
 		TodayAlerts:      row.AlertCount,
-		AvgWearHours:     round2(row.AvgWearMinutes / 60),
+		AvgWearHours:     min(round2(row.AvgWearMinutes / 60), 24),
 		DeviceOnlineRate: round2(row.DeviceOnlineRate),
 		MonthNewPatients: row.MonthNewPatients,
 	}
@@ -194,7 +194,7 @@ func (s *DashboardService) GetWearTrend(ctx context.Context, days int) ([]WearTr
 	}
 	byDate := make(map[string]float64, len(rows))
 	for _, r := range rows {
-		byDate[r.Date.Format("01-02")] = round2(r.Value / 60)
+		byDate[r.Date.Format("01-02")] = min(round2(r.Value/60), 24)
 	}
 	out := make([]WearTrendPoint, 0, days)
 	for d := 0; d < days; d++ {
@@ -252,7 +252,7 @@ func (s *DashboardService) GetTeamRanking(ctx context.Context) ([]TeamRankingDTO
 			Rank:           i + 1,
 			TeamName:       r.Name,
 			PatientCount:   r.PatientCount,
-			AvgDailyWear:   round2(r.AvgWearMin / 60),
+			AvgDailyWear:   min(round2(r.AvgWearMin / 60), 24),
 			ComplianceRate: round2(r.Compliance),
 		})
 	}

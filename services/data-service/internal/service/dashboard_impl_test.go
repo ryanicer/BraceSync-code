@@ -367,3 +367,100 @@ func TestServiceRankingFromDate(t *testing.T) {
 	want := start.Format("2006-01-02")
 	assert.Equal(t, want, "2026-08-05") // 近 7 日窗口起点
 }
+
+// ========== T083: 24h 物理上限 sanity check ==========
+
+// TestServiceGetWearTrend_SinglePatientOverCap 单日单患者极端异常 → avgHours 被 cap 到 24h
+// 模拟 T083 故障场景：某个患者 wear_minutes=26730（445.5h=不可能），cap 后应为 24h
+func TestServiceGetWearTrend_SinglePatientOverCap(t *testing.T) {
+	nowTS := time.Date(2026, 9, 2, 12, 0, 0, 0, model.CSTZone())
+	store := &mockDashboardStore{
+		wearRows: []repo.TrendRow{
+			// 09-02 单患者 wear_minutes=26730，repo SQL 已做 LEAST(26730,1440)=1440，
+			// 但如果 repo 没 cap（历史脏数据），service 层也应兜底
+			{Date: time.Date(2026, 9, 2, 0, 0, 0, 0, model.CSTZone()), Value: 26730}, // 直接传异常值验证 service 兜底
+		},
+	}
+	svc := NewDashboardService(store, nil)
+	svc.now = func() time.Time { return nowTS }
+
+	list, err := svc.GetWearTrend(context.Background(), 7)
+	require.Nil(t, err)
+	// 最后一天是 09-02，avgHours 应 ≤ 24（24h 物理上限）
+	assert.LessOrEqual(t, list[6].AvgHours, 24.0, "avgHours 不应超过 24h 物理上限")
+	assert.Equal(t, 24.0, list[6].AvgHours) // 26730/60=445.5 → cap 到 24
+}
+
+// TestServiceGetWearTrend_MultiPatientOneAbnormal 多患者中一人异常，cap 后均值合理
+func TestServiceGetWearTrend_MultiPatientOneAbnormal(t *testing.T) {
+	nowTS := time.Date(2026, 9, 2, 12, 0, 0, 0, model.CSTZone())
+	store := &mockDashboardStore{
+		wearRows: []repo.TrendRow{
+			// 模拟 repo 返回的 AVG 已被 LEAST 保护（正常路径）
+			// 但 service 层仍做二次兜底
+			{Date: time.Date(2026, 9, 2, 0, 0, 0, 0, model.CSTZone()), Value: 1440}, // 刚好 24h
+		},
+	}
+	svc := NewDashboardService(store, nil)
+	svc.now = func() time.Time { return nowTS }
+
+	list, err := svc.GetWearTrend(context.Background(), 7)
+	require.Nil(t, err)
+	assert.Equal(t, 24.0, list[6].AvgHours, "1440/60=24h，刚好等于物理上限")
+}
+
+// TestServiceGetWearTrend_NormalDay 正常日 → 不被 cap（回归测试）
+func TestServiceGetWearTrend_NormalDay(t *testing.T) {
+	nowTS := time.Date(2026, 9, 2, 12, 0, 0, 0, model.CSTZone())
+	store := &mockDashboardStore{
+		wearRows: []repo.TrendRow{
+			{Date: time.Date(2026, 9, 2, 0, 0, 0, 0, model.CSTZone()), Value: 720}, // 12h
+		},
+	}
+	svc := NewDashboardService(store, nil)
+	svc.now = func() time.Time { return nowTS }
+
+	list, err := svc.GetWearTrend(context.Background(), 7)
+	require.Nil(t, err)
+	assert.Equal(t, 12.0, list[6].AvgHours, "正常值不应被 cap")
+}
+
+// TestServiceGetKPI_AvgWearHoursCap KPI 的 AvgWearHours 也受 24h 限制
+func TestServiceGetKPI_AvgWearHoursCap(t *testing.T) {
+	ctx := context.Background()
+	// 构造 repo 返回极端值（模拟历史脏数据）
+	mockStore := &mockDashboardStore{kpiRow: &repo.KPIRow{
+		TotalPatients:    100,
+		ActiveWear:       50,
+		AlertCount:       10,
+		AvgWearMinutes:   26730, // 445.5h → 应被 cap
+		DeviceOnlineRate: 80.0,
+		MonthNewPatients: 5,
+	}}
+	svc := NewDashboardService(mockStore, nil)
+
+	dto, appErr := svc.GetKPI(ctx, "today")
+	require.Nil(t, appErr)
+	assert.LessOrEqual(t, dto.AvgWearHours, 24.0, "KPI AvgWearHours 不应超过 24h")
+	assert.Equal(t, 24.0, dto.AvgWearHours)
+}
+
+// TestServiceGetTeamRanking_AvgDailyWearCap TeamRanking 的 AvgDailyWear 也受 24h 限制
+func TestServiceGetTeamRanking_AvgDailyWearCap(t *testing.T) {
+	ctx := context.Background()
+	nowTS := time.Date(2026, 9, 2, 12, 0, 0, 0, model.CSTZone())
+	store := &mockDashboardStore{
+		teamRows: []repo.RankingRow{
+			{Name: "TEAM-A", PatientCount: 10, AvgWearMin: 26730, Compliance: 80}, // 异常大
+			{Name: "TEAM-B", PatientCount: 5, AvgWearMin: 720, Compliance: 60},   // 正常值
+		},
+	}
+	svc := NewDashboardService(store, nil)
+	svc.now = func() time.Time { return nowTS }
+
+	list, err := svc.GetTeamRanking(ctx)
+	require.Nil(t, err)
+	assert.Len(t, list, 2)
+	assert.LessOrEqual(t, list[0].AvgDailyWear, 24.0, "异常值应被 cap 到 24h")
+	assert.Equal(t, 12.0, list[1].AvgDailyWear, "正常值不应被 cap")
+}
