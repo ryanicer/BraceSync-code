@@ -26,6 +26,7 @@ test.beforeEach(async ({ page }) => {
 // ---------------------------------------------------------------------
 test('L1-微信登录按钮可见可用', async ({ page }) => {
   const el = loginPage(page)
+  // agreed 默认 true，无需额外勾选
   await expect(el.wechatBtn).toBeVisible()
   await expect(el.wechatBtn).toBeEnabled()
 })
@@ -53,6 +54,9 @@ test('L7-协议勾选前未同意弹出 Modal，勾选后可登录', async ({ pa
   // Modal 标题 + 内容断言（来自 login/index.vue L123 checkAgreedModal）
   await expect(page.locator('uni-modal').filter({ hasText: /请先阅读并同意协议/ })).toBeVisible()
   
+  // Step 2b: 关闭 modal（showCancel:false，只有"确定"按钮）
+  await page.locator('uni-modal').getByText('确定').click()
+  
   // wx-login route 零命中
   expect(wxLoginCalled).toBe(false)
   
@@ -69,7 +73,7 @@ test('L7-协议勾选前未同意弹出 Modal，勾选后可登录', async ({ pa
 })
 
 // ---------------------------------------------------------------------
-// L4 + L2: 点击微信按钮跳转 monitor+storage+route mock 断言
+// L4-L2: 点击微信按钮跳转 monitor+storage+route mock 断言
 // ---------------------------------------------------------------------
 test('L4-L2-点击微信按钮跳转 monitor 并写入 storage', async ({ page }) => {
   // Route mock setup - 拦截请求体以验证 fallback code
@@ -81,9 +85,8 @@ test('L4-L2-点击微信按钮跳转 monitor 并写入 storage', async ({ page }
     return route.fulfill({ json: { token: MOCK_TOKEN, ...MOCK_PATIENT } })
   })
   
-  // 执行登录：勾选协议 → 点击微信按钮
+  // 执行登录：agreed 默认 true → 直接点微信按钮
   const el = loginPage(page)
-  await el.checkbox.click()
   await el.wechatBtn.click()
   
   // 断言跳转
@@ -107,7 +110,7 @@ test('L3-接口失败显示 toast 且不跳转', async ({ page }) => {
   })
   
   const el = loginPage(page)
-  await el.checkbox.click()
+  // agreed 默认 true → 直接点击
   await el.wechatBtn.click()
   
   // Toast 显示（来自 login/index.vue L170）
@@ -135,7 +138,7 @@ test('L6-登录失败后可重试', async ({ page }) => {
   })
   
   const el = loginPage(page)
-  await el.checkbox.click()
+  // agreed 默认 true → 直接点击
   
   // 第一次点击 - 失败（toast 文案来自 login/index.vue L170）
   await el.wechatBtn.click()
@@ -153,7 +156,7 @@ test('L6-登录失败后可重试', async ({ page }) => {
 // ---------------------------------------------------------------------
 test('L8-点击后按钮防重复点击', async ({ page }) => {
   const el = loginPage(page)
-  await el.checkbox.click()
+  // agreed 默认 true → 直接点击
   
   let requestCount = 0
   
@@ -185,7 +188,7 @@ test('L9-L5-已登录 monitor 页刷新后保持', async ({ page }) => {
   })
   
   const el = loginPage(page)
-  await el.checkbox.click()
+  // agreed 默认 true → 直接点击
   await el.wechatBtn.click()
   await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
   await expect(page.getByText('实时监测').first()).toBeVisible()
@@ -214,8 +217,7 @@ test('L10-多次点击登录无死循环', async ({ page }) => {
     return route.fulfill({ json: { token: MOCK_TOKEN, ...MOCK_PATIENT } })
   })
   
-  // 勾选协议
-  await loginPage(page).checkbox.click()
+  // agreed 默认 true，无需额外勾选
   
   // 快速连续点击 5 次
   for (let i = 0; i < 5; i++) {
