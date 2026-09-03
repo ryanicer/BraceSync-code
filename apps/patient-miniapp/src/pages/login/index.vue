@@ -38,9 +38,16 @@
 
       <view class="divider"><text class="divider-text">其他登录方式</text></view>
 
-      <view class="btn-wechat" @click="wechatLogin">
+      <view
+        class="btn-wechat"
+        :class="{ 'btn-wechat-disabled': loginLoading }"
+        :disabled="loginLoading"
+        :aria-disabled="loginLoading"
+        role="button"
+        @click="wechatLogin"
+      >
         <text class="wechat-icon">💬</text>
-        <text>微信授权登录</text>
+        <text>{{ loginLoading ? '登录中...' : '微信授权登录' }}</text>
       </view>
     </view>
 
@@ -91,6 +98,7 @@
 import { ref, onUnmounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { request } from '../../utils/request'
+import { getToken, getPatientId } from '../../utils/token'
 
 // 患者登录响应：POST /api/v1/patient/wx-login 返回（契约 user-service model.PatientLoginResultDTO）
 interface WxLoginResp {
@@ -113,9 +121,25 @@ const toastVisible = ref(false)
 const toastText = ref('')
 const loginLoading = ref(false)
 let smsTimer: ReturnType<typeof setInterval> | null = null
+// 同一帧内 3 连点的幂等合并器（L8 requestCount=1 确定性去重）
+let pendingWxLogin: Promise<void> | null = null
 
 function sendSMS() {
   uni.showToast({ title: '患者端暂仅支持微信登录', icon: 'none' })
+}
+
+/** 字符串打码：只保留前 8 字符前缀用于区分 fallback/真实 code，不打印全文 */
+function maskCode(code: string | undefined): string {
+  if (!code) return ''
+  return code.length <= 8 ? code : `${code.slice(0, 8)}…`
+}
+
+function safeMessage(e: unknown, fallback = '登录失败，请重试'): string {
+  if (e instanceof Error && e.message) {
+    const s = e.message
+    return s.length > 80 ? `${s.slice(0, 80)}…` : s
+  }
+  return fallback
 }
 
 // 协议勾选校验：Ella L7 用例契约 —— 未勾选点微信登录按钮 → showModal 提示，且不发任何请求
@@ -146,7 +170,14 @@ function showToast(text: string, shouldNav: boolean = true) {
   setTimeout(() => {
     toastVisible.value = false
     if (shouldNav) {
-      uni.switchTab({ url: '/pages/monitor/index' })
+      // 兜底：若 token/patientId 落盘失败（极端情况），不执行跳转，避免 L3/L6 误判"跳 monitor"
+      const navOk = !!getToken() && !!getPatientId()
+      if (navOk) {
+        console.debug('[wx-login] nav:switchTab -> monitor')
+        uni.switchTab({ url: '/pages/monitor/index' })
+      } else {
+        console.debug('[wx-login] nav:skip-switchTab (missing persisted token/patientId)')
+      }
     }
   }, 1500)
 }
@@ -163,6 +194,7 @@ function showToast(text: string, shouldNav: boolean = true) {
 async function wechatLoginInner() {
   try {
     let code: string | undefined
+    let codeSource: 'wx' | 'fallback' = 'wx'
     try {
       const res = await new Promise<UniApp.LoginRes>((resolve, reject) => {
         uni.login({
@@ -172,29 +204,40 @@ async function wechatLoginInner() {
         })
       })
       code = res?.code
-    } catch {
+      console.debug('[wx-login] uni.login:ok', { codePrefix: maskCode(code) })
+    } catch (e) {
+      codeSource = 'fallback'
       // H5/CI 无微信 SDK → 占位 code，接口层（或 Playwright route）照常处理
       code = 'h5-fallback-wechat-login-code'
+      console.debug('[wx-login] uni.login:fallback', { reason: safeMessage(e, 32) })
     }
     if (!code) {
       uni.showToast({ title: '登录失败，请重试', icon: 'none' })
       return
     }
+    console.debug('[wx-login] request:start', { codePrefix: maskCode(code), via: codeSource })
     const resp = await request<WxLoginResp>({
       url: '/api/v1/patient/wx-login',
       method: 'POST',
       data: { code },
     })
+    const hasToken = !!(resp && resp.token)
+    const hasPatientId = !!(resp && resp.patientId)
+    console.debug('[wx-login] request:ok', { hasToken, hasPatientId, hasName: !!(resp && resp.name) })
     if (!resp || !resp.token || !resp.patientId) {
       uni.showToast({ title: '登录失败，请重试', icon: 'none' })
       return
     }
+    console.debug('[wx-login] authStore:login (will persist token+patientId)')
     authStore.login(resp.token, resp.patientId)
     showToast('登录成功，正在跳转...')
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : '登录失败，请重试'
+    const msg = safeMessage(e)
+    console.debug('[wx-login] request:fail', { error: msg })
     uni.showToast({ title: msg, icon: 'none' })
   } finally {
+    // 清当前 pending 引用（下一帧才能再发）；loading 先复位，保证用户重试可用
+    pendingWxLogin = null
     loginLoading.value = false
   }
 }
@@ -220,15 +263,24 @@ function doRegister() {
 }
 
 // 微信授权登录：患者端 C 线唯一入口
+// 确定性守卫（对应 L8 requestCount flaky 修复）：
+//   1) JS guard：loginLoading.value
+//   2) DOM 可观测 guard：aria-disabled + pointer-events:none + disabled
+//   3) pending Promise 合并器：同一帧内 3 连点只触发 1 次 request（幂等去重）
 function wechatLogin() {
   if (!checkAgreedModal()) return // 未勾选 → showModal「请先阅读并同意协议」，不调 wechatLoginInner、不发任何网络请求
   if (loginLoading.value) return
   loginLoading.value = true
-  void wechatLoginInner()
+  if (pendingWxLogin) {
+    console.debug('[wx-login] click:merged (pendingWxLogin exists)')
+    return
+  }
+  pendingWxLogin = wechatLoginInner()
 }
 
 onUnmounted(() => {
   if (smsTimer) clearInterval(smsTimer)
+  pendingWxLogin = null
 })
 </script>
 
@@ -269,9 +321,11 @@ onUnmounted(() => {
 .divider { display: flex; align-items: center; margin: 56rpx 0 40rpx; }
 .divider::before, .divider::after { content: ''; flex: 1; height: 1rpx; background: #e2e8f0; }
 .divider-text { padding: 0 28rpx; font-size: 24rpx; color: #94a3b8; }
-.btn-wechat { width: 100%; padding: 26rpx 0; background: #07C160; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; gap: 16rpx; }
+.btn-wechat { width: 100%; padding: 26rpx 0; background: #07C160; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; gap: 16rpx; user-select: none; }
 .btn-wechat text { color: #fff; font-size: 30rpx; font-weight: 500; }
 .wechat-icon { font-size: 36rpx; }
+/* H5 确定性禁用态：让 Playwright click() 在内置 enabled 检查时等待，并阻止底层事件派发 */
+.btn-wechat-disabled { opacity: 0.6; pointer-events: none; }
 .switch-to-login { text-align: center; margin-top: 24rpx; }
 .muted-text { font-size: 24rpx; color: #94a3b8; }
 .link-text { font-size: 24rpx; color: #2563EB; }
