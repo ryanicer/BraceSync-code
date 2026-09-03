@@ -16,7 +16,15 @@
 
     <!-- 记录列表 -->
     <view class="section">
-      <view v-if="filteredRecords.length > 0" class="record-list">
+      <view v-if="loading" class="card empty-card">
+        <text class="empty-text">加载中...</text>
+      </view>
+      <view v-else-if="error" class="card empty-card">
+        <text class="empty-icon">⚠️</text>
+        <text class="empty-text">{{ error }}</text>
+        <view class="retry-btn" @click="loadRecords"><text class="retry-text">重试</text></view>
+      </view>
+      <view v-else-if="filteredRecords.length > 0" class="record-list">
         <view v-for="rec in filteredRecords" :key="rec.installId" class="record-card" @click="viewDetail(rec)">
           <view class="record-header">
             <text class="record-device">{{ rec.deviceId }}</text>
@@ -60,14 +68,32 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import type { InstallRecord } from '@bracesync/shared-types'
-import { mockInstallRecords } from '../../mock/records'
+import { ref, computed, onMounted } from 'vue'
+import type { InstallRecord, PaginatedResponse } from '@bracesync/shared-types'
+import { request } from '../../utils/request'
 
-// MOCK 数据
-// 替换计划: 接 device-service GET /api/v1/install-records?techId=xxx
-const records = ref<InstallRecord[]>(mockInstallRecords())
+const records = ref<InstallRecord[]>([])
 const filter = ref<'all' | 'connected' | 'unconfigured'>('all')
+const loading = ref(false)
+const error = ref('')
+
+async function loadRecords() {
+  loading.value = true
+  error.value = ''
+  try {
+    // 契约: GET /api/v1/install-records?page=1&pageSize=50
+    const res = await request<PaginatedResponse<InstallRecord>>({
+      url: '/api/v1/install-records',
+      method: 'GET',
+      data: { page: 1, pageSize: 50 },
+    })
+    records.value = res.list || []
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '加载失败'
+  } finally {
+    loading.value = false
+  }
+}
 
 const filteredRecords = computed(() => {
   if (filter.value === 'all') return records.value
@@ -90,6 +116,10 @@ function viewDetail(rec: InstallRecord) {
 function goBind() {
   uni.navigateTo({ url: '/pages/bind/index' })
 }
+
+onMounted(() => {
+  loadRecords()
+})
 </script>
 
 <style scoped>

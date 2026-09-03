@@ -120,7 +120,6 @@ import { useDeviceStore } from '../../stores/device'
 import { useInstallStore } from '../../stores/install'
 import { useAuthStore } from '../../stores/auth'
 import { writeCalibrationCommand, readCalibrationData } from '../../utils/ble'
-import { mockRealtimeSensorData } from '../../mock/baseline'
 
 const deviceStore = useDeviceStore()
 const installStore = useInstallStore()
@@ -167,28 +166,36 @@ function startCalibration() {
   calibrationProgress.value = 0
   const devId = deviceInfo.value.deviceId
 
-  // MOCK: 模拟校准过程
-  // 替换计划: 真机通过 BLE writeCalibrationCommand + readCalibrationData
   calTimer = setInterval(async () => {
     calibrationProgress.value += 20
     if (calibrationProgress.value >= 100) {
       if (calTimer) clearInterval(calTimer)
       calTimer = null
       calibrating.value = false
-      calibrationDone.value = true
       try {
         await writeCalibrationCommand(devId, 'stop')
-        baselineValues.value = await readCalibrationData(devId)
+        const data = await readCalibrationData(devId)
+        if (data && data.length === 20) {
+          baselineValues.value = data
+          calibrationDone.value = true
+        } else {
+          // 真机 BLE 未就绪时返回空数组，提示用户重试
+          uni.showToast({ title: '校准数据采集失败，请重试', icon: 'none' })
+        }
       } catch (e) {
-        // fallback to mock sensor data
-        baselineValues.value = mockRealtimeSensorData().map(p => parseFloat((p.pressureValue * 0.01).toFixed(2)))
+        // BLE 功能不可用（H5 或真机蓝牙未开）
+        uni.showToast({ title: e instanceof Error ? e.message : '校准失败，请重试', icon: 'none' })
       }
     }
   }, 800)
 }
 
 function goSaveBaseline() {
-  installStore.setBaseline(baselineValues.value.length > 0 ? baselineValues.value : mockRealtimeSensorData().map(() => 0.15))
+  if (baselineValues.value.length === 0) {
+    uni.showToast({ title: '请先完成设备校准', icon: 'none' })
+    return
+  }
+  installStore.setBaseline(baselineValues.value)
   uni.navigateTo({ url: '/pages/save-baseline/index' })
 }
 
