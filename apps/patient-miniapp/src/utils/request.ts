@@ -31,6 +31,8 @@ export async function request<T>(options: RequestOptions): Promise<T> {
       header,
       success: (res) => {
         const data = res.data as { code: number; message: string; data: T }
+        console.log('[REQUEST] Response data:', data)
+        console.log('[REQUEST] Status code:', res.statusCode)
         if (data.code === 0) {
           resolve(data.data)
         } else if (data.code >= 10000 && data.code < 20000) {

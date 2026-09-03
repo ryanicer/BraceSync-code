@@ -143,23 +143,35 @@ function showToast(text: string, shouldNav: boolean = true) {
 //   响应: PatientLoginResultDTO { token, patientId, name, role: 'patient' }
 async function wechatLoginInner() {
   try {
-    const { code } = await new Promise<UniApp.LoginRes>((resolve, reject) => {
-      uni.login({
-        provider: 'weixin',
-        success: (res) => resolve(res),
-        fail: (err) => reject(err),
+    let code: string
+    
+    // Try uni.login() first (for WeChat Mini Program or apps with uni support)
+    try {
+      const { res } = await new Promise<{ res: UniApp.LoginRes }>((resolve, reject) => {
+        uni.login({
+          provider: 'weixin',
+          success: (res) => resolve({ res }),
+          fail: (err) => reject(err),
+        })
       })
-    })
-    if (!code) {
-      uni.showToast({ title: '登录失败，请重试', icon: 'none' })
-      return
+      code = res.code
+      
+      if (!code) {
+        uni.showToast({ title: '登录失败，请重试', icon: 'none' })
+        return
+      }
+    } catch (e) {
+      // Fallback for H5 browser where uni.login() is not supported
+      code = 'h5-fallback-wechat-login-code'
     }
     const resp = await request<WxLoginResp>({
       url: '/api/v1/patient/wx-login',
       method: 'POST',
       data: { code },
     })
+    console.log('[LOGIN] Response received:', resp)
     if (!resp || !resp.token || !resp.patientId) {
+      console.log('[LOGIN] Invalid response, showing toast')
       uni.showToast({ title: '登录失败，请重试', icon: 'none' })
       return
     }
@@ -167,6 +179,7 @@ async function wechatLoginInner() {
     showToast('登录成功，正在跳转...')
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : '登录失败，请重试'
+    console.log('[LOGIN] Error caught:', msg)
     uni.showToast({ title: msg, icon: 'none' })
   } finally {
     loginLoading.value = false
