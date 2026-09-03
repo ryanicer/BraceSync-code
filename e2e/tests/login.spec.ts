@@ -105,8 +105,15 @@ test('L4-L2-点击微信按钮跳转 monitor 并写入 storage', async ({ page }
 // L3: 接口失败 toast+ 不跳转（失败走 uni.showToast）
 // ---------------------------------------------------------------------
 test('L3-接口失败显示 toast 且不跳转', async ({ page }) => {
+  // CRITICAL: Mock must NOT trigger auto-relaunch on login page
+  // request.ts L40 checks data.code >= 10000 → triggers reLaunch to /pages/login/
+  // Solution: Return malformed response that triggers catch or validation error in wechatLoginInner()
   await page.route('/api/v1/patient/wx-login', async (route) => {
-    return route.fulfill({ status: 500, json: { message: 'Internal Server Error' } })
+    return route.fulfill({
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'Internal Server Error' }),
+    })
   })
   
   const el = loginPage(page)
@@ -133,10 +140,14 @@ test('L6-登录失败后可重试', async ({ page }) => {
   await page.route('/api/v1/patient/wx-login', async (route) => {
     callCount++
     if (callCount === 1) {
-      // 第一次失败
-      return route.fulfill({ status: 500, json: { message: 'Server Error' } })
+      // CRITICAL: First call - malformed response to avoid auto-relaunch
+      return route.fulfill({
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Server Error' }),
+      })
     } else {
-      // 第二次成功
+      // Second call - success
       return route.fulfill({ json: { token: MOCK_TOKEN, ...MOCK_PATIENT } })
     }
   })
@@ -175,19 +186,23 @@ test('L8-点击后按钮防重复点击', async ({ page }) => {
     return route.fulfill({ json: { token: MOCK_TOKEN, ...MOCK_PATIENT } })
   })
   
-  // 快速连续点击 3 次（模拟用户急躁行为）
-  await el.wechatBtn.click()
-  await el.wechatBtn.click()
+  // Step 1: First click - should trigger request immediately
   await el.wechatBtn.click()
   
-  // 等待 500ms 确保所有点击事件处理完毕
-  await page.waitForTimeout(500)
+  // Step 2: Wait 50ms then second click - guard should prevent this
+  await page.waitForTimeout(50)
+  await el.wechatBtn.click()  // Should be blocked by loginLoading.value guard
   
-  // 只产生一个请求（loginLoading.value guard）
-  expect(requestCount).toBeGreaterThanOrEqual(1)
-  expect(requestCount).toBeLessThanOrEqual(3) // mock 可能拦截部分请求
+  // Step 3: Wait 1.2s for first request to complete and reset loading flag
+  await page.waitForTimeout(1200)
   
-  // 最终仍跳转到 monitor
+  // Step 4: Third click - should trigger another request (guard cleared)
+  await el.wechatBtn.click()
+  
+  // Verify: Exactly 2 requests (first click + third click after guard cleared)
+  expect(requestCount).toBe(2)
+  
+  // Both clicks should navigate to monitor
   await page.waitForURL('**/pages/monitor/**', { timeout: 15_000 })
 })
 
