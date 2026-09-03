@@ -1,5 +1,19 @@
 <template>
-  <view class="page">
+  <!--
+    T080: 根 div 上挂 data-e2e-state，Playwright 无需读 console 即可断言"按钮到底进入了哪一步"。
+    状态机：
+      - INIT                → 初始
+      - WX_CLICK            → wechatLogin() 同步入口被调用（3连点计数第一点必达）
+      - WX_UNCHECKED        → 未勾选协议，已弹 modal（不发请求）
+      - WX_GUARD_MERGED     → loginLoading/pending 合并器拦截（第2/3次连点落此）
+      - WX_REQ_START        → request(/wx-login) 即将发出
+      - WX_REQ_OK           → request 成功 resolve（但未必最终登录）
+      - WX_REQ_INCOMPLETE   → token/patientId 缺失（接口返回结构异常）
+      - WX_LOGIN_STORE_OK   → authStore.login 调用成功（接下来会 switchTab）
+      - WX_NAV_SKIP         → 要 switchTab 前发现落盘 token/pid 不全（主动放弃跳转）
+      - WX_REQ_FAIL:<msg>   → catch 到失败（msg 取前 12 字符）
+  -->
+  <view class="page" :data-e2e-state="e2eState">
     <view class="brand-header">
       <view class="brand-logo"><text class="brand-icon">⚡</text></view>
       <text class="brand-name">矫治通</text>
@@ -120,9 +134,13 @@ const smsCountdown = ref(0)
 const toastVisible = ref(false)
 const toastText = ref('')
 const loginLoading = ref(false)
+// T080: 与模板绑定的同步 DOM marker（根节点 data-e2e-state）——Playwright 直接读 locator
+const e2eState = ref<string>('INIT')
 let smsTimer: ReturnType<typeof setInterval> | null = null
 // 同一帧内 3 连点的幂等合并器（L8 requestCount=1 确定性去重）
 let pendingWxLogin: Promise<void> | null = null
+
+const OBS = '[OBS] wx-login'
 
 function sendSMS() {
   uni.showToast({ title: '患者端暂仅支持微信登录', icon: 'none' })
@@ -134,18 +152,39 @@ function maskCode(code: string | undefined): string {
   return code.length <= 8 ? code : `${code.slice(0, 8)}…`
 }
 
-function safeMessage(e: unknown, fallback = '登录失败，请重试'): string {
+function safeMessage(e: unknown, fallback = '登录失败，请重试', max = 80): string {
   if (e instanceof Error && e.message) {
     const s = e.message
-    return s.length > 80 ? `${s.slice(0, 80)}…` : s
+    return s.length > max ? `${s.slice(0, max)}…` : s
   }
   return fallback
+}
+
+/**
+ * T080: 三路观测（console.warn 必不落 DCE + DOM marker 可断言 + 窗口数组 Playwright evaluate 可直读）
+ * 与 request.ts emit() 对齐，保证 L3/L6/L8 任一方向出问题 CI 至少有一路留痕。
+ */
+function setE2E(state: string, meta: Record<string, unknown> = {}) {
+  e2eState.value = state
+  // console.warn DCE-proof
+  // eslint-disable-next-line no-console
+  console.warn(`${OBS} state=${state} ${JSON.stringify(meta)}`)
+  try {
+    // @ts-ignore
+    if (typeof window !== 'undefined') {
+      // @ts-ignore
+      const w = window as any
+      if (!Array.isArray(w.__E2E_WXLOGIN_EVENTS__)) w.__E2E_WXLOGIN_EVENTS__ = []
+      w.__E2E_WXLOGIN_EVENTS__.push({ t: Date.now(), state, ...meta })
+    }
+  } catch {/* ignore */}
 }
 
 // 协议勾选校验：Ella L7 用例契约 —— 未勾选点微信登录按钮 → showModal 提示，且不发任何请求
 // 返回 true = 已勾选（可继续）；false = 未勾选，已 showModal，调用方直接 return
 function checkAgreedModal(): boolean {
   if (agreed.value) return true
+  setE2E('WX_UNCHECKED')
   uni.showModal({
     title: '提示',
     content: '请先阅读并同意协议',
@@ -173,10 +212,10 @@ function showToast(text: string, shouldNav: boolean = true) {
       // 兜底：若 token/patientId 落盘失败（极端情况），不执行跳转，避免 L3/L6 误判"跳 monitor"
       const navOk = !!getToken() && !!getPatientId()
       if (navOk) {
-        console.debug('[wx-login] nav:switchTab -> monitor')
+        setE2E('WX_NAV_GOING', { to: 'monitor' })
         uni.switchTab({ url: '/pages/monitor/index' })
       } else {
-        console.debug('[wx-login] nav:skip-switchTab (missing persisted token/patientId)')
+        setE2E('WX_NAV_SKIP', { reason: 'missing persisted token/patientId' })
       }
     }
   }, 1500)
@@ -204,18 +243,19 @@ async function wechatLoginInner() {
         })
       })
       code = res?.code
-      console.debug('[wx-login] uni.login:ok', { codePrefix: maskCode(code) })
+      setE2E('WX_LOGIN_OK', { codePrefix: maskCode(code) })
     } catch (e) {
       codeSource = 'fallback'
       // H5/CI 无微信 SDK → 占位 code，接口层（或 Playwright route）照常处理
       code = 'h5-fallback-wechat-login-code'
-      console.debug('[wx-login] uni.login:fallback', { reason: safeMessage(e, 32) })
+      setE2E('WX_LOGIN_FALLBACK', { reason: safeMessage(e, 32) })
     }
     if (!code) {
+      setE2E('WX_NO_CODE')
       uni.showToast({ title: '登录失败，请重试', icon: 'none' })
       return
     }
-    console.debug('[wx-login] request:start', { codePrefix: maskCode(code), via: codeSource })
+    setE2E('WX_REQ_START', { codePrefix: maskCode(code), via: codeSource })
     const resp = await request<WxLoginResp>({
       url: '/api/v1/patient/wx-login',
       method: 'POST',
@@ -223,17 +263,19 @@ async function wechatLoginInner() {
     })
     const hasToken = !!(resp && resp.token)
     const hasPatientId = !!(resp && resp.patientId)
-    console.debug('[wx-login] request:ok', { hasToken, hasPatientId, hasName: !!(resp && resp.name) })
+    setE2E('WX_REQ_OK', { hasToken, hasPatientId })
     if (!resp || !resp.token || !resp.patientId) {
+      setE2E('WX_REQ_INCOMPLETE', { hasToken, hasPatientId })
       uni.showToast({ title: '登录失败，请重试', icon: 'none' })
       return
     }
-    console.debug('[wx-login] authStore:login (will persist token+patientId)')
+    setE2E('WX_LOGIN_STORE_OK', { name: (resp.name || '').slice(0, 8), role: resp.role || '' })
     authStore.login(resp.token, resp.patientId)
     showToast('登录成功，正在跳转...')
   } catch (e: unknown) {
     const msg = safeMessage(e)
-    console.debug('[wx-login] request:fail', { error: msg })
+    const tag = (msg || '').slice(0, 12).replace(/[^0-9a-zA-Z_\u4e00-\u9fa5]/g, '_') || 'err'
+    setE2E(`WX_REQ_FAIL:${tag}`, { error: msg })
     uni.showToast({ title: msg, icon: 'none' })
   } finally {
     // 清当前 pending 引用（下一帧才能再发）；loading 先复位，保证用户重试可用
@@ -264,15 +306,22 @@ function doRegister() {
 
 // 微信授权登录：患者端 C 线唯一入口
 // 确定性守卫（对应 L8 requestCount flaky 修复）：
-//   1) JS guard：loginLoading.value
-//   2) DOM 可观测 guard：aria-disabled + pointer-events:none + disabled
-//   3) pending Promise 合并器：同一帧内 3 连点只触发 1 次 request（幂等去重）
+//   0) WX_CLICK marker：同步写入 DOM + 观测（连点 3 次必留痕，哪怕后续 guard 拦）
+//   1) 协议守卫 checkAgreedModal（未勾选 → WX_UNCHECKED + 不发请求）
+//   2) JS guard：loginLoading.value
+//   3) DOM 可观测 guard：aria-disabled + pointer-events:none + disabled
+//   4) pending Promise 合并器：同一帧内 3 连点只触发 1 次 request（幂等去重）
 function wechatLogin() {
-  if (!checkAgreedModal()) return // 未勾选 → showModal「请先阅读并同意协议」，不调 wechatLoginInner、不发任何网络请求
-  if (loginLoading.value) return
+  // 先写 marker 再做任何守卫 — L8 requestCount=0 情况下 CI 也能证明"按钮事件确实到了"
+  setE2E('WX_CLICK', { t: Date.now() })
+  if (!checkAgreedModal()) return
+  if (loginLoading.value) {
+    setE2E('WX_GUARD_MERGED', { reason: 'loginLoading' })
+    return
+  }
   loginLoading.value = true
   if (pendingWxLogin) {
-    console.debug('[wx-login] click:merged (pendingWxLogin exists)')
+    setE2E('WX_GUARD_MERGED', { reason: 'pendingWxLogin' })
     return
   }
   pendingWxLogin = wechatLoginInner()

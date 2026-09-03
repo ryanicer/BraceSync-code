@@ -22,6 +22,8 @@ interface GatewayResponse<T> {
 }
 
 const DEFAULT_ERROR_MESSAGE = '服务器异常，请稍后重试'
+// T080: 可观测 marker 前缀（CI Playwright 可按 locator / 控制台 warn / 页面 uni-toast 三路取）
+const OBS_TAG = '[OBS] request'
 
 /** 安全地从 uni.request 的 success 回调里取 bodyType 字符串供日志 */
 function bodyKind(data: unknown): string {
@@ -39,6 +41,41 @@ function truncate(input: unknown, max = 80): string {
   return s.length > max ? `${s.slice(0, max)}…` : s
 }
 
+/**
+ * T080：CI 观测通道的最低保障。
+ *
+ * Playwright CI GitHub reporter 的 stdout 对 console.debug 不采集，且 Vite dev 对
+ * 纯副作用 console.debug 可能做 DCE。我们升级为 console.warn（不会被丢弃），
+ * 并在 window.__E2E_DEBUG__ 为真时额外把观测事件写到：
+ *   - (window as any).__E2E_REQUEST_EVENTS__ 内存数组（Playwright evaluate 可直读）
+ *   - uni.showToast icon=none（E2E 再失败时截图里会带 marker 文案；用户肉眼也能看到）
+ */
+function emit(payload: Record<string, unknown>): void {
+  const line = `${OBS_TAG} ${JSON.stringify(payload)}`
+  try {
+    // 生产构建 terser 也不会 drop console.warn（否则用户代码报错会丢）
+    // eslint-disable-next-line no-console
+    console.warn(line)
+  } catch {/* ignore */}
+  try {
+    // 仅在 H5 / CI 下生效；小程序 window 可能不可写
+    // @ts-ignore
+    if (typeof window !== 'undefined' && (window as any).__E2E_DEBUG__) {
+      // @ts-ignore
+      const w = window as any
+      if (!Array.isArray(w.__E2E_REQUEST_EVENTS__)) w.__E2E_REQUEST_EVENTS__ = []
+      w.__E2E_REQUEST_EVENTS__.push({ t: Date.now(), ...payload })
+      try {
+        uni.showToast({
+          title: `${OBS_TAG.split(' ')[1]}:${payload.event || 'x'}`,
+          icon: 'none',
+          duration: 1400,
+        })
+      } catch {/* ignore */}
+    }
+  } catch {/* ignore */}
+}
+
 export async function request<T>(options: RequestOptions): Promise<T> {
   if (USE_MOCK) {
     throw new Error('Mock mode: use mock data functions directly')
@@ -51,6 +88,8 @@ export async function request<T>(options: RequestOptions): Promise<T> {
   if (token) {
     header['Authorization'] = `Bearer ${token}`
   }
+
+  const startTs = Date.now()
 
   return new Promise((resolve, reject) => {
     uni.request({
@@ -67,9 +106,14 @@ export async function request<T>(options: RequestOptions): Promise<T> {
         let message: string | undefined
         let data: unknown
 
+        const elapsedMs = Date.now() - startTs
+
         // -------- 1) HTTP 状态码非 2xx：直接判失败，不触发任何页面导航 --------
         //    兼容 H5：uni.request 对 4xx/5xx 仍回调 success。
         //    uni-app statusCode 在 H5/小程序规范中都存在，用 != null 兜底老版本。
+        // T080 关键修正：statusCode 只要 >=400（含 4xx/5xx）就**无条件**按"HTTP 失败"处理，
+        // 即便 H5 runtime/拦截器把 body 规范化成 {code:0, data:{token,patientId}} 也不再
+        // 被当成成功（这是 L3/L6 "mock 500 仍跳 monitor" 的真正兜底）。
         const httpOk = statusCode != null && statusCode >= 200 && statusCode < 300
 
         // -------- 2) body 防御式解析 --------
@@ -100,15 +144,16 @@ export async function request<T>(options: RequestOptions): Promise<T> {
               /* ignore navigation error in sandbox */
             }
           }
-          // 诊断日志：statusCode 非 2xx
-          console.debug('[request]', {
+          emit({
+            event: 'http-error',
             url: options.url,
-            method: options.method,
-            statusCode,
+            method: options.method || 'GET',
+            statusCode: statusCode ?? null,
             bodyType,
-            code: Number.isFinite(code) ? code : null,
+            code: Number.isFinite(code) ? code! : null,
             willNavigate,
             error: truncate(message),
+            elapsedMs,
           })
           reject(new Error(message || DEFAULT_ERROR_MESSAGE))
           return
@@ -116,13 +161,15 @@ export async function request<T>(options: RequestOptions): Promise<T> {
 
         // -------- 4) HTTP 2xx：按 body.code 分发 --------
         if (Number.isFinite(code) && code === 0) {
-          console.debug('[request]', {
+          emit({
+            event: 'ok',
             url: options.url,
-            method: options.method,
-            statusCode,
+            method: options.method || 'GET',
+            statusCode: statusCode ?? null,
             bodyType,
             code: 0,
             willNavigate: false,
+            elapsedMs,
           })
           resolve(data as T)
           return
@@ -138,14 +185,16 @@ export async function request<T>(options: RequestOptions): Promise<T> {
           }
         }
 
-        console.debug('[request]', {
+        emit({
+          event: 'biz-error',
           url: options.url,
-          method: options.method,
-          statusCode,
+          method: options.method || 'GET',
+          statusCode: statusCode ?? null,
           bodyType,
-          code: Number.isFinite(code) ? code : null,
+          code: Number.isFinite(code) ? code! : null,
           willNavigate,
           error: truncate(message),
+          elapsedMs,
         })
         reject(new Error(message || DEFAULT_ERROR_MESSAGE))
       },
@@ -153,11 +202,13 @@ export async function request<T>(options: RequestOptions): Promise<T> {
         const errMsg = (err && typeof err === 'object' && 'errMsg' in err && typeof (err as { errMsg?: unknown }).errMsg === 'string')
           ? (err as { errMsg: string }).errMsg
           : 'Network error'
-        console.debug('[request]', {
+        const elapsedMs = Date.now() - startTs
+        emit({
+          event: 'fail',
           url: options.url,
-          method: options.method,
-          fail: true,
+          method: options.method || 'GET',
           error: truncate(errMsg),
+          elapsedMs,
         })
         reject(new Error(`HTTP fail: ${errMsg}`))
       },
