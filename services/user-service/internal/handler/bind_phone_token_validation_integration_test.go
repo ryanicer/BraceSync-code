@@ -9,6 +9,9 @@
 package handler
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +23,6 @@ import (
 
 	"github.com/bracesync/bracesync/services/testhelper"
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
-	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
 )
 
@@ -33,11 +35,11 @@ const testPhoneTokenSecret = "T085-test-secret-for-phonetoken-validation-only"
 func newPhoneTokenTestEnv(t *testing.T) *phoneTokenTestEnv {
 	t.Helper()
 
-	signer, _ := token.NewSigner(t085TestJWTSecret, time.Hour)
+	signer, _ := token.NewSigner(t085TestJWTSecret, 8*time.Hour)
 	bindSigner, _ := token.NewSigner(t085TestJWTSecret, 30*time.Minute)
 	fc := testhelper.NewFixedClock(time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
 
-	store := &fakeStore{}
+	store := newT085Store()
 	h := New(store, signer, nil)
 	wechatClient := testhelper.NewMockWechatClient("13800138000")
 
@@ -49,7 +51,7 @@ func newPhoneTokenTestEnv(t *testing.T) *phoneTokenTestEnv {
 		store:            store,
 		h:                h,
 		wechatClient:     wechatClient,
-		phoneTokenSigner: testPhoneTokenSecret, // TODO: Winner 实现后使用 jwt.Signer
+		phoneTokenSigner: testPhoneTokenSecret,
 	}
 }
 
@@ -58,59 +60,71 @@ type phoneTokenTestEnv struct {
 	signer           *token.Signer
 	bindSigner       *token.Signer
 	fixedClock       *testhelper.FixedClock
-	store            *fakeStore
+	store            *t085Store
 	h                *Handler
 	wechatClient     *testhelper.MockWechatClient
-	phoneTokenSigner string // TODO: Winner 实现后替换为 jwt.Signer
+	phoneTokenSigner string
+}
+
+// signPhoneToken 用 HS256 签发 phoneToken（与 Winner 实现的 phoneToken 同构）。
+// claims: purpose / phone_hash / openid / iat / exp
+func signPhoneToken(secret, phoneHash, openID, purpose string, iat, exp int64) string {
+	header := `{"alg":"HS256","typ":"JWT"}`
+	payload, _ := json.Marshal(map[string]any{
+		"purpose":    purpose,
+		"phone_hash": phoneHash,
+		"openid":     openID,
+		"iat":        iat,
+		"exp":        exp,
+	})
+	signingInput := base64.RawURLEncoding.EncodeToString([]byte(header)) + "." +
+		base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signingInput))
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // createValidPhoneToken 生成有效的 phoneToken (purpose="phone_token", exp=7d)
 func (e *phoneTokenTestEnv) createValidPhoneToken(phoneHash, openID string) string {
-	// TODO: Winner 实现后使用 HS256 JWT 格式
-	// payload := map[string]interface{}{
-	//     "purpose": "phone_token",
-	//     "phone_hash": phoneHash,
-	//     "openid": openID,
-	//     "iat": e.fixedClock.Now().Unix(),
-	//     "exp": e.fixedClock.Now().Add(7*24*time.Hour).Unix(),
-	// }
-	// return jwt.Sign(payload, []byte(e.phoneTokenSigner))
-
-	return "valid_phone_token_placeholder_" + openID[len(openID)-6:]
+	now := e.fixedClock.Now().Unix()
+	return signPhoneToken(e.phoneTokenSigner, phoneHash, openID, "phone_token", now, now+7*24*3600)
 }
 
 // createInvalidPhoneTokenSignatureTampered 生成签名被篡改的 phoneToken
 func (e *phoneTokenTestEnv) createInvalidPhoneTokenSignatureTampered(phoneHash, openID string) string {
-	// 模拟篡改后的 token（实际应基于有效 token 修改 payload）
-	return "tampered_phone_token_" + openID[len(openID)-6:]
+	valid := e.createValidPhoneToken(phoneHash, openID)
+	// 在签名段追加字符模拟篡改
+	return valid + "tampered"
 }
 
 // createPhoneTokenWrongPurpose 生成 purpose 错误的 phoneToken
 func (e *phoneTokenTestEnv) createPhoneTokenWrongPurpose(phoneHash, openID string) string {
-	// purpose="wrong_purpose" ≠ "phone_token"
-	return "phone_token_with_wrong_purpose_" + openID[len(openID)-6:]
+	now := e.fixedClock.Now().Unix()
+	return signPhoneToken(e.phoneTokenSigner, phoneHash, openID, "wrong_purpose", now, now+7*24*3600)
 }
 
 // createPhoneTokenOpenidMismatch 生成 openid 不匹配的 phoneToken
 func (e *phoneTokenTestEnv) createPhoneTokenOpenidMismatch(phoneHash, openID string) string {
-	// phoneToken 含 openid=mismatched_openid
-	return "phone_token_mismatch_openid_" + openID[len(openID)-6:]
+	now := e.fixedClock.Now().Unix()
+	// phoneToken 内含 openid="mismatched_openid"，与绑定态 sub 不一致
+	return signPhoneToken(e.phoneTokenSigner, phoneHash, "openid_mismatched_xxx", "phone_token", now, now+7*24*3600)
 }
 
 // createPhoneTokenExpired 生成过期 (>7d) 的 phoneToken
 func (e *phoneTokenTestEnv) createPhoneTokenExpired(phoneHash, openID string) string {
-	// iat=time.Now()-8days (超过 7 天有效期)
-	return "expired_phone_token_" + openID[len(openID)-6:]
+	now := e.fixedClock.Now().Unix()
+	// iat = now - 8days, exp = now - 1day（已过期）
+	return signPhoneToken(e.phoneTokenSigner, phoneHash, openID, "phone_token", now-8*24*3600, now-24*3600)
 }
 
 // createScopeBindJWT 签发绑定态 JWT (scope=bind)
 func (e *phoneTokenTestEnv) createScopeBindJWT(openid string) string {
-	token, _ := e.bindSigner.Sign(openid, "", "测试患者", "patient")
-	return token
+	tok, _ := e.bindSigner.Sign(openid, "", "测试患者", "patient")
+	return tok
 }
 
 // doBindPhoneWithPhoneToken 用 phoneToken 发起 bind-phone 请求
-func (e *phoneTokenTestEnv) doBindPhoneWithPhoneToken(authOpenID, phoneToken string) (*httptest.ResponseRecorder, *jsonResp) {
+func (e *phoneTokenTestEnv) doBindPhoneWithPhoneToken(authOpenID, phoneToken string) (*httptest.ResponseRecorder, *testResp) {
 	e.t.Helper()
 
 	body := map[string]string{"phone_token": phoneToken}
@@ -123,7 +137,7 @@ func (e *phoneTokenTestEnv) doBindPhoneWithPhoneToken(authOpenID, phoneToken str
 	rec := httptest.NewRecorder()
 	e.h.Router().ServeHTTP(rec, w)
 
-	resp := &jsonResp{}
+	resp := &testResp{}
 	_ = json.Unmarshal(rec.Body.Bytes(), resp)
 
 	return rec, resp
@@ -153,7 +167,7 @@ func TestBindPhoneInvalidPhoneToken_SignatureTampered_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestBindPhoneInvalidPhoneToken_WrongPurpose_KNOWN_Red purpose≠"phone_token" → 10605
+// TestBindPhoneInvalidPhoneToken_WrongPurpose_KNOWN_RED purpose≠"phone_token" → 10605
 func TestBindPhoneInvalidPhoneToken_WrongPurpose_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
@@ -184,7 +198,7 @@ func TestBindPhoneInvalidPhoneToken_OpenidMismatch_KNOWN_RED(t *testing.T) {
 		t.Log("KNOWN_RED: stub 未校验 openid 一致性，预期 10605 (phoneToken.openid 应等于绑定态 sub)")
 
 		scopeBindJWT := e.createScopeBindJWT("openid_auth_subject")
-		mismatchToken := e.createPhoneTokenOpenidMismatch("hash_xyz", "openid_different_from_auth")
+		mismatchToken := e.createPhoneTokenOpenidMismatch("hash_xyz", "openid_auth_subject")
 
 		w, resp := e.doBindPhoneWithPhoneToken(scopeBindJWT, mismatchToken)
 
@@ -224,12 +238,8 @@ func TestBindPhoneValidRetry_NoWechatCall_KNOWN_RED(t *testing.T) {
 
 	e := newPhoneTokenTestEnv(t)
 
-	// Fixture: phone_hash 匹配档案但 wx_openid=NULL (等待绑定)
-	patient := repo.PatientRow{
-		PatientID: "P20260006", Name: "患者小红",
-		PhoneEnc: []byte("encrypted"), Status: "active",
-	}
-	e.store.patients = append(e.store.patients, patient)
+	// Fixture: phone_hash 匹配 active 档案（patientLogin 返回 P20260006）
+	e.store.patientLogin = patientLoginForPhone("P20260006", "患者小红", "active")
 
 	t.Run("valid_phone_token_retry_zero_wechat_api_call", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 可能调用微信 API，预期 phoneToken 模式不调用微信接口")
@@ -244,7 +254,7 @@ func TestBindPhoneValidRetry_NoWechatCall_KNOWN_RED(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code, "有效 phoneToken 应返回 200 success")
 
-		// **关键断言**: phoneToken 模式不应调用微信 GetPhoneNumber
+		// 关键断言: phoneToken 模式不应调用微信 GetPhoneNumber
 		assert.Equal(t, 0, e.wechatClient.CallCount(), "phoneToken 重试模式应零微信调用")
 
 		// 预期成功响应

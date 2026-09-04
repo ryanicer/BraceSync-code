@@ -1,9 +1,9 @@
-// Package handler T085 Admin 患者档案维护契约 KNOWN_RED 测试
+// Package handler T085 管理端患者维护（解绑微信/改号）契约 KNOWN_RED 测试
 //
-// 覆盖 §5.6 Admin 侧操作：
-//   - POST /api/v1/admin/patients/:patientId/unbind-wechat → wx_openid=NULL
-//   - PUT /api/v1/admin/patients/:patientId/phone → format validation / 409 conflict
-//   - audit log: operator_id/action/before/after
+// 覆盖 §5.3 admin 患者维护：
+//   - POST /api/v1/admin/patients/:id/unbind-wechat → wx_openid=NULL + 审计日志
+//   - PUT  /api/v1/admin/patients/:id/phone         → phone_enc+phone_hash 同步更新 + 审计日志
+//   - 手机号格式校验 / 409 冲突
 package handler
 
 import (
@@ -29,7 +29,7 @@ const (
 )
 
 // ─────────────────────────────────────────────────────────────
-// Fixtures & Helpers
+// Fixtures
 // ─────────────────────────────────────────────────────────────
 
 func newAdminMaintenanceEnv(t *testing.T) (*adminMaintTestEnv, *testhelper.LogCaptureHook) {
@@ -40,7 +40,7 @@ func newAdminMaintenanceEnv(t *testing.T) (*adminMaintTestEnv, *testhelper.LogCa
 
 	lc := testhelper.NewLogCaptureHook()
 
-	store := &fakeStore{}
+	store := newT085Store()
 	h := New(store, signer, nil)
 
 	return &adminMaintTestEnv{
@@ -55,45 +55,45 @@ func newAdminMaintenanceEnv(t *testing.T) (*adminMaintTestEnv, *testhelper.LogCa
 type adminMaintTestEnv struct {
 	t          *testing.T
 	signer     *token.Signer
-	store      *fakeStore
+	store      *t085Store
 	h          *Handler
 	logCapture *testhelper.LogCaptureHook
 }
 
 // createSuperAdminJWT 签发 super admin JWT (scope=all)
 func (e *adminMaintTestEnv) createSuperAdminJWT(adminID string) string {
-	token, _ := e.signer.Sign(adminID, "", "超级管理员", "ROLE_SUPER_ADMIN")
-	return token
+	tok, _ := e.signer.Sign(adminID, "", "超级管理员", "ROLE_SUPER_ADMIN")
+	return tok
 }
 
-// samplePatientRow 装配 PatientRow 样本（带 phone_enc+hash）
-func samplePatientRowWithPhone(id, status string) repo.PatientRow {
+// samplePatientForAdmin 构造 GetPatient 返回的 PatientRow fixture（含 phone_enc）
+func samplePatientForAdmin(id, status string) repo.PatientRow {
 	return repo.PatientRow{
 		PatientID: id, Name: "患者小明", PhoneEnc: []byte("encrypted"),
-		Status:    status,
-		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		Status: status, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 }
 
 // doUnbindWechat 发起 unbind-wechat 请求
-func (e *adminMaintTestEnv) doUnbindWechat(patientID string, authToken string) (*httptest.ResponseRecorder, *jsonResp) {
+func (e *adminMaintTestEnv) doUnbindWechat(patientID, authToken string) (*httptest.ResponseRecorder, *testResp) {
 	e.t.Helper()
 
 	w := httptest.NewRequest(http.MethodPost, "/api/v1/admin/patients/"+patientID+"/unbind-wechat", nil)
 	w.Header.Set("Content-Type", "application/json")
 	w.Header.Set("Authorization", "Bearer "+authToken)
+	w.Header.Set("X-User-Id", testSuperAdminID)
 
 	rec := httptest.NewRecorder()
 	e.h.Router().ServeHTTP(rec, w)
 
-	resp := &jsonResp{}
+	resp := &testResp{}
 	_ = json.Unmarshal(rec.Body.Bytes(), resp)
 
 	return rec, resp
 }
 
 // doPutPhone 发起 PUT phone 请求
-func (e *adminMaintTestEnv) doPutPhone(patientID, newPhone, reason string, authToken string) (*httptest.ResponseRecorder, *jsonResp) {
+func (e *adminMaintTestEnv) doPutPhone(patientID, newPhone, reason, authToken string) (*httptest.ResponseRecorder, *testResp) {
 	e.t.Helper()
 
 	body := map[string]string{"phone": newPhone, "reason": reason}
@@ -102,11 +102,12 @@ func (e *adminMaintTestEnv) doPutPhone(patientID, newPhone, reason string, authT
 	w := httptest.NewRequest(http.MethodPut, "/api/v1/admin/patients/"+patientID+"/phone", strings.NewReader(string(bodyBytes)))
 	w.Header.Set("Content-Type", "application/json")
 	w.Header.Set("Authorization", "Bearer "+authToken)
+	w.Header.Set("X-User-Id", testSuperAdminID)
 
 	rec := httptest.NewRecorder()
 	e.h.Router().ServeHTTP(rec, w)
 
-	resp := &jsonResp{}
+	resp := &testResp{}
 	_ = json.Unmarshal(rec.Body.Bytes(), resp)
 
 	return rec, resp
@@ -123,9 +124,9 @@ func TestUnbindWechat_SuccessfullySetsNULL_KNOWN_RED(t *testing.T) {
 
 	env, lc := newAdminMaintenanceEnv(t)
 
-	// Fixture: patient 已绑定 wx_openid
-	patient := samplePatientRowWithPhone("P20260007", "active")
-	env.store.patients = append(env.store.patients, patient)
+	// Fixture: patient 已绑定 wx_openid（GetPatient 命中）
+	patient := samplePatientForAdmin("P20260007", "active")
+	env.store.patient = &patient
 
 	authToken := env.createSuperAdminJWT(testSuperAdminID)
 
@@ -137,7 +138,8 @@ func TestUnbindWechat_SuccessfullySetsNULL_KNOWN_RED(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code, "成功应返回 200")
 		assert.Equal(t, model.CodeOK, resp.Code)
 
-		// TODO: Winner 实现后断言以下逻辑
+		// 断言：调用 1 次解绑写操作（Winner 扩展 Store 接口后生效）
+		assert.Equal(t, 1, env.store.unbindOpenidCalls, "应恰好调用 1 次 wx_openid 置 NULL")
 
 		// 审计日志断言
 		entry := lc.FindEventByAction("unbind_wechat")
@@ -184,23 +186,23 @@ func TestUpdatePhone_FormatValidation_RejectInvalid_KNOWN_RED(t *testing.T) {
 			assert.Equal(t, model.CodeInvalidParam, resp.Code, "错误码应为 CodeInvalidParam")
 
 			// 断言：不执行后续 UPDATE
+			assert.Equal(t, 0, env.store.updatePhoneCalls, "格式校验失败不应调用改号写操作")
 		})
 	}
 }
 
-// TestUpdatePhone_409_ConflictWithExistingHash_KNOWN_Red phone_hash 冲突 → 409 Conflict
+// TestUpdatePhone_409_ConflictWithExistingHash_KNOWN_RED phone_hash 冲突 → 409 Conflict
 func TestUpdatePhone_409_ConflictWithExistingHash_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	env, _ := newAdminMaintenanceEnv(t)
 
-	// Fixture: 两个患者共享同一 phone_hash（模拟 409 冲突场景）
-	patient1 := samplePatientRowWithPhone("P20260008", "active")
-	patient2 := samplePatientRowWithPhone("P20260009", "active")
-	env.store.patients = append(env.store.patients, patient1, patient2)
-
-	// 查找时返回 P20260008
+	// Fixture: 目标患者存在（GetPatient 命中 P20260008）
+	patient := samplePatientForAdmin("P20260008", "active")
+	env.store.patient = &patient
+	// 模拟 phone_hash 已被占用（Winner 实现查重时应返回 409）
+	env.store.phoneTaken = true
 
 	authToken := env.createSuperAdminJWT(testSuperAdminID)
 
@@ -213,6 +215,7 @@ func TestUpdatePhone_409_ConflictWithExistingHash_KNOWN_RED(t *testing.T) {
 		assert.Equal(t, model.CodeConflict, resp.Code, "错误码应为 409")
 
 		// 断言：不执行 UPDATE
+		assert.Equal(t, 0, env.store.updatePhoneCalls, "冲突场景不应执行改号写入")
 	})
 }
 
@@ -223,23 +226,24 @@ func TestUpdatePhone_Success_EncAndHashSyncUpdated_KNOWN_RED(t *testing.T) {
 
 	env, _ := newAdminMaintenanceEnv(t)
 
-	// Fixture: patient 存在且 phone_hash 唯一
-	phone := "13800138001"
-
-	oldPatient := samplePatientRowWithPhone("P20260007", "active")
-	env.store.patients = append(env.store.patients, oldPatient)
+	// Fixture: P20260010 存在且 phone_hash 唯一
+	patient := samplePatientForAdmin("P20260010", "active")
+	env.store.patient = &patient
+	env.store.phoneTaken = false
 
 	authToken := env.createSuperAdminJWT(testSuperAdminID)
+	newPhone := "13800138001"
 
 	t.Run("update_phone_enc_and_hash_synchronously", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 未实现加密哈希逻辑，预期同步更新 phone_enc+phone_hash")
 
-		w, resp := env.doPutPhone("P20260010", phone, "患者新手机号", authToken)
+		w, resp := env.doPutPhone("P20260010", newPhone, "患者新手机号", authToken)
 
 		assert.Equal(t, http.StatusOK, w.Code, "成功应返回 200")
 		assert.Equal(t, model.CodeOK, resp.Code)
 
-		// TODO: Winner 实现后断言：
+		// 断言：恰好调用 1 次改号写操作
+		assert.Equal(t, 1, env.store.updatePhoneCalls, "应恰好调用 1 次 phone_enc+hash 更新")
 	})
 }
 
@@ -250,9 +254,9 @@ func TestUpdatePhone_AuditLogFieldsWritten_KNOWN_RED(t *testing.T) {
 
 	env, lc := newAdminMaintenanceEnv(t)
 
-	// Fixture: patient 存在
-	oldPatient := samplePatientRowWithPhone("P20260007", "active")
-	env.store.patients = append(env.store.patients, oldPatient)
+	// Fixture: P20260011 存在
+	patient := samplePatientForAdmin("P20260011", "active")
+	env.store.patient = &patient
 
 	authToken := env.createSuperAdminJWT(testSuperAdminID)
 

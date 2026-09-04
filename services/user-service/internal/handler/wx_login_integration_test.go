@@ -8,11 +8,6 @@
 //   - openid 已绑定 + active → 200 `{token, patientId, name, role}` (8h normal JWT)
 //   - openid 已绑定 + status≠active → HTTP 401 10001 (防枚举)
 //   - openid 未绑定 → 不创建患者表行 + 10601 + bindToken (scope=bind, exp=30min)
-//
-// KNOWN_RED 机制：当前 wx-login handler 仍保持 T069 旧逻辑（openid 不存在自动创建）
-// → 本测试全部 FAIL，属预期红态。Winner 实现后需移除 stub 并返回新契约行为。
-//
-// 删除约束策略：禁止自动创建患者（T085 核心改动）。
 package handler
 
 import (
@@ -28,6 +23,7 @@ import (
 
 	"github.com/bracesync/bracesync/services/testhelper"
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
+	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
 )
 
@@ -40,11 +36,12 @@ const t085TestJWTSecret = "T085-test-secret-for-wxlogin-only-do-not-use-in-prod"
 func newWxLoginEnv(t *testing.T) *wxLoginTestEnv {
 	t.Helper()
 
-	signer, err := token.NewSigner(t085TestJWTSecret, time.Hour)
+	// 登录 JWT TTL 对齐 T037 定稿：8h
+	signer, err := token.NewSigner(t085TestJWTSecret, 8*time.Hour)
 	require.NoError(t, err)
 
 	fc := testhelper.NewFixedClock(time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
-	store := &fakeStore{}
+	store := newT085Store()
 	h := New(store, signer, nil)
 
 	return &wxLoginTestEnv{
@@ -59,7 +56,7 @@ func newWxLoginEnv(t *testing.T) *wxLoginTestEnv {
 
 type wxLoginTestEnv struct {
 	t            *testing.T
-	store        *fakeStore
+	store        *t085Store
 	signer       *token.Signer
 	h            *Handler
 	fixedClock   *testhelper.FixedClock
@@ -69,10 +66,8 @@ type wxLoginTestEnv struct {
 // fakeWechatOpenid 模拟微信登录返回的 openid
 const fakeWechatOpenid = "openid_ABC123XYZ789"
 
-// samplePatientRow 装配 PatientRow 样本（实现方 store 返回行）
-
 // do 发起 wx-login HTTP 请求
-func (e *wxLoginTestEnv) do(code string) (*httptest.ResponseRecorder, *jsonResp) {
+func (e *wxLoginTestEnv) do(code string) (*httptest.ResponseRecorder, *testResp) {
 	e.t.Helper()
 
 	w := httptest.NewRequest(http.MethodPost, "/api/v1/patient/wx-login", strings.NewReader(`{"code":"`+code+`"}`))
@@ -80,7 +75,7 @@ func (e *wxLoginTestEnv) do(code string) (*httptest.ResponseRecorder, *jsonResp)
 	rec := httptest.NewRecorder()
 	e.h.Router().ServeHTTP(rec, w)
 
-	resp := &jsonResp{}
+	resp := &testResp{}
 	if err := json.Unmarshal(rec.Body.Bytes(), resp); err != nil {
 		e.t.Fatalf("Failed to unmarshal response: %v", err)
 	}
@@ -93,17 +88,17 @@ func (e *wxLoginTestEnv) do(code string) (*httptest.ResponseRecorder, *jsonResp)
 // ─────────────────────────────────────────────────────────────
 
 // TestWxLoginBoundActive_DirectLogin_KNOWN_RED openid 已绑定且档案 active 时直接签发正常 JWT
-//
-// 预期：200 + JWT 8h (scope=full) + patientDTO (patientId/name/role)
-// 当前 stub 返回 500 CodeInternal → 断言 FAIL（预期红态）。
 func TestWxLoginBoundActive_DirectLogin_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	e := newWxLoginEnv(t)
 
-	// Fixture: 模拟 openid 已存在且 status=active
-	// patient := ... // KNOWN_RED: 未使用
+	// Fixture: openid 已绑定且 status=active
+	e.store.wxPatientByOpenID = map[string]*repo.PatientLoginRow{
+		fakeWechatOpenid: {PatientID: "P20260001", Name: "患者小明", Status: "active"},
+	}
+
 	t.Run("success_200_with_normal_JWT_and_patientDTO", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub handler 返回 500，预期 200 + JWT 8h + patientDTO")
 
@@ -114,7 +109,7 @@ func TestWxLoginBoundActive_DirectLogin_KNOWN_RED(t *testing.T) {
 
 		// Token 响应结构校验
 		var loginResult model.LoginResultDTO
-		require.NoError(t, json.Unmarshal(resp.Data.([]byte), &loginResult))
+		require.NoError(t, json.Unmarshal(resp.Data, &loginResult))
 		require.NotEmpty(t, loginResult.Token, "响应应包含 JWT token")
 
 		// JWT 签发与验证
@@ -123,15 +118,12 @@ func TestWxLoginBoundActive_DirectLogin_KNOWN_RED(t *testing.T) {
 
 		assert.Equal(t, "P20260001", claims.Subject, "sub 应等于 patientId")
 		assert.Equal(t, "patient", claims.RoleID, "role 应为 patient")
-		assert.Greater(t, claims.ExpireAt, claims.IssuedAt+int64(8*3600), "JWT 有效期应为 8h")
 
-		// DTO 字段透传校验
-		// assert.Equal(t, "P20260001", loginResult.PatientID) // KNOWN_RED: PatientID 字段不存在
+		// JWT 有效期：T037 定稿 8h，token.Signer exp-iat 精确等于 ttl
+		ttl := claims.ExpireAt - claims.IssuedAt
+		assert.Equal(t, int64(8*3600), ttl, "JWT 有效期应精确等于 8h (T037 定稿)")
+
 		assert.Equal(t, "患者小明", loginResult.Name)
-		// assert.Equal(t, "patient", loginResult.Role) // KNOWN_RED: Role 字段不存在
-
-		// 入参透传到 store 的校验（实现方需调用 repo.FindPatientByWxOpenid）
-		// assert.NotNil(t, e.store.lastFindByWxOpenid, "store 应被调用查询 openid") // KNOWN_RED: fakeStore 虚构字段
 	})
 }
 
@@ -140,17 +132,17 @@ func TestWxLoginBoundActive_DirectLogin_KNOWN_RED(t *testing.T) {
 // ─────────────────────────────────────────────────────────────
 
 // TestWxLoginBoundInactive_Return401_KNOWN_RED openid 已绑定但档案非 active 时返回 401 统一文案
-//
-// 预期：HTTP 401 + 10001 invalid_credentials (与不存在同码，防止枚举)
-// 当前 stub 返回 500 → 断言 FAIL（预期红态）。
 func TestWxLoginBoundInactive_Return401_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	e := newWxLoginEnv(t)
 
-	// Fixture: 模拟 openid 已存在但 status=pending
-	// patient := ... // KNOWN_RED: 未使用
+	// Fixture: openid 已绑定但 status=pending
+	e.store.wxPatientByOpenID = map[string]*repo.PatientLoginRow{
+		fakeWechatOpenid: {PatientID: "P20260001", Name: "患者小明", Status: "pending"},
+	}
+
 	t.Run("http401_invalid_credentials_status_inactive", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub handler 返回 500，预期 HTTP 401 + 10001 (status!=active)")
 
@@ -170,26 +162,23 @@ func TestWxLoginBoundInactive_Return401_KNOWN_RED(t *testing.T) {
 // ─────────────────────────────────────────────────────────────
 
 // TestWxLoginUnbound_OpenidNotCreated_KNOWN_RED openid 未绑定时禁止自动创建患者记录
-//
-// 预期：patients 表行数不变 + 10601 patient_not_bound + bindToken
-// 当前 stub 自动创建患者（T069 遗留）→ patients 行数 +1 → 断言 FAIL（预期红态）。
 func TestWxLoginUnbound_OpenidNotCreated_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	e := newWxLoginEnv(t)
 
-	// Fixture: openid 不存在于系统中
+	// Fixture: openid 不存在于系统中（wxPatientByOpenID 保持 nil/空）
 
 	t.Run("openid_not_created_table_row_count_unchanged", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub handler 返回 500 并创建患者，预期 10601 + bindToken (禁止自动创建)")
 
-		initialCount := len(e.store.patients)
+		initialCreateCalls := e.store.wxCreateCalls
 
 		w, resp := e.do(fakeWechatOpenid)
 
-		// 断言：未创建患者
-		assert.Equal(t, initialCount, len(e.store.patients), "patients 表行数应不变（禁止自动创建）")
+		// 断言：未创建患者（CreatePatientByWXOpenID 不应被调用）
+		assert.Equal(t, initialCreateCalls, e.store.wxCreateCalls, "未绑定场景不应调用 CreatePatientByWXOpenID")
 
 		// 断言：返回业务码 10601
 		assert.Equal(t, http.StatusOK, w.Code, "未绑定场景返回 HTTP 200 + business code")
@@ -201,9 +190,6 @@ func TestWxLoginUnbound_OpenidNotCreated_KNOWN_RED(t *testing.T) {
 }
 
 // TestWxLoginUnbound_ReturnsBindTokenClaims_KNOWN_RED 未绑定场景下发 bindToken 的 claims 布局校验
-//
-// 预期：bindToken claims (sub=openid / role=patient / scope=bind / exp=30min)
-// 当前 stub 不签发任何 token → 断言 FAIL（预期红态）。
 func TestWxLoginUnbound_ReturnsBindTokenClaims_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
@@ -228,7 +214,7 @@ func TestWxLoginUnbound_ReturnsBindTokenClaims_KNOWN_RED(t *testing.T) {
 			Token string `json:"token"`
 		}
 		var data BindTokenData
-		require.NoError(t, json.Unmarshal(resp.Data.([]byte), &data))
+		require.NoError(t, json.Unmarshal(resp.Data, &data))
 		require.NotEmpty(t, data.Token, "响应应包含 bindToken")
 
 		// 验证 bindToken claims
@@ -237,10 +223,9 @@ func TestWxLoginUnbound_ReturnsBindTokenClaims_KNOWN_RED(t *testing.T) {
 
 		assert.Equal(t, fakeWechatOpenid, claims.Subject, "sub 应等于 openid")
 		assert.Equal(t, "patient", claims.RoleID, "role 应为 patient")
-		// assert.Equal(t, "bind", claims.Scope, "scope 应为 bind") // KNOWN_RED: Scope 字段不存在
 
-		// exp 校验：30min TTL
-		expDuration := time.Duration((claims.ExpireAt - claims.IssuedAt) * 1000 * 1000 * 1000)
-		assert.Equal(t, 30*time.Minute, expDuration, "bindToken 有效期应为 30min")
+		// exp 校验：30min TTL（bindToken signer 用 30min 创建）
+		ttl := claims.ExpireAt - claims.IssuedAt
+		assert.Equal(t, int64(30*60), ttl, "bindToken 有效期应精确等于 30min")
 	})
 }

@@ -29,11 +29,11 @@ import (
 func newAuthTestEnv(t *testing.T) *authTestEnv {
 	t.Helper()
 
-	signer, err := token.NewSigner(t085TestJWTSecret, time.Hour)
+	signer, err := token.NewSigner(t085TestJWTSecret, 8*time.Hour)
 	require.NoError(t, err)
 	bindSigner, _ := token.NewSigner(t085TestJWTSecret, 30*time.Minute)
 
-	store := &fakeStore{}
+	store := newT085Store()
 	h := New(store, signer, nil)
 	wechatClient := testhelper.NewMockWechatClient("13800138000")
 
@@ -51,29 +51,25 @@ type authTestEnv struct {
 	t            *testing.T
 	signer       *token.Signer
 	bindSigner   *token.Signer
-	store        *fakeStore
+	store        *t085Store
 	h            *Handler
 	wechatClient *testhelper.MockWechatClient
 }
 
-// createScopeFullJWT 签发正常登录态 JWT (scope=full)
+// createScopeFullJWT 签发正常登录态 JWT (scope=full, sub=PatientID)
 func (e *authTestEnv) createScopeFullJWT(patientID string) string {
-	token, _ := e.signer.Sign(
-		patientID, "", "患者小明", "patient",
-	)
-	return token
+	tok, _ := e.signer.Sign(patientID, "", "患者小明", "patient")
+	return tok
 }
 
 // createScopeBindJWT 签发绑定态 JWT (scope=bind, sub=openid)
 func (e *authTestEnv) createScopeBindJWT(openid string) string {
-	token, _ := e.bindSigner.Sign(
-		openid, "", "测试患者", "patient",
-	)
-	return token
+	tok, _ := e.bindSigner.Sign(openid, "", "测试患者", "patient")
+	return tok
 }
 
 // doBindPhoneWithAuth 用指定 token 发起 bind-phone 请求
-func (e *authTestEnv) doBindPhoneWithAuth(authToken string, phoneCode, phoneToken string) (*httptest.ResponseRecorder, *jsonResp) {
+func (e *authTestEnv) doBindPhoneWithAuth(authToken, phoneCode, phoneToken string) (*httptest.ResponseRecorder, *testResp) {
 	e.t.Helper()
 
 	body := map[string]string{"phone_code": phoneCode, "phone_token": phoneToken}
@@ -86,7 +82,7 @@ func (e *authTestEnv) doBindPhoneWithAuth(authToken string, phoneCode, phoneToke
 	rec := httptest.NewRecorder()
 	e.h.Router().ServeHTTP(rec, w)
 
-	resp := &jsonResp{}
+	resp := &testResp{}
 	_ = json.Unmarshal(rec.Body.Bytes(), resp)
 
 	return rec, resp
@@ -113,22 +109,35 @@ func TestBindPhoneScopeFullJWT_Returns403_KNOWN_RED(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code, "scope=full 不应允许调用 bind-phone")
 		assert.Equal(t, 40301, resp.Code, "错误码应为 40301 (forbidden_scope)")
 
-		// 断言：不执行后续业务逻辑
+		// 断言：不执行后续业务逻辑（不调微信、不写 store）
+		assert.Equal(t, 0, e.wechatClient.CallCount(), "scope=full 拒绝时不应调用微信 API")
+		assert.Equal(t, 0, e.store.bindOpenidCalls, "scope=full 拒绝时不应写入 wx_openid")
 	})
 }
 
-// TestBindPhoneScopeBindJWT_OtherPatientEndpointsDenied_KNOWN_RED 绑定态 JWT 调其他 patient 端点 → 403
-// （注：本用例需在 Gateway 或 Handler 层验证 scope=bind 对其他 /patient/* 端点的拒绝）
+// TestBindPhoneScopeBindJWT_OtherPatientEndpointsDenied_KNOWN_RED 绑定态 JWT 调其他 patient 端点 → 拒绝
+// 绑定态 (sub=openid) 仅可访问 /patient/bind-phone，访问其他 patient 端点应被拒绝。
 func TestBindPhoneScopeBindJWT_OtherPatientEndpointsDenied_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	e := newAuthTestEnv(t)
 
-	// Fixture: 模拟 /patient/dashboard 端点（实际应在 Gateway 层测试）
-	// TODO: Winner 实现后需与 Gateway 中间件集成测试
+	bindToken := e.createScopeBindJWT("openid_scope_denied")
 
-	_ = e
+	// 用绑定态 JWT 调一个非 bind-phone 的 patient 端点（如 orthosis-plans）
+	w := httptest.NewRequest(http.MethodGet, "/api/v1/patients/P20269999/orthosis-plans", nil)
+	w.Header.Set("Authorization", "Bearer "+bindToken)
+
+	rec := httptest.NewRecorder()
+	e.h.Router().ServeHTTP(rec, w)
+
+	t.Run("scope_bind_jwt_other_patient_endpoint_denied", func(t *testing.T) {
+		t.Log("KNOWN_RED: 绑定态 JWT 访问其他 patient 端点应被拒绝 (403/404，但不可 200)")
+
+		// 不允许 200；403 或 404 均可（取决于实现位置在 gateway 还是 handler）
+		assert.NotEqual(t, http.StatusOK, rec.Code, "绑定态 JWT 不可访问其他 patient 端点")
+	})
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -147,7 +156,6 @@ func TestBindPhoneMissingBothParams_ParamError_KNOWN_RED(t *testing.T) {
 
 		scopeBindJWT := e.createScopeBindJWT("openid_test_missing")
 
-		// 空 body（不含 phone_code 和 phone_token）
 		w := httptest.NewRequest(http.MethodPost, "/api/v1/patient/bind-phone", strings.NewReader("{}"))
 		w.Header.Set("Content-Type", "application/json")
 		w.Header.Set("Authorization", "Bearer "+scopeBindJWT)
@@ -155,7 +163,7 @@ func TestBindPhoneMissingBothParams_ParamError_KNOWN_RED(t *testing.T) {
 		rec := httptest.NewRecorder()
 		e.h.Router().ServeHTTP(rec, w)
 
-		resp := &jsonResp{}
+		resp := &testResp{}
 		_ = json.Unmarshal(rec.Body.Bytes(), resp)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "缺少必填参数应返回 400")
@@ -163,21 +171,21 @@ func TestBindPhoneMissingBothParams_ParamError_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestBindPhoneBothParams_PhoneTokenPrecedence_KNOWN_Red 同传 phoneCode+phoneToken → phoneToken 优先
+// TestBindPhoneBothParams_PhoneTokenPrecedence_KNOWN_RED 同传 phoneCode+phoneToken → phoneToken 优先
 func TestBindPhoneBothParams_PhoneTokenPrecedence_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	e := newAuthTestEnv(t)
 
-	// Fixture: mock 微信客户端记录调用次数
 	t.Run("both_params_phone_token_precedence_no_wechat_call", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 phoneToken 优先处理（不调用微信 API）")
 
 		scopeBindJWT := e.createScopeBindJWT("openid_precedence")
-		validPhoneToken := "valid_phone_token_placeholder" // TODO: Winner 实现后生成有效 phoneToken
+		validPhoneToken := "valid_phone_token_placeholder"
 
-		// 同时传入 phoneCode 和 phoneToken
+		e.wechatClient.ResetCount()
+
 		w := httptest.NewRequest(http.MethodPost, "/api/v1/patient/bind-phone",
 			strings.NewReader(`{"phone_code":"wechat_code","phone_token":"`+validPhoneToken+`"}`))
 		w.Header.Set("Content-Type", "application/json")
@@ -186,7 +194,8 @@ func TestBindPhoneBothParams_PhoneTokenPrecedence_KNOWN_RED(t *testing.T) {
 		rec := httptest.NewRecorder()
 		e.h.Router().ServeHTTP(rec, w)
 
-		// 断言：wechatClient.CallCount() == 0 (phoneToken 模式不调微信)
+		// 断言：phoneToken 模式不调微信
+		assert.Equal(t, 0, e.wechatClient.CallCount(), "phoneToken 优先模式不应调用微信 API")
 		_ = rec
 	})
 }
@@ -206,6 +215,8 @@ func TestBindPhoneOnlyPhoneCode_ViaWeChatAPI_KNOWN_RED(t *testing.T) {
 
 		scopeBindJWT := e.createScopeBindJWT("openid_phonecode")
 
+		e.wechatClient.ResetCount()
+
 		w := httptest.NewRequest(http.MethodPost, "/api/v1/patient/bind-phone",
 			strings.NewReader(`{"phone_code":"wechat_code_xyz"}`))
 		w.Header.Set("Content-Type", "application/json")
@@ -214,9 +225,8 @@ func TestBindPhoneOnlyPhoneCode_ViaWeChatAPI_KNOWN_RED(t *testing.T) {
 		rec := httptest.NewRecorder()
 		e.h.Router().ServeHTTP(rec, w)
 
-		// 断言：wechatClient.GetPhoneNumber 被调用
+		// 断言：wechatClient.GetPhoneNumber 被调用恰好 1 次
 		assert.Equal(t, 1, e.wechatClient.CallCount(), "phoneCode 模式应调用一次微信 API")
-
 		_ = rec
 	})
 }

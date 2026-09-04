@@ -145,17 +145,28 @@ func TestWechatMockServer_BizError_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestWechatMockServer_NetworkError_KNOWN_Red 网络错误模拟
+// TestWechatMockServer_NetworkError_KNOWN_RED 网络错误模拟
+// 关闭 mock server 后发起请求，应返回连接错误（dial tcp connection refused）。
 func TestWechatMockServer_NetworkError_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	env := setupTestEnv(t)
 
-	t.Run("mock_server_ready_for_network_error_simulation", func(t *testing.T) {
-		t.Log("KNOWN_RED: 网络错误将通过关闭 mock server 或连接拒绝模拟")
-		// 后续实现时可通过停止服务模拟 dial tcp timeout
-		_ = env
+	t.Run("network_error_returns_connection_refused", func(t *testing.T) {
+		t.Log("关闭 mock server 模拟网络不可达，预期请求返回错误")
+
+		// 关闭 mock server，后续请求应 connection refused
+		env.mockServer.Close()
+
+		req, _ := http.NewRequest("GET", env.mockServer.URL+"/phonenumber/getPhoneNumber?phone_code=test", nil)
+		resp, err := env.client.httpCli.Do(req)
+
+		// 断言：网络错误场景下 err 不为 nil（连接被拒绝）
+		assert.Error(t, err, "mock server 关闭后请求应返回连接错误")
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
 	})
 }
 
@@ -193,11 +204,10 @@ func TestAccessTokenManager_Singleflight_Design_KNOWN_RED(t *testing.T) {
 
 		wg.Wait()
 
-		// 当前无 singleflight 机制，因此会触发多次实际调用
-		// 预期 Winner 实现后通过 sync.Once/group 保证仅一次
-		assert.Greater(t, successCount, 0, "并发请求至少部分成功")
-
-		_ = env
+		// singleflight 契约：10 并发请求 access_token，上游 /cgi-bin/token 应仅被调用 1 次。
+		// 当前直接走 httpCli 无 singleflight，tokenCallCount=10（红）；Winner 实现
+		// AccessTokenManager 后应通过 singleflight 合并为 1 次上游调用。
+		assert.Equal(t, 1, env.tokenCallCount, "singleflight 应保证并发请求仅 1 次上游调用")
 	})
 }
 
@@ -211,13 +221,13 @@ func TestAccessTokenManager_ForceRefresh_Design_KNOWN_RED(t *testing.T) {
 	t.Run("force_refresh_contract_on_40001_or_42001", func(t *testing.T) {
 		t.Log("KNOWN_RED: GetPhoneNumber 未实现，但 mock server 支持 40001 模拟")
 
-		// 切换到错误模式
+		// 切换到错误模式：phonenumber 接口返回 errcode=40001
 		env.mu.Lock()
 		env.errorMode = true
 		env.accessTokenValue = "invalid_token"
 		env.mu.Unlock()
 
-		// 此时任何 phonenumber 调用应返回 40001
+		// 调用 phonenumber，预期返回 40001 并触发 access_token 强制刷新
 		req, _ := http.NewRequest("GET", env.mockServer.URL+"/phonenumber/getPhoneNumber?phone_code=test", nil)
 		resp, err := env.client.httpCli.Do(req)
 		require.NoError(t, err)
@@ -229,6 +239,9 @@ func TestAccessTokenManager_ForceRefresh_Design_KNOWN_RED(t *testing.T) {
 
 		assert.Equal(t, float64(40001), errResp["errcode"], "mock server 应返回 errcode=40001")
 
-		t.Log("✓ 强制刷新逻辑将在 Winner 实现时处理此错误码")
+		// 强制刷新契约：收到 40001/42001 后应重新请求 access_token，
+		// 因此 /cgi-bin/token 调用次数应 >= 2（首次获取 + 强制刷新）。
+		// 当前无自动刷新逻辑，tokenCallCount=0（红）。
+		assert.GreaterOrEqual(t, env.tokenCallCount, 2, "errcode=40001 应触发 access_token 强制刷新")
 	})
 }

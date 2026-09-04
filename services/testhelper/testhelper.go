@@ -13,6 +13,8 @@ package testhelper
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"testing"
@@ -115,3 +117,10 @@ func GetEnvOrDefault(key, defaultVal string) string {
 //       return nil
 //   })
 // TODO: Winner 实现后需与 repo.Store 接口集成（目前 standalone helper）
+
+// SHA256Hex 返回输入字符串的 SHA-256 十六进制摘要（用于构造患者 phone_hash fixture）。
+// 与真实 pg.go 中 patients.phone_hash 的计算方式一致（SHA-256 纯手机号十六进制）。
+func SHA256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
