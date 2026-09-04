@@ -128,9 +128,9 @@ func (h *Handler) Router() *gin.Engine {
 	v1 := r.Group("/api/v1")
 	{
 		v1.POST("/auth/login", h.login)
-		v1.POST("/tech/login", h.techLogin)       // T037 技师登录（免 JWT）
-		v1.POST("/patient/login", h.patientLogin) // T037 患者登录（免 JWT）
-		v1.POST("/patient/wx-login", h.wxLogin)   // T069 患者端微信登录（免 JWT）
+		v1.POST("/tech/login", h.techLogin)         // T037 技师登录（免 JWT）
+		v1.POST("/patient/login", h.patientLogin)   // T037 患者登录（免 JWT）
+		v1.POST("/patient/wx-login", h.wxLogin)     // T069 患者端微信登录（免 JWT）
 		v1.POST("/patient/bind-phone", h.bindPhone) // T085 患者微信绑定手机号（需 scope=bind JWT）
 
 		v1.GET("/admin/patients", h.listPatients)

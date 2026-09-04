@@ -219,8 +219,8 @@ func (c *Client) fetchAccessToken(ctx context.Context) (string, error) {
 
 // phoneInfoResp phonenumber.getPhoneNumber 成功响应
 type phoneInfoResp struct {
-	ErrCode int `json:"errcode"`
-	ErrMsg  string `json:"errmsg"`
+	ErrCode   int    `json:"errcode"`
+	ErrMsg    string `json:"errmsg"`
 	PhoneInfo struct {
 		PhoneNumber     string `json:"phoneNumber"`
 		PurePhoneNumber string `json:"purePhoneNumber"`
