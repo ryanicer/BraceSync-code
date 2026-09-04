@@ -1,4 +1,4 @@
-﻿// Package handler T085 患者微信登录绑定契约 KNOWN_RED 测试
+// Package handler T085 患者微信登录绑定契约 KNOWN_RED 测试
 //
 // 覆盖 §5.1 wx-login 接口改造契约：
 //

@@ -1,4 +1,4 @@
-﻿// Package handler T085 管理端患者维护（解绑微信/改号）契约 KNOWN_RED 测试
+// Package handler T085 管理端患者维护（解绑微信/改号）契约 KNOWN_RED 测试
 //
 // 覆盖 §5.3 admin 患者维护：
 //   - POST /api/v1/admin/patients/:id/unbind-wechat → wx_openid=NULL + 审计日志

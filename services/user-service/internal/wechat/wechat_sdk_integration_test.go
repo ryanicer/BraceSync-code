@@ -1,4 +1,4 @@
-﻿// Package wechat T085 微信 SDK 集成契约 KNOWN_RED 测试
+// Package wechat T085 微信 SDK 集成契约 KNOWN_RED 测试
 //
 // 覆盖 §5.3 GetPhoneNumber + AccessTokenManager 设计契约：
 //   - biz error → 10604 invalid_phone_code

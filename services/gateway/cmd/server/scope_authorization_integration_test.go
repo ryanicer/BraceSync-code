@@ -1,4 +1,4 @@
-﻿// Package main T085 Gateway Scope 鉴权中间件契约 KNOWN_RED 测试
+// Package main T085 Gateway Scope 鉴权中间件契约 KNOWN_RED 测试
 //
 // 覆盖 §5.4 Gateway scope 鉴权：
 //   - JWT 经 jwtAuth 解析后注入 X-User-Id / X-Role 头（中间件行为，已实现）

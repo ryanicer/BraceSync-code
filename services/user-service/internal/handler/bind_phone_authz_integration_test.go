@@ -1,4 +1,4 @@
-﻿// Package handler T085 绑定态 JWT 鉴权契约 KNOWN_RED 测试
+// Package handler T085 绑定态 JWT 鉴权契约 KNOWN_RED 测试
 //
 // 覆盖 §5.2 bind-phone 接口鉴权规则：
 //   - scope=bind JWT 仅可调用 /patient/bind-phone

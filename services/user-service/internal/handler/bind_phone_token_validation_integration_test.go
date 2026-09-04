@@ -1,4 +1,4 @@
-﻿// Package handler T085 phoneToken 校验契约 KNOWN_RED 测试
+// Package handler T085 phoneToken 校验契约 KNOWN_RED 测试
 //
 // 覆盖 §5.2 phoneToken 验证逻辑：
 //   - signature tampered → 10605
