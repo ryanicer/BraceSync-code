@@ -15,8 +15,8 @@ import (
 //   - 审计字段落日志断言（场景 E/G Admin 操作）
 //   - 验证 structured log fields: operator_id, action, before, after
 type LogCaptureHook struct {
-	entries []map[string]interface{}
-	mu      sync.Mutex
+	entries         []map[string]interface{}
+	mu              sync.Mutex
 	eventTypeFilter string // 可选过滤 event 类型
 }
 
@@ -35,7 +35,7 @@ func (lc *LogCaptureHook) Run(e *zerolog.Event, level zerolog.Level, msg string)
 	defer lc.mu.Unlock()
 
 	entry := make(map[string]interface{})
-	
+
 	// 提取关键上下文信息（使用传入的 level 参数）
 	entry["level"] = level
 	entry["msg"] = msg
@@ -47,7 +47,7 @@ func (lc *LogCaptureHook) Run(e *zerolog.Event, level zerolog.Level, msg string)
 func (lc *LogCaptureHook) Entries() []map[string]interface{} {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	
+
 	// 深拷贝避免外部修改
 	result := make([]map[string]interface{}, len(lc.entries))
 	copy(result, lc.entries)
@@ -58,7 +58,7 @@ func (lc *LogCaptureHook) Entries() []map[string]interface{} {
 func (lc *LogCaptureHook) CountEvent(eventType string) int {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	
+
 	count := 0
 	for _, entry := range lc.entries {
 		if action, ok := entry["event"]; ok {
@@ -74,7 +74,7 @@ func (lc *LogCaptureHook) CountEvent(eventType string) int {
 func (lc *LogCaptureHook) FindEventByAction(actionValue string) map[string]interface{} {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	
+
 	for _, entry := range lc.entries {
 		if action, ok := entry["action"]; ok {
 			if actionStr, ok := action.(string); ok && actionStr == actionValue {
@@ -89,7 +89,7 @@ func (lc *LogCaptureHook) FindEventByAction(actionValue string) map[string]inter
 func (lc *LogCaptureHook) HasField(fieldName string) bool {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	
+
 	for _, entry := range lc.entries {
 		if _, exists := entry[fieldName]; exists {
 			return true
@@ -109,10 +109,10 @@ func (lc *LogCaptureHook) Clear() {
 func (lc *LogCaptureHook) GetLastEntry() map[string]interface{} {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
-	
+
 	if len(lc.entries) == 0 {
 		return nil
 	}
-	
+
 	return lc.entries[len(lc.entries)-1]
 }

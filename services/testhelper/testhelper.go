@@ -109,7 +109,7 @@ func GetEnvOrDefault(key, defaultVal string) string {
 
 // WithTransactionRollback 在事务上下文中执行 run() 函数并在结束后自动回滚（用于测试隔离）
 // 适用于每测试用例独立数据库状态验证，避免跨用例污染
-// usage: 
+// usage:
 //   err := WithTransactionRollback(ctx, store, func() error {
 //       // ... 测试操作 ...
 //       return nil

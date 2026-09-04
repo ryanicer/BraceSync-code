@@ -21,13 +21,13 @@ var (
 //   - 模拟业务错误返回（如 code 非法、access_token 失效）
 //   - 记录实际 API 调用次数
 type MockWechatClient struct {
-	phoneNumber    string
+	phoneNumber     string
 	purePhoneNumber string
-	countryCode   string
-	shouldError   bool
-	errorCode     int // 模拟微信 errcode
-	callCount     int
-	mu            sync.Mutex
+	countryCode     string
+	shouldError     bool
+	errorCode       int // 模拟微信 errcode
+	callCount       int
+	mu              sync.Mutex
 }
 
 // NewMockWechatClient 创建新的 mock 微信客户端
@@ -45,21 +45,21 @@ func NewMockWechatClient(phoneNumber string) *MockWechatClient {
 func (m *MockWechatClient) GetPhoneNumber(code string) (string, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	m.callCount++
-	
+
 	if m.shouldError {
 		if m.errorCode != 0 {
 			return "", "", &WechatError{ErrCode: m.errorCode}
 		}
 		return "", "", ErrPhoneNumberUnavailable
 	}
-	
+
 	// 模拟正常响应
 	if code == "" {
 		return "", "", ErrInvalidCode
 	}
-	
+
 	// 纯手机号（无国家码前缀）
 	return m.purePhoneNumber, m.countryCode, nil
 }
