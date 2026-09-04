@@ -13,9 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -80,7 +78,7 @@ func (e *phoneTokenTestEnv) createValidPhoneToken(phoneHash, openID string) stri
 	return "valid_phone_token_placeholder_" + openID[len(openID)-6:]
 }
 
-createInvalidPhoneTokenSignatureTampered 生成签名被篡改的 phoneToken
+// createInvalidPhoneTokenSignatureTampered 生成签名被篡改的 phoneToken
 func (e *phoneTokenTestEnv) createInvalidPhoneTokenSignatureTampered(phoneHash, openID string) string {
 	// 模拟篡改后的 token（实际应基于有效 token 修改 payload）
 	return "tampered_phone_token_" + openID[len(openID)-6:]

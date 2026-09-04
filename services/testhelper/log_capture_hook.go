@@ -36,14 +36,9 @@ func (lc *LogCaptureHook) Run(e *zerolog.Event, level zerolog.Level, msg string)
 
 	entry := make(map[string]interface{})
 	
-	// 提取关键上下文信息（使用传入的 level 参数而非 e.GetLevel()）
+	// 提取关键上下文信息（使用传入的 level 参数）
 	entry["level"] = level
 	entry["msg"] = msg
-	
-	// 尝试从 Fields 中获取结构化数据
-	for k, v := range e.Fields {
-		entry[k] = v
-	}
 
 	lc.entries = append(lc.entries, entry)
 }
