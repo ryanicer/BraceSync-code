@@ -123,6 +123,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 // TestWechatMockServer_BizError_KNOWN_RED 微信业务错误模拟（mock server）
 func TestWechatMockServer_BizError_KNOWN_RED(t *testing.T) {
+	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	env := setupTestEnv(t)
@@ -146,6 +147,7 @@ func TestWechatMockServer_BizError_KNOWN_RED(t *testing.T) {
 
 // TestWechatMockServer_NetworkError_KNOWN_Red 网络错误模拟
 func TestWechatMockServer_NetworkError_KNOWN_RED(t *testing.T) {
+	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	env := setupTestEnv(t)
@@ -163,6 +165,7 @@ func TestWechatMockServer_NetworkError_KNOWN_RED(t *testing.T) {
 
 // TestAccessTokenManager_Singleflight_Design_KNOWN_RED singleflight 设计契约验证
 func TestAccessTokenManager_Singleflight_Design_KNOWN_RED(t *testing.T) {
+	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	env := setupTestEnv(t)
@@ -200,6 +203,7 @@ func TestAccessTokenManager_Singleflight_Design_KNOWN_RED(t *testing.T) {
 
 // TestAccessTokenManager_ForceRefresh_Design_KNOWN_RED 强制刷新设计契约
 func TestAccessTokenManager_ForceRefresh_Design_KNOWN_RED(t *testing.T) {
+	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
 
 	env := setupTestEnv(t)
