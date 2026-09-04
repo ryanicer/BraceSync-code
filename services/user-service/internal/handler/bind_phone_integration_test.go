@@ -101,10 +101,6 @@ func samplePatientRowWithHash(id, status string) repo.PatientRow {
 }
 
 // hashPhoneNumber 模拟手机号 SHA-256 hash (测试用简化版)
-func hashPhoneNumber(phone string) string {
-	// 实际应使用 crypto/sha256，此处简化为前缀标识
-	return "hash_" + phone[len(phone)-6:]
-}
 
 // doBindPhone 发起 bind-phone HTTP 请求
 func (e *bindPhoneTestEnv) doBindPhone(phoneCode, phoneToken string, openid string) (*httptest.ResponseRecorder, *jsonResp) {

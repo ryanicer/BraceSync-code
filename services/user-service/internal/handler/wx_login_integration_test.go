@@ -28,7 +28,6 @@ import (
 
 	"github.com/bracesync/bracesync/services/testhelper"
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
-	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
 )
 
@@ -71,16 +70,6 @@ type wxLoginTestEnv struct {
 const fakeWechatOpenid = "openid_ABC123XYZ789"
 
 // samplePatientRow 装配 PatientRow 样本（实现方 store 返回行）
-func samplePatientRow(id string, openID string, phoneHash string, status string) repo.PatientRow {
-	return repo.PatientRow{
-		PatientID: id,
-		Name:      "患者小明",
-		PhoneEnc:  []byte("encrypted_phone_data"),
-		Status:    status,
-		CreatedAt: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC),
-		UpdatedAt: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC),
-	}
-}
 
 // do 发起 wx-login HTTP 请求
 func (e *wxLoginTestEnv) do(code string) (*httptest.ResponseRecorder, *jsonResp) {
