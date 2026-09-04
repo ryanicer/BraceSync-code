@@ -61,14 +61,14 @@ func setupTestEnv(t *testing.T) *testEnv {
 				"access_token": env.accessTokenValue,
 				"expires_in":   7200,
 			}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		} else if r.URL.Path == "/phonenumber/getPhoneNumber" {
 			// 验证 access_token
 			accessToken := r.FormValue("access_token")
 
 			if accessToken != env.accessTokenValue || env.errorMode {
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"errcode": 40001,
 					"errmsg":  "invalid access_token",
 				})
@@ -77,7 +77,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 			code := r.FormValue("phone_code")
 			if code == "invalid_code" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"errcode": 41401,
 					"errmsg":  "code is invalid or expired",
 				})
@@ -85,7 +85,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 			}
 
 			if code == "used_code" {
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"errcode": 41208,
 					"errmsg":  "code has been used",
 				})
@@ -93,7 +93,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 			}
 
 			// 正常响应
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"errcode": 0,
 				"errmsg":  "",
 				"phone_info": map[string]string{
@@ -135,11 +135,11 @@ func TestWechatMockServer_BizError_KNOWN_RED(t *testing.T) {
 		req, _ := http.NewRequest("GET", env.mockServer.URL+"/phonenumber/getPhoneNumber?phone_code=invalid_code", nil)
 		resp, err := env.client.httpCli.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		body, _ := io.ReadAll(resp.Body)
 		var weWechatError map[string]int
-		json.Unmarshal(body, &weWechatError)
+		_ = json.Unmarshal(body, &weWechatError)
 
 		assert.Equal(t, 41401, weWechatError["errcode"], "mock server 应返回 errcode=41401")
 	})
@@ -221,11 +221,11 @@ func TestAccessTokenManager_ForceRefresh_Design_KNOWN_RED(t *testing.T) {
 		req, _ := http.NewRequest("GET", env.mockServer.URL+"/phonenumber/getPhoneNumber?phone_code=test", nil)
 		resp, err := env.client.httpCli.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		body, _ := io.ReadAll(resp.Body)
 		var errResp map[string]interface{}
-		json.Unmarshal(body, &errResp)
+		_ = json.Unmarshal(body, &errResp)
 
 		assert.Equal(t, float64(40001), errResp["errcode"], "mock server 应返回 errcode=40001")
 

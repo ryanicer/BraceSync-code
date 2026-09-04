@@ -58,7 +58,7 @@ func hmacSHA256(key, data []byte) []byte {
 func startTestGateway(t *testing.T) *httptest.Server {
 	userURL := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"code":0,"message":"success","data":null}`))
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":null}`))
 	}))
 	defer userURL.Close()
 	
@@ -67,7 +67,7 @@ func startTestGateway(t *testing.T) *httptest.Server {
 		// Stub: mock gateway response for now
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"code":0,"message":"ok"}`))
+		_, _ = w.Write([]byte(`{"code":0,"message":"ok"}`))
 	}))
 }
 
