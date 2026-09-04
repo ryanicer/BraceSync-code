@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <view class="page">
     <!-- Brand Header -->
     <view class="brand-header">
@@ -116,7 +116,7 @@ async function doLogin() {
       })
 
       setTimeout(() => {
-        uni.reLaunch({ url: '/pages/bind/index' })
+        uni.reLaunch({ url: '/pages/home/index' })
       }, 1500)
       return
     }
@@ -130,7 +130,7 @@ async function doLogin() {
     })
 
     setTimeout(() => {
-      uni.reLaunch({ url: '/pages/bind/index' })
+      uni.reLaunch({ url: '/pages/home/index' })
     }, 1500)
   } catch (error) {
     // 失败统一提示（对齐后端防枚举，不区分"用户不存在/密码错误"）
@@ -241,3 +241,4 @@ async function doLogin() {
   opacity: 0.6;
 }
 </style>
+

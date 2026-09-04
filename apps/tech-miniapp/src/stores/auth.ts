@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { TechLoginResult } from '@bracesync/shared-types'
 import { getToken, setToken, removeToken, getTechId, setTechId, removeTechId } from '../utils/token'
@@ -38,5 +38,13 @@ export const useAuthStore = defineStore('auth', () => {
     removeTechId()
   }
 
-  return { token, techId, name, isLoggedIn, login, loginWithPassword, logout }
+  /**
+   * T089-R3-3: 登录成功后跳转首页，不是 bind
+   * 安装入口在首页双卡片：新设备安装→bind / 安装记录→records
+   */
+  function goAfterLogin() {
+    uni.reLaunch({ url: '/pages/home/index' })
+  }
+
+  return { token, techId, name, isLoggedIn, login, loginWithPassword, logout, goAfterLogin }
 })
