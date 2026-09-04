@@ -28,10 +28,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bracesync/bracesync/services/testhelper"
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
-	"github.com/bracesync/bracesync/services/testhelper"
 )
 
 // ─────────────────────────────────────────────────────────────
@@ -40,33 +40,33 @@ import (
 
 func newBindPhoneEnv(t *testing.T) *bindPhoneTestEnv {
 	t.Helper()
-	
+
 	signer, err := token.NewSigner(t085TestJWTSecret, time.Hour)
 	require.NoError(t, err)
-	
+
 	fc := testhelper.NewFixedClock(time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
 	store := &fakeStore{}
 	h := New(store, signer, nil)
 	wechatClient := testhelper.NewMockWechatClient("13800138000")
-	
+
 	return &bindPhoneTestEnv{
-		t:              t,
-		store:          store,
-		signer:         signer,
-		h:              h,
-		fixedClock:     fc,
-		wechatClient:   wechatClient,
+		t:               t,
+		store:           store,
+		signer:          signer,
+		h:               h,
+		fixedClock:      fc,
+		wechatClient:    wechatClient,
 		bindTokenSigner: MustNewBindTokenSigner(),
 	}
 }
 
 type bindPhoneTestEnv struct {
-	t              *testing.T
-	store          *fakeStore
-	signer         *token.Signer
-	h              *Handler
-	fixedClock     *testhelper.FixedClock
-	wechatClient   *testhelper.MockWechatClient
+	t               *testing.T
+	store           *fakeStore
+	signer          *token.Signer
+	h               *Handler
+	fixedClock      *testhelper.FixedClock
+	wechatClient    *testhelper.MockWechatClient
 	bindTokenSigner *token.Signer
 }
 
@@ -83,10 +83,10 @@ func MustNewBindTokenSigner() *token.Signer {
 func (e *bindPhoneTestEnv) createBindToken(openid string) string {
 	e.fixedClock.Set(time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
 	token, _ := e.bindTokenSigner.Sign(
-		openid,        // subject
-		"",            // username (patient 无 username)
-		"测试患者",     // name
-		"patient",     // roleID
+		openid,    // subject
+		"",        // username (patient 无 username)
+		"测试患者",    // name
+		"patient", // roleID
 	)
 	return token
 }
@@ -95,7 +95,7 @@ func (e *bindPhoneTestEnv) createBindToken(openid string) string {
 func samplePatientRowWithHash(id, status string) repo.PatientRow {
 	return repo.PatientRow{
 		PatientID: id, Name: "患者小明", PhoneEnc: []byte("encrypted"),
-		Status: status,
+		Status:    status,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 }
@@ -109,28 +109,28 @@ func hashPhoneNumber(phone string) string {
 // doBindPhone 发起 bind-phone HTTP 请求
 func (e *bindPhoneTestEnv) doBindPhone(phoneCode, phoneToken string, openid string) (*httptest.ResponseRecorder, *jsonResp) {
 	e.t.Helper()
-	
+
 	type ReqBody struct {
-		Code      string `json:"phone_code,omitempty"`
-		Token     string `json:"phone_token,omitempty"`
+		Code  string `json:"phone_code,omitempty"`
+		Token string `json:"phone_token,omitempty"`
 	}
-	
+
 	body := ReqBody{Code: phoneCode, Token: phoneToken}
 	bodyBytes, _ := json.Marshal(body)
-	
+
 	w := httptest.NewRequest(http.MethodPost, "/api/v1/patient/bind-phone", strings.NewReader(string(bodyBytes)))
 	w.Header.Set("Content-Type", "application/json")
-	
+
 	// 注入绑定态 Authorization header
 	auth := "Bearer " + openid
 	w.Header.Set("Authorization", auth)
-	
+
 	rec := httptest.NewRecorder()
 	e.h.Router().ServeHTTP(rec, w)
-	
+
 	resp := &jsonResp{}
-	json.Unmarshal(rec.Body.Bytes(), resp)
-	
+	_ = json.Unmarshal(rec.Body.Bytes(), resp)
+
 	return rec, resp
 }
 
@@ -142,37 +142,37 @@ func (e *bindPhoneTestEnv) doBindPhone(phoneCode, phoneToken string, openid stri
 func TestBindPhoneHappyPath_SuccessfulBinding_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
-	
+
 	e := newBindPhoneEnv(t)
-	
+
 	// Fixture: phone_hash 匹配 unique active patient with wx_openid=NULL
 	phone := "13800138000"
 	patient := samplePatientRowWithHash("P20260001", "active")
 	e.store.patients = append(e.store.patients, patient)
-	
+
 	// Mock 微信返回手机号
 	e.wechatClient.DisableError()
 	e.wechatClient.SetPhoneNumber(phone)
-	
+
 	t.Run("success_200_with_JWT_and_wx_openid_written", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub handler 返回 500，预期 200 + JWT 8h + UPDATE wx_openid")
-		
+
 		bindToken := e.createBindToken("openid_bind_B")
 		w, resp := e.doBindPhone("wechat_code_xyz", "", bindToken)
-		
+
 		assert.Equal(t, http.StatusOK, w.Code, "绑定成功应返回 200")
 		assert.Equal(t, model.CodeOK, resp.Code, "业务码应为 0")
-		
+
 		// Token 校验
 		var loginResult model.LoginResultDTO
 		require.NoError(t, json.Unmarshal(resp.Data.([]byte), &loginResult))
 		require.NotEmpty(t, loginResult.Token)
-		
+
 		claims, err := e.signer.Verify(loginResult.Token)
 		require.NoError(t, err)
 		assert.Equal(t, "P20260001", claims.Subject)
 		assert.Greater(t, claims.ExpireAt-claims.IssuedAt, int64(7*3600), "JWT 有效期应≈8h")
-		
+
 		// 断言：store 被调用写入 wx_openid
 	})
 }
@@ -185,20 +185,20 @@ func TestBindPhoneHappyPath_SuccessfulBinding_KNOWN_RED(t *testing.T) {
 func TestBindPhoneNoMatch_UnregisteredPhone_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
-	
+
 	e := newBindPhoneEnv(t)
-	
+
 	// Fixture: phone_hash 不存在
-	
+
 	t.Run("not_found_10602_with_phoneToken", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 10602 + phoneToken (purpose=phone_token/exp=7d)")
-		
+
 		bindToken := e.createBindToken("openid_bind_C")
 		w, resp := e.doBindPhone("wechat_code_unreg", "", bindToken)
-		
+
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, 10602, resp.Code, "错误码应为 10602 (patient_not_found)")
-		
+
 		// 断言：返回 phoneToken
 		type PhoneTokenData struct {
 			PhoneToken string `json:"phone_token"`
@@ -206,7 +206,7 @@ func TestBindPhoneNoMatch_UnregisteredPhone_KNOWN_RED(t *testing.T) {
 		var data PhoneTokenData
 		require.NoError(t, json.Unmarshal(resp.Data.([]byte), &data))
 		require.NotEmpty(t, data.PhoneToken, "响应应包含 phoneToken")
-		
+
 		// phoneToken claims 校验（待 Winner 实现后验证 purpose/exp）
 		_ = data.PhoneToken
 	})
@@ -220,19 +220,19 @@ func TestBindPhoneNoMatch_UnregisteredPhone_KNOWN_RED(t *testing.T) {
 func TestBindPhoneInactiveStatus_Returns10602_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
-	
+
 	e := newBindPhoneEnv(t)
-	
+
 	// Fixture: phone_hash 匹配但 status=pending
 	patient := samplePatientRowWithHash("P20260002", "pending")
 	e.store.patients = append(e.store.patients, patient)
-	
+
 	t.Run("inactive_status_returns_10602_same_code_as_no_match", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 10602 (status!=active 与 no match 同码防枚举)")
-		
+
 		bindToken := e.createBindToken("openid_bind_C_inactive")
 		w, resp := e.doBindPhone("wechat_code", "", bindToken)
-		
+
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, 10602, resp.Code, "status 异常应返回 10602")
 	})
@@ -246,24 +246,24 @@ func TestBindPhoneInactiveStatus_Returns10602_KNOWN_RED(t *testing.T) {
 func TestBindPhoneAlreadyBoundByOtherOpenid_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
-	
+
 	e := newBindPhoneEnv(t)
-	
+
 	// Fixture: phone_hash 匹配且 wx_openid≠当前 openid
-	
+
 	patient := samplePatientRowWithHash("P20260003", "active")
 	e.store.patients = append(e.store.patients, patient)
-	
+
 	t.Run("already_bound_other_openid_10603_with_phoneToken", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 10603 + phoneToken (禁止覆盖)")
-		
+
 		newOpenid := "openid_bind_D"
 		bindToken := e.createBindToken(newOpenid)
 		w, resp := e.doBindPhone("wechat_code", "", bindToken)
-		
+
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, 10603, resp.Code, "错误码应为 10603 (phone_already_bound)")
-		
+
 		// 断言：不修改 wx_openid
 		type PhoneTokenData struct {
 			PhoneToken string `json:"phone_token"`
@@ -271,7 +271,7 @@ func TestBindPhoneAlreadyBoundByOtherOpenid_KNOWN_RED(t *testing.T) {
 		var data PhoneTokenData
 		require.NoError(t, json.Unmarshal(resp.Data.([]byte), &data))
 		require.NotEmpty(t, data.PhoneToken)
-		
+
 		// 验证 store 未被调用 UPDATE
 	})
 }
@@ -284,34 +284,34 @@ func TestBindPhoneAlreadyBoundByOtherOpenid_KNOWN_RED(t *testing.T) {
 func TestBindPhoneConcurrency_TwoRequests_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
-	
+
 	e := newBindPhoneEnv(t)
-	
+
 	// Fixture: phone_hash 匹配未绑定 active 档案
 	phone := "13800138003"
 	patient := samplePatientRowWithHash("P20260004", "active")
 	e.store.patients = append(e.store.patients, patient)
-	
+
 	e.wechatClient.DisableError()
 	e.wechatClient.SetPhoneNumber(phone)
-	
+
 	t.Run("concurrent_requests_exactly_one_success_one_10603", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 database row lock 保证恰好 1 成功")
-		
+
 		bindToken := e.createBindToken("openid_concurrent_H")
-		
+
 		var wg sync.WaitGroup
 		successCount := 0
 		count10603 := 0
-		
+
 		// 并发两请求
 		for i := 0; i < 2; i++ {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				
+
 				w, resp := e.doBindPhone("wechat_code_"+strconv.Itoa(idx), "", bindToken)
-				
+
 				if w.Code == http.StatusOK && resp.Code == model.CodeOK {
 					successCount++
 				} else if w.Code == http.StatusOK && resp.Code == 10603 {
@@ -319,13 +319,13 @@ func TestBindPhoneConcurrency_TwoRequests_KNOWN_RED(t *testing.T) {
 				}
 			}(i)
 		}
-		
+
 		wg.Wait()
-		
+
 		// 断言：恰好 1 成功，1 个 10603
 		assert.Equal(t, 1, successCount, "应有恰好 1 个成功请求")
 		assert.Equal(t, 1, count10603, "应有恰好 1 个 10603 失败请求")
-		
+
 		t.Logf("并发结果：%d 成功，%d 个 10603", successCount, count10603)
 	})
 }
@@ -338,24 +338,24 @@ func TestBindPhoneConcurrency_TwoRequests_KNOWN_RED(t *testing.T) {
 func TestBindPhoneIdempotentSameOpenid_KNOWN_RED(t *testing.T) {
 	t.Skip("KNOWN_RED: await Winner's implementation")
 	t.Parallel()
-	
+
 	e := newBindPhoneEnv(t)
-	
+
 	// Fixture: phone_hash 匹配且 wx_openid==当前 openid (已绑定自身)
-	
+
 	patient := samplePatientRowWithHash("P20260005", "active")
 	e.store.patients = append(e.store.patients, patient)
-	
+
 	t.Run("idempotent_same_openid_returns_success", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 200 (UPDATE 条件 wx_openid IS NULL 命中自身时幂等)")
-		
+
 		sameOpenid := "openid_idem_H"
 		bindToken := e.createBindToken(sameOpenid)
 		w, resp := e.doBindPhone("wechat_code", "", bindToken)
-		
+
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, model.CodeOK, resp.Code, "幂等应返回 200 success")
-		
+
 		// 断言：允许重复操作但不实际改变状态
 	})
 }

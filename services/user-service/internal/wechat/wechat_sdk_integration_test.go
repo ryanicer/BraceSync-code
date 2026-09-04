@@ -31,12 +31,12 @@ const (
 // ─────────────────────────────────────────────────────────────
 
 type testEnv struct {
-	client            *Client
-	mockServer        *httptest.Server
-	tokenCallCount    int
-	mu                sync.Mutex
-	accessTokenValue  string
-	errorMode         bool // 模拟 access_token 失效场景
+	client           *Client
+	mockServer       *httptest.Server
+	tokenCallCount   int
+	mu               sync.Mutex
+	accessTokenValue string
+	errorMode        bool // 模拟 access_token 失效场景
 }
 
 func setupTestEnv(t *testing.T) *testEnv {
