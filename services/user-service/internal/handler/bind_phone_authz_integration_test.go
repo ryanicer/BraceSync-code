@@ -1,4 +1,4 @@
-// Package handler T085 绑定态 JWT 鉴权契约 KNOWN_RED 测试
+﻿// Package handler T085 绑定态 JWT 鉴权契约 KNOWN_RED 测试
 //
 // 覆盖 §5.2 bind-phone 接口鉴权规则：
 //   - scope=bind JWT 仅可调用 /patient/bind-phone
@@ -36,6 +36,7 @@ func newAuthTestEnv(t *testing.T) *authTestEnv {
 	store := newT085Store()
 	h := New(store, signer, nil)
 	wechatClient := testhelper.NewMockWechatClient("13800138000")
+	h.SetWXClient(&t085WXClient{MockWechatClient: wechatClient})
 
 	return &authTestEnv{
 		t:            t,
@@ -92,9 +93,8 @@ func (e *authTestEnv) doBindPhoneWithAuth(authToken, phoneCode, phoneToken strin
 // Scenario: Scope Authorization Rules
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneScopeFullJWT_Returns403_KNOWN_RED 正常 JWT(scope=full) 调 bind-phone → 403
-func TestBindPhoneScopeFullJWT_Returns403_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneScopeFullJWT_Returns403 正常 JWT(scope=full) 调 bind-phone → 403
+func TestBindPhoneScopeFullJWT_Returns403(t *testing.T) {
 	t.Parallel()
 
 	e := newAuthTestEnv(t)
@@ -115,10 +115,9 @@ func TestBindPhoneScopeFullJWT_Returns403_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestBindPhoneScopeBindJWT_OtherPatientEndpointsDenied_KNOWN_RED 绑定态 JWT 调其他 patient 端点 → 拒绝
+// TestBindPhoneScopeBindJWT_OtherPatientEndpointsDenied 绑定态 JWT 调其他 patient 端点 → 拒绝
 // 绑定态 (sub=openid) 仅可访问 /patient/bind-phone，访问其他 patient 端点应被拒绝。
-func TestBindPhoneScopeBindJWT_OtherPatientEndpointsDenied_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+func TestBindPhoneScopeBindJWT_OtherPatientEndpointsDenied(t *testing.T) {
 	t.Parallel()
 
 	e := newAuthTestEnv(t)
@@ -144,9 +143,8 @@ func TestBindPhoneScopeBindJWT_OtherPatientEndpointsDenied_KNOWN_RED(t *testing.
 // Scenario: Parameter Validation
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneMissingBothParams_ParamError_KNOWN_RED 缺 phoneCode+phoneToken → 参数错误
-func TestBindPhoneMissingBothParams_ParamError_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneMissingBothParams_ParamError 缺 phoneCode+phoneToken → 参数错误
+func TestBindPhoneMissingBothParams_ParamError(t *testing.T) {
 	t.Parallel()
 
 	e := newAuthTestEnv(t)
@@ -171,9 +169,8 @@ func TestBindPhoneMissingBothParams_ParamError_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestBindPhoneBothParams_PhoneTokenPrecedence_KNOWN_RED 同传 phoneCode+phoneToken → phoneToken 优先
-func TestBindPhoneBothParams_PhoneTokenPrecedence_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneBothParams_PhoneTokenPrecedence 同传 phoneCode+phoneToken → phoneToken 优先
+func TestBindPhoneBothParams_PhoneTokenPrecedence(t *testing.T) {
 	t.Parallel()
 
 	e := newAuthTestEnv(t)
@@ -200,9 +197,8 @@ func TestBindPhoneBothParams_PhoneTokenPrecedence_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestBindPhoneOnlyPhoneCode_ViaWeChatAPI_KNOWN_RED 仅 phoneCode → 调用微信 API 换取手机号
-func TestBindPhoneOnlyPhoneCode_ViaWeChatAPI_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneOnlyPhoneCode_ViaWeChatAPI 仅 phoneCode → 调用微信 API 换取手机号
+func TestBindPhoneOnlyPhoneCode_ViaWeChatAPI(t *testing.T) {
 	t.Parallel()
 
 	e := newAuthTestEnv(t)

@@ -41,8 +41,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
@@ -65,39 +68,58 @@ var presetRoles = map[string]struct{}{
 // Handler HTTP 处理器（signer/phoneCipher 允许为 nil：对应登录/技师写入返回 500 配置错误；
 // wxClient 允许为 nil：/patient/wx-login 返回 500，不影响其他登录端点）
 type Handler struct {
-	store    repo.Store
-	signer   *token.Signer
-	phone    *phone.Cipher
-	wxClient wxClientI // 接口化：单测注入内存 fake；生产为 *wechat.Client
+	store            repo.Store
+	signer           *token.Signer
+	bindSigner       *token.Signer // T085：绑定态 JWT signer（同 secret，ttl=30min）
+	phone            *phone.Cipher
+	wxClient         wxClientI // 接口化：单测注入内存 fake；生产为 *wechat.Client
+	phoneTokenSecret string    // T085：phoneToken 签发/校验密钥（独立于 JWT_SECRET）
 }
 
 // New 创建 Handler（保持三参签名兼容现有测试与调用方；main.go 通过 SetWXClient 注入真实客户端）。
 // 缺失 signer：登录端点返回 500；缺失 phoneCipher：技师写入端点返回 500；
 // wxClient 需显式 SetWXClient 注入，未注入时 /patient/wx-login 返回 500（不影响其他端点）。
+// bindSigner 由 signer 派生（CloneWithTTL 30min）；若 signer 为 nil 则 bindSigner 亦为 nil。
 func New(store repo.Store, signer *token.Signer, phoneCipher *phone.Cipher) *Handler {
-	return &Handler{store: store, signer: signer, phone: phoneCipher, wxClient: nil}
-}
-
-// SetWXClient 注入微信登录客户端（nil 视为未配置）
-// 供 cmd/server 在 main.go 内做可选注入，保持 New 三参签名不破坏既有 test。
-func (h *Handler) SetWXClient(wx *wechat.Client) {
-	if wx == nil {
-		h.wxClient = nil
-		return
+	h := &Handler{store: store, signer: signer, phone: phoneCipher, wxClient: nil}
+	if signer != nil {
+		h.bindSigner = signer.CloneWithTTL(30 * time.Minute)
 	}
-	h.wxClient = wx // *wechat.Client 实现 wxClientI
+	return h
 }
 
-// wxClientI 仅暴露 DoCode2Session 的最小接口：
-// handler_impl_test 可用内存 fake 轻量注入；生产 *wechat.Client 自然实现。
+// SetWXClient 注入微信登录客户端（nil 视为未配置）。
+// 接 wxClientI 接口以便测试注入 wrapper（嵌入 testhelper.MockWechatClient）。
+func (h *Handler) SetWXClient(wx wxClientI) {
+	h.wxClient = wx
+}
+
+// SetPhoneTokenSecret T085：注入 phoneToken 签发/校验密钥（env PHONE_TOKEN_SECRET）。
+func (h *Handler) SetPhoneTokenSecret(secret string) {
+	h.phoneTokenSecret = secret
+}
+
+// SetPhoneCipher 注入手机号 AES-GCM 加密器（供测试注入；生产由 New 传入）。
+func (h *Handler) SetPhoneCipher(c *phone.Cipher) {
+	h.phone = c
+}
+
+// wxClientI 微信客户端最小接口：
+// handler 测试可用内存 fake/wrapper 轻量注入；生产 *wechat.Client 自然实现。
 type wxClientI interface {
 	DoCode2Session(ctx context.Context, code string) (*wechat.Code2SessionResult, error)
+	// GetPhoneNumber T085：微信 phonenumber.getPhoneNumber（code 换手机号）。
+	GetPhoneNumber(ctx context.Context, code string) (pureNumber, countryCode string, err error)
 }
 
 // Router 组装路由（可测试）
 func (h *Handler) Router() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
+	// captureLogger 将当前全局 log.Logger 注入 request context，使 handler 在请求生命周期内
+	// 使用同一 logger（避免并行测试覆写全局 log.Logger 导致审计日志串台）。
+	r.Use(captureLogger)
+	r.Use(h.scopeGuard) // T085：scope 鉴权（bind 仅放行 bind-phone；full 禁 bind-phone）
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -109,12 +131,16 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/tech/login", h.techLogin)       // T037 技师登录（免 JWT）
 		v1.POST("/patient/login", h.patientLogin) // T037 患者登录（免 JWT）
 		v1.POST("/patient/wx-login", h.wxLogin)   // T069 患者端微信登录（免 JWT）
+		v1.POST("/patient/bind-phone", h.bindPhone) // T085 患者微信绑定手机号（需 scope=bind JWT）
 
 		v1.GET("/admin/patients", h.listPatients)
 		v1.GET("/admin/patients/:patientId", h.getPatient)
 		v1.POST("/admin/patients", h.createPatient)                    // T057 创建患者
 		v1.POST("/admin/patients/batch-bind", h.batchBindPatients)     // T057 批量绑定
 		v1.PUT("/admin/patients/:patientId/team", h.assignPatientTeam) // T057 分配团队
+		// T085 Admin 档案维护
+		v1.POST("/admin/patients/:patientId/unbind-wechat", h.unbindWechat) // 解绑微信
+		v1.PUT("/admin/patients/:patientId/phone", h.updatePatientPhone)    // 改手机号
 
 		v1.GET("/teams", h.listTeams)
 		v1.GET("/teams/:teamId/members", h.getTeamMembers)
@@ -165,12 +191,81 @@ func fail(c *gin.Context, appErr *model.AppError) {
 	c.JSON(appErr.HTTPStatus, jsonResp{Code: appErr.Code, Message: appErr.Message, Data: nil})
 }
 
+// captureLogger 将调用时刻的全局 log.Logger 注入 request context。
+// handler 通过 ctxLogger(c) 取回，确保单个请求生命周期内使用同一 logger，
+// 规避并行测试覆写全局 log.Logger 导致审计日志串台。
+func captureLogger(c *gin.Context) {
+	ctx := c.Request.Context()
+	ctx = log.Logger.WithContext(ctx)
+	c.Request = c.Request.WithContext(ctx)
+	c.Next()
+}
+
+// ctxLogger 从 request context 取回 captureLogger 注入的 logger；
+// 若 context 无 logger（非 HTTP 入口调用），回退到当前全局 log.Logger。
+func ctxLogger(c *gin.Context) *zerolog.Logger {
+	if l := zerolog.Ctx(c.Request.Context()); l != nil {
+		return l
+	}
+	return &log.Logger
+}
+
 // operatorID 操作人：网关注入的 X-User-Id，缺省 fallback（一期 gateway JWT 未上线）
 func operatorID(c *gin.Context, fallback string) string {
 	if v := c.GetHeader(headerUserID); v != "" {
 		return v
 	}
 	return fallback
+}
+
+// scopeGuard T085：scope 鉴权中间件。
+// 无 Authorization 头时放行（生产由 gateway 注入 X-Scope；测试直连时由本中间件解析 JWT）。
+// scope 判定：JWT sub 前缀 "openid_" → bind（仅可访问 /patient/bind-phone）；否则 full（禁 bind-phone）。
+// 通过后将 subject/scope 写入 gin context 供 handler 使用。
+func (h *Handler) scopeGuard(c *gin.Context) {
+	auth := c.GetHeader("Authorization")
+	if auth == "" {
+		c.Next()
+		return
+	}
+	const bearer = "Bearer "
+	if !strings.HasPrefix(auth, bearer) {
+		fail(c, model.ErrUnauthorized("invalid authorization header"))
+		c.Abort()
+		return
+	}
+	tokenStr := strings.TrimPrefix(auth, bearer)
+	if h.signer == nil {
+		fail(c, model.ErrInternal("JWT_SECRET not configured"))
+		c.Abort()
+		return
+	}
+	claims, err := h.signer.Verify(tokenStr)
+	if err != nil {
+		fail(c, model.ErrUnauthorized("invalid token: %v", err))
+		c.Abort()
+		return
+	}
+	sub := claims.Subject
+	scope := "full"
+	if strings.HasPrefix(sub, "openid_") {
+		scope = "bind"
+	}
+	c.Set("subject", sub)
+	c.Set("scope", scope)
+
+	path := c.Request.URL.Path
+	switch {
+	case scope == "bind" && path != "/api/v1/patient/bind-phone":
+		fail(c, model.ErrForbiddenScope("bind scope only allows /patient/bind-phone"))
+		c.Abort()
+		return
+	case scope == "full" && path == "/api/v1/patient/bind-phone":
+		fail(c, model.ErrForbiddenScope("full scope cannot call /patient/bind-phone"))
+		c.Abort()
+		return
+	}
+	c.Next()
 }
 
 // parsePaging 分页参数（架构 §3.5：page 1 起，pageSize 默认 20 上限 100，非法 400）
@@ -373,7 +468,11 @@ type wxLoginRequest struct {
 	Code string `json:"code"`
 }
 
-// wxLogin 患者端微信登录（T069）
+// wxLogin 患者端微信登录（T069 + T085 改造）
+// 三分支：
+//   - 已绑定 + active → 200/0 + 正式 JWT（sub=patientID，8h）
+//   - 已绑定 + inactive → 401 + 10001（统一文案防枚举）
+//   - 未绑定 → 200 + 10601 + bindToken（scope=bind，30min，sub=openid）；不创建 patients 行
 func (h *Handler) wxLogin(c *gin.Context) {
 	var req wxLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -406,33 +505,29 @@ func (h *Handler) wxLogin(c *gin.Context) {
 		return
 	}
 	if row == nil {
-		// 首次登录：创建患者
-		row, err = h.store.CreatePatientByWXOpenID(c.Request.Context(), sess.OpenID)
-		if err != nil {
-			// 并发竞态：另一请求抢先插入 → 回退再查一次（幂等 upsert 语义）
-			if errors.Is(err, repo.ErrWXOpenIDExists) {
-				row, qErr = h.store.GetPatientByWXOpenID(c.Request.Context(), sess.OpenID)
-				if qErr != nil {
-					fail(c, model.ErrInternal("query patient by openid failed after conflict"))
-					return
-				}
-				if row == nil {
-					// 极端：事务回滚等导致 Get 仍 nil → 仅额外重试 Create 一次
-					row, err = h.store.CreatePatientByWXOpenID(c.Request.Context(), sess.OpenID)
-					if err != nil {
-						fail(c, model.ErrInternal("create patient by openid failed"))
-						return
-					}
-				}
-			} else {
-				fail(c, model.ErrInternal("create patient by openid failed"))
-				return
-			}
+		// T085：未绑定 → 返回 bindToken 引导绑定，不创建患者
+		if h.bindSigner == nil {
+			fail(c, model.ErrInternal("JWT_SECRET not configured"))
+			return
 		}
+		bindTok, bErr := h.bindSigner.SignWithTeam(sess.OpenID, "微信用户", "", "patient")
+		if bErr != nil {
+			fail(c, model.ErrInternal("sign bind token failed"))
+			return
+		}
+		c.JSON(http.StatusOK, jsonResp{
+			Code:    model.CodePatientNotBound,
+			Message: "wechat openid not bound; bind phone required",
+			Data:    gin.H{"token": bindTok},
+		})
+		return
 	}
 	if row.Status != "active" {
-		// 不区分"禁用/不存在"统一 401 文案，防账号枚举（与 patientLogin 同口径）
-		fail(c, model.ErrUnauthorized("invalid credentials"))
+		// 不区分"禁用/不存在"统一 401 文案，防账号枚举；不返回 data（不泄露 token）
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"code":    model.CodeInvalidCredentials,
+			"message": "invalid_credentials",
+		})
 		return
 	}
 	if h.signer == nil {

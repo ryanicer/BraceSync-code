@@ -133,6 +133,79 @@ func (s *PGStore) CreatePatientByWXOpenID(ctx context.Context, openid string) (*
 	return s.GetPatientByWXOpenID(ctx, openid)
 }
 
+// GetPatientWXOpenID T085：查患者当前绑定的 wx_openid；未绑定返回空串。
+func (s *PGStore) GetPatientWXOpenID(ctx context.Context, patientID string) (string, error) {
+	row := s.pool.QueryRow(ctx, `SELECT wx_openid FROM patients WHERE patient_id = $1`, patientID)
+	var openID *string
+	if err := row.Scan(&openID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrPatientNotFound
+		}
+		return "", err
+	}
+	if openID == nil {
+		return "", nil
+	}
+	return *openID, nil
+}
+
+// BindPatientOpenid T085：原子绑定 openid。UPDATE ... WHERE wx_openid IS NULL
+// 命中 0 行 → ErrAlreadyBound（已绑定其他 openid 或被并发抢占）。
+func (s *PGStore) BindPatientOpenid(ctx context.Context, patientID, openid string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE patients SET wx_openid = $1, updated_at = NOW()
+		 WHERE patient_id = $2 AND wx_openid IS NULL`,
+		openid, patientID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAlreadyBound
+	}
+	return nil
+}
+
+// UnbindWechat T085：解绑微信（wx_openid 置 NULL）。
+func (s *PGStore) UnbindWechat(ctx context.Context, patientID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE patients SET wx_openid = NULL, updated_at = NOW() WHERE patient_id = $1`,
+		patientID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPatientNotFound
+	}
+	return nil
+}
+
+// UpdatePatientPhone T085：改手机号，phone_enc + phone_hash 同步更新。
+func (s *PGStore) UpdatePatientPhone(ctx context.Context, patientID string, phoneEnc []byte, phoneHash string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE patients SET phone_enc = $1, phone_hash = $2, updated_at = NOW()
+		 WHERE patient_id = $3`,
+		phoneEnc, phoneHash, patientID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPatientNotFound
+	}
+	return nil
+}
+
+// PatientPhoneHashTaken T085：phone_hash 是否已被其他患者占用（排除自身）。
+func (s *PGStore) PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM patients WHERE phone_hash = $1 AND patient_id <> $2)`,
+		phoneHash, excludePatientID)
+	var taken bool
+	if err := row.Scan(&taken); err != nil {
+		return false, err
+	}
+	return taken, nil
+}
+
 // RoleScope 读角色数据范围（permissions_json->>'scope'）；角色不存在返回空串
 func (s *PGStore) RoleScope(ctx context.Context, roleID string) (string, error) {
 	row := s.pool.QueryRow(ctx, `SELECT permissions_json->>'scope' FROM roles WHERE role_id = $1`, roleID)

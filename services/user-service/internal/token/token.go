@@ -50,6 +50,12 @@ func NewSigner(secret string, ttl time.Duration) (*Signer, error) {
 	return &Signer{secret: []byte(secret), ttl: ttl, now: time.Now}, nil
 }
 
+// CloneWithTTL 派生一个复用同一 secret 但 ttl 不同的 Signer。
+// 用于用同一 JWT_SECRET 签发不同有效期的 token（如 bindToken 30min vs 正式 JWT 8h）。
+func (s *Signer) CloneWithTTL(ttl time.Duration) *Signer {
+	return &Signer{secret: s.secret, ttl: ttl, now: s.now}
+}
+
 // header HS256 固定头（JSON 序列化保证字段序稳定）
 const headerJSON = `{"alg":"HS256","typ":"JWT"}`
 

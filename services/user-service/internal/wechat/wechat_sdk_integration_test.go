@@ -1,4 +1,4 @@
-// Package wechat T085 微信 SDK 集成契约 KNOWN_RED 测试
+﻿// Package wechat T085 微信 SDK 集成契约 KNOWN_RED 测试
 //
 // 覆盖 §5.3 GetPhoneNumber + AccessTokenManager 设计契约：
 //   - biz error → 10604 invalid_phone_code
@@ -10,6 +10,7 @@
 package wechat
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -121,9 +122,8 @@ func setupTestEnv(t *testing.T) *testEnv {
 // Test Cases: Mock Server Behavior Verification
 // ─────────────────────────────────────────────────────────────
 
-// TestWechatMockServer_BizError_KNOWN_RED 微信业务错误模拟（mock server）
-func TestWechatMockServer_BizError_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestWechatMockServer_BizError 微信业务错误模拟（mock server）
+func TestWechatMockServer_BizError(t *testing.T) {
 	t.Parallel()
 
 	env := setupTestEnv(t)
@@ -132,7 +132,7 @@ func TestWechatMockServer_BizError_KNOWN_RED(t *testing.T) {
 		t.Log("KNOWN_RED: GetPhoneNumber 尚未实现，但 mock server 已准备就绪")
 
 		// 断言 mock server 能正确返回业务错误码
-		req, _ := http.NewRequest("GET", env.mockServer.URL+"/phonenumber/getPhoneNumber?phone_code=invalid_code", nil)
+		req, _ := http.NewRequest("GET", env.mockServer.URL+"/phonenumber/getPhoneNumber?access_token="+env.accessTokenValue+"&phone_code=invalid_code", nil)
 		resp, err := env.client.httpCli.Do(req)
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
@@ -145,10 +145,9 @@ func TestWechatMockServer_BizError_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestWechatMockServer_NetworkError_KNOWN_RED 网络错误模拟
+// TestWechatMockServer_NetworkError 网络错误模拟
 // 关闭 mock server 后发起请求，应返回连接错误（dial tcp connection refused）。
-func TestWechatMockServer_NetworkError_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+func TestWechatMockServer_NetworkError(t *testing.T) {
 	t.Parallel()
 
 	env := setupTestEnv(t)
@@ -174,52 +173,40 @@ func TestWechatMockServer_NetworkError_KNOWN_RED(t *testing.T) {
 // Test Cases: AccessTokenManager Design Contract
 // ─────────────────────────────────────────────────────────────
 
-// TestAccessTokenManager_Singleflight_Design_KNOWN_RED singleflight 设计契约验证
-func TestAccessTokenManager_Singleflight_Design_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestAccessTokenManager_Singleflight_Design singleflight 设计契约验证
+func TestAccessTokenManager_Singleflight_Design(t *testing.T) {
 	t.Parallel()
 
 	env := setupTestEnv(t)
 
 	t.Run("singleflight_contract_mock_server_verification", func(t *testing.T) {
-		t.Log("KNOWN_RED: GetPhoneNumber 未实现，但单测环境已就绪")
+		t.Log("T085: AccessTokenManager singleflight 合并并发请求为 1 次上游调用")
 
 		const concurrency = 10
-		successCount := 0
-
 		var wg sync.WaitGroup
 		for i := 0; i < concurrency; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				// 调用 token 接口验证并发控制
-				req, _ := http.NewRequest("POST", env.mockServer.URL+"/cgi-bin/token?grant_type=client_credential", nil)
-				resp, err := env.client.httpCli.Do(req)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					successCount++
-				}
-				_ = resp
+				_, _ = env.client.GetAccessToken(context.Background())
 			}()
 		}
 
 		wg.Wait()
 
 		// singleflight 契约：10 并发请求 access_token，上游 /cgi-bin/token 应仅被调用 1 次。
-		// 当前直接走 httpCli 无 singleflight，tokenCallCount=10（红）；Winner 实现
-		// AccessTokenManager 后应通过 singleflight 合并为 1 次上游调用。
 		assert.Equal(t, 1, env.tokenCallCount, "singleflight 应保证并发请求仅 1 次上游调用")
 	})
 }
 
-// TestAccessTokenManager_ForceRefresh_Design_KNOWN_RED 强制刷新设计契约
-func TestAccessTokenManager_ForceRefresh_Design_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestAccessTokenManager_ForceRefresh_Design 强制刷新设计契约
+func TestAccessTokenManager_ForceRefresh_Design(t *testing.T) {
 	t.Parallel()
 
 	env := setupTestEnv(t)
 
 	t.Run("force_refresh_contract_on_40001_or_42001", func(t *testing.T) {
-		t.Log("KNOWN_RED: GetPhoneNumber 未实现，但 mock server 支持 40001 模拟")
+		t.Log("T085: GetPhoneNumber 遇 40001 触发 access_token 强制刷新并重试")
 
 		// 切换到错误模式：phonenumber 接口返回 errcode=40001
 		env.mu.Lock()
@@ -227,21 +214,11 @@ func TestAccessTokenManager_ForceRefresh_Design_KNOWN_RED(t *testing.T) {
 		env.accessTokenValue = "invalid_token"
 		env.mu.Unlock()
 
-		// 调用 phonenumber，预期返回 40001 并触发 access_token 强制刷新
-		req, _ := http.NewRequest("GET", env.mockServer.URL+"/phonenumber/getPhoneNumber?phone_code=test", nil)
-		resp, err := env.client.httpCli.Do(req)
-		require.NoError(t, err)
-		defer func() { _ = resp.Body.Close() }()
-
-		body, _ := io.ReadAll(resp.Body)
-		var errResp map[string]interface{}
-		_ = json.Unmarshal(body, &errResp)
-
-		assert.Equal(t, float64(40001), errResp["errcode"], "mock server 应返回 errcode=40001")
+		// 调用 GetPhoneNumber：首次取 token(count=1) → 40001 → 强制刷新(count=2) → 重试仍 40001
+		_, _, _ = env.client.GetPhoneNumber(context.Background(), "test")
 
 		// 强制刷新契约：收到 40001/42001 后应重新请求 access_token，
 		// 因此 /cgi-bin/token 调用次数应 >= 2（首次获取 + 强制刷新）。
-		// 当前无自动刷新逻辑，tokenCallCount=0（红）。
 		assert.GreaterOrEqual(t, env.tokenCallCount, 2, "errcode=40001 应触发 access_token 强制刷新")
 	})
 }

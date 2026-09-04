@@ -1,4 +1,4 @@
-// Package main T085 Gateway Scope 鉴权中间件契约 KNOWN_RED 测试
+﻿// Package main T085 Gateway Scope 鉴权中间件契约 KNOWN_RED 测试
 //
 // 覆盖 §5.4 Gateway scope 鉴权：
 //   - JWT 经 jwtAuth 解析后注入 X-User-Id / X-Role 头（中间件行为，已实现）
@@ -143,11 +143,9 @@ func findBackendRequest(received *[]t085CapturedRequest, method, pathContains st
 // Test Cases: X-User-Id Header Injection
 // ─────────────────────────────────────────────────────────────
 
-// TestScopeBind_MiddlewareInjectsXScopeHeader_KNOWN_RED
+// TestScopeBind_MiddlewareInjectsXScopeHeader
 // 绑定态 JWT 经过 gateway → mock backend 应收到 X-User-Id=openid + X-Role=patient。
-func TestScopeBind_MiddlewareInjectsXScopeHeader_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-
+func TestScopeBind_MiddlewareInjectsXScopeHeader(t *testing.T) {
 	gw, received := startTestGateway(t, testGatewaySecret)
 
 	bindToken := signScopeJWT(t, testGatewaySecret, "openid_bind_xxx", "patient", time.Now().Add(30*time.Minute).Unix())
@@ -173,10 +171,8 @@ func TestScopeBind_MiddlewareInjectsXScopeHeader_KNOWN_RED(t *testing.T) {
 // Test Cases: Scope=Bind Authorization Matrix
 // ─────────────────────────────────────────────────────────────
 
-// TestScopeBind_BindPhoneEndpoint_Allowed_KNOWN_RED
-func TestScopeBind_BindPhoneEndpoint_Allowed_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-
+// TestScopeBind_BindPhoneEndpoint_Allowed
+func TestScopeBind_BindPhoneEndpoint_Allowed(t *testing.T) {
 	gw, _ := startTestGateway(t, testGatewaySecret)
 	bindToken := signScopeJWT(t, testGatewaySecret, "openid_allow_xxx", "patient", time.Now().Add(30*time.Minute).Unix())
 
@@ -192,11 +188,9 @@ func TestScopeBind_BindPhoneEndpoint_Allowed_KNOWN_RED(t *testing.T) {
 	assert.Equal(t, req.ExpectedCode, code, "scope=bind 应允许访问 bind-phone")
 }
 
-// TestScopeBind_OtherPatientEndpoints_Forbidden_KNOWN_RED
+// TestScopeBind_OtherPatientEndpoints_Forbidden
 // 绑定态 JWT 调其他 patient 端点 → 不应触达后端（403 或 404 但不可 200）
-func TestScopeBind_OtherPatientEndpoints_Forbidden_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-
+func TestScopeBind_OtherPatientEndpoints_Forbidden(t *testing.T) {
 	gw, received := startTestGateway(t, testGatewaySecret)
 	bindToken := signScopeJWT(t, testGatewaySecret, "openid_forbidden_xxx", "patient", time.Now().Add(30*time.Minute).Unix())
 
@@ -218,11 +212,9 @@ func TestScopeBind_OtherPatientEndpoints_Forbidden_KNOWN_RED(t *testing.T) {
 // Test Cases: Scope=Full Authorization Matrix
 // ─────────────────────────────────────────────────────────────
 
-// TestScopeFull_BindPhoneEndpoint_Forbidden_KNOWN_RED
+// TestScopeFull_BindPhoneEndpoint_Forbidden
 // 全态 (PatientID) JWT 调 bind-phone → 应被拒绝（已绑定用户不能再绑定）
-func TestScopeFull_BindPhoneEndpoint_Forbidden_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-
+func TestScopeFull_BindPhoneEndpoint_Forbidden(t *testing.T) {
 	gw, _ := startTestGateway(t, testGatewaySecret)
 	fullToken := signScopeJWT(t, testGatewaySecret, "P20260012", "patient", time.Now().Add(8*time.Hour).Unix())
 
@@ -238,11 +230,9 @@ func TestScopeFull_BindPhoneEndpoint_Forbidden_KNOWN_RED(t *testing.T) {
 	assert.Equal(t, req.ExpectedCode, code, "全态 JWT 不可调用 bind-phone")
 }
 
-// TestScopeFull_DefaultEndpoints_Allowed_KNOWN_RED
+// TestScopeFull_DefaultEndpoints_Allowed
 // 全态 JWT 访问默认 patient 端点 → 200 且后端收到 X-User-Id=PatientID
-func TestScopeFull_DefaultEndpoints_Allowed_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-
+func TestScopeFull_DefaultEndpoints_Allowed(t *testing.T) {
 	gw, received := startTestGateway(t, testGatewaySecret)
 	fullToken := signScopeJWT(t, testGatewaySecret, "P20260013", "patient", time.Now().Add(8*time.Hour).Unix())
 

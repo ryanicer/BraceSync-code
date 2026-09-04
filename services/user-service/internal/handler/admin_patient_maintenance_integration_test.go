@@ -1,4 +1,4 @@
-// Package handler T085 管理端患者维护（解绑微信/改号）契约 KNOWN_RED 测试
+﻿// Package handler T085 管理端患者维护（解绑微信/改号）契约 KNOWN_RED 测试
 //
 // 覆盖 §5.3 admin 患者维护：
 //   - POST /api/v1/admin/patients/:id/unbind-wechat → wx_openid=NULL + 审计日志
@@ -14,11 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bracesync/bracesync/services/testhelper"
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
+	"github.com/bracesync/bracesync/services/user-service/internal/phone"
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
 )
@@ -42,6 +45,11 @@ func newAdminMaintenanceEnv(t *testing.T) (*adminMaintTestEnv, *testhelper.LogCa
 
 	store := newT085Store()
 	h := New(store, signer, nil)
+	// T085 接线：注入手机号加密器（update-phone 成功路径需加密）
+	cipher, _ := phone.NewCipher(testPhoneKey)
+	h.SetPhoneCipher(cipher)
+	// 替换全局 zerolog logger 以捕获审计日志
+	log.Logger = zerolog.New(lc)
 
 	return &adminMaintTestEnv{
 		t:          t,
@@ -117,10 +125,8 @@ func (e *adminMaintTestEnv) doPutPhone(patientID, newPhone, reason, authToken st
 // Scenario: Unbind WeChat
 // ─────────────────────────────────────────────────────────────
 
-// TestUnbindWechat_SuccessfullySetsNULL_KNOWN_RED POST unbind-wechat → wx_openid=NULL + audit log
-func TestUnbindWechat_SuccessfullySetsNULL_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-	t.Parallel()
+// TestUnbindWechat_SuccessfullySetsNULL POST unbind-wechat → wx_openid=NULL + audit log
+func TestUnbindWechat_SuccessfullySetsNULL(t *testing.T) {
 
 	env, lc := newAdminMaintenanceEnv(t)
 
@@ -154,10 +160,8 @@ func TestUnbindWechat_SuccessfullySetsNULL_KNOWN_RED(t *testing.T) {
 // Scenario: Update Phone Format Validation & 409 Conflict
 // ─────────────────────────────────────────────────────────────
 
-// TestUpdatePhone_FormatValidation_RejectInvalid_KNOWN_RED PUT phone 格式错误 → 400 Bad Request
-func TestUpdatePhone_FormatValidation_RejectInvalid_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-	t.Parallel()
+// TestUpdatePhone_FormatValidation_RejectInvalid PUT phone 格式错误 → 400 Bad Request
+func TestUpdatePhone_FormatValidation_RejectInvalid(t *testing.T) {
 
 	env, _ := newAdminMaintenanceEnv(t)
 
@@ -191,10 +195,8 @@ func TestUpdatePhone_FormatValidation_RejectInvalid_KNOWN_RED(t *testing.T) {
 	}
 }
 
-// TestUpdatePhone_409_ConflictWithExistingHash_KNOWN_RED phone_hash 冲突 → 409 Conflict
-func TestUpdatePhone_409_ConflictWithExistingHash_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-	t.Parallel()
+// TestUpdatePhone_409_ConflictWithExistingHash phone_hash 冲突 → 409 Conflict
+func TestUpdatePhone_409_ConflictWithExistingHash(t *testing.T) {
 
 	env, _ := newAdminMaintenanceEnv(t)
 
@@ -219,10 +221,8 @@ func TestUpdatePhone_409_ConflictWithExistingHash_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestUpdatePhone_Success_EncAndHashSyncUpdated_KNOWN_RED PUT phone 成功 → phone_enc+phone_hash 同步更新
-func TestUpdatePhone_Success_EncAndHashSyncUpdated_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-	t.Parallel()
+// TestUpdatePhone_Success_EncAndHashSyncUpdated PUT phone 成功 → phone_enc+phone_hash 同步更新
+func TestUpdatePhone_Success_EncAndHashSyncUpdated(t *testing.T) {
 
 	env, _ := newAdminMaintenanceEnv(t)
 
@@ -247,10 +247,8 @@ func TestUpdatePhone_Success_EncAndHashSyncUpdated_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestUpdatePhone_AuditLogFieldsWritten_KNOWN_RED audit fields (operator_id/action/before/after) 落日志断言
-func TestUpdatePhone_AuditLogFieldsWritten_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
-	t.Parallel()
+// TestUpdatePhone_AuditLogFieldsWritten audit fields (operator_id/action/before/after) 落日志断言
+func TestUpdatePhone_AuditLogFieldsWritten(t *testing.T) {
 
 	env, lc := newAdminMaintenanceEnv(t)
 
