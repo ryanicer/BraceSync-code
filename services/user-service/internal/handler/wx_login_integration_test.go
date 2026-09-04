@@ -103,7 +103,6 @@ func TestWxLoginBoundActive_DirectLogin_KNOWN_RED(t *testing.T) {
 	e := newWxLoginEnv(t)
 
 	// Fixture: 模拟 openid 已存在且 status=active
-	const activeStatus = "active"
 	// patient := ... // KNOWN_RED: 未使用
 	t.Run("success_200_with_normal_JWT_and_patientDTO", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub handler 返回 500，预期 200 + JWT 8h + patientDTO")
@@ -151,7 +150,6 @@ func TestWxLoginBoundInactive_Return401_KNOWN_RED(t *testing.T) {
 	e := newWxLoginEnv(t)
 
 	// Fixture: 模拟 openid 已存在但 status=pending
-	const pendingStatus = "pending"
 	// patient := ... // KNOWN_RED: 未使用
 	t.Run("http401_invalid_credentials_status_inactive", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub handler 返回 500，预期 HTTP 401 + 10001 (status!=active)")
