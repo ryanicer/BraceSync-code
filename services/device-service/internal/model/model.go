@@ -7,6 +7,7 @@
 package model
 
 import (
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"time"
@@ -59,6 +60,18 @@ var deviceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{3,47}$`)
 // ValidDeviceID 校验 device_id 格式
 func ValidDeviceID(id string) bool { return deviceIDPattern.MatchString(id) }
 
+// ValidDeviceSecret 校验 device_secret 格式：必须为 64 字符 hex 字符串。
+// 固件约定（docs/design/hardware/BLE配网协议确认-小顾-2026-09-05.md §3）：
+// HKDF 的 ikm 取 device_secret 的 64 字符 hex ASCII 字节（64B），而非 hex 解码后的 32B。
+// 注册/派生两端均须保证 secret 为 64-hex，否则与固件静默派生出不同密钥。
+func ValidDeviceSecret(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
 // ─────────────────────────────────────────────────────────────
 // 错误码（架构 §3.5：2xxxx 设备域；1xxxx 用户域；9xxxx 系统级）
 // ─────────────────────────────────────────────────────────────
@@ -68,6 +81,7 @@ const (
 	CodeInvalidParam    = 20400 // 参数非法（device_id 格式 / offset_values 长度 / installId 解析）
 	CodeNotFound        = 20404 // 设备域资源不存在（device / install_record）
 	CodeConflict        = 20409 // 状态冲突（绑定互斥 / 基线已存在 / 安装与绑定不一致）
+	CodeTooMany         = 20429 // 请求过频（T091 配网密钥重发间隔内重复领取）
 	CodeUserResNotFound = 10404 // 用户域资源不存在（patient / technician，owner: user-service）
 	CodeInternal        = 90001 // 系统内部错误
 )
@@ -95,6 +109,11 @@ func ErrNotFound(format string, args ...any) *AppError {
 
 func ErrConflict(format string, args ...any) *AppError {
 	return newAppError(CodeConflict, 409, format, args...)
+}
+
+// ErrTooMany T091：配网密钥重发间隔内重复领取 → HTTP 429
+func ErrTooMany(format string, args ...any) *AppError {
+	return newAppError(CodeTooMany, 429, format, args...)
 }
 
 func ErrUserResNotFound(format string, args ...any) *AppError {

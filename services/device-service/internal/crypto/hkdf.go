@@ -2,7 +2,9 @@
 //
 // DeriveProvisionKey 按 RFC 5869 HKDF-SHA256 从 device_secret 派生 16B 配网密钥：
 //
-//	ikm   = device_secret（32B）
+//	ikm   = device_secret 的 64 字符 hex ASCII 字节（64B，与固件约定一致，
+//	        见 docs/design/hardware/BLE配网协议确认-小顾-2026-09-05.md §3；
+//	        注意：不是 hex 解码后的 32B，否则与固件派生出不同密钥）
 //	salt  = nil（RFC 5869：salt 未提供时用 HashLen 零字节，即 32B 零）
 //	info  = "provision" + device_id
 //	L     = 16（128 bit）

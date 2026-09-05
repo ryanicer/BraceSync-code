@@ -64,6 +64,13 @@ func registerAPIProxies(r *gin.Engine, agt *gatewayAuth) {
 	api.DELETE("/admin/technicians/:techId", func(c *gin.Context) {
 		abortJSON(c, http.StatusNotFound, http.StatusNotFound, "endpoint not available")
 	})
+
+	// T091：配网密钥端点从裸组迁入 JWT 组，叠加 tech+admin RBAC 与 per-user 限流。
+	// 子组继承 api 的 jwtAuth/scopeAuthz/roleAuthz，再加 provisionRateLimit 中间件。
+	prov := api.Group("")
+	prov.Use(provisionRateLimit(newUserRateLimiter()))
+	registerServiceRoutes(prov, envOrURL("DEVICE_SERVICE_URL", defaultDeviceServiceURL), "device-service",
+		[]proxyRoute{{http.MethodPost, "/devices/:deviceId/provision-key"}})
 }
 
 // registerDeviceReportRoutes 注册设备域路由（设备验签组，不经 JWT）：
@@ -82,18 +89,6 @@ func registerDeviceReportRoutes(r *gin.Engine, agt *gatewayAuth) {
 		})
 	})
 	log.Info().Msg("device report routes registered (device-signature auth)")
-}
-
-// registerProvisionRoutes 配网端点（T067：联调期不强制 JWT/RBAC，硬件清单未定义鉴权）。
-// TODO(T068)：联调后收紧鉴权（JWT + admin 角色或设备签名）。
-//
-// 用裸组（无 jwtAuth/roleAuthz）注册，避开 /api/v1 JWT 组的中间件链；
-// gin radix tree：/devices/:deviceId/provision-key 与 /devices/:deviceId/bind 终段不同，无路由冲突。
-func registerProvisionRoutes(r *gin.Engine, agt *gatewayAuth) {
-	prov := r.Group("/api/v1") // 裸组：无 jwtAuth/roleAuthz
-	registerServiceRoutes(prov, envOrURL("DEVICE_SERVICE_URL", defaultDeviceServiceURL), "device-service",
-		[]proxyRoute{{http.MethodPost, "/devices/:deviceId/provision-key"}}) // T067
-	log.Info().Msg("provision-key route registered (no-auth for integration)")
 }
 
 // loadGatewayAuth 组装鉴权依赖：JWT_SECRET + 设备密钥提供器。
