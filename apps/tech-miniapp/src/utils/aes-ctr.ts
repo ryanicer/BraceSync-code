@@ -1,9 +1,10 @@
-﻿/**
+/**
  * AES-128-CTR WiFi 凭据加密工具（T089）
  *
  * 密钥来源：provision_key_hex（云端 T067 下发，HKDF-SHA256 派生 16B → 32hex）
- * IV 构造：seq 扩展为 16 字节（T089-TODO: 待硬件确认 16B 具体布局）
- * 明文格式：JSON { ssid, pwd, seq }（T089-TODO: 待硬件裁定 TLV vs JSON）
+ * IV 构造：seq 按大端写入前 4 字节，后 12 字节 0x00（协议定稿：见 docs/design/hardware/BLE配网协议确认-小顾-2026-09-05.md §3）
+ *   自证：seq=1 → IV = 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00（16B）
+ * 明文格式：JSON { ssid, pwd, seq }（协议定稿 §4）
  *
  * 实现策略：
  *  - H5 / 现代小程序环境：优先使用 WebCrypto SubtleCrypto 的 AES-CTR（crypto.subtle 支持）
@@ -25,11 +26,15 @@ function bytesToHex(bytes: Uint8Array): string {
     .join('')
 }
 
-/** IV 构造：低 4B = seq（小端），高 12B 补 0；T089-TODO: 硬件确认最终布局 */
+/**
+ * IV 构造：seq 按大端写入前 4 字节，后 12 字节 0x00
+ * 协议定稿：见 docs/design/hardware/BLE配网协议确认-小顾-2026-09-05.md §3
+ * 自证：seq=1 → IV = 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00（16B）
+ */
 function buildIv(seq: number): Uint8Array {
   const iv = new Uint8Array(16)
   const dv = new DataView(iv.buffer)
-  dv.setUint32(0, seq >>> 0, true) // 小端写入 seq
+  dv.setUint32(0, seq >>> 0, false) // 大端写入 seq（协议 §3 定稿）
   return iv
 }
 

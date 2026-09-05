@@ -1,4 +1,4 @@
-﻿// BLE 近场调试工具：T089 扩展
+// BLE 近场调试工具：T089 扩展
 // 新增：Realtime 推送 / WiFi 加密配置写入 / WiFi Status 状态机监听 / 设备信息读取
 // H5 dev 模式下 BLE API 不可用 → 蓝牙相关方法抛错由上层处理；discoverDevices 返回空数组；
 // 实时推送 & 配网状态机在 H5 下使用模拟数据（mock），真机联调以硬件为准。
@@ -14,6 +14,13 @@ function isH5(): boolean {
 }
 
 const H5_BLUETOOTH_ERROR = '蓝牙功能仅支持真机使用，请在手机上操作'
+
+// BLE GATT UUID（协议定稿 §1）
+const SERVICE_UUID = '0000b510-0000-1000-8000-00805f9b34fb'
+const CHAR_WIFI_CONFIG = '0000b511-0000-1000-8000-00805f9b34fb'
+const CHAR_WIFI_STATUS = '0000b512-0000-1000-8000-00805f9b34fb'
+const CHAR_REALTIME = '0000b513-0000-1000-8000-00805f9b34fb'
+const CHAR_DEVICE_INFO = '0000b514-0000-1000-8000-00805f9b34fb'
 
 export async function initBluetooth(): Promise<boolean> {
   if (isH5()) {
@@ -43,13 +50,15 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
       uni.offBluetoothDeviceFound()
     }
 
+    // TODO: services: [SERVICE_UUID] 过滤待真机验证广播服务后再加
     uni.startBluetoothDevicesDiscovery({
       allowDuplicatesKey: false,
       success: () => {
         uni.onBluetoothDeviceFound((res) => {
           for (const dev of res.devices) {
             const d = dev as unknown as { deviceId: string; name: string; RSSI: number }
-            if (d.name) found.set(d.deviceId, d)
+            // 协议 §1：广播名 BSYNC-{device_id 后 6 位}，仅保留 BraceSync 设备
+            if (d.name && d.name.startsWith('BSYNC-')) found.set(d.deviceId, d)
           }
         })
         timer = setTimeout(() => {
@@ -174,7 +183,19 @@ let wifiStatusCallback: ((code: number) => void) | null = null
 
 /**
  * 写入加密后的 WiFi 配置（AES-128-CTR，由 aes-ctr.ts 加密后传入密文 hex）
+ * 协议 §4：密文按每片 ≤180 字节切片，对 B511 特征顺序 Write，无分包序号字节。
+ * 写完即完成发送（固件侧 400ms 静默判包）。
  */
+const WIFI_CHUNK_SIZE = 180
+
+function hexToBytesLocal(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
+  }
+  return bytes
+}
+
 export async function writeWifiConfigV2(
   deviceId: string,
   encryptedHex: string
@@ -183,7 +204,20 @@ export async function writeWifiConfigV2(
     // H5 mock：直接成功，启动状态机模拟
     return true
   }
-  // 真机：T089-HW-TODO 向 WiFi Config Char（0x0000B511）Write 密文分包
+  const cipher = hexToBytesLocal(encryptedHex)
+  for (let off = 0; off < cipher.length; off += WIFI_CHUNK_SIZE) {
+    const chunk = cipher.slice(off, off + WIFI_CHUNK_SIZE)
+    await new Promise<void>((resolve, reject) => {
+      uni.writeBLECharacteristicValue({
+        deviceId,
+        serviceId: SERVICE_UUID,
+        characteristicId: CHAR_WIFI_CONFIG,
+        value: chunk.buffer,
+        success: () => resolve(),
+        fail: (err) => reject(new Error(`B511 写入失败: ${err.errMsg}`)),
+      })
+    })
+  }
   return true
 }
 
@@ -224,7 +258,11 @@ export function stopMockWifiStatusSequence(): void {
 
 // ===== T089 新增：设备信息 =====
 
-/** 读取设备信息（device_id / firmware / battery） */
+/**
+ * 读取设备信息（协议 §5：B514 Read 一次返回 UTF-8 JSON，snake_case）
+ * {"device_id":"...","firmware":"...","battery":100}
+ * 字段容错：缺 battery 默认 100；解析失败返回 null，不阻塞流程。
+ */
 export async function readDeviceInfo(deviceId: string): Promise<{
   deviceId: string
   firmware: string
@@ -233,6 +271,35 @@ export async function readDeviceInfo(deviceId: string): Promise<{
   if (isH5()) {
     return { deviceId, firmware: 'v1.2.3', battery: 85 }
   }
-  // 真机：T089-HW-TODO 读取 Device Info Char（0x0000B514）
-  return null
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (val: any) => {
+      if (settled) return
+      settled = true
+      uni.offBLECharacteristicValueChange(handler)
+      resolve(val)
+    }
+    const handler = (res: any) => {
+      try {
+        const text = new TextDecoder().decode(new Uint8Array(res.value))
+        const data = JSON.parse(text)
+        finish({
+          deviceId: data.device_id || deviceId,
+          firmware: data.firmware || '',
+          battery: typeof data.battery === 'number' ? data.battery : 100,
+        })
+      } catch (e) {
+        finish(null)
+      }
+    }
+    uni.onBLECharacteristicValueChange(handler)
+    uni.readBLECharacteristicValue({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_DEVICE_INFO,
+      fail: () => finish(null),
+    })
+    // 3s 超时兜底
+    setTimeout(() => finish(null), 3000)
+  })
 }

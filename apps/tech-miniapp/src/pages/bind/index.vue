@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <view class="page">
     <view class="page-header">
       <text class="back-link" @click="goHome">← 返回</text>
@@ -71,7 +71,7 @@ import { ref, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { useDeviceStore } from '../../stores/device'
 import { useInstallStore } from '../../stores/install'
-import { discoverDevices, initBluetooth, createBLEConnection } from '../../utils/ble'
+import { discoverDevices, initBluetooth, createBLEConnection, readDeviceInfo } from '../../utils/ble'
 import { bindDevice } from '../../api/device'
 import { createInstall } from '../../api/install'
 import { getPatient } from '../../api/patient'
@@ -193,7 +193,21 @@ async function selectDevice(deviceId: string) {
     installStore.setBleConnected(connected, deviceId)
     deviceStore.setBleConnected(connected)
     manualDeviceId.value = deviceId
-    showToast(connected ? '设备已连接' : '连接失败，请靠近设备')
+    if (connected) {
+      // 协议 §5：读取 B514 设备信息（snake_case JSON），失败不阻塞绑定流程
+      try {
+        const info = await readDeviceInfo(deviceId)
+        if (info) {
+          showToast(`设备已连接 · 固件 ${info.firmware} · 电量 ${info.battery}%`)
+        } else {
+          showToast('设备已连接')
+        }
+      } catch (e) {
+        showToast('设备已连接')
+      }
+    } else {
+      showToast('连接失败，请靠近设备')
+    }
   } catch (e) {
     uni.hideLoading()
     uni.showToast({ title: '连接失败，请靠近设备', icon: 'none' })

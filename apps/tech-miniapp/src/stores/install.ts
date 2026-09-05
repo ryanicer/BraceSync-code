@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia'
+import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Baseline } from '@bracesync/shared-types'
 import type {
@@ -52,6 +52,9 @@ export const useInstallStore = defineStore('install', () => {
   const wifiStatus = ref<'unconfigured' | 'connected'>('unconfigured')
   const wifiStatusCode = ref<number | null>(null)
   const reachabilityStatus = ref<ReachabilityStatus>('pending')
+
+  // ===== 配网 seq 计数器（协议 §3：会话内递增，防 CTR 重用；跨会话/断电重置为 1） =====
+  const wifiSeq = ref(1)
 
   // ===== 计算属性 =====
   const phaseDone = computed(() => phaseStatus.value[phase.value] === 'done')
@@ -126,6 +129,13 @@ export const useInstallStore = defineStore('install', () => {
     installNote.value = note
   }
 
+  /** 领取本次配网 seq（返回当前值并自增；首次配网 = 1，同一会话重写凭据必须 +1） */
+  function nextWifiSeq(): number {
+    const cur = wifiSeq.value
+    wifiSeq.value += 1
+    return cur
+  }
+
   function resetInstall() {
     installId.value = null
     deviceId.value = ''
@@ -146,6 +156,7 @@ export const useInstallStore = defineStore('install', () => {
     wifiStatus.value = 'unconfigured'
     wifiStatusCode.value = null
     reachabilityStatus.value = 'pending'
+    wifiSeq.value = 1
   }
 
   return {
@@ -169,6 +180,7 @@ export const useInstallStore = defineStore('install', () => {
     wifiStatus,
     wifiStatusCode,
     reachabilityStatus,
+    wifiSeq,
     // computed
     phaseDone,
     // methods
@@ -187,6 +199,7 @@ export const useInstallStore = defineStore('install', () => {
     updateWifiStatusCode,
     setReachabilityVerified,
     setInstallNote,
+    nextWifiSeq,
     resetInstall,
   }
 })
