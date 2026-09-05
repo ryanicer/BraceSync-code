@@ -130,6 +130,7 @@ const errorCode = ref<number | null>(null)
 const autoReturnTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const timeoutTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 let statusListener: ((code: number) => void) | null = null
+let successProcessed = false
 
 const errorMessage = computed(() => {
   const map: Record<number, string> = {
@@ -181,6 +182,7 @@ async function startWifiConfig() {
   provisioning.value = true
   wifiStatusCode.value = null
   errorCode.value = null
+  successProcessed = false
 
   try {
     // 1. 申领 provision-key（真实 API）
@@ -219,7 +221,8 @@ async function startWifiConfig() {
 
 async function handleSuccess(ssid: string) {
   // 固件会 Notify 两次 9（防 BLE 漏收），第二次直接忽略，不重复跳转/回写
-  if (wifiStatusCode.value === 9) return
+  if (successProcessed) return
+  successProcessed = true
   if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
   stopMockWifiStatusSequence()
   provisioning.value = false
