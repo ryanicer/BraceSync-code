@@ -348,14 +348,17 @@ export async function writeWifiConfigV2(
  * 状态码：0收到 1连AP 2取IP 3探测 9成功 -1密码错 -2 SSID不见 -3 DHCP失败 -4云端不可达
  * R5：真机订阅 B512 Notify，记录每次状态原始 int8 值。
  */
-export function onWifiStatus(deviceId: string, cb: (code: number) => void): void {
+let wifiStatusDeviceId = ''
+
+export function onWifiStatus(cb: (code: number) => void): void {
   wifiStatusCallback = cb
   if (isH5()) return
   if (b512NotifyRegistered) return
+  if (!wifiStatusDeviceId) return
   b512NotifyRegistered = true
   // 开启 B512 通知
   uni.notifyBLECharacteristicValueChange({
-    deviceId,
+    deviceId: wifiStatusDeviceId,
     serviceId: SERVICE_UUID,
     characteristicId: CHAR_WIFI_STATUS,
     success: () => bleLog.info('B512 Notify 订阅成功'),

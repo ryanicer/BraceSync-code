@@ -111,6 +111,7 @@ import {
   startMockWifiStatusSequence,
   stopMockWifiStatusSequence,
 } from '../../utils/ble'
+import { bleLog } from '../../utils/ble-log'
 
 const installStore = useInstallStore()
 
@@ -184,6 +185,7 @@ async function startWifiConfig() {
   wifiStatusCode.value = null
   errorCode.value = null
   successProcessed = false
+  statusHistory.length = 0
 
   try {
     // 1. 申领 provision-key（真实 API）
@@ -199,10 +201,11 @@ async function startWifiConfig() {
     // 4. 监听配网状态
     statusListener = (code: number) => {
       wifiStatusCode.value = code
+      statusHistory.push(code)
       if (code === 9) handleSuccess(ssid)
       else if (code < 0) handleError(code)
     }
-    onWifiStatus(deviceId, statusListener)
+    onWifiStatus(statusListener)
 
     // H5 mock：启动状态机序列
     // T089-MOCK: 真机由硬件 WiFi Status Notify 驱动
@@ -253,6 +256,7 @@ function handleError(code: number) {
 }
 
 function handleTimeout() {
+  bleLog.warn('15s 配网超时，状态历史', [...statusHistory])
   // P2-5: 迟到状态 9 回转——继续监听，不立即标失败
   // 这里给提示，但保留 statusListener（未移除），迟到状态 9 仍可触发 handleSuccess
   uni.showToast({ title: '设备无响应，请靠近设备后重试', icon: 'none' })
