@@ -1,9 +1,16 @@
-{
+﻿{
   "pages": [
     {
       "path": "pages/login/index",
-      "style": { 
+      "style": {
         "navigationBarTitleText": "技师登录",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/home/index",
+      "style": {
+        "navigationBarTitleText": "矫智通运维",
         "navigationStyle": "custom"
       }
     },
@@ -12,24 +19,20 @@
       "style": { "navigationBarTitleText": "设备绑定" }
     },
     {
-      "path": "pages/matrix/index",
+      "path": "pages/install/index",
       "style": { "navigationBarTitleText": "安装流程" }
     },
     {
-      "path": "pages/save-baseline/index",
-      "style": { "navigationBarTitleText": "保存基线" }
-    },
-    {
       "path": "pages/wifi-config/index",
-      "style": { "navigationBarTitleText": "WiFi配置" }
-    },
-    {
-      "path": "pages/records/index",
-      "style": { "navigationBarTitleText": "安装记录" }
+      "style": { "navigationBarTitleText": "WiFi 配置" }
     },
     {
       "path": "pages/complete/index",
       "style": { "navigationBarTitleText": "安装完成" }
+    },
+    {
+      "path": "pages/records/index",
+      "style": { "navigationBarTitleText": "安装记录" }
     },
     {
       "path": "pages/alerts/index",

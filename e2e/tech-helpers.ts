@@ -16,9 +16,9 @@ export const MOCK_DEVICE_ID = 'PRS-ML05-RC-001'
 /** uni-app H5 hash 路由直达（技师端无 tabBar） */
 export const techRoutes = {
   login: '/#/pages/login/index',
+  home: '/#/pages/home/index',
   bind: '/#/pages/bind/index',
-  matrix: '/#/pages/matrix/index',
-  saveBaseline: '/#/pages/save-baseline/index',
+  install: '/#/pages/install/index',
   wifiConfig: '/#/pages/wifi-config/index',
   records: '/#/pages/records/index',
   complete: '/#/pages/complete/index',
@@ -84,29 +84,121 @@ export async function forceTechLoginMock(page: Page) {
 
 /**
  * 执行真实登录流程（仅用于本地验证登录页 UI，CI 跳过）
- * @description 对齐 T037 独立登录页交互：导航/login → 填手机号/密码 → 勾选协议 → 点击登录 → 跳转 bind
+ * @description 对齐 T089 登录页交互：导航/login → 填手机号/密码 → 勾选协议 → 点击登录 → 跳转 home
  * @param page Playwright Page 实例
  */
 export async function doTechRealLogin(page: Page) {
   await page.goto(techRoutes.login)
-  
+
   // 填充手机号（第一个 .input-field）
   const phoneInput = page.locator('.input-field').first()
   await fillTechInput(phoneInput, TECH_PHONE)
-  
+
   // 填充密码（第二个 .input-field）
   const pwdInput = page.locator('.input-field').nth(1)
   await fillTechInput(pwdInput, 'admin123') // T041 播种密码
-  
+
   // 勾选协议（必须）
   await page.locator('.agree-row .checkbox').click()
-  
+
   // 点击登录按钮
-  await page.locator('.btn-primary').click()
-  
-  // 断言跳转至 bind 页
-  await page.waitForURL('**/pages/bind/**', { timeout: 10_000 })
-  await expect(page.getByText('扫码绑定')).toBeVisible({ timeout: 10_000 })
+  await page.locator('.btn-primary', { hasText: '登录' }).click()
+
+  // 断言跳转至 home 页（T089: 登录后跳首页，非 bind）
+  await page.waitForURL('**/pages/home/**', { timeout: 10_000 })
+  await expect(page.getByText('开始工作')).toBeVisible({ timeout: 10_000 })
+}
+
+/**
+ * Mock BLE 模块（H5 环境下蓝牙不可用，拦截 ble.ts 改写 H5 分支）
+ *
+ * T089 实现中 H5 下 initBluetooth 抛错、createBLEConnection 返回 false、
+ * discoverDevices 返回空数组，导致 install 阶段②校准按钮禁用、bind BLE 扫描无设备。
+ * 通过 page.route 拦截 /src/utils/ble.ts，将整个模块替换为 H5 友好的 mock 版本，
+ * 使 bind→install 校准链路与 BLE 扫描可在 E2E 中跑通。
+ */
+export async function mockTechBLE(page: Page) {
+  await page.route('**/utils/ble.ts', async (route) => {
+    const mockBody = `
+// T089 E2E MOCK: H5 蓝牙友好版（替换原始 ble.ts）
+const isH5 = () => true
+
+export async function initBluetooth() { return true }
+
+export async function discoverDevices() {
+  await new Promise(r => setTimeout(r, 800))
+  return [
+    { deviceId: 'PRS-ML05-RC-001', name: 'PRS-ML05-RC-001', RSSI: -45 },
+  ]
+}
+
+export async function createBLEConnection(deviceId) { return true }
+
+export async function writeWiFiConfig(ssid, password) { return true }
+
+export async function closeBLEConnection(deviceId) { return }
+
+export async function readCalibrationData(deviceId) { return [] }
+
+export async function writeCalibrationCommand(deviceId, command) { return true }
+
+export async function readFirmwareVersion(deviceId) {
+  return { deviceId, firmware: 'v1.2.3', battery: 85 }
+}
+
+// ===== 实时压力推送 mock（1Hz，20 点接近 0 的随机值）=====
+let realtimeTimer = null
+let realtimeCallback = null
+
+export async function startRealtimePressure(deviceId) {
+  realtimeTimer = setInterval(() => {
+    const frame = Array.from({ length: 20 }, () => Math.random() * 0.3 - 0.15)
+    realtimeCallback && realtimeCallback(frame)
+  }, 1000)
+}
+
+export async function stopRealtimePressure(deviceId) {
+  if (realtimeTimer) { clearInterval(realtimeTimer); realtimeTimer = null }
+}
+
+export function onRealtimeFrame(cb) { realtimeCallback = cb }
+
+// ===== WiFi 配网 mock =====
+let wifiStatusTimer = null
+let wifiStatusCallback = null
+
+export async function writeWifiConfigV2(deviceId, encryptedHex) { return true }
+
+export function onWifiStatus(cb) { wifiStatusCallback = cb }
+
+export function startMockWifiStatusSequence() {
+  const seq = [0, 1, 2, 3, 9]
+  let idx = 0
+  if (wifiStatusTimer) clearInterval(wifiStatusTimer)
+  wifiStatusTimer = setInterval(() => {
+    if (idx < seq.length) {
+      wifiStatusCallback && wifiStatusCallback(seq[idx])
+      idx++
+    } else {
+      if (wifiStatusTimer) clearInterval(wifiStatusTimer)
+    }
+  }, 500)
+}
+
+export function stopMockWifiStatusSequence() {
+  if (wifiStatusTimer) { clearInterval(wifiStatusTimer); wifiStatusTimer = null }
+}
+
+export async function readDeviceInfo(deviceId) {
+  return { deviceId, firmware: 'v1.2.3', battery: 85 }
+}
+`
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/javascript',
+      body: mockBody,
+    })
+  })
 }
 
 
