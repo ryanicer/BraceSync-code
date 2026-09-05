@@ -13,6 +13,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,7 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
+	"github.com/bracesync/bracesync/services/user-service/internal/wechat"
 )
 
 // testResp 统一响应体（Data 用 json.RawMessage 便于二次反序列化，避免 any 类型断言 panic）
@@ -50,6 +52,9 @@ type testResp struct {
 type t085Store struct {
 	*fakeStore
 
+	// RWMutex：GetPatientWXOpenID 用读锁（模拟 DB SELECT 不阻塞），
+	// Bind/Unbind/Update 用写锁（模拟 UPDATE 原子行锁）。
+	mu sync.RWMutex
 	// 写操作调用记录（Winner 实现后由遮蔽方法填充；当前 stub handler 不调用故为 0）
 	bindOpenidCalls   int
 	lastBindPatient   string
@@ -60,6 +65,125 @@ type t085Store struct {
 
 func newT085Store() *t085Store {
 	return &t085Store{fakeStore: &fakeStore{}}
+}
+
+// t085WXClient 包装 testhelper.MockWechatClient 以实现 handler.wxClientI。
+// DoCode2Session 返回 code 作为 openid（测试简化）；GetPhoneNumber 委托 mock。
+type t085WXClient struct {
+	*testhelper.MockWechatClient
+}
+
+func (c *t085WXClient) DoCode2Session(_ context.Context, code string) (*wechat.Code2SessionResult, error) {
+	return &wechat.Code2SessionResult{OpenID: code}, nil
+}
+
+func (c *t085WXClient) GetPhoneNumber(_ context.Context, code string) (string, string, error) {
+	return c.MockWechatClient.GetPhoneNumber(code)
+}
+
+// fakeWXClient.GetPhoneNumber 补齐 wxClientI 接口（既有 fakeWXClient 仅实现 DoCode2Session）。
+func (f *fakeWXClient) GetPhoneNumber(_ context.Context, _ string) (string, string, error) {
+	return "", "", nil
+}
+
+// ─────────────────────────────────────────────────────────────
+// fakeStore: 补齐 T085 扩展 Store 接口方法（使 *fakeStore 仍满足 repo.Store）
+// t085Store 通过嵌入 *fakeStore 获得这些方法，并按需遮蔽以记录调用。
+// ─────────────────────────────────────────────────────────────
+
+func (f *fakeStore) GetPatientWXOpenID(_ context.Context, patientID string) (string, error) {
+	for openid, p := range f.wxPatientByOpenID {
+		if p != nil && p.PatientID == patientID {
+			return openid, nil
+		}
+	}
+	return "", nil
+}
+
+func (f *fakeStore) BindPatientOpenid(_ context.Context, patientID, openid string) error {
+	for _, p := range f.wxPatientByOpenID {
+		if p != nil && p.PatientID == patientID {
+			return repo.ErrAlreadyBound
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) UnbindWechat(_ context.Context, _ string) error { return nil }
+
+func (f *fakeStore) UpdatePatientPhone(_ context.Context, _ string, _ []byte, _ string) error {
+	return nil
+}
+
+func (f *fakeStore) PatientPhoneHashTaken(_ context.Context, _, _ string) (bool, error) {
+	return f.phoneTaken, f.takenErr
+}
+
+// ─────────────────────────────────────────────────────────────
+// t085Store: T085 扩展 Store 方法（绑定/解绑/改号 + openid 查询 + hash 查重）
+// ─────────────────────────────────────────────────────────────
+
+// GetPatientWXOpenID 反查 wxPatientByOpenID：返回该 patient 当前绑定的 openid（未绑定返回 ""）。
+// 使用读锁，模拟 DB SELECT 不阻塞 UPDATE（允许并发读，可能读到过期值）。
+func (s *t085Store) GetPatientWXOpenID(_ context.Context, patientID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for openid, p := range s.wxPatientByOpenID {
+		if p != nil && p.PatientID == patientID {
+			return openid, nil
+		}
+	}
+	return "", nil
+}
+
+// BindPatientOpenid 模拟行锁绑定：mutex 串行化，已绑定任意 openid → ErrAlreadyBound。
+// 幂等由 handler 层 GetPatientWXOpenID 判断保证；store 层严格模拟 DB 行锁语义。
+//
+// 并发模拟：进入写锁前短暂让步，确保并发请求的 GetPatientWXOpenID（读锁）先于
+// 任一写入完成，从而复现 DB 中"两个 SELECT 均返回空，仅一个 UPDATE 成功"的行锁竞争。
+func (s *t085Store) BindPatientOpenid(_ context.Context, patientID, openid string) error {
+	time.Sleep(30 * time.Millisecond) // 让并发读先完成，模拟行锁竞争窗口
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range s.wxPatientByOpenID {
+		if p != nil && p.PatientID == patientID {
+			return repo.ErrAlreadyBound
+		}
+	}
+	s.bindOpenidCalls++
+	s.lastBindPatient = patientID
+	s.lastBindOpenid = openid
+	if s.wxPatientByOpenID == nil {
+		s.wxPatientByOpenID = make(map[string]*repo.PatientLoginRow)
+	}
+	s.wxPatientByOpenID[openid] = &repo.PatientLoginRow{PatientID: patientID}
+	return nil
+}
+
+// UnbindWechat 移除该 patient 的 openid 绑定。
+func (s *t085Store) UnbindWechat(_ context.Context, patientID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.unbindOpenidCalls++
+	for oid, p := range s.wxPatientByOpenID {
+		if p != nil && p.PatientID == patientID {
+			delete(s.wxPatientByOpenID, oid)
+		}
+	}
+	return nil
+}
+
+// UpdatePatientPhone 改手机号（同步更新 enc+hash）。
+func (s *t085Store) UpdatePatientPhone(_ context.Context, _ string, _ []byte, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updatePhoneCalls++
+	return nil
+}
+
+// PatientPhoneHashTaken phone_hash 是否已被占用（排除自身）。
+func (s *t085Store) PatientPhoneHashTaken(_ context.Context, _, _ string) (bool, error) {
+	return s.phoneTaken, s.takenErr
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -77,6 +201,8 @@ func newBindPhoneEnv(t *testing.T) *bindPhoneTestEnv {
 	store := newT085Store()
 	h := New(store, signer, nil)
 	wechatClient := testhelper.NewMockWechatClient("13800138000")
+	h.SetWXClient(&t085WXClient{MockWechatClient: wechatClient})
+	h.SetPhoneTokenSecret(testPhoneTokenSecret)
 
 	return &bindPhoneTestEnv{
 		t:               t,
@@ -166,9 +292,8 @@ func (e *bindPhoneTestEnv) doBindPhone(phoneCode, phoneToken, authToken string) 
 // Scenario B: Happy Path - Successful Binding
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneHappyPath_SuccessfulBinding_KNOWN_RED 手机号匹配唯一未绑定档案 → 绑定成功
-func TestBindPhoneHappyPath_SuccessfulBinding_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneHappyPath_SuccessfulBinding 手机号匹配唯一未绑定档案 → 绑定成功
+func TestBindPhoneHappyPath_SuccessfulBinding(t *testing.T) {
 	t.Parallel()
 
 	e := newBindPhoneEnv(t)
@@ -216,9 +341,8 @@ func TestBindPhoneHappyPath_SuccessfulBinding_KNOWN_RED(t *testing.T) {
 // Scenario C: No Match → 10602 + phoneToken
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneNoMatch_UnregisteredPhone_KNOWN_RED phone_hash 无匹配 → 10602 + phoneToken
-func TestBindPhoneNoMatch_UnregisteredPhone_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneNoMatch_UnregisteredPhone phone_hash 无匹配 → 10602 + phoneToken
+func TestBindPhoneNoMatch_UnregisteredPhone(t *testing.T) {
 	t.Parallel()
 
 	e := newBindPhoneEnv(t)
@@ -253,9 +377,8 @@ func TestBindPhoneNoMatch_UnregisteredPhone_KNOWN_RED(t *testing.T) {
 // Scenario C Variant: status!=active → 10602 (防枚举同码)
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneInactiveStatus_Returns10602_KNOWN_RED 档案 status≠active → 10602 (与无匹配同码)
-func TestBindPhoneInactiveStatus_Returns10602_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneInactiveStatus_Returns10602 档案 status≠active → 10602 (与无匹配同码)
+func TestBindPhoneInactiveStatus_Returns10602(t *testing.T) {
 	t.Parallel()
 
 	e := newBindPhoneEnv(t)
@@ -283,9 +406,8 @@ func TestBindPhoneInactiveStatus_Returns10602_KNOWN_RED(t *testing.T) {
 // Scenario D: Already Bound by Other Openid → 10603 + phoneToken
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneAlreadyBoundByOtherOpenid_KNOWN_RED wx_openid 已绑定其他微信 → 10603
-func TestBindPhoneAlreadyBoundByOtherOpenid_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneAlreadyBoundByOtherOpenid wx_openid 已绑定其他微信 → 10603
+func TestBindPhoneAlreadyBoundByOtherOpenid(t *testing.T) {
 	t.Parallel()
 
 	e := newBindPhoneEnv(t)
@@ -328,9 +450,8 @@ func TestBindPhoneAlreadyBoundByOtherOpenid_KNOWN_RED(t *testing.T) {
 // Scenario H: Concurrency - Exactly One Success
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneConcurrency_TwoRequests_KNOWN_RED 并发两请求 → 恰好 1 成功 1 个 10603
-func TestBindPhoneConcurrency_TwoRequests_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneConcurrency_TwoRequests 并发两请求 → 恰好 1 成功 1 个 10603
+func TestBindPhoneConcurrency_TwoRequests(t *testing.T) {
 	t.Parallel()
 
 	e := newBindPhoneEnv(t)
@@ -380,9 +501,8 @@ func TestBindPhoneConcurrency_TwoRequests_KNOWN_RED(t *testing.T) {
 // Idempotent: Same Openid Repeat Bind → Success
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneIdempotentSameOpenid_KNOWN_RED 同一 openid 重复绑定同一手机号 → 幂等成功
-func TestBindPhoneIdempotentSameOpenid_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneIdempotentSameOpenid 同一 openid 重复绑定同一手机号 → 幂等成功
+func TestBindPhoneIdempotentSameOpenid(t *testing.T) {
 	t.Parallel()
 
 	e := newBindPhoneEnv(t)

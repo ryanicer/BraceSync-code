@@ -42,6 +42,8 @@ func newPhoneTokenTestEnv(t *testing.T) *phoneTokenTestEnv {
 	store := newT085Store()
 	h := New(store, signer, nil)
 	wechatClient := testhelper.NewMockWechatClient("13800138000")
+	h.SetWXClient(&t085WXClient{MockWechatClient: wechatClient})
+	h.SetPhoneTokenSecret(testPhoneTokenSecret)
 
 	return &phoneTokenTestEnv{
 		t:                t,
@@ -147,9 +149,8 @@ func (e *phoneTokenTestEnv) doBindPhoneWithPhoneToken(authOpenID, phoneToken str
 // Scenario: Invalid PhoneToken Cases
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneInvalidPhoneToken_SignatureTampered_KNOWN_RED signature 被篡改 → 10605
-func TestBindPhoneInvalidPhoneToken_SignatureTampered_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneInvalidPhoneToken_SignatureTampered signature 被篡改 → 10605
+func TestBindPhoneInvalidPhoneToken_SignatureTampered(t *testing.T) {
 	t.Parallel()
 
 	e := newPhoneTokenTestEnv(t)
@@ -167,9 +168,8 @@ func TestBindPhoneInvalidPhoneToken_SignatureTampered_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestBindPhoneInvalidPhoneToken_WrongPurpose_KNOWN_RED purpose≠"phone_token" → 10605
-func TestBindPhoneInvalidPhoneToken_WrongPurpose_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneInvalidPhoneToken_WrongPurpose purpose≠"phone_token" → 10605
+func TestBindPhoneInvalidPhoneToken_WrongPurpose(t *testing.T) {
 	t.Parallel()
 
 	e := newPhoneTokenTestEnv(t)
@@ -187,9 +187,8 @@ func TestBindPhoneInvalidPhoneToken_WrongPurpose_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestBindPhoneInvalidPhoneToken_OpenidMismatch_KNOWN_RED openid 与绑定态 sub 不一致 → 10605
-func TestBindPhoneInvalidPhoneToken_OpenidMismatch_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneInvalidPhoneToken_OpenidMismatch openid 与绑定态 sub 不一致 → 10605
+func TestBindPhoneInvalidPhoneToken_OpenidMismatch(t *testing.T) {
 	t.Parallel()
 
 	e := newPhoneTokenTestEnv(t)
@@ -207,9 +206,8 @@ func TestBindPhoneInvalidPhoneToken_OpenidMismatch_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestBindPhoneInvalidPhoneToken_Expired_KNOWN_RED expired >7d → 10605
-func TestBindPhoneInvalidPhoneToken_Expired_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneInvalidPhoneToken_Expired expired >7d → 10605
+func TestBindPhoneInvalidPhoneToken_Expired(t *testing.T) {
 	t.Parallel()
 
 	e := newPhoneTokenTestEnv(t)
@@ -231,9 +229,8 @@ func TestBindPhoneInvalidPhoneToken_Expired_KNOWN_RED(t *testing.T) {
 // Scenario: Valid Retry → Zero WeChat Call
 // ─────────────────────────────────────────────────────────────
 
-// TestBindPhoneValidRetry_NoWechatCall_KNOWN_RED 有效 phoneToken 重试 → mock 断言零调微信接口
-func TestBindPhoneValidRetry_NoWechatCall_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestBindPhoneValidRetry_NoWechatCall 有效 phoneToken 重试 → mock 断言零调微信接口
+func TestBindPhoneValidRetry_NoWechatCall(t *testing.T) {
 	t.Parallel()
 
 	e := newPhoneTokenTestEnv(t)

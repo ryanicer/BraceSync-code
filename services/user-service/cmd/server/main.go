@@ -98,6 +98,13 @@ func main() {
 	h := handler.New(repo.NewPGStore(pool), signer, phoneCipher)
 	h.SetWXClient(wxClient) // 可选注入：nil 视为未配置，/patient/wx-login 降级 500
 
+	// T085：phoneToken 签发/校验密钥（bind-phone 失败重试免二次微信调用）
+	if pts := os.Getenv("PHONE_TOKEN_SECRET"); pts != "" {
+		h.SetPhoneTokenSecret(pts)
+	} else {
+		log.Warn().Msg("PHONE_TOKEN_SECRET not set: bind-phone phoneToken retry disabled")
+	}
+
 	port := envOr("PORT", "8081")
 	server := &http.Server{Addr: ":" + port, Handler: h.Router()}
 

@@ -24,6 +24,10 @@ var ErrPatientNotFound = errors.New("patient not found")
 // 命中 23505；handler 据此回退 GetPatientByWXOpenID 重试 1 次实现幂等 upsert）。
 var ErrWXOpenIDExists = errors.New("patient wx_openid already exists")
 
+// ErrAlreadyBound T085：患者 wx_openid 已绑定其他微信（并发绑定竞态下
+// UPDATE ... WHERE wx_openid IS NULL 命中 0 行；handler 映射为 10603）。
+var ErrAlreadyBound = errors.New("patient already bound to another wechat openid")
+
 // ─────────────────────────────────────────────────────────────
 // T059 团队/成员写操作 sentinel 错误（handler 据此映射 HTTP code）
 // ─────────────────────────────────────────────────────────────
@@ -310,6 +314,17 @@ type Store interface {
 	// 默认 name="微信用户" status="active" 其余字段 NULL；并发下 openid 唯一冲突返回
 	// ErrWXOpenIDExists（handler 据此回退 Get 1 次实现幂等 upsert）
 	CreatePatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error)
+	// T085 患者微信绑定与档案维护
+	GetPatientWXOpenID(ctx context.Context, patientID string) (openID string, err error)
+	// BindPatientOpenid 原子绑定 openid：UPDATE ... WHERE wx_openid IS NULL。
+	// 命中 0 行表示已绑定（或被并发抢占）→ ErrAlreadyBound；命中 1 行成功。
+	BindPatientOpenid(ctx context.Context, patientID, openid string) error
+	// UnbindWechat 解绑微信：wx_openid 置 NULL（admin 维护）。
+	UnbindWechat(ctx context.Context, patientID string) error
+	// UpdatePatientPhone 改手机号：phone_enc + phone_hash 同步更新（admin 维护）。
+	UpdatePatientPhone(ctx context.Context, patientID string, phoneEnc []byte, phoneHash string) error
+	// PatientPhoneHashTaken phone_hash 是否已被其他患者占用（excludePatientID 排除自身）。
+	PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error)
 	RoleScope(ctx context.Context, roleID string) (scope string, err error)
 	DoctorIDByAdmin(ctx context.Context, adminID string) (doctorID string, ok bool, err error)
 

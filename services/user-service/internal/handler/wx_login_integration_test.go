@@ -43,6 +43,8 @@ func newWxLoginEnv(t *testing.T) *wxLoginTestEnv {
 	fc := testhelper.NewFixedClock(time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
 	store := newT085Store()
 	h := New(store, signer, nil)
+	wechatClient := testhelper.NewMockWechatClient("13800138000")
+	h.SetWXClient(&t085WXClient{MockWechatClient: wechatClient})
 
 	return &wxLoginTestEnv{
 		t:            t,
@@ -87,9 +89,8 @@ func (e *wxLoginTestEnv) do(code string) (*httptest.ResponseRecorder, *testResp)
 // Scenario A-1: openid 已绑定 + active → 直接登录
 // ─────────────────────────────────────────────────────────────
 
-// TestWxLoginBoundActive_DirectLogin_KNOWN_RED openid 已绑定且档案 active 时直接签发正常 JWT
-func TestWxLoginBoundActive_DirectLogin_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestWxLoginBoundActive_DirectLogin openid 已绑定且档案 active 时直接签发正常 JWT
+func TestWxLoginBoundActive_DirectLogin(t *testing.T) {
 	t.Parallel()
 
 	e := newWxLoginEnv(t)
@@ -131,9 +132,8 @@ func TestWxLoginBoundActive_DirectLogin_KNOWN_RED(t *testing.T) {
 // Scenario A-2: openid 已绑定 + status≠active → 401 防枚举
 // ─────────────────────────────────────────────────────────────
 
-// TestWxLoginBoundInactive_Return401_KNOWN_RED openid 已绑定但档案非 active 时返回 401 统一文案
-func TestWxLoginBoundInactive_Return401_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestWxLoginBoundInactive_Return401 openid 已绑定但档案非 active 时返回 401 统一文案
+func TestWxLoginBoundInactive_Return401(t *testing.T) {
 	t.Parallel()
 
 	e := newWxLoginEnv(t)
@@ -161,9 +161,8 @@ func TestWxLoginBoundInactive_Return401_KNOWN_RED(t *testing.T) {
 // Scenario B entry: openid 未绑定 → 不创建 + 10601 + bindToken
 // ─────────────────────────────────────────────────────────────
 
-// TestWxLoginUnbound_OpenidNotCreated_KNOWN_RED openid 未绑定时禁止自动创建患者记录
-func TestWxLoginUnbound_OpenidNotCreated_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestWxLoginUnbound_OpenidNotCreated openid 未绑定时禁止自动创建患者记录
+func TestWxLoginUnbound_OpenidNotCreated(t *testing.T) {
 	t.Parallel()
 
 	e := newWxLoginEnv(t)
@@ -189,9 +188,8 @@ func TestWxLoginUnbound_OpenidNotCreated_KNOWN_RED(t *testing.T) {
 	})
 }
 
-// TestWxLoginUnbound_ReturnsBindTokenClaims_KNOWN_RED 未绑定场景下发 bindToken 的 claims 布局校验
-func TestWxLoginUnbound_ReturnsBindTokenClaims_KNOWN_RED(t *testing.T) {
-	t.Skip("KNOWN_RED: await Winner's implementation")
+// TestWxLoginUnbound_ReturnsBindTokenClaims 未绑定场景下发 bindToken 的 claims 布局校验
+func TestWxLoginUnbound_ReturnsBindTokenClaims(t *testing.T) {
 	t.Parallel()
 
 	e := newWxLoginEnv(t)

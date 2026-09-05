@@ -48,6 +48,7 @@ var deviceReportRoutes = []proxyRoute{
 func registerAPIProxies(r *gin.Engine, agt *gatewayAuth) {
 	api := r.Group("/api/v1")
 	api.Use(jwtAuth(agt)) // T032：统一 JWT 鉴权（白名单见 middleware.go）
+	api.Use(scopeAuthz()) // T085：scope 授权（bind 仅放行 bind-phone；full 禁 bind-phone）
 	api.Use(roleAuthz())  // T039-H2：端点级 RBAC（admin 专属端点矩阵，见 rbac.go）
 
 	registerAlertsProxyOn(api, envOrURL("ALERT_SERVICE_URL", defaultAlertServiceURL)) // T028 保持

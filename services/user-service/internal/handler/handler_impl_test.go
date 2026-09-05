@@ -375,6 +375,9 @@ func newEnvWithWX(t *testing.T, withSigner, withPhone bool, wx *fakeWXClient) *t
 	if wx != nil {
 		h.wxClient = wx
 	}
+	if signer != nil {
+		h.bindSigner = signer.CloneWithTTL(30 * time.Minute) // T085：bindToken signer
+	}
 	return &testEnv{t: t, store: store, signer: signer, wx: wx, h: h}
 }
 
@@ -1695,7 +1698,7 @@ func TestWXLogin_ExistingActivePatient(t *testing.T) {
 	assert.Equal(t, "", claims.TeamID)
 }
 
-// Case 6: openid 命中非 active 患者（pending/disabled）→ 401 未授权
+// Case 6: openid 命中非 active 患者（pending/disabled）→ 401 统一文案防枚举（T085：10001）
 func TestWXLogin_ExistingInactivePatient(t *testing.T) {
 	openid := "o6"
 	wx := &fakeWXClient{
@@ -1713,94 +1716,54 @@ func TestWXLogin_ExistingInactivePatient(t *testing.T) {
 
 	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c6"}, nil)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.Equal(t, model.CodeUnauthorized, resp.Code)
+	// T085：inactive 统一返回 10001（invalid_credentials）防枚举
+	assert.Equal(t, model.CodeInvalidCredentials, resp.Code)
+	assert.Equal(t, "invalid_credentials", resp.Message)
 }
 
-// Case 7: openid 未命中 → 创建患者 → 200 + 签发 token + 默认名
+// Case 7: openid 未命中 → T085 不创建患者，返回 10601 + bindToken（引导绑定手机号）
 func TestWXLogin_NewPatient(t *testing.T) {
 	openid := "o7"
-	newPID := "P90007"
 	wx := &fakeWXClient{
 		DefaultRes: &wechat.Code2SessionResult{OpenID: openid, SessionKey: "sk7"},
 	}
 	e := newEnvWithWX(t, true, true, wx)
 	// 未配置 wxPatientByOpenID → GetPatientByWXOpenID 返回 nil,nil（患者不存在）
-	e.store.wxCreatePatient = &repo.PatientLoginRow{
-		PatientID:    newPID,
-		Name:         "微信用户",
-		PasswordHash: "",
-		Status:       "active",
-	}
 
 	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c7"}, nil)
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 0, resp.Code)
-	assert.Equal(t, 1, e.store.wxCreateCalls, "只应创建一次")
-	assert.Equal(t, openid, e.store.wxLastCreateOpenID)
+	// T085：未绑定返回 10601 + bindToken，禁止自动创建患者
+	assert.Equal(t, model.CodePatientNotBound, resp.Code)
+	assert.Equal(t, 0, e.store.wxCreateCalls, "未绑定场景不应创建患者")
 
-	var dto model.PatientLoginResultDTO
-	require.NoError(t, json.Unmarshal(resp.Data, &dto))
-	assert.Equal(t, newPID, dto.PatientID)
-	assert.Equal(t, "patient", dto.Role)
-
-	claims, err := e.signer.Verify(dto.Token)
-	require.NoError(t, err)
-	assert.Equal(t, newPID, claims.Subject)
-	assert.Equal(t, "patient", claims.RoleID)
+	// 响应应包含 bindToken
+	var data struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Data, &data))
+	assert.NotEmpty(t, data.Token, "响应应包含 bindToken")
 }
 
-// Case 8: 并发创建冲突（首次 Create 返回 ErrWXOpenIDExists）→ 重试 Get → 200
+// Case 8: T085 不再自动创建患者，openid 未命中直接返回 10601 + bindToken（无并发创建冲突）
 func TestWXLogin_ConcurrentConflictRetry(t *testing.T) {
 	openid := "o8"
-	newPID := "P90008"
-	built := &repo.PatientLoginRow{
-		PatientID:    newPID,
-		Name:         "并发创建用户",
-		PasswordHash: "",
-		Status:       "active",
-	}
 	wx := &fakeWXClient{
 		DefaultRes: &wechat.Code2SessionResult{OpenID: openid, SessionKey: "sk8"},
 	}
 	e := newEnvWithWX(t, true, true, wx)
-	// 首次查 wxPatientByOpenID → nil（无该 openid）；第 2 次 Get 由 fakeStore 懒加载返回已建立患者
-	// 做法：用 map 返回值（每次查都命中），但 fakeStore 在首次 Create 冲突后 handler 会再查；
-	// 由于 map 是预先配好的，会在第 1 次 Get 就命中 → 不会走 Create。
-	// 所以改用钩子不易；采用更直接的语义：测试配置 wxCreateFirstErr + 冲突后 wxCreateAfterFirst 给患者（handler 走 "再查仍nil → 再Create" 路径的话不生效）。
-	// 当前真实 handler 在冲突时会 **再 Get 一次**，若还 nil → 500。所以这里让冲突后 Get 命中：
-	// 技巧：用自定义的 hook 包装不太方便；用 ErrWXOpenIDExists 后再 Get，由于 map 没配会 nil → 500。
-	// 改为：用计数器 + 动态值，在 wxPatientByOpenID 放入该患者（但这样首次 Create 就不会走）。
-	// 真正的冲突场景：两个并发请求都 Get 到 nil，都去 Create。先 Create 的成功；后 Create 的 ErrWXOpenIDExists。
-	// 后 Create 方 handler 在冲突后再 Get → 命中。所以 fakeStore 需：首次 Get 返回 nil；冲突后（wxCreateCalls>=1）再 Get 返回患者。
-	// 我们通过把 wxPatientByOpenID 留空 + 在 GetPatientByWXOpenID fake 实现内，基于"是否冲突过"动态返回。此处保持简洁：
-	// 直接扩展 GetPatientByWXOpenID：若 wxCreateFirstErr!=nil 且 wxCreateCalls>=1 → 返回 built。
-	e.store.wxCreateFirstErr = repo.ErrWXOpenIDExists
-	e.store.wxCreateAfterFirst = nil
-	// 保存引用，Get fake 中冲突后返回 built
 	e.store.wxPatientByOpenID = nil
-	e.store.wxPatientErr = nil
-	// 冲突后重试：再 Get 命中 built；通过扩展 fake 内部变量在 hook 里做；简单做法：
-	// 修改 wxPatientByOpenID 的 map 在首次 Create 返回后由 fake 自己填？不行，调用顺序是 Get → Create → Get。
-	// 解决：用一个辅助字段 lastWXPatientAfterConflict，Get 的 fake 在 wxCreateCalls>=1 时返回它。
-	// 但是我们没这个字段，直接在冲突后把 map 设置好再让 handler 去 Get 也不行，时序是 fake.Store 内部。
-	// 采用一个更简单的方式：在 fakeStore 的 GetPatientByWXOpenID 里如果碰到"已发生过 wxCreateFirstErr 冲突的"情况返回 built。
-	// 做法：新增字段 lastCreatedPatientAfterConflict（直接在这里用，无需改结构）——其实简单办法：让第 2 次 Create 返回患者而不是走 Get 命中分支。
-	// 需改 handler：冲突后若再 Get 仍 nil，尝试再 Create 一次。
-	// 权衡：handler.go 冲突重试逻辑已经是"冲突后再 Get"；如果此时 Get 返回 nil 就 500。这对真实 Postgres 也有意义——唯一索引冲突意味着行已存在，除非刚被删事务回滚，不会 Get nil。
-	// 所以最简单转绿：在 Case 8 中，冲突后 (wxCreateCalls >= 1) 的下一次 Get 返回 built。我们通过扩展 fakeStore 的 Get 钩子实现。
-	// 替代方案：直接在 Test 里手动注入：利用闭包不方便——改为：wxCreateFirstErr 后，让 GetPatientByWXOpenID 检查 wxCreateCalls >=1 时返回 built。
-	// 最简实现：直接让 wxCreateAfterFirst 返回患者，同时修改 handler 冲突逻辑：若冲突后再 Create 成功也接受。
-	// → 采用：更新 handler.go 冲突路径为"冲突后再 Get；若仍 nil 则再 Create 一次（只重试一轮）"
-	e.store.wxCreateAfterFirst = built
 
 	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c8"}, nil)
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 0, resp.Code)
-	assert.GreaterOrEqual(t, e.store.wxCreateCalls, 2, "至少触发一次冲突重试")
+	// T085：无患者创建 → 无冲突 → 直接 10601 + bindToken
+	assert.Equal(t, model.CodePatientNotBound, resp.Code)
+	assert.Equal(t, 0, e.store.wxCreateCalls, "未绑定场景不应创建患者")
 
-	var dto model.PatientLoginResultDTO
-	require.NoError(t, json.Unmarshal(resp.Data, &dto))
-	assert.Equal(t, newPID, dto.PatientID)
+	var data struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Data, &data))
+	assert.NotEmpty(t, data.Token, "响应应包含 bindToken")
 }
 
 // Case 9: signer=nil（JWT_SECRET 未配置）→ 即使 openid 命中也 500

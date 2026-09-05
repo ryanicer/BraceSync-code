@@ -22,7 +22,16 @@ const (
 	CodeNotFound     = 10404 // 用户域资源不存在（patient/technician/feedback/role…）
 	CodeConflict     = 10409 // 状态冲突（手机号重复等）
 	CodeWXUnavail    = 10502 // 微信 jscode2session 下游不可用（HTTP 502 语义）
+	CodeInvalidPhone = 10604 // 微信 phonenumber.getPhoneNumber 业务错误（code 非法/已用）
 	CodeInternal     = 90001 // 系统内部错误（DB/加密配置等）
+
+	// T085 患者微信登录绑定域错误码（设计源 T088-V2 §5）
+	CodeInvalidCredentials = 10001 // 凭据无效（status!=active 统一文案防枚举）
+	CodePatientNotBound    = 10601 // openid 未绑定（需走 bind-phone 流程）
+	CodePatientNotFound    = 10602 // phone_hash 无匹配或 status!=active（同码防枚举）
+	CodePhoneAlreadyBound  = 10603 // 手机号档案已绑定其他微信 openid
+	CodeInvalidPhoneToken  = 10605 // phoneToken 校验失败（签名/用途/openid/过期）
+	CodeForbiddenScope     = 40301 // scope 越权（如 full JWT 调用 bind-phone）
 )
 
 // AppError 业务错误：携带统一响应 code 与建议 HTTP 状态
@@ -65,6 +74,43 @@ func ErrInternal(format string, args ...any) *AppError {
 // NewWXServiceUnavailable 微信服务端不可用（jscode2session 网络/HTTP 错误）
 func NewWXServiceUnavailable(format string, args ...any) *AppError {
 	return newAppError(CodeWXUnavail, 502, format, args...)
+}
+
+// T085 患者微信登录绑定域错误构造器
+
+// ErrInvalidCredentials 凭据无效（wx-login: status!=active 统一文案防枚举；HTTP 401）
+func ErrInvalidCredentials(format string, args ...any) *AppError {
+	return newAppError(CodeInvalidCredentials, 401, format, args...)
+}
+
+// ErrPatientNotBound openid 未绑定（wx-login: 返回 bindToken 引导绑定；HTTP 200）
+func ErrPatientNotBound(format string, args ...any) *AppError {
+	return newAppError(CodePatientNotBound, 200, format, args...)
+}
+
+// ErrPatientNotFound phone_hash 无匹配或档案非 active（bind-phone；与无匹配同码防枚举；HTTP 200）
+func ErrPatientNotFound(format string, args ...any) *AppError {
+	return newAppError(CodePatientNotFound, 200, format, args...)
+}
+
+// ErrPhoneAlreadyBound 手机号档案已绑定其他微信 openid（bind-phone；HTTP 200）
+func ErrPhoneAlreadyBound(format string, args ...any) *AppError {
+	return newAppError(CodePhoneAlreadyBound, 200, format, args...)
+}
+
+// ErrInvalidPhoneCode 微信 phonenumber.getPhoneNumber 业务错误（code 非法/已用；HTTP 200）
+func ErrInvalidPhoneCode(format string, args ...any) *AppError {
+	return newAppError(CodeInvalidPhone, 200, format, args...)
+}
+
+// ErrInvalidPhoneToken phoneToken 校验失败（签名/用途/openid/过期；HTTP 200）
+func ErrInvalidPhoneToken(format string, args ...any) *AppError {
+	return newAppError(CodeInvalidPhoneToken, 200, format, args...)
+}
+
+// ErrForbiddenScope scope 越权（如 full JWT 调用 bind-phone；HTTP 403）
+func ErrForbiddenScope(format string, args ...any) *AppError {
+	return newAppError(CodeForbiddenScope, 403, format, args...)
 }
 
 // ─────────────────────────────────────────────────────────────
