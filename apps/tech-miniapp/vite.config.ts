@@ -36,15 +36,19 @@ function readEnvFile(filename: string): Record<string, string> {
 
 // 注意：@dcloudio/vite-plugin-uni@5020320260806002 会把 import.meta.env 整体替换为 {}，
 // 导致 VITE_* 变量在 mp-weixin 产物中全部丢失。
-// 此处直接读取 .env.production（入库默认值）+ .env.local（本地覆盖，gitignored），
-// 不使用 loadEnv/process.env，避免系统环境变量覆盖入库值。
-export default defineConfig(() => {
-  const envProduction = readEnvFile('.env.production')
+// 此处直接读取 .env 文件，不使用 loadEnv/process.env，避免系统环境变量覆盖入库值。
+//
+// 模式策略：
+// - production：读取 .env.production（入库默认值），.env.local 可覆盖
+// - development：默认 mock 模式（USE_MOCK=true, API_BASE_URL=''），.env.local 可覆盖
+export default defineConfig(({ mode }) => {
+  const isProd = mode === 'production'
+  const envProduction = isProd ? readEnvFile('.env.production') : {}
   const envLocal = readEnvFile('.env.local')
 
-  // .env.local 优先，其次 .env.production
+  // 优先级：.env.local > .env.production（仅生产模式）> 开发模式默认值
   const apiBaseUrl = envLocal.VITE_API_BASE_URL ?? envProduction.VITE_API_BASE_URL ?? ''
-  const useMock = (envLocal.VITE_USE_MOCK ?? envProduction.VITE_USE_MOCK ?? 'true') !== 'false'
+  const useMock = (envLocal.VITE_USE_MOCK ?? envProduction.VITE_USE_MOCK ?? (isProd ? 'false' : 'true')) !== 'false'
 
   return {
     plugins: [uni()],
