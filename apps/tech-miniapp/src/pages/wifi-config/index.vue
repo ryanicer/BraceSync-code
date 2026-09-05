@@ -126,6 +126,7 @@ const selectedSSID = ref('')
 const provisioning = ref(false)
 
 const wifiStatusCode = ref<number | null>(null)
+const statusHistory: number[] = []
 const errorCode = ref<number | null>(null)
 const autoReturnTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const timeoutTimer = ref<ReturnType<typeof setTimeout> | null>(null)
@@ -201,7 +202,7 @@ async function startWifiConfig() {
       if (code === 9) handleSuccess(ssid)
       else if (code < 0) handleError(code)
     }
-    onWifiStatus(statusListener)
+    onWifiStatus(deviceId, statusListener)
 
     // H5 mock：启动状态机序列
     // T089-MOCK: 真机由硬件 WiFi Status Notify 驱动
