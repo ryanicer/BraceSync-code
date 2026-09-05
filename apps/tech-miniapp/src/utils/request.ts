@@ -1,9 +1,13 @@
 import { getToken, removeToken } from './token'
 
+// 环境变量通过 vite.config.ts 的 define 静态注入（绕开 uni 插件对 import.meta.env 的破坏）
+declare const __API_BASE_URL__: string
+declare const __USE_MOCK__: boolean
+
 // MOCK 开关：构建时通过 VITE_USE_MOCK 环境变量控制（默认 true=mock，部署构建注入 false 走真实 API）
-// 例：VITE_USE_MOCK=false npm run dev:h5 -w apps/tech-miniapp
-export const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false'
-export const API_BASE_URL = '' // 同源代理：nginx /api/ → gateway:8080
+// 例：VITE_USE_MOCK=false npm run build:mp-weixin
+export const USE_MOCK = __USE_MOCK__
+export const API_BASE_URL = __API_BASE_URL__
 
 interface RequestOptions {
   url: string
