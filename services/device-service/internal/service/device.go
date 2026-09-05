@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/bracesync/bracesync/services/device-service/internal/crypto"
@@ -23,11 +24,22 @@ type DeviceService struct {
 	store repo.Store
 	enc   *crypto.Encryptor
 	now   func() time.Time
+
+	// T091 配网密钥重发间隔防护（内存态，单实例；重启后清空，仅作窗口防护非密钥失效）
+	provisionMu       sync.Mutex
+	lastProvision     map[string]time.Time // deviceID → 上次签发时间
+	provisionInterval time.Duration        // 同设备最短重发间隔
 }
 
 // NewDeviceService 组装 DeviceService
 func NewDeviceService(store repo.Store, enc *crypto.Encryptor) *DeviceService {
-	return &DeviceService{store: store, enc: enc, now: time.Now}
+	return &DeviceService{
+		store:             store,
+		enc:               enc,
+		now:               time.Now,
+		lastProvision:     make(map[string]time.Time),
+		provisionInterval: loadProvisionInterval(),
+	}
 }
 
 // mapRepoErr repo 哨兵错误 → AppError（其余按系统错误 90001）

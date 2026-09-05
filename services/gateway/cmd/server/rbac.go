@@ -29,6 +29,7 @@ import (
 // 预置角色常量（对齐 user-service/internal/rbac.Role*，跨模块不直接依赖）
 const (
 	roleAdmin = "ROLE_ADMIN"
+	roleTech  = "technician" // 技师登录签发 role="technician"（user-service handler.go techLogin）
 )
 
 // rbacPattern admin 专属端点（method + gin 风格路径模板，":param" 段匹配任意值）
@@ -62,15 +63,27 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/doctors"),
 }
 
+// techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T091）：
+// 配网密钥领卡端点——仅安装技师（technician）与管理员（ROLE_ADMIN）可领取，
+// 患者/医生/客服等角色 → 403。T089 技师端调用时本就携带技师登录 JWT，前端零改动。
+var techAdminOnlyPatterns = []rbacPattern{
+	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/provision-key"), // T067 配网密钥（T091 收紧）
+}
+
+// matchTechAdminPattern 判断 method+path 是否命中 tech+admin 专属端点矩阵
+func matchTechAdminPattern(method, path string) bool {
+	return matchPatterns(method, path, techAdminOnlyPatterns)
+}
+
 // rbacOf 构造 admin 专属端点模式（路径按 "/" 切段存储）
 func rbacOf(method, path string) rbacPattern {
 	return rbacPattern{method: method, segments: strings.Split(path, "/")}
 }
 
-// matchRBACPattern 判断 method+path 是否命中 admin 专属端点矩阵
-func matchRBACPattern(method, path string) bool {
+// matchPatterns 判断 method+path 是否命中给定端点模式列表
+func matchPatterns(method, path string, patterns []rbacPattern) bool {
 	segments := strings.Split(path, "/")
-	for _, p := range adminOnlyPatterns {
+	for _, p := range patterns {
 		if p.method != method || len(p.segments) != len(segments) {
 			continue
 		}
@@ -91,6 +104,11 @@ func matchRBACPattern(method, path string) bool {
 	return false
 }
 
+// matchRBACPattern 判断 method+path 是否命中 admin 专属端点矩阵
+func matchRBACPattern(method, path string) bool {
+	return matchPatterns(method, path, adminOnlyPatterns)
+}
+
 // roleAuthz 端点级 RBAC 授权中间件：挂载于 /api/v1 JWT 组，紧随 jwtAuth（依赖其注入
 // X-Role）。命中 admin 专属端点且角色非 ROLE_ADMIN → 403 统一响应体，不转发后端。
 // fail-closed：X-Role 缺失（如鉴权链路异常）视同无权限。
@@ -103,6 +121,14 @@ func roleAuthz() gin.HandlerFunc {
 		role := c.GetHeader("X-Role")
 		if role == roleAdmin {
 			c.Next()
+			return
+		}
+		// T091：tech+admin 专属端点（如配网密钥领卡）——仅 technician 与 ROLE_ADMIN 可访问
+		if matchTechAdminPattern(c.Request.Method, c.Request.URL.Path) && role != roleTech {
+			log.Warn().Str("role", role).Str("method", c.Request.Method).
+				Str("path", c.Request.URL.Path).Msg("rbac denied: tech-or-admin-only endpoint")
+			abortJSON(c, http.StatusForbidden, http.StatusForbidden,
+				"forbidden: role not allowed for this endpoint")
 			return
 		}
 		if matchRBACPattern(c.Request.Method, c.Request.URL.Path) {

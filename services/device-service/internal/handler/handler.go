@@ -250,10 +250,11 @@ func (h *Handler) setWifi(c *gin.Context) {
 }
 
 // provisionKey 配网密钥派生（T067，硬件清单 §2.1 HKDF-SHA256 16B→32hex）。
-// 联调期由 gateway 裸组注册（不强制 JWT）；未注册 device → 20404。
-// TODO(T068)：鉴权收紧 + expires_in_sec 真实 enforcement。
+// T091：端点已迁入 gateway JWT 组（JWT + tech/admin RBAC + per-user 限流）；
+// 操作人取网关注入的 X-User-Id（§5.2 内部信任链），用于审计日志与重发间隔。
+// 未注册 device → 20404；同设备重发间隔内 → 20429。
 func (h *Handler) provisionKey(c *gin.Context) {
-	keyHex, appErr := h.svc.GetProvisionKey(c.Request.Context(), c.Param("deviceId"))
+	keyHex, appErr := h.svc.GetProvisionKey(c.Request.Context(), c.Param("deviceId"), c.GetHeader(headerUserID))
 	if appErr != nil {
 		fail(c, appErr)
 		return

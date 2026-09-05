@@ -68,6 +68,7 @@ const (
 	CodeInvalidParam    = 20400 // 参数非法（device_id 格式 / offset_values 长度 / installId 解析）
 	CodeNotFound        = 20404 // 设备域资源不存在（device / install_record）
 	CodeConflict        = 20409 // 状态冲突（绑定互斥 / 基线已存在 / 安装与绑定不一致）
+	CodeTooMany         = 20429 // 请求过频（T091 配网密钥重发间隔内重复领取）
 	CodeUserResNotFound = 10404 // 用户域资源不存在（patient / technician，owner: user-service）
 	CodeInternal        = 90001 // 系统内部错误
 )
@@ -95,6 +96,11 @@ func ErrNotFound(format string, args ...any) *AppError {
 
 func ErrConflict(format string, args ...any) *AppError {
 	return newAppError(CodeConflict, 409, format, args...)
+}
+
+// ErrTooMany T091：配网密钥重发间隔内重复领取 → HTTP 429
+func ErrTooMany(format string, args ...any) *AppError {
+	return newAppError(CodeTooMany, 429, format, args...)
 }
 
 func ErrUserResNotFound(format string, args ...any) *AppError {
