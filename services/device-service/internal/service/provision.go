@@ -84,6 +84,17 @@ func (s *DeviceService) GetProvisionKey(ctx context.Context, deviceID, operatorI
 			Msg("provision-key request denied")
 		return "", appErr
 	}
+	// A-1（T091 补录）：防御性校验——DB 中 device_secret 必须为 64 字符 hex。
+	// 读时非法属于数据损坏/迁移异常，与固件 HKDF ikm 约定不一致会静默派生错误密钥。
+	if !model.ValidDeviceSecret(secret) {
+		s.provisionMu.Lock()
+		delete(s.lastProvision, deviceID)
+		s.provisionMu.Unlock()
+		log.Error().Str("user_id", operatorID).Str("device_id", deviceID).
+			Str("result", "invalid_secret_format").Int("secret_len", len(secret)).
+			Msg("provision-key denied: device_secret not 64-char hex")
+		return "", model.ErrInternal("device_secret invalid format (not 64-char hex) for device %q", deviceID)
+	}
 
 	key, err := crypto.DeriveProvisionKey([]byte(secret), deviceID)
 	if err != nil {

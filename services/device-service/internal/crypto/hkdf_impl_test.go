@@ -55,3 +55,24 @@ func TestDeriveProvisionKey_DifferentSecret(t *testing.T) {
 	k2, _ := DeriveProvisionKey(ikmB, "DEV-SAME")
 	assert.NotEqual(t, k1, k2, "不同 secret 应派生不同密钥")
 }
+
+// TestDeriveProvisionKey_FirmwareVector 与固件共享的 HKDF 测试向量（T091 补录 A-3）。
+//
+// 固件约定：HKDF ikm = device_secret 的 64 字符 hex **ASCII 字节**（64B），
+// 与云端 GetProvisionKey 调用 []byte(secret) 形态一致；不是 hex 解码后的 32B。
+// 本用例断言 (device_secret_hex_str, device_id) → provision_key_hex 的已知值，
+// 作为三端（固件/云端/未来复算工具）对齐铁证。
+//
+// TODO：向量待 PM 向小顾索取固件实测值后填入 wantHex 并删除 t.Skip。
+func TestDeriveProvisionKey_FirmwareVector(t *testing.T) {
+	t.Skip("await hardware test vector from PM (小顾固件实测值, device_secret+device_id→provision_key_hex)")
+
+	// ikm 以 64 字符 hex 字符串的 ASCII 字节传入（对齐生产 []byte(secret)）
+	const secretHex = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+	const deviceID = "DEV-FIRMWARE-001"
+	wantHex := "<待小顾固件实测值填入>"
+
+	got, err := DeriveProvisionKey([]byte(secretHex), deviceID)
+	require.NoError(t, err)
+	assert.Equal(t, wantHex, hex.EncodeToString(got), "HKDF 派生须匹配固件实测向量")
+}

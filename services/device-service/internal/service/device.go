@@ -72,6 +72,12 @@ func (s *DeviceService) Register(ctx context.Context, deviceID, deviceModel stri
 	if err != nil {
 		return nil, false, model.ErrInternal("generate device secret: %v", err)
 	}
+	// A-1（T091 补录）：防御性契约校验——device_secret 必须为 64 字符 hex，
+	// 与固件 HKDF ikm 约定一致（64 ASCII 字节）。当前 RandomSecret 恒合规，
+	// 此处防止未来 RandomSecret 改动静默破坏配网密钥对齐。
+	if !model.ValidDeviceSecret(secret) {
+		return nil, false, model.ErrInvalidParam("device_secret must be 64-char hex, got %q", secret)
+	}
 	encSecret, err := s.enc.Encrypt([]byte(secret))
 	if err != nil {
 		return nil, false, model.ErrInternal("encrypt device secret: %v", err)

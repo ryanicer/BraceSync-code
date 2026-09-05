@@ -7,6 +7,7 @@
 package model
 
 import (
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"time"
@@ -58,6 +59,18 @@ var deviceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{3,47}$`)
 
 // ValidDeviceID 校验 device_id 格式
 func ValidDeviceID(id string) bool { return deviceIDPattern.MatchString(id) }
+
+// ValidDeviceSecret 校验 device_secret 格式：必须为 64 字符 hex 字符串。
+// 固件约定（docs/design/hardware/BLE配网协议确认-小顾-2026-09-05.md §3）：
+// HKDF 的 ikm 取 device_secret 的 64 字符 hex ASCII 字节（64B），而非 hex 解码后的 32B。
+// 注册/派生两端均须保证 secret 为 64-hex，否则与固件静默派生出不同密钥。
+func ValidDeviceSecret(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
 
 // ─────────────────────────────────────────────────────────────
 // 错误码（架构 §3.5：2xxxx 设备域；1xxxx 用户域；9xxxx 系统级）
