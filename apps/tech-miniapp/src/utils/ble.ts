@@ -166,14 +166,14 @@ export async function ensureLocationPermission(): Promise<boolean> {
       bleLog.error('ensureLocationPermission getSystemSetting 异常，回退正常授权流程', e instanceof Error ? e.message : String(e))
       checkAndRequest()
     }
-    // T101: 超时兜底——若 wx.getSystemSetting 2s 内未回调，直接进入正常授权流程，避免卡死
+    // T101: 超时兜底——若 wx.getSystemSetting 500ms 内未回调，直接进入正常授权流程，避免卡死（部分 Android 机型此 API 不回调）
     setTimeout(() => {
       if (!systemSettingResolved) {
-        bleLog.warn('wx.getSystemSetting 超时（2s）未回调，回退正常授权流程')
+        bleLog.warn('wx.getSystemSetting 超时（500ms）未回调，回退正常授权流程')
         finishSystemCheck()
         checkAndRequest()
       }
-    }, 2000)
+    }, 500)
   })
   // #endif
   // #ifndef MP-WEIXIN
@@ -253,34 +253,56 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
       uni.offBluetoothDeviceFound()
     }
 
-    // TODO: services: [SERVICE_UUID] 过滤待真机验证广播服务后再加
+    // T101: 扫描时长 3s→6s，给 scan response（含设备名）留足时间
+    const SCAN_DURATION = 6000
+
     bleLog.info('调用 startBluetoothDevicesDiscovery')
     uni.startBluetoothDevicesDiscovery({
       allowDuplicatesKey: false,
       success: () => {
         bleLog.info('startBluetoothDevicesDiscovery 成功，注册 onBluetoothDeviceFound')
         uni.onBluetoothDeviceFound((res) => {
-          const devs = res.devices as unknown as { deviceId: string; name: string; RSSI: number }[]
-          bleLog.info(`onBluetoothDeviceFound 原始设备数=${devs.length}`, devs.slice(0, 20).map((d) => ({ name: d.name || '(空)', deviceId: d.deviceId, RSSI: d.RSSI })))
+          const devs = res.devices as unknown as { deviceId: string; name: string; localName?: string; RSSI: number }[]
+          bleLog.info(`onBluetoothDeviceFound 原始设备数=${devs.length}`, devs.slice(0, 20).map((d) => ({ name: d.name || '(空)', localName: d.localName || '(空)', deviceId: d.deviceId, RSSI: d.RSSI })))
           for (const dev of devs) {
             const d = dev
-            // T101-DEBUG: 临时放开 BSYNC- 前缀过滤，展示所有设备以便硬件团队确认实际广播名
-            // 协议 §1：广播名应为 BSYNC-{device_id 后 6 位}，联调确认后恢复前缀过滤
-            if (d.name && d.name.startsWith('BSYNC-')) {
-              bleLog.info(`[匹配] BraceSync 设备: name=${d.name}, deviceId=${d.deviceId}, RSSI=${d.RSSI}`)
-              found.set(d.deviceId, d)
+            // T101: Android 上广播名常在 scan response 的 localName 字段，name 可能为空
+            const devName = d.name || d.localName || ''
+            // 协议 §1：广播名 BSYNC-{device_id 后 6 位}，仅保留 BraceSync 设备
+            if (devName.startsWith('BSYNC-')) {
+              bleLog.info(`[匹配] BraceSync 设备: name=${devName}, deviceId=${d.deviceId}, RSSI=${d.RSSI}`)
+              found.set(d.deviceId, { deviceId: d.deviceId, name: devName, RSSI: d.RSSI })
             } else {
-              bleLog.info(`[过滤] 非 BSYNC- 设备: name=${d.name || '(空)'}, deviceId=${d.deviceId}, RSSI=${d.RSSI}`)
-              // T101-DEBUG: 临时也加入列表，方便看到所有广播设备
-              found.set(d.deviceId, { deviceId: d.deviceId, name: d.name || '(未命名设备)', RSSI: d.RSSI })
+              bleLog.info(`[过滤] 非 BSYNC- 设备: name=${devName || '(空)'}, deviceId=${d.deviceId}, RSSI=${d.RSSI}`)
             }
           }
         })
         discoveryTimer = setTimeout(() => {
-          bleLog.info(`扫描 3s 超时，清理并返回，BSYNC- 过滤后设备数=${found.size}`)
           cleanup()
-          resolve(Array.from(found.values()))
-        }, 3000)
+          // T101: 扫描结束后调 getBluetoothDevices 拿系统缓存设备（名字更全），补齐可能漏掉的 BSYNC 设备
+          wx.getBluetoothDevices({
+            success: (res) => {
+              const cached = res.devices as unknown as { deviceId: string; name: string; localName?: string; RSSI: number }[]
+              bleLog.info(`getBluetoothDevices 缓存设备数=${cached.length}`)
+              for (const dev of cached) {
+                const devName = dev.name || dev.localName || ''
+                if (devName.startsWith('BSYNC-')) {
+                  if (!found.has(dev.deviceId)) {
+                    bleLog.info(`[缓存补入] BraceSync 设备: name=${devName}, deviceId=${dev.deviceId}, RSSI=${dev.RSSI}`)
+                    found.set(dev.deviceId, { deviceId: dev.deviceId, name: devName, RSSI: dev.RSSI })
+                  }
+                }
+              }
+              bleLog.info(`扫描结束，最终 BSYNC 设备数=${found.size}`)
+              resolve(Array.from(found.values()))
+            },
+            fail: (err) => {
+              bleLog.warn(`getBluetoothDevices 失败，errMsg=${err?.errMsg || ''}，使用 onBluetoothDeviceFound 结果`)
+              bleLog.info(`扫描结束，BSYNC 设备数=${found.size}`)
+              resolve(Array.from(found.values()))
+            },
+          })
+        }, SCAN_DURATION)
       },
       fail: async (err) => {
         const errMsg = err?.errMsg || 'unknown'
