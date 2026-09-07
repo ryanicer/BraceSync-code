@@ -35,49 +35,105 @@ function isAuthDeny(errMsg: string): boolean {
 }
 
 /**
- * R5-2 权限前置：扫描前检查 scope.userLocation（Android BLE 必需）
+ * T101 权限前置：扫描前检查 scope.userLocation（Android BLE 必需）
+ *
+ * 修复点（相对 R5-2）：
+ *  1. 前置 wx.getSystemSetting 检查系统位置服务开关，区分"权限被拒"与"位置服务关闭"，
+ *     避免引导用户去 openSetting 却无法解决系统开关问题。
+ *  2. openSetting 返回后不依赖其 authSetting（部分 Android 机型不即时刷新），
+ *     改为 complete 回调中延迟重新 wx.getSetting 取最新状态。
+ *  3. 日志区分四种状态，便于真机排查。
+ *
  * iOS 无需位置权限，但仍走 getSetting 不影响。
- * 未授权则请求；拒绝则引导 openSetting。
  */
 export async function ensureLocationPermission(): Promise<boolean> {
   if (isH5()) return true
   // #ifdef MP-WEIXIN
   return new Promise((resolve) => {
+    const checkAndRequest = () => {
+      try {
+        wx.getSetting({
+          success: (res) => {
+            if (res.authSetting['scope.userLocation']) {
+              bleLog.info('位置权限已授权')
+              resolve(true)
+              return
+            }
+            bleLog.warn('scope.userLocation 未授权，尝试 wx.authorize')
+            wx.authorize({
+              scope: 'scope.userLocation',
+              success: () => {
+                bleLog.info('wx.authorize 位置权限成功')
+                resolve(true)
+              },
+              fail: () => {
+                bleLog.warn('wx.authorize 位置权限被拒，引导 openSetting')
+                uni.showModal({
+                  title: '需要位置权限',
+                  content: '扫描附近蓝牙设备需要位置权限，请在设置中开启后重试',
+                  confirmText: '去设置',
+                  success: (r) => {
+                    if (r.confirm) {
+                      wx.openSetting({
+                        complete: () => {
+                          // T101: 不依赖 openSetting 成功回调的 authSetting（Android 可能不即时刷新），
+                          // 延迟后重新 wx.getSetting 取最新授权状态
+                          setTimeout(() => {
+                            wx.getSetting({
+                              success: (s2) => {
+                                const ok = !!s2.authSetting['scope.userLocation']
+                                bleLog.info(`openSetting 返回后重检位置权限: ${ok}`)
+                                resolve(ok)
+                              },
+                              fail: () => {
+                                bleLog.warn('openSetting 后重检 getSetting 失败，按未授权处理')
+                                resolve(false)
+                              },
+                            })
+                          }, 300)
+                        },
+                      })
+                    } else {
+                      resolve(false)
+                    }
+                  },
+                  fail: () => resolve(false),
+                })
+              },
+            })
+          },
+          fail: () => resolve(true), // getSetting 失败不阻断
+        })
+      } catch (e) {
+        resolve(true)
+      }
+    }
+
+    // T101: 前置系统位置服务检查（Android BLE 扫描依赖系统位置开关）
     try {
-      wx.getSetting({
-        success: (res) => {
-          if (res.authSetting['scope.userLocation']) {
-            resolve(true)
+      wx.getSystemSetting({
+        success: (sys) => {
+          if (sys.locationEnabled === false) {
+            bleLog.warn('系统位置服务未开启（locationEnabled=false）')
+            uni.showModal({
+              title: '请开启手机位置服务',
+              content: '扫描蓝牙设备需要开启手机位置服务，请在系统设置中开启后重试',
+              confirmText: '我知道了',
+              showCancel: false,
+              success: () => resolve(false),
+              fail: () => resolve(false),
+            })
             return
           }
-          wx.authorize({
-            scope: 'scope.userLocation',
-            success: () => resolve(true),
-            fail: () => {
-              bleLog.warn('位置权限授权被拒，引导 openSetting')
-              uni.showModal({
-                title: '权限未授权',
-                content: '蓝牙/位置权限未授权，请在设置中开启后重试',
-                confirmText: '去设置',
-                success: (r) => {
-                  if (r.confirm) {
-                    wx.openSetting({
-                      success: (s) => resolve(!!s.authSetting['scope.userLocation']),
-                      fail: () => resolve(false),
-                    })
-                  } else {
-                    resolve(false)
-                  }
-                },
-                fail: () => resolve(false),
-              })
-            },
-          })
+          checkAndRequest()
         },
-        fail: () => resolve(true), // getSetting 失败不阻断
+        fail: () => {
+          // 旧基础库或不支持 getSystemSetting，回退正常授权流程
+          checkAndRequest()
+        },
       })
     } catch (e) {
-      resolve(true)
+      checkAndRequest()
     }
   })
   // #endif
@@ -171,9 +227,18 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
           resolve(Array.from(found.values()))
         }, 3000)
       },
-      fail: (err) => {
+      fail: async (err) => {
         bleLog.error('扫描启动失败', err?.errMsg)
         cleanup()
+        // T101: 若失败原因为权限类，重新触发授权流程，避免用户卡在"扫描失败"无法回到授权引导
+        if (isAuthDeny(err?.errMsg || '')) {
+          bleLog.warn('扫描失败原因为权限问题，重新触发 ensureLocationPermission')
+          const ok = await ensureLocationPermission()
+          if (ok) {
+            resolve([]) // 权限已恢复，返回空结果让用户可再次点击刷新
+            return
+          }
+        }
         reject(new Error(`设备扫描失败: ${err.errMsg}`))
       },
     })
