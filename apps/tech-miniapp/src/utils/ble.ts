@@ -129,9 +129,15 @@ export async function ensureLocationPermission(): Promise<boolean> {
     }
 
     // T101: 前置系统位置服务检查（Android BLE 扫描依赖系统位置开关）
+    let systemSettingResolved = false
+    const finishSystemCheck = () => {
+      if (systemSettingResolved) return
+      systemSettingResolved = true
+    }
     try {
       wx.getSystemSetting({
         success: (sys) => {
+          finishSystemCheck()
           bleLog.info(`wx.getSystemSetting 成功，locationEnabled=${sys.locationEnabled}，bluetoothEnabled=${sys.bluetoothEnabled}`)
           if (sys.locationEnabled === false) {
             bleLog.warn('系统位置服务未开启（locationEnabled=false），提示用户开启')
@@ -149,15 +155,25 @@ export async function ensureLocationPermission(): Promise<boolean> {
           checkAndRequest()
         },
         fail: (err) => {
+          finishSystemCheck()
           bleLog.warn(`wx.getSystemSetting 失败，errMsg=${err?.errMsg || 'unknown'}，回退正常授权流程`)
           // 旧基础库或不支持 getSystemSetting，回退正常授权流程
           checkAndRequest()
         },
       })
     } catch (e) {
+      finishSystemCheck()
       bleLog.error('ensureLocationPermission getSystemSetting 异常，回退正常授权流程', e instanceof Error ? e.message : String(e))
       checkAndRequest()
     }
+    // T101: 超时兜底——若 wx.getSystemSetting 2s 内未回调，直接进入正常授权流程，避免卡死
+    setTimeout(() => {
+      if (!systemSettingResolved) {
+        bleLog.warn('wx.getSystemSetting 超时（2s）未回调，回退正常授权流程')
+        finishSystemCheck()
+        checkAndRequest()
+      }
+    }, 2000)
   })
   // #endif
   // #ifndef MP-WEIXIN
@@ -245,13 +261,18 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
         bleLog.info('startBluetoothDevicesDiscovery 成功，注册 onBluetoothDeviceFound')
         uni.onBluetoothDeviceFound((res) => {
           const devs = res.devices as unknown as { deviceId: string; name: string; RSSI: number }[]
-          bleLog.info(`onBluetoothDeviceFound 原始设备数=${devs.length}`, devs.slice(0, 10).map((d) => ({ name: d.name, deviceId: d.deviceId, RSSI: d.RSSI })))
+          bleLog.info(`onBluetoothDeviceFound 原始设备数=${devs.length}`, devs.slice(0, 20).map((d) => ({ name: d.name || '(空)', deviceId: d.deviceId, RSSI: d.RSSI })))
           for (const dev of devs) {
             const d = dev
-            // 协议 §1：广播名 BSYNC-{device_id 后 6 位}，仅保留 BraceSync 设备
+            // T101-DEBUG: 临时放开 BSYNC- 前缀过滤，展示所有设备以便硬件团队确认实际广播名
+            // 协议 §1：广播名应为 BSYNC-{device_id 后 6 位}，联调确认后恢复前缀过滤
             if (d.name && d.name.startsWith('BSYNC-')) {
-              bleLog.info(`发现 BraceSync 设备: name=${d.name}, deviceId=${d.deviceId}, RSSI=${d.RSSI}`)
+              bleLog.info(`[匹配] BraceSync 设备: name=${d.name}, deviceId=${d.deviceId}, RSSI=${d.RSSI}`)
               found.set(d.deviceId, d)
+            } else {
+              bleLog.info(`[过滤] 非 BSYNC- 设备: name=${d.name || '(空)'}, deviceId=${d.deviceId}, RSSI=${d.RSSI}`)
+              // T101-DEBUG: 临时也加入列表，方便看到所有广播设备
+              found.set(d.deviceId, { deviceId: d.deviceId, name: d.name || '(未命名设备)', RSSI: d.RSSI })
             }
           }
         })
