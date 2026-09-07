@@ -16,6 +16,34 @@ function isH5(): boolean {
   // #endif
 }
 
+// T101: 微信小程序不支持 TextDecoder，手动实现 UTF-8 字节解码
+function decodeUtf8(bytes: Uint8Array): string {
+  let result = ''
+  let i = 0
+  while (i < bytes.length) {
+    const byte = bytes[i]
+    if (byte < 0x80) {
+      result += String.fromCharCode(byte)
+      i += 1
+    } else if (byte < 0xc0) {
+      // 非法续字节，跳过
+      i += 1
+    } else if (byte < 0xe0) {
+      result += String.fromCharCode(((byte & 0x1f) << 6) | (bytes[i + 1] & 0x3f))
+      i += 2
+    } else if (byte < 0xf0) {
+      result += String.fromCharCode(((byte & 0x0f) << 12) | ((bytes[i + 1] & 0x3f) << 6) | (bytes[i + 2] & 0x3f))
+      i += 3
+    } else {
+      const codepoint = ((byte & 0x07) << 18) | ((bytes[i + 1] & 0x3f) << 12) | ((bytes[i + 2] & 0x3f) << 6) | (bytes[i + 3] & 0x3f)
+      const offset = codepoint - 0x10000
+      result += String.fromCharCode(0xd800 + (offset >> 10), 0xdc00 + (offset & 0x3ff))
+      i += 4
+    }
+  }
+  return result
+}
+
 const H5_BLUETOOTH_ERROR = '蓝牙功能仅支持真机使用，请在手机上操作'
 
 // BLE GATT UUID（协议定稿 §1）
@@ -570,7 +598,7 @@ export async function readDeviceInfo(deviceId: string): Promise<{
     }
     const handler = (res: any) => {
       try {
-        const text = new TextDecoder().decode(new Uint8Array(res.value))
+        const text = decodeUtf8(new Uint8Array(res.value))
         const truncated = text.length > 200 ? text.slice(0, 200) + '...(truncated)' : text
         bleLog.info(`B514 原始文本=${truncated}`)
         const data = JSON.parse(text)
