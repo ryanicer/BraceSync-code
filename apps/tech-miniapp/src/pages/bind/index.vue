@@ -72,6 +72,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useDeviceStore } from '../../stores/device'
 import { useInstallStore } from '../../stores/install'
 import { discoverDevices, initBluetooth, createBLEConnection, readDeviceInfo } from '../../utils/ble'
+import { bleLog } from '../../utils/ble-log'
 import { bindDevice } from '../../api/device'
 import { createInstall } from '../../api/install'
 import { getPatient } from '../../api/patient'
@@ -172,12 +173,15 @@ async function bindManual() {
 }
 
 async function scanBLE() {
+  bleLog.info('scanBLE 入口，scanning=true')
   scanning.value = true
   scanResults.value = []
   try {
     await initBluetooth()
     scanResults.value = await discoverDevices()
+    bleLog.info(`scanBLE 完成，扫描到 ${scanResults.value.length} 个设备`)
   } catch (e) {
+    bleLog.error(`scanBLE 异常`, e instanceof Error ? e.message : String(e))
     uni.showToast({ title: e instanceof Error ? e.message : '扫描失败，请开启蓝牙', icon: 'none' })
   } finally {
     scanning.value = false

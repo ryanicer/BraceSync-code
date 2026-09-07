@@ -35,49 +35,128 @@ function isAuthDeny(errMsg: string): boolean {
 }
 
 /**
- * R5-2 权限前置：扫描前检查 scope.userLocation（Android BLE 必需）
+ * T101 权限前置：扫描前检查 scope.userLocation（Android BLE 必需）
+ *
+ * 修复点（相对 R5-2）：
+ *  1. 前置 wx.getSystemSetting 检查系统位置服务开关，区分"权限被拒"与"位置服务关闭"，
+ *     避免引导用户去 openSetting 却无法解决系统开关问题。
+ *  2. openSetting 返回后不依赖其 authSetting（部分 Android 机型不即时刷新），
+ *     改为 complete 回调中延迟重新 wx.getSetting 取最新状态。
+ *  3. 日志区分四种状态，便于真机排查。
+ *
  * iOS 无需位置权限，但仍走 getSetting 不影响。
- * 未授权则请求；拒绝则引导 openSetting。
  */
 export async function ensureLocationPermission(): Promise<boolean> {
   if (isH5()) return true
   // #ifdef MP-WEIXIN
+  bleLog.info('ensureLocationPermission 入口')
   return new Promise((resolve) => {
+    const checkAndRequest = () => {
+      try {
+        wx.getSetting({
+          success: (res) => {
+            bleLog.info('wx.getSetting 成功，完整 authSetting', JSON.stringify(res.authSetting))
+            if (res.authSetting['scope.userLocation']) {
+              bleLog.info('位置权限已授权（scope.userLocation=true）')
+              resolve(true)
+              return
+            }
+            bleLog.warn('scope.userLocation 未授权，尝试 wx.authorize')
+            wx.authorize({
+              scope: 'scope.userLocation',
+              success: () => {
+                bleLog.info('wx.authorize 位置权限成功')
+                resolve(true)
+              },
+              fail: (err) => {
+                bleLog.warn(`wx.authorize 位置权限被拒，errMsg=${err?.errMsg || 'unknown'}，引导 openSetting`)
+                uni.showModal({
+                  title: '需要位置权限',
+                  content: '扫描附近蓝牙设备需要位置权限，请在设置中开启后重试',
+                  confirmText: '去设置',
+                  success: (r) => {
+                    bleLog.info(`用户对权限弹窗的选择: confirm=${r.confirm}`)
+                    if (r.confirm) {
+                      bleLog.info('调用 wx.openSetting')
+                      wx.openSetting({
+                        success: (s) => {
+                          bleLog.info(`wx.openSetting 成功回调，authSetting=${JSON.stringify(s.authSetting)}`)
+                        },
+                        fail: (err) => {
+                          bleLog.warn(`wx.openSetting 失败回调，errMsg=${err?.errMsg || 'unknown'}`)
+                        },
+                        complete: () => {
+                          bleLog.info('wx.openSetting complete 回调，延迟 300ms 后重新 getSetting')
+                          // T101: 不依赖 openSetting 成功回调的 authSetting（Android 可能不即时刷新），
+                          // 延迟后重新 wx.getSetting 取最新授权状态
+                          setTimeout(() => {
+                            wx.getSetting({
+                              success: (s2) => {
+                                const ok = !!s2.authSetting['scope.userLocation']
+                                bleLog.info(`openSetting 返回后重检 getSetting，authSetting=${JSON.stringify(s2.authSetting)}，scope.userLocation=${ok}`)
+                                resolve(ok)
+                              },
+                              fail: (err2) => {
+                                bleLog.warn(`openSetting 后重检 getSetting 失败，errMsg=${err2?.errMsg || 'unknown'}，按未授权处理`)
+                                resolve(false)
+                              },
+                            })
+                          }, 300)
+                        },
+                      })
+                    } else {
+                      bleLog.info('用户取消权限引导弹窗，resolve(false)')
+                      resolve(false)
+                    }
+                  },
+                  fail: (err) => {
+                    bleLog.warn(`权限引导弹窗失败，errMsg=${err?.errMsg || 'unknown'}，resolve(false)`)
+                    resolve(false)
+                  },
+                })
+              },
+            })
+          },
+          fail: (err) => {
+            bleLog.warn(`wx.getSetting 失败，errMsg=${err?.errMsg || 'unknown'}，不阻断，resolve(true)`)
+            resolve(true) // getSetting 失败不阻断
+          },
+        })
+      } catch (e) {
+        bleLog.error('ensureLocationPermission checkAndRequest 异常', e instanceof Error ? e.message : String(e))
+        resolve(true)
+      }
+    }
+
+    // T101: 前置系统位置服务检查（Android BLE 扫描依赖系统位置开关）
     try {
-      wx.getSetting({
-        success: (res) => {
-          if (res.authSetting['scope.userLocation']) {
-            resolve(true)
+      wx.getSystemSetting({
+        success: (sys) => {
+          bleLog.info(`wx.getSystemSetting 成功，locationEnabled=${sys.locationEnabled}，bluetoothEnabled=${sys.bluetoothEnabled}`)
+          if (sys.locationEnabled === false) {
+            bleLog.warn('系统位置服务未开启（locationEnabled=false），提示用户开启')
+            uni.showModal({
+              title: '请开启手机位置服务',
+              content: '扫描蓝牙设备需要开启手机位置服务，请在系统设置中开启后重试',
+              confirmText: '我知道了',
+              showCancel: false,
+              success: () => resolve(false),
+              fail: () => resolve(false),
+            })
             return
           }
-          wx.authorize({
-            scope: 'scope.userLocation',
-            success: () => resolve(true),
-            fail: () => {
-              bleLog.warn('位置权限授权被拒，引导 openSetting')
-              uni.showModal({
-                title: '权限未授权',
-                content: '蓝牙/位置权限未授权，请在设置中开启后重试',
-                confirmText: '去设置',
-                success: (r) => {
-                  if (r.confirm) {
-                    wx.openSetting({
-                      success: (s) => resolve(!!s.authSetting['scope.userLocation']),
-                      fail: () => resolve(false),
-                    })
-                  } else {
-                    resolve(false)
-                  }
-                },
-                fail: () => resolve(false),
-              })
-            },
-          })
+          bleLog.info('系统位置服务已开启，进入 scope 授权检查流程')
+          checkAndRequest()
         },
-        fail: () => resolve(true), // getSetting 失败不阻断
+        fail: (err) => {
+          bleLog.warn(`wx.getSystemSetting 失败，errMsg=${err?.errMsg || 'unknown'}，回退正常授权流程`)
+          // 旧基础库或不支持 getSystemSetting，回退正常授权流程
+          checkAndRequest()
+        },
       })
     } catch (e) {
-      resolve(true)
+      bleLog.error('ensureLocationPermission getSystemSetting 异常，回退正常授权流程', e instanceof Error ? e.message : String(e))
+      checkAndRequest()
     }
   })
   // #endif
@@ -91,8 +170,9 @@ function registerAdapterStateListener() {
   if (adapterStateRegistered || isH5()) return
   adapterStateRegistered = true
   uni.onBluetoothAdapterStateChange((res) => {
+    bleLog.info(`onBluetoothAdapterStateChange: available=${res.available}, discovering=${res.discovering}`)
     if (!res.available) {
-      bleLog.warn('手机蓝牙已关闭，终止扫描')
+      bleLog.warn('手机蓝牙已关闭（available=false），终止扫描')
       uni.showToast({ title: '手机蓝牙已关闭', icon: 'none' })
       if (discoveryTimer) {
         clearTimeout(discoveryTimer)
@@ -107,22 +187,26 @@ export async function initBluetooth(): Promise<boolean> {
   if (isH5()) {
     throw new Error(H5_BLUETOOTH_ERROR)
   }
+  bleLog.info('initBluetooth 入口，调用 openBluetoothAdapter')
   return new Promise((resolve, reject) => {
     uni.openBluetoothAdapter({
       success: () => {
-        bleLog.info('adapter 初始化成功')
+        bleLog.info('adapter 初始化成功（openBluetoothAdapter success）')
         registerAdapterStateListener()
         resolve(true)
       },
       fail: (err) => {
-        bleLog.error('adapter 初始化失败', err?.errMsg)
-        if (isAuthDeny(err?.errMsg || '')) {
+        const errMsg = err?.errMsg || 'unknown'
+        bleLog.error(`adapter 初始化失败（openBluetoothAdapter fail），errMsg=${errMsg}，isAuthDeny=${isAuthDeny(errMsg)}`)
+        if (isAuthDeny(errMsg)) {
+          bleLog.info('adapter 失败原因为权限类，调用 ensureLocationPermission')
           ensureLocationPermission().then((ok) => {
+            bleLog.info(`ensureLocationPermission 返回: ${ok}`)
             if (ok) resolve(true)
-            else reject(new Error(`蓝牙初始化失败: ${err.errMsg}`))
+            else reject(new Error(`蓝牙初始化失败: ${errMsg}`))
           })
         } else {
-          reject(new Error(`蓝牙初始化失败: ${err.errMsg}`))
+          reject(new Error(`蓝牙初始化失败: ${errMsg}`))
         }
       },
     })
@@ -134,8 +218,10 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
     // H5 不造假设备，返回空数组由上层展示空态
     return []
   }
+  bleLog.info('discoverDevices 入口，先检查位置权限')
   // R5-2 权限前置
   const permOk = await ensureLocationPermission()
+  bleLog.info(`discoverDevices 权限检查结果: permOk=${permOk}`)
   if (!permOk) {
     throw new Error('蓝牙/位置权限未授权，请在设置中开启后重试')
   }
@@ -147,33 +233,47 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
         clearTimeout(discoveryTimer)
         discoveryTimer = null
       }
-      uni.stopBluetoothDevicesDiscovery({ fail: () => {} })
+      uni.stopBluetoothDevicesDiscovery({ fail: (e) => { bleLog.warn(`stopBluetoothDevicesDiscovery fail: ${e?.errMsg || ''}`) } })
       uni.offBluetoothDeviceFound()
     }
 
     // TODO: services: [SERVICE_UUID] 过滤待真机验证广播服务后再加
+    bleLog.info('调用 startBluetoothDevicesDiscovery')
     uni.startBluetoothDevicesDiscovery({
       allowDuplicatesKey: false,
       success: () => {
-        bleLog.info('扫描启动成功')
+        bleLog.info('startBluetoothDevicesDiscovery 成功，注册 onBluetoothDeviceFound')
         uni.onBluetoothDeviceFound((res) => {
           const devs = res.devices as unknown as { deviceId: string; name: string; RSSI: number }[]
           bleLog.info(`onBluetoothDeviceFound 原始设备数=${devs.length}`, devs.slice(0, 10).map((d) => ({ name: d.name, deviceId: d.deviceId, RSSI: d.RSSI })))
           for (const dev of devs) {
             const d = dev
             // 协议 §1：广播名 BSYNC-{device_id 后 6 位}，仅保留 BraceSync 设备
-            if (d.name && d.name.startsWith('BSYNC-')) found.set(d.deviceId, d)
+            if (d.name && d.name.startsWith('BSYNC-')) {
+              bleLog.info(`发现 BraceSync 设备: name=${d.name}, deviceId=${d.deviceId}, RSSI=${d.RSSI}`)
+              found.set(d.deviceId, d)
+            }
           }
         })
         discoveryTimer = setTimeout(() => {
+          bleLog.info(`扫描 3s 超时，清理并返回，BSYNC- 过滤后设备数=${found.size}`)
           cleanup()
-          bleLog.info(`BSYNC- 过滤后设备数=${found.size}`)
           resolve(Array.from(found.values()))
         }, 3000)
       },
-      fail: (err) => {
-        bleLog.error('扫描启动失败', err?.errMsg)
+      fail: async (err) => {
+        const errMsg = err?.errMsg || 'unknown'
+        bleLog.error(`startBluetoothDevicesDiscovery 失败，errMsg=${errMsg}，isAuthDeny=${isAuthDeny(errMsg)}`)
         cleanup()
+        // T101: 若失败原因为权限类，重新触发授权流程，避免用户卡在"扫描失败"无法回到授权引导
+        if (isAuthDeny(err?.errMsg || '')) {
+          bleLog.warn('扫描失败原因为权限问题，重新触发 ensureLocationPermission')
+          const ok = await ensureLocationPermission()
+          if (ok) {
+            resolve([]) // 权限已恢复，返回空结果让用户可再次点击刷新
+            return
+          }
+        }
         reject(new Error(`设备扫描失败: ${err.errMsg}`))
       },
     })
