@@ -144,17 +144,21 @@ async function bindManual() {
     })
 
     // 3. 自动 BLE 连接（失败不阻断）
-    try {
-      await initBluetooth()
-      const connected = await createBLEConnection(devId)
-      installStore.setBleConnected(connected, devId)
-      deviceStore.setBleConnected(connected)
-      if (!connected) {
+    // T101: BLE 连接需要 MAC 地址，不是设备 ID。优先用 selectDevice 时存的 MAC。
+    const bleMac = installStore.bleDeviceId
+    if (bleMac) {
+      try {
+        await initBluetooth()
+        const connected = await createBLEConnection(bleMac)
+        installStore.setBleConnected(connected, bleMac)
+        deviceStore.setBleConnected(connected)
+        if (!connected) {
+          uni.showToast({ title: '蓝牙连接失败，后续校准需重新连接', icon: 'none' })
+        }
+      } catch (e) {
+        installStore.setBleConnected(false)
         uni.showToast({ title: '蓝牙连接失败，后续校准需重新连接', icon: 'none' })
       }
-    } catch (e) {
-      installStore.setBleConnected(false)
-      uni.showToast({ title: '蓝牙连接失败，后续校准需重新连接', icon: 'none' })
     }
 
     // 4. 拉取患者档案
@@ -202,6 +206,8 @@ async function selectDevice(deviceId: string) {
       try {
         const info = await readDeviceInfo(deviceId)
         if (info) {
+          // T101: B514 返回的 device_id 才是后端识别的设备 ID，不能用 BLE MAC 地址
+          manualDeviceId.value = info.deviceId
           showToast(`设备已连接 · 固件 ${info.firmware} · 电量 ${info.battery}%`)
         } else {
           showToast('设备已连接')
