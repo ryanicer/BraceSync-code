@@ -126,6 +126,12 @@ const showPassword = ref(false)
 const selectedSSID = ref('')
 const provisioning = ref(false)
 
+// T119: 最小重试间隔（ms）。防止连点导致高频 BLE 写入 / 重复申领。
+// 取 3s：BLE 写入+设备处理约 1~2s，3s 足以让上一次操作落定，
+// 同时用户改完密码后不会感到明显阻塞。
+const MIN_PROVISION_INTERVAL = 3000
+let lastProvisionAttempt = 0
+
 const wifiStatusCode = ref<number | null>(null)
 const statusHistory: number[] = []
 const errorCode = ref<number | null>(null)
@@ -172,6 +178,15 @@ function goBack() {
 }
 
 async function startWifiConfig() {
+  // T119: 最小重试间隔节流，避免连点高频写设备
+  const now = Date.now()
+  if (now - lastProvisionAttempt < MIN_PROVISION_INTERVAL) {
+    const waitSec = Math.ceil((MIN_PROVISION_INTERVAL - (now - lastProvisionAttempt)) / 1000)
+    uni.showToast({ title: `操作过于频繁，请${waitSec}秒后重试`, icon: 'none' })
+    return
+  }
+  lastProvisionAttempt = now
+
   const ssid = manualSSID.value || selectedSSID.value
   if (!ssid) {
     uni.showToast({ title: '请选择或输入 WiFi 网络', icon: 'none' })
