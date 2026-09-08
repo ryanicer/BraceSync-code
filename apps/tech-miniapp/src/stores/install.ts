@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Baseline } from '@bracesync/shared-types'
+import { clearProvisionKeyCache } from '../api/provision'
 import type {
   InstallPhase,
   PhaseStatus,
@@ -142,6 +143,8 @@ export const useInstallStore = defineStore('install', () => {
   }
 
   function resetInstall() {
+    // T119: 切换安装会话时清空 provision key 内存缓存，下一次配网重新申领
+    clearProvisionKeyCache()
     installId.value = null
     deviceId.value = ''
     patientId.value = ''
