@@ -579,6 +579,7 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
       deviceId,
       serviceId: SERVICE_UUID,
       characteristicId: CHAR_REALTIME,
+      state: true,
       success: () => bleLog.info('B513 Notify 订阅成功'),
       fail: (err) => bleLog.error('B513 Notify 订阅失败', err?.errMsg),
     })
@@ -728,6 +729,7 @@ export function onWifiStatus(cb: (code: number) => void, deviceId?: string): voi
     deviceId: wifiStatusDeviceId,
     serviceId: SERVICE_UUID,
     characteristicId: CHAR_WIFI_STATUS,
+    state: true,
     success: () => bleLog.info('B512 Notify 订阅成功'),
     fail: (err) => bleLog.error('B512 Notify 订阅失败', err?.errMsg),
   })
