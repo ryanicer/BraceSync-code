@@ -134,6 +134,12 @@ export async function discoverDevices() {
 
 export async function createBLEConnection(deviceId) { return true }
 
+// T109: connectDevice = createBLEConnection + GATT 服务发现（mock 直接返回 true）
+export async function connectDevice(deviceId) { return true }
+
+// T109: BLE 连接状态监听注册（mock 空实现）
+export function registerBleStateListener(cb) { }
+
 export async function writeWiFiConfig(ssid, password) { return true }
 
 export async function closeBLEConnection(deviceId) { return }

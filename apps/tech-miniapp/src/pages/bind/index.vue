@@ -71,7 +71,7 @@ import { ref, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { useDeviceStore } from '../../stores/device'
 import { useInstallStore } from '../../stores/install'
-import { discoverDevices, initBluetooth, createBLEConnection, readDeviceInfo } from '../../utils/ble'
+import { discoverDevices, initBluetooth, connectDevice, readDeviceInfo } from '../../utils/ble'
 import { bleLog } from '../../utils/ble-log'
 import { bindDevice } from '../../api/device'
 import { createInstall } from '../../api/install'
@@ -144,12 +144,14 @@ async function bindManual() {
     })
 
     // 3. 自动 BLE 连接（失败不阻断）
-    // T101: BLE 连接需要 MAC 地址，不是设备 ID。优先用 selectDevice 时存的 MAC。
-    const bleMac = installStore.bleDeviceId
-    if (bleMac) {
+    // T109: 若 selectDevice 已连接成功，此处跳过重连，避免对已连接设备重复 createBLEConnection
+    //       导致 Android 触发"断开-重连"循环而断连。
+    //       优先用 selectDevice 存的 MAC（bleDeviceId）；若无则用后端设备 ID 尝试（真机上会失败但不阻断）。
+    const bleMac = installStore.bleDeviceId || devId
+    if (bleMac && !installStore.bleConnected) {
       try {
         await initBluetooth()
-        const connected = await createBLEConnection(bleMac)
+        const connected = await connectDevice(bleMac)
         installStore.setBleConnected(connected, bleMac)
         deviceStore.setBleConnected(connected)
         if (!connected) {
@@ -196,7 +198,8 @@ async function selectDevice(deviceId: string) {
   try {
     uni.showLoading({ title: '连接中...' })
     await initBluetooth()
-    const connected = await createBLEConnection(deviceId)
+    // T109: 使用 connectDevice（含 GATT 服务发现），连接后可直接读 B514 设备信息
+    const connected = await connectDevice(deviceId)
     uni.hideLoading()
     installStore.setBleConnected(connected, deviceId)
     deviceStore.setBleConnected(connected)

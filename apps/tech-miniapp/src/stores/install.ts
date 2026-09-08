@@ -92,6 +92,11 @@ export const useInstallStore = defineStore('install', () => {
     if (deviceId !== undefined) bleDeviceId.value = deviceId
   }
 
+  /** T109: BLE 意外断连时调用 —— 仅置 connected=false，保留 bleDeviceId（MAC）供重连 */
+  function setBleDisconnected() {
+    bleConnected.value = false
+  }
+
   function startRealtimeStream() {
     isStreaming.value = true
   }
@@ -190,6 +195,7 @@ export const useInstallStore = defineStore('install', () => {
     setPhase,
     setPhaseDone,
     setBleConnected,
+    setBleDisconnected,
     startRealtimeStream,
     stopRealtimeStream,
     updateRealtimeData,

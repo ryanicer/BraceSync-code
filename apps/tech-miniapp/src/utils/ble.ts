@@ -57,6 +57,10 @@ const CHAR_DEVICE_INFO = '0000b514-0000-1000-8000-00805f9b34fb'
 let discoveryTimer: ReturnType<typeof setTimeout> | null = null
 let adapterStateRegistered = false
 
+// T109: BLE 连接状态变化监听（全局只注册一次）
+let bleStateRegistered = false
+let bleStateCallback: ((deviceId: string, connected: boolean) => void) | null = null
+
 function isAuthDeny(errMsg: string): boolean {
   const m = (errMsg || '').toLowerCase()
   return m.includes('auth') || m.includes('deny') || m.includes('permission')
@@ -371,6 +375,80 @@ export async function createBLEConnection(deviceId: string): Promise<boolean> {
   })
 }
 
+/**
+ * T109: 完整 BLE 连接流程 —— createBLEConnection + getBLEDeviceServices + getBLEDeviceCharacteristics
+ *
+ * 微信 BLE API 要求：连接后必须发现服务与特征值，否则 read/write/notify 全部失败。
+ * Android 部分机型连接后需短暂延时再发现服务，这里统一延时 300ms。
+ * H5 下返回 true（mock）。
+ */
+export async function connectDevice(deviceId: string): Promise<boolean> {
+  if (isH5()) {
+    return true
+  }
+  bleLog.info(`connectDevice 入口 deviceId=${deviceId}`)
+  await createBLEConnection(deviceId)
+  // Android 兼容：连接后延时再发现服务
+  await new Promise((r) => setTimeout(r, 300))
+  const services = await new Promise<string[]>((resolve, reject) => {
+    uni.getBLEDeviceServices({
+      deviceId,
+      success: (res) => {
+        const uuids = (res.services || []).map((s: any) => s.uuid)
+        bleLog.info(`getBLEDeviceServices 成功，服务列表=${JSON.stringify(uuids)}`)
+        resolve(uuids)
+      },
+      fail: (err) => {
+        bleLog.error(`getBLEDeviceServices 失败`, err?.errMsg)
+        reject(new Error(`服务发现失败: ${err.errMsg}`))
+      },
+    })
+  })
+  // 确认目标服务存在
+  const targetService = services.find(
+    (u) => u.toLowerCase() === SERVICE_UUID.toLowerCase()
+  )
+  if (!targetService) {
+    bleLog.warn(`未找到目标服务 ${SERVICE_UUID}，可用服务=${JSON.stringify(services)}`)
+    throw new Error('设备未暴露 BraceSync 服务，请确认设备固件版本')
+  }
+  await new Promise<void>((resolve, reject) => {
+    uni.getBLEDeviceCharacteristics({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      success: (res) => {
+        const chars = (res.characteristics || []).map((c: any) => c.uuid)
+        bleLog.info(`getBLEDeviceCharacteristics 成功，特征列表=${JSON.stringify(chars)}`)
+        resolve()
+      },
+      fail: (err) => {
+        bleLog.error(`getBLEDeviceCharacteristics 失败`, err?.errMsg)
+        reject(new Error(`特征发现失败: ${err.errMsg}`))
+      },
+    })
+  })
+  bleLog.info(`connectDevice 完成 deviceId=${deviceId}`)
+  return true
+}
+
+/**
+ * T109: 注册 BLE 连接状态变化监听（全局只注册一次）
+ * 回调参数：(deviceId, connected) —— connected=false 表示设备意外断连
+ */
+export function registerBleStateListener(
+  cb: (deviceId: string, connected: boolean) => void
+): void {
+  bleStateCallback = cb
+  if (bleStateRegistered || isH5()) return
+  bleStateRegistered = true
+  uni.onBLEConnectionStateChange((res) => {
+    bleLog.info(
+      `onBLEConnectionStateChange: deviceId=${res.deviceId}, connected=${res.connected}`
+    )
+    bleStateCallback?.(res.deviceId, res.connected)
+  })
+}
+
 // T089-DEPRECATED: 旧明文版 writeWiFiConfig，联调稳定后清理（用 writeWifiConfigV2 替代）
 export async function writeWiFiConfig(ssid: string, password: string): Promise<boolean> {
   if (isH5()) {
@@ -425,8 +503,14 @@ export async function readFirmwareVersion(deviceId: string): Promise<string> {
 
 let realtimeTimer: ReturnType<typeof setInterval> | null = null
 let realtimeCallback: ((frame: number[]) => void) | null = null
+let realtimeNotifyRegistered = false
+let realtimeDeviceId = ''
 
-/** 启动 BLE 实时压力推送（1Hz，20 点 uint16 小端，值 = N×100） */
+/**
+ * 启动 BLE 实时压力推送
+ * 协议：向 B513 特征 Write 0x01 启动 Notify，固件以 1Hz 推送 20×uint16 小端（值 = N×100）。
+ * 解析：raw / 100 → number[20]（单位 N）。
+ */
 export async function startRealtimePressure(deviceId: string): Promise<void> {
   if (isH5()) {
     // H5 mock：每秒推送 20 个接近 0 的随机小数（模拟空载）
@@ -436,27 +520,87 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
     }, 1000)
     return
   }
-  // 真机：T089-HW-TODO 待硬件 UUID 确认后，向 Realtime Char（0x0000B513）Write 0x01 启动 Notify
-  await new Promise((r) => setTimeout(r, 100))
+  realtimeDeviceId = deviceId
+  bleLog.info(`startRealtimePressure deviceId=${deviceId}，写入 0x01 启动 B513 Notify`)
+  // 1. 订阅 B513 Notify（仅注册一次）
+  if (!realtimeNotifyRegistered) {
+    realtimeNotifyRegistered = true
+    uni.notifyBLECharacteristicValueChange({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_REALTIME,
+      success: () => bleLog.info('B513 Notify 订阅成功'),
+      fail: (err) => bleLog.error('B513 Notify 订阅失败', err?.errMsg),
+    })
+    uni.onBLECharacteristicValueChange((res) => {
+      if (res.characteristicId?.toLowerCase() !== CHAR_REALTIME.toLowerCase()) return
+      try {
+        const bytes = new Uint8Array(res.value)
+        // 20 个 uint16 小端 → number[20]（÷100 转 N）
+        const frame: number[] = []
+        for (let i = 0; i < 20 && i * 2 + 1 < bytes.length; i++) {
+          const raw = bytes[i * 2] | (bytes[i * 2 + 1] << 8)
+          const signed = raw > 32767 ? raw - 65536 : raw
+          frame.push(signed / 100)
+        }
+        if (frame.length === 20) {
+          realtimeCallback?.(frame)
+        } else {
+          bleLog.warn(`B513 数据帧长度不符：期望 40 字节，实际 ${bytes.length} 字节，解析出 ${frame.length} 点`)
+        }
+      } catch (e) {
+        bleLog.error('B513 数据解析失败', e instanceof Error ? e.message : String(e))
+      }
+    })
+  }
+  // 2. 写入 0x01 启动推送
+  await new Promise<void>((resolve, reject) => {
+    uni.writeBLECharacteristicValue({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_REALTIME,
+      value: new Uint8Array([0x01]).buffer,
+      success: () => {
+        bleLog.info('B513 写入 0x01 成功，实时推送已启动')
+        resolve()
+      },
+      fail: (err) => {
+        bleLog.error('B513 写入 0x01 失败', err?.errMsg)
+        reject(new Error(`启动实时推送失败: ${err.errMsg}`))
+      },
+    })
+  })
 }
 
-/** 停止 BLE 实时压力推送 */
+/** 停止 BLE 实时压力推送：向 B513 写 0x00 停止 Notify */
 export async function stopRealtimePressure(deviceId: string): Promise<void> {
   if (realtimeTimer) {
     clearInterval(realtimeTimer)
     realtimeTimer = null
   }
   if (isH5()) return
-  // 真机：向 Realtime Char Write 0x00 停止 Notify
+  bleLog.info(`stopRealtimePressure deviceId=${deviceId}，写入 0x00 停止 B513 Notify`)
+  await new Promise<void>((resolve) => {
+    uni.writeBLECharacteristicValue({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_REALTIME,
+      value: new Uint8Array([0x00]).buffer,
+      success: () => {
+        bleLog.info('B513 写入 0x00 成功，实时推送已停止')
+        resolve()
+      },
+      fail: (err) => {
+        bleLog.warn('B513 写入 0x00 失败（不阻断流程）', err?.errMsg)
+        resolve()
+      },
+    })
+  })
 }
 
 /** 注册实时帧回调 */
 export function onRealtimeFrame(cb: (frame: number[]) => void): void {
   realtimeCallback = cb
-  if (!isH5()) {
-    // 真机：监听 Realtime Char Notify，解析 20×uint16 小端 → number[20]（÷100 转 N）
-    // T089-HW-TODO: 解析逻辑待真机联调
-  }
 }
 
 // ===== T089 新增：WiFi 加密配置写入 + 状态机 =====
@@ -521,9 +665,11 @@ export async function writeWifiConfigV2(
  */
 let wifiStatusDeviceId = ''
 
-export function onWifiStatus(cb: (code: number) => void): void {
+export function onWifiStatus(cb: (code: number) => void, deviceId?: string): void {
   wifiStatusCallback = cb
   if (isH5()) return
+  // T109: 调用方传入 deviceId（BLE MAC），赋值后再订阅 B512 Notify
+  if (deviceId) wifiStatusDeviceId = deviceId
   if (b512NotifyRegistered) return
   if (!wifiStatusDeviceId) return
   b512NotifyRegistered = true
