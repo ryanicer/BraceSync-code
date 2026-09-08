@@ -77,20 +77,19 @@ describe('T118: NIST SP 800-38A AES-128-CTR 已知向量（独立验证）', () 
 })
 
 describe('T118: encryptWifiPayload 降级路径（模拟小程序无 WebCrypto）', () => {
-  const originalCrypto = (globalThis as any).crypto
+  // 不在 describe 顶部捕获 originalCrypto——CI Node 18 的 globalThis.crypto
+  // 可能在模块加载时不可用，仅在测试运行时由 vitest 环境注入。
+  // 所有 mock 用 vi.spyOn，afterEach 中 vi.restoreAllMocks() 统一恢复，
+  // 避免直接赋值 getter-only 属性或重定义 crypto 属性导致恢复失败。
 
   afterEach(() => {
-    ;(globalThis as any).crypto = originalCrypto
     vi.restoreAllMocks()
   })
 
   it('crypto.subtle 不存在时，应走纯 JS 路径且结果与 WebCrypto 一致', async () => {
-    // 模拟微信小程序：删除 crypto.subtle
-    Object.defineProperty(globalThis, 'crypto', {
-      value: { subtle: undefined },
-      configurable: true,
-      writable: true,
-    })
+    const cryptoObj = (globalThis as any).crypto
+    // subtle 是原型上的 getter，用 spyOn 模拟返回 undefined
+    vi.spyOn(cryptoObj, 'subtle', 'get').mockReturnValue(undefined)
 
     const key = 'a1a13b09c2d2e3f4a5b6c7d8e9f0a1b2'
     const seq = 1
@@ -99,8 +98,8 @@ describe('T118: encryptWifiPayload 降级路径（模拟小程序无 WebCrypto�
 
     const fromPureJs = await encryptWifiPayload(ssid, pwd, key, seq)
 
-    // 用 WebCrypto 算出期望值
-    ;(globalThis as any).crypto = originalCrypto
+    // 恢复真实 subtle 后用 WebCrypto 算期望值
+    vi.restoreAllMocks()
     const plain = bytesToHex(new TextEncoder().encode(JSON.stringify({ ssid, pwd, seq })))
     const iv = '00000001000000000000000000000000'
     const expected = await webCryptoAesCtr(key, iv, plain)
@@ -111,14 +110,8 @@ describe('T118: encryptWifiPayload 降级路径（模拟小程序无 WebCrypto�
   })
 
   it('WebCrypto 抛错时，应降级到纯 JS 并产出正确密文', async () => {
-    const fakeSubtle = {
-      importKey: vi.fn().mockRejectedValue(new Error('simulated failure')),
-    }
-    Object.defineProperty(globalThis, 'crypto', {
-      value: { subtle: fakeSubtle },
-      configurable: true,
-      writable: true,
-    })
+    const subtle = (globalThis as any).crypto.subtle
+    vi.spyOn(subtle, 'importKey').mockRejectedValue(new Error('simulated failure'))
 
     const key = 'a1a13b09c2d2e3f4a5b6c7d8e9f0a1b2'
     const seq = 7
@@ -127,7 +120,7 @@ describe('T118: encryptWifiPayload 降级路径（模拟小程序无 WebCrypto�
 
     const fromFallback = await encryptWifiPayload(ssid, pwd, key, seq)
 
-    ;(globalThis as any).crypto = originalCrypto
+    vi.restoreAllMocks()
     const plain = bytesToHex(new TextEncoder().encode(JSON.stringify({ ssid, pwd, seq })))
     const iv = '00000007000000000000000000000000'
     const expected = await webCryptoAesCtr(key, iv, plain)
