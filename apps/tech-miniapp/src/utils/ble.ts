@@ -387,10 +387,18 @@ export async function createBLEConnection(deviceId: string): Promise<boolean> {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        bleLog.error(`连接失败 deviceId=${deviceId}`, err?.errMsg)
+        const errMsg = err?.errMsg || ''
+        // T109: "already connect" 表示设备已处于连接状态，视为连接成功
+        //       （常见于小程序未关闭干净重进、或 selectDevice 后 bindManual 重复连接）
+        if (errMsg.includes('already connect')) {
+          bleLog.info(`设备已连接（already connect），视为连接成功 deviceId=${deviceId}`)
+          resolve(true)
+          return
+        }
+        bleLog.error(`连接失败 deviceId=${deviceId}`, errMsg)
         // T109: 失败时主动 closeBLEConnection 释放微信内部"连接中"状态
         uni.closeBLEConnection({ deviceId, fail: () => {} })
-        reject(new Error(`连接失败: ${err.errMsg}`))
+        reject(new Error(`连接失败: ${errMsg}`))
       },
     })
   })
