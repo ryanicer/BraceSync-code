@@ -44,6 +44,9 @@ function decodeUtf8(bytes: Uint8Array): string {
   return result
 }
 
+// T109 修复版本标识（通过日志可确认小顾测试的是否是修复版）
+const BLE_FIX_VERSION = 'T109-fix-v2-close-before-connect'
+
 const H5_BLUETOOTH_ERROR = '蓝牙功能仅支持真机使用，请在手机上操作'
 
 // BLE GATT UUID（协议定稿 §1）
@@ -235,7 +238,7 @@ export async function initBluetooth(): Promise<boolean> {
   if (isH5()) {
     throw new Error(H5_BLUETOOTH_ERROR)
   }
-  bleLog.info('initBluetooth 入口，调用 openBluetoothAdapter')
+  bleLog.info(`initBluetooth 入口 version=${BLE_FIX_VERSION}，调用 openBluetoothAdapter`)
   return new Promise((resolve, reject) => {
     uni.openBluetoothAdapter({
       success: () => {
@@ -361,14 +364,32 @@ export async function createBLEConnection(deviceId: string): Promise<boolean> {
     return false
   }
   return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      bleLog.error(`createBLEConnection 超时（10s）deviceId=${deviceId}，清理连接状态`)
+      // 超时必须 closeBLEConnection 释放微信内部"连接中"状态，否则后续重连必报 create BLE connect fail
+      uni.closeBLEConnection({ deviceId, fail: () => {} })
+      reject(new Error('连接超时，请靠近设备后重试'))
+    }, 10000)
     uni.createBLEConnection({
       deviceId,
+      timeout: 10000,
       success: () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
         bleLog.info(`连接成功 deviceId=${deviceId}`)
         resolve(true)
       },
       fail: (err) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
         bleLog.error(`连接失败 deviceId=${deviceId}`, err?.errMsg)
+        // T109: 失败时主动 closeBLEConnection 释放微信内部"连接中"状态
+        uni.closeBLEConnection({ deviceId, fail: () => {} })
         reject(new Error(`连接失败: ${err.errMsg}`))
       },
     })
@@ -386,47 +407,68 @@ export async function connectDevice(deviceId: string): Promise<boolean> {
   if (isH5()) {
     return true
   }
-  bleLog.info(`connectDevice 入口 deviceId=${deviceId}`)
-  await createBLEConnection(deviceId)
+  bleLog.info(`connectDevice 入口 version=${BLE_FIX_VERSION} deviceId=${deviceId}`)
+  // T109: 连接前先 closeBLEConnection 清理可能残留的"连接中"状态。
+  //       若上次连接失败/超时未释放，微信内部会认为设备仍在连接中，
+  //       再次 createBLEConnection 直接报 "create BLE connect fail"。
+  try {
+    await closeBLEConnection(deviceId)
+  } catch (e) {
+    bleLog.warn(`connectDevice 前置 closeBLEConnection 异常（忽略）`, e instanceof Error ? e.message : String(e))
+  }
+  try {
+    await createBLEConnection(deviceId)
+  } catch (e) {
+    // createBLEConnection 内部已 closeBLEConnection 清理，这里直接抛出
+    throw e
+  }
   // Android 兼容：连接后延时再发现服务
   await new Promise((r) => setTimeout(r, 300))
-  const services = await new Promise<string[]>((resolve, reject) => {
-    uni.getBLEDeviceServices({
-      deviceId,
-      success: (res) => {
-        const uuids = (res.services || []).map((s: any) => s.uuid)
-        bleLog.info(`getBLEDeviceServices 成功，服务列表=${JSON.stringify(uuids)}`)
-        resolve(uuids)
-      },
-      fail: (err) => {
-        bleLog.error(`getBLEDeviceServices 失败`, err?.errMsg)
-        reject(new Error(`服务发现失败: ${err.errMsg}`))
-      },
+  try {
+    const services = await new Promise<string[]>((resolve, reject) => {
+      uni.getBLEDeviceServices({
+        deviceId,
+        success: (res) => {
+          const uuids = (res.services || []).map((s: any) => s.uuid)
+          bleLog.info(`getBLEDeviceServices 成功，服务列表=${JSON.stringify(uuids)}`)
+          resolve(uuids)
+        },
+        fail: (err) => {
+          bleLog.error(`getBLEDeviceServices 失败`, err?.errMsg)
+          reject(new Error(`服务发现失败: ${err.errMsg}`))
+        },
+      })
     })
-  })
-  // 确认目标服务存在
-  const targetService = services.find(
-    (u) => u.toLowerCase() === SERVICE_UUID.toLowerCase()
-  )
-  if (!targetService) {
-    bleLog.warn(`未找到目标服务 ${SERVICE_UUID}，可用服务=${JSON.stringify(services)}`)
-    throw new Error('设备未暴露 BraceSync 服务，请确认设备固件版本')
+    // 确认目标服务存在
+    const targetService = services.find(
+      (u) => u.toLowerCase() === SERVICE_UUID.toLowerCase()
+    )
+    if (!targetService) {
+      bleLog.warn(`未找到目标服务 ${SERVICE_UUID}，可用服务=${JSON.stringify(services)}`)
+      throw new Error('设备未暴露 BraceSync 服务，请确认设备固件版本')
+    }
+    await new Promise<void>((resolve, reject) => {
+      uni.getBLEDeviceCharacteristics({
+        deviceId,
+        serviceId: SERVICE_UUID,
+        success: (res) => {
+          const chars = (res.characteristics || []).map((c: any) => c.uuid)
+          bleLog.info(`getBLEDeviceCharacteristics 成功，特征列表=${JSON.stringify(chars)}`)
+          resolve()
+        },
+        fail: (err) => {
+          bleLog.error(`getBLEDeviceCharacteristics 失败`, err?.errMsg)
+          reject(new Error(`特征发现失败: ${err.errMsg}`))
+        },
+      })
+    })
+  } catch (e) {
+    // T109: 连接已建立但服务/特征发现失败 → 必须 closeBLEConnection 释放连接，
+    //       否则微信内部认为设备已连接，后续重连必报 "create BLE connect fail"。
+    bleLog.warn(`connectDevice 服务发现失败，关闭已建立的连接 deviceId=${deviceId}`)
+    await closeBLEConnection(deviceId)
+    throw e
   }
-  await new Promise<void>((resolve, reject) => {
-    uni.getBLEDeviceCharacteristics({
-      deviceId,
-      serviceId: SERVICE_UUID,
-      success: (res) => {
-        const chars = (res.characteristics || []).map((c: any) => c.uuid)
-        bleLog.info(`getBLEDeviceCharacteristics 成功，特征列表=${JSON.stringify(chars)}`)
-        resolve()
-      },
-      fail: (err) => {
-        bleLog.error(`getBLEDeviceCharacteristics 失败`, err?.errMsg)
-        reject(new Error(`特征发现失败: ${err.errMsg}`))
-      },
-    })
-  })
   bleLog.info(`connectDevice 完成 deviceId=${deviceId}`)
   return true
 }
