@@ -71,7 +71,7 @@ import { ref, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { useDeviceStore } from '../../stores/device'
 import { useInstallStore } from '../../stores/install'
-import { discoverDevices, initBluetooth, connectDevice, readDeviceInfo } from '../../utils/ble'
+import { discoverDevices, initBluetooth, connectDevice, readDeviceInfo, registerBleStateListener, closeBLEConnection } from '../../utils/ble'
 import { bleLog } from '../../utils/ble-log'
 import { bindDevice } from '../../api/device'
 import { createInstall } from '../../api/install'
@@ -196,6 +196,19 @@ async function scanBLE() {
 
 async function selectDevice(deviceId: string) {
   try {
+    // T109: 若已连接同一设备，直接复用，避免重复连接触发 Android 断连
+    if (installStore.bleConnected && installStore.bleDeviceId === deviceId) {
+      bleLog.info(`selectDevice 设备已连接，复用 deviceId=${deviceId}`)
+      manualDeviceId.value = deviceId
+      showToast('设备已连接')
+      return
+    }
+    // T109: 若已连接其他设备，先断开旧连接
+    if (installStore.bleConnected && installStore.bleDeviceId && installStore.bleDeviceId !== deviceId) {
+      bleLog.info(`selectDevice 断开旧连接 old=${installStore.bleDeviceId} new=${deviceId}`)
+      await closeBLEConnection(installStore.bleDeviceId)
+      installStore.setBleDisconnected()
+    }
     uni.showLoading({ title: '连接中...' })
     await initBluetooth()
     // T109: 使用 connectDevice（含 GATT 服务发现），连接后可直接读 B514 设备信息
@@ -231,6 +244,16 @@ onMounted(() => {
   if (!authStore.isLoggedIn) {
     uni.reLaunch({ url: '/pages/login/index' })
   }
+  // T109: 注册 BLE 断连监听，保持 store 与实际连接状态同步。
+  //       若设备意外断开（如固件超时），及时更新 bleConnected，
+  //       避免"实际已断连但 store 仍显示已连接"导致重连失败。
+  registerBleStateListener((deviceId, connected) => {
+    if (!connected && installStore.bleDeviceId === deviceId) {
+      bleLog.info(`bind 页检测到 BLE 断连 deviceId=${deviceId}，更新 store 状态`)
+      installStore.setBleDisconnected()
+      deviceStore.setBleConnected(false)
+    }
+  })
 })
 </script>
 

@@ -312,7 +312,8 @@ func (h *Handler) saveBaseline(c *gin.Context) {
 		return
 	}
 	calibrator := operatorID(c, req.CalibratorID)
-	if _, appErr := h.svc.SaveBaseline(c.Request.Context(), installID, req.OffsetValues, calibrator); appErr != nil {
+	baselineID, appErr := h.svc.SaveBaseline(c.Request.Context(), installID, req.OffsetValues, calibrator)
+	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
@@ -330,7 +331,7 @@ func (h *Handler) saveBaseline(c *gin.Context) {
 			return
 		}
 	}
-	ok(c, nil)
+	ok(c, gin.H{"baselineId": strconv.FormatInt(baselineID, 10)})
 }
 
 // report 上报/补传状态校正（internal：data-service 联动或运维手工；不经网关）

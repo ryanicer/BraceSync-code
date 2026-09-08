@@ -44,6 +44,9 @@ function decodeUtf8(bytes: Uint8Array): string {
   return result
 }
 
+// T109 修复版本标识（通过日志可确认小顾测试的是否是修复版）
+const BLE_FIX_VERSION = 'T109-fix-v2-close-before-connect'
+
 const H5_BLUETOOTH_ERROR = '蓝牙功能仅支持真机使用，请在手机上操作'
 
 // BLE GATT UUID（协议定稿 §1）
@@ -235,7 +238,7 @@ export async function initBluetooth(): Promise<boolean> {
   if (isH5()) {
     throw new Error(H5_BLUETOOTH_ERROR)
   }
-  bleLog.info('initBluetooth 入口，调用 openBluetoothAdapter')
+  bleLog.info(`initBluetooth 入口 version=${BLE_FIX_VERSION}，调用 openBluetoothAdapter`)
   return new Promise((resolve, reject) => {
     uni.openBluetoothAdapter({
       success: () => {
@@ -361,15 +364,41 @@ export async function createBLEConnection(deviceId: string): Promise<boolean> {
     return false
   }
   return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      bleLog.error(`createBLEConnection 超时（10s）deviceId=${deviceId}，清理连接状态`)
+      // 超时必须 closeBLEConnection 释放微信内部"连接中"状态，否则后续重连必报 create BLE connect fail
+      uni.closeBLEConnection({ deviceId, fail: () => {} })
+      reject(new Error('连接超时，请靠近设备后重试'))
+    }, 10000)
     uni.createBLEConnection({
       deviceId,
+      timeout: 10000,
       success: () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
         bleLog.info(`连接成功 deviceId=${deviceId}`)
         resolve(true)
       },
       fail: (err) => {
-        bleLog.error(`连接失败 deviceId=${deviceId}`, err?.errMsg)
-        reject(new Error(`连接失败: ${err.errMsg}`))
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        const errMsg = err?.errMsg || ''
+        // T109: "already connect" 表示设备已处于连接状态，视为连接成功
+        //       （常见于小程序未关闭干净重进、或 selectDevice 后 bindManual 重复连接）
+        if (errMsg.includes('already connect')) {
+          bleLog.info(`设备已连接（already connect），视为连接成功 deviceId=${deviceId}`)
+          resolve(true)
+          return
+        }
+        bleLog.error(`连接失败 deviceId=${deviceId}`, errMsg)
+        // T109: 失败时主动 closeBLEConnection 释放微信内部"连接中"状态
+        uni.closeBLEConnection({ deviceId, fail: () => {} })
+        reject(new Error(`连接失败: ${errMsg}`))
       },
     })
   })
@@ -386,47 +415,89 @@ export async function connectDevice(deviceId: string): Promise<boolean> {
   if (isH5()) {
     return true
   }
-  bleLog.info(`connectDevice 入口 deviceId=${deviceId}`)
-  await createBLEConnection(deviceId)
+  bleLog.info(`connectDevice 入口 version=${BLE_FIX_VERSION} deviceId=${deviceId}`)
+  // T109: 连接前先 closeBLEConnection 清理可能残留的"连接中"状态。
+  //       若上次连接失败/超时未释放，微信内部会认为设备仍在连接中，
+  //       再次 createBLEConnection 直接报 "create BLE connect fail"。
+  try {
+    await closeBLEConnection(deviceId)
+  } catch (e) {
+    bleLog.warn(`connectDevice 前置 closeBLEConnection 异常（忽略）`, e instanceof Error ? e.message : String(e))
+  }
+  try {
+    await createBLEConnection(deviceId)
+  } catch (e) {
+    // createBLEConnection 内部已 closeBLEConnection 清理，这里直接抛出
+    throw e
+  }
   // Android 兼容：连接后延时再发现服务
   await new Promise((r) => setTimeout(r, 300))
-  const services = await new Promise<string[]>((resolve, reject) => {
-    uni.getBLEDeviceServices({
-      deviceId,
-      success: (res) => {
-        const uuids = (res.services || []).map((s: any) => s.uuid)
-        bleLog.info(`getBLEDeviceServices 成功，服务列表=${JSON.stringify(uuids)}`)
-        resolve(uuids)
-      },
-      fail: (err) => {
-        bleLog.error(`getBLEDeviceServices 失败`, err?.errMsg)
-        reject(new Error(`服务发现失败: ${err.errMsg}`))
-      },
+  try {
+    const services = await new Promise<string[]>((resolve, reject) => {
+      uni.getBLEDeviceServices({
+        deviceId,
+        success: (res) => {
+          const uuids = (res.services || []).map((s: any) => s.uuid)
+          bleLog.info(`getBLEDeviceServices 成功，服务列表=${JSON.stringify(uuids)}`)
+          resolve(uuids)
+        },
+        fail: (err) => {
+          bleLog.error(`getBLEDeviceServices 失败`, err?.errMsg)
+          reject(new Error(`服务发现失败: ${err.errMsg}`))
+        },
+      })
     })
-  })
-  // 确认目标服务存在
-  const targetService = services.find(
-    (u) => u.toLowerCase() === SERVICE_UUID.toLowerCase()
-  )
-  if (!targetService) {
-    bleLog.warn(`未找到目标服务 ${SERVICE_UUID}，可用服务=${JSON.stringify(services)}`)
-    throw new Error('设备未暴露 BraceSync 服务，请确认设备固件版本')
+    // 确认目标服务存在
+    const targetService = services.find(
+      (u) => u.toLowerCase() === SERVICE_UUID.toLowerCase()
+    )
+    if (!targetService) {
+      bleLog.warn(`未找到目标服务 ${SERVICE_UUID}，可用服务=${JSON.stringify(services)}`)
+      throw new Error('设备未暴露 BraceSync 服务，请确认设备固件版本')
+    }
+    await new Promise<void>((resolve, reject) => {
+      uni.getBLEDeviceCharacteristics({
+        deviceId,
+        serviceId: SERVICE_UUID,
+        success: (res) => {
+          const chars = (res.characteristics || []).map((c: any) => c.uuid)
+          bleLog.info(`getBLEDeviceCharacteristics 成功，特征列表=${JSON.stringify(chars)}`)
+          resolve()
+        },
+        fail: (err) => {
+          bleLog.error(`getBLEDeviceCharacteristics 失败`, err?.errMsg)
+          reject(new Error(`特征发现失败: ${err.errMsg}`))
+        },
+      })
+    })
+    // T109: 协商更大 MTU（默认 ATT MTU=23，单次 Notify 最多 20 字节；
+    //       B513 每帧 40 字节需拆 2 包，协商 MTU=247 可单包传输）。
+    //       失败不阻断（分包拼接兜底）。
+    try {
+      await new Promise<void>((resolve) => {
+        uni.setBLEMTU({
+          deviceId,
+          mtu: 247,
+          success: (res: any) => {
+            bleLog.info(`setBLEMTU 协商成功 mtu=${res?.mtu || 247}`)
+            resolve()
+          },
+          fail: (err) => {
+            bleLog.warn(`setBLEMTU 协商失败（不阻断，走分包拼接）`, err?.errMsg)
+            resolve()
+          },
+        })
+      })
+    } catch (e) {
+      bleLog.warn(`setBLEMTU 异常（忽略）`, e instanceof Error ? e.message : String(e))
+    }
+  } catch (e) {
+    // T109: 连接已建立但服务/特征发现失败 → 必须 closeBLEConnection 释放连接，
+    //       否则微信内部认为设备已连接，后续重连必报 "create BLE connect fail"。
+    bleLog.warn(`connectDevice 服务发现失败，关闭已建立的连接 deviceId=${deviceId}`)
+    await closeBLEConnection(deviceId)
+    throw e
   }
-  await new Promise<void>((resolve, reject) => {
-    uni.getBLEDeviceCharacteristics({
-      deviceId,
-      serviceId: SERVICE_UUID,
-      success: (res) => {
-        const chars = (res.characteristics || []).map((c: any) => c.uuid)
-        bleLog.info(`getBLEDeviceCharacteristics 成功，特征列表=${JSON.stringify(chars)}`)
-        resolve()
-      },
-      fail: (err) => {
-        bleLog.error(`getBLEDeviceCharacteristics 失败`, err?.errMsg)
-        reject(new Error(`特征发现失败: ${err.errMsg}`))
-      },
-    })
-  })
   bleLog.info(`connectDevice 完成 deviceId=${deviceId}`)
   return true
 }
@@ -505,6 +576,8 @@ let realtimeTimer: ReturnType<typeof setInterval> | null = null
 let realtimeCallback: ((frame: number[]) => void) | null = null
 let realtimeNotifyRegistered = false
 let realtimeDeviceId = ''
+// T109: B513 分包拼接缓冲区（默认 MTU 下 40 字节帧被拆成 2×20 字节 Notify）
+let realtimeBuffer: number[] = []
 
 /**
  * 启动 BLE 实时压力推送
@@ -529,24 +602,34 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
       deviceId,
       serviceId: SERVICE_UUID,
       characteristicId: CHAR_REALTIME,
+      state: true,
       success: () => bleLog.info('B513 Notify 订阅成功'),
       fail: (err) => bleLog.error('B513 Notify 订阅失败', err?.errMsg),
     })
     uni.onBLECharacteristicValueChange((res) => {
       if (res.characteristicId?.toLowerCase() !== CHAR_REALTIME.toLowerCase()) return
       try {
-        const bytes = new Uint8Array(res.value)
-        // 20 个 uint16 小端 → number[20]（÷100 转 N）
-        const frame: number[] = []
-        for (let i = 0; i < 20 && i * 2 + 1 < bytes.length; i++) {
-          const raw = bytes[i * 2] | (bytes[i * 2 + 1] << 8)
-          const signed = raw > 32767 ? raw - 65536 : raw
-          frame.push(signed / 100)
+        const bytes = Array.from(new Uint8Array(res.value))
+        // T109: 分包拼接——默认 MTU 下 40 字节帧被拆成 2×20 字节 Notify
+        realtimeBuffer.push(...bytes)
+        // 防异常累积：超过 2 帧（80 字节）清空重置
+        if (realtimeBuffer.length > 80) {
+          bleLog.warn(`B513 缓冲区溢出（${realtimeBuffer.length}B），清空重置`)
+          realtimeBuffer = []
+          return
         }
-        if (frame.length === 20) {
+        bleLog.info(`B513 收到 ${bytes.length}B，缓冲区=${realtimeBuffer.length}B`)
+        // 凑够 40 字节解析一帧
+        while (realtimeBuffer.length >= 40) {
+          const frameBytes = realtimeBuffer.splice(0, 40)
+          const frame: number[] = []
+          for (let i = 0; i < 20; i++) {
+            const raw = frameBytes[i * 2] | (frameBytes[i * 2 + 1] << 8)
+            const signed = raw > 32767 ? raw - 65536 : raw
+            frame.push(signed / 100)
+          }
+          bleLog.info(`B513 解析一帧 P01..P05=${frame.slice(0, 5).map((v) => v.toFixed(2)).join(',')}N`)
           realtimeCallback?.(frame)
-        } else {
-          bleLog.warn(`B513 数据帧长度不符：期望 40 字节，实际 ${bytes.length} 字节，解析出 ${frame.length} 点`)
         }
       } catch (e) {
         bleLog.error('B513 数据解析失败', e instanceof Error ? e.message : String(e))
@@ -578,6 +661,7 @@ export async function stopRealtimePressure(deviceId: string): Promise<void> {
     clearInterval(realtimeTimer)
     realtimeTimer = null
   }
+  realtimeBuffer = []
   if (isH5()) return
   bleLog.info(`stopRealtimePressure deviceId=${deviceId}，写入 0x00 停止 B513 Notify`)
   await new Promise<void>((resolve) => {
@@ -678,6 +762,7 @@ export function onWifiStatus(cb: (code: number) => void, deviceId?: string): voi
     deviceId: wifiStatusDeviceId,
     serviceId: SERVICE_UUID,
     characteristicId: CHAR_WIFI_STATUS,
+    state: true,
     success: () => bleLog.info('B512 Notify 订阅成功'),
     fail: (err) => bleLog.error('B512 Notify 订阅失败', err?.errMsg),
   })

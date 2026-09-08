@@ -189,6 +189,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
 import { saveBaseline } from '../../api/baseline'
+import { bleLog } from '../../utils/ble-log'
 import { updateInstallMeta } from '../../api/install'
 import {
   startRealtimePressure,
@@ -301,13 +302,18 @@ async function finalizeCalibration() {
   }
   installStore.setCalibrationData(result)
 
-  // 保存基线（installId 必填，mock 先行）
-  const bs = await saveBaseline(
-    installStore.installId!,
-    offsets,
-    installStore.deviceId
-  )
-  installStore.setBaselineSaved(bs.baselineId)
+  // 保存基线（后端 T084 未实现时失败不阻断校准完成）
+  try {
+    const bs = await saveBaseline(
+      installStore.installId!,
+      offsets,
+      installStore.deviceId
+    )
+    installStore.setBaselineSaved(bs.baselineId)
+  } catch (e) {
+    bleLog.warn('saveBaseline 失败（不阻断校准）', e instanceof Error ? e.message : String(e))
+    uni.showToast({ title: '基线保存失败，校准仍有效', icon: 'none' })
+  }
   calibrated.value = true
 }
 

@@ -1,4 +1,4 @@
-﻿import { request, USE_MOCK } from '../utils/request'
+import { request, USE_MOCK } from '../utils/request'
 
 /**
  * 保存基线（真实：POST /baselines，后端 T084 未实现 → mock 先行）
