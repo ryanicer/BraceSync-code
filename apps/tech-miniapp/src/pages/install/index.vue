@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <view class="page">
     <view class="page-header">
       <text class="back-link" @click="goBack">← 返回</text>
@@ -194,8 +194,9 @@ import {
   startRealtimePressure,
   stopRealtimePressure,
   onRealtimeFrame,
-  createBLEConnection,
+  connectDevice,
   initBluetooth,
+  registerBleStateListener,
 } from '../../utils/ble'
 import type { CalibrationResult, PatientProfile } from '../../types/app-extends'
 
@@ -282,7 +283,7 @@ async function startCalibration() {
 
 async function finalizeCalibration() {
   if (collectTimer) { clearInterval(collectTimer); collectTimer = null }
-  await stopRealtimePressure(installStore.bleDeviceId || installStore.deviceId)
+  await stopRealtimePressure(installStore.bleDeviceId || '')
   installStore.stopRealtimeStream()
   calibrating.value = false
 
@@ -311,13 +312,20 @@ async function finalizeCalibration() {
 }
 
 async function reconnectBLE() {
+  // T109: 重连必须用 BLE MAC（bleDeviceId），不能回退到后端设备 ID
+  const mac = installStore.bleDeviceId
+  if (!mac) {
+    uni.showToast({ title: '请先在绑定页扫描并连接设备', icon: 'none' })
+    return
+  }
   try {
     await initBluetooth()
-    const ok = await createBLEConnection(installStore.bleDeviceId || installStore.deviceId)
-    installStore.setBleConnected(ok, installStore.bleDeviceId || installStore.deviceId)
+    const ok = await connectDevice(mac)
+    installStore.setBleConnected(ok, mac)
     deviceStore.setBleConnected(ok)
     uni.showToast({ title: ok ? '蓝牙已连接' : '连接失败，请靠近设备', icon: 'none' })
   } catch (e) {
+    installStore.setBleConnected(false)
     uni.showToast({ title: '蓝牙连接失败', icon: 'none' })
   }
 }
@@ -385,7 +393,15 @@ onMounted(() => {
   if (!installStore.installId) {
     uni.showToast({ title: '请先完成设备绑定', icon: 'none' })
     setTimeout(() => uni.redirectTo({ url: '/pages/bind/index' }), 1500)
+    return
   }
+  // T109: 注册 BLE 连接状态监听，设备意外断连时更新 store 状态（保留 MAC 供重连）
+  registerBleStateListener((deviceId, connected) => {
+    if (!connected) {
+      installStore.setBleDisconnected()
+      deviceStore.setBleConnected(false)
+    }
+  })
 })
 
 onUnmounted(() => {

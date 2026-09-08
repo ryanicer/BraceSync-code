@@ -195,17 +195,18 @@ async function startWifiConfig() {
     const seq = installStore.nextWifiSeq()
     const encrypted = await encryptWifiPayload(ssid, password.value, provision_key_hex, seq)
 
-    // 3. BLE 写入加密配置
-    await writeWifiConfigV2(installStore.deviceId, encrypted)
+    // 3. BLE 写入加密配置（T109: 用 BLE MAC，非后端设备 ID）
+    const bleMac = installStore.bleDeviceId || installStore.deviceId
+    await writeWifiConfigV2(bleMac, encrypted)
 
-    // 4. 监听配网状态
+    // 4. 监听配网状态（T109: 传入 BLE MAC 以订阅 B512 Notify）
     statusListener = (code: number) => {
       wifiStatusCode.value = code
       statusHistory.push(code)
       if (code === 9) handleSuccess(ssid)
       else if (code < 0) handleError(code)
     }
-    onWifiStatus(statusListener)
+    onWifiStatus(statusListener, bleMac)
 
     // H5 mock：启动状态机序列
     // T089-MOCK: 真机由硬件 WiFi Status Notify 驱动
