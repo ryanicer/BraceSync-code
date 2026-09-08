@@ -144,6 +144,17 @@ type reportRequest struct {
 	FaultCode int   `json:"fault_code"`
 }
 
+// BindResponseDTO 绑定/换绑响应体（对齐前端 bindDevice 契约）
+type BindResponseDTO struct {
+	model.DeviceDTO
+	Swapped bool `json:"swapped"` // true=本次为换绑（旧 binding 已关闭）
+}
+
+// toBindResponse service.BindResult → 前端响应 DTO
+func toBindResponse(r *service.BindResult) BindResponseDTO {
+	return BindResponseDTO{DeviceDTO: r.Device.ToDTO(), Swapped: r.Rebound}
+}
+
 // ─────────────────────────────────────────────────────────────
 // 处理器
 // ─────────────────────────────────────────────────────────────
@@ -187,19 +198,19 @@ func (h *Handler) listBindings(c *gin.Context) {
 	ok(c, gin.H{"list": list})
 }
 
-// bind 绑定（契约 bindDevice → ApiResponse<null>；互斥：已被他患者绑定 → 409）
+// bind 绑定（契约 bindDevice → ApiResponse<BindResponseDTO>；互斥：已被他患者绑定 → 自动换绑）
 func (h *Handler) bind(c *gin.Context) {
 	var req bindRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	_, appErr := h.svc.Bind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
+	result, appErr := h.svc.Bind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
-	ok(c, nil)
+	ok(c, toBindResponse(result))
 }
 
 // rebind 换绑（旧绑定写 unbind_at+reason=rebind+operator，历史可追溯）
@@ -209,12 +220,12 @@ func (h *Handler) rebind(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	_, appErr := h.svc.Rebind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
+	result, appErr := h.svc.Rebind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
-	ok(c, nil)
+	ok(c, toBindResponse(result))
 }
 
 // unbind 解绑（幂等）
