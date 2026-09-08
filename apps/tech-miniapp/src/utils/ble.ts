@@ -520,18 +520,6 @@ export function registerBleStateListener(
   })
 }
 
-// T089-DEPRECATED: 旧明文版 writeWiFiConfig，联调稳定后清理（用 writeWifiConfigV2 替代）
-export async function writeWiFiConfig(ssid: string, password: string): Promise<boolean> {
-  if (isH5()) {
-    throw new Error(H5_BLUETOOTH_ERROR)
-  }
-  const payload = JSON.stringify({ ssid, password })
-  const buffer = new TextEncoder().encode(payload)
-  return new Promise((resolve) => {
-    resolve(Boolean(buffer.byteLength > 0))
-  })
-}
-
 export async function closeBLEConnection(deviceId: string): Promise<void> {
   if (isH5()) {
     return
