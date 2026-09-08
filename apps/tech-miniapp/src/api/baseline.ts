@@ -1,4 +1,4 @@
-﻿import { request, USE_MOCK } from '../utils/request'
+import { request, USE_MOCK } from '../utils/request'
 
 /**
  * 保存基线（真实：POST /baselines，后端 T084 未实现 → mock 先行）
@@ -17,9 +17,12 @@ export async function saveBaseline(
     const suffix = Math.random().toString(36).slice(2, 8)
     return { baselineId: `BSL-${Date.now().toString().slice(-6)}-${suffix}` }
   }
-  return request<{ baselineId: string }>({
+  // T109: 后端 POST /baselines 已实现但返回 data:null（对齐契约待后端补 baselineId），
+  //       前端兼容 null 返回，避免基线保存失败阻断校准流程。
+  const data = await request<{ baselineId: string } | null>({
     url: '/api/v1/baselines',
     method: 'POST',
     data: { installId, offsetValues, deviceId },
   })
+  return { baselineId: data?.baselineId || '' }
 }
