@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { webcrypto } from 'node:crypto'
 import { encryptWifiPayload, _aesCtrEncryptForTest } from '../src/utils/aes-ctr'
+
+// CI Node 18 默认不挂 globalThis.crypto（需 --experimental-global-webcrypto），
+// 用 node:crypto 的 webcrypto 兜底，等价性测试与 webCryptoAesCtr 才能运行。
+// Node 15+ 均提供 crypto.webcrypto。
+if (!(globalThis as any).crypto) {
+  ;(globalThis as any).crypto = webcrypto
+}
 
 /**
  * 用 WebCrypto 加密作为"已知正确"参照，与纯 JS 实现逐字节比对。
