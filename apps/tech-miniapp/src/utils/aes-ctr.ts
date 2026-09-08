@@ -10,7 +10,43 @@
  *  - H5 / 现代小程序环境：优先使用 WebCrypto SubtleCrypto 的 AES-CTR（crypto.subtle 支持）
  *  - 不支持 WebCrypto 时：降级为"占位密文"（mock 模式下 UI 仍可跑通；真机需 WebCrypto 或后续换 aes-js）
  *  - 不引入新三方 npm 依赖，避免 CI 扰动
+ *
+ * T115: 微信小程序运行时不含 TextEncoder，手动实现 UTF-8 编码（与 ble.ts decodeUtf8 对称）。
  */
+
+/**
+ * 手动 UTF-8 编码（微信小程序不支持 TextEncoder，T115）
+ * 支持 BMP 与代理对（emoji 等），输出严格等价于 TextEncoder.encode。
+ */
+function encodeUtf8(str: string): Uint8Array {
+  const bytes: number[] = []
+  for (let i = 0; i < str.length; i++) {
+    let code = str.charCodeAt(i)
+    // 代理对：高代理 0xD800-0xDBFF 后接低代理 0xDC00-0xDFFF
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
+      const low = str.charCodeAt(i + 1)
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00)
+        i++
+      }
+    }
+    if (code < 0x80) {
+      bytes.push(code)
+    } else if (code < 0x800) {
+      bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f))
+    } else if (code < 0x10000) {
+      bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+    } else {
+      bytes.push(
+        0xf0 | (code >> 18),
+        0x80 | ((code >> 12) & 0x3f),
+        0x80 | ((code >> 6) & 0x3f),
+        0x80 | (code & 0x3f)
+      )
+    }
+  }
+  return new Uint8Array(bytes)
+}
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2)
@@ -53,7 +89,7 @@ export async function encryptWifiPayload(
   seq: number
 ): Promise<string> {
   const plaintext = JSON.stringify({ ssid, pwd, seq })
-  const plainBytes = new TextEncoder().encode(plaintext)
+  const plainBytes = encodeUtf8(plaintext)
   const keyBytes = hexToBytes(provisionKeyHex)
   const iv = buildIv(seq)
 
