@@ -626,8 +626,10 @@ export async function readDeviceInfo(deviceId: string): Promise<{
     })
     // 3s 超时兜底
     setTimeout(() => {
-      bleLog.warn('B514 读取超时')
-      finish(null)
+      if (!settled) {
+        bleLog.warn('B514 读取超时')
+        finish(null)
+      }
     }, 3000)
   })
 }
