@@ -113,7 +113,13 @@ func TestBindUnbindHTTP(t *testing.T) {
 		map[string]string{"patientId": "P-100"}, map[string]string{"X-User-Id": "TECH-8"})
 	assert.Equal(t, http.StatusOK, status)
 	assert.Equal(t, model.CodeOK, resp.Code)
-	assert.Equal(t, "null", string(resp.Data), "契约 bindDevice → ApiResponse<null>")
+
+	// 契约 bindDevice → ApiResponse<BindResponseDTO>（非 null）
+	var bindResp BindResponseDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &bindResp))
+	assert.Equal(t, "DEV-H-002", bindResp.DeviceID)
+	assert.Equal(t, model.StatusOffline, bindResp.Status, "unbound→offline")
+	assert.False(t, bindResp.Swapped, "首绑非换绑")
 
 	// 绑定历史含 operator
 	status, resp = env.do(t, http.MethodGet, "/api/v1/devices/DEV-H-002/bindings", nil, nil)
@@ -301,6 +307,12 @@ func TestRebindHTTP(t *testing.T) {
 	assert.Equal(t, http.StatusOK, status)
 	assert.Equal(t, model.CodeOK, resp.Code)
 
+	// 换绑响应 swapped=true
+	var rebindResp BindResponseDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &rebindResp))
+	assert.True(t, rebindResp.Swapped, "第二绑应为换绑")
+	assert.Equal(t, "P-501", *rebindResp.PatientID)
+
 	// 显式 rebind 路由：先解绑，无 active binding 时 rebind → 409
 	status, resp = env.do(t, http.MethodPost, "/api/v1/devices/DEV-H-008/unbind", nil, nil)
 	require.Equal(t, http.StatusOK, status)
@@ -317,6 +329,12 @@ func TestRebindHTTP(t *testing.T) {
 		map[string]string{"patientId": "P-501"}, map[string]string{"X-User-Id": "TECH-X"})
 	assert.Equal(t, http.StatusOK, status)
 	assert.Equal(t, model.CodeOK, resp.Code)
+
+	// 显式 rebind 响应 swapped=true
+	var explicitRebindResp BindResponseDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &explicitRebindResp))
+	assert.True(t, explicitRebindResp.Swapped, "rebind 路由 swapped=true")
+	assert.Equal(t, "P-501", *explicitRebindResp.PatientID)
 
 	// 绑定历史含 reason=rebind
 	status, resp = env.do(t, http.MethodGet, "/api/v1/devices/DEV-H-008/bindings", nil, nil)
