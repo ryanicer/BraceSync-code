@@ -470,6 +470,27 @@ export async function connectDevice(deviceId: string): Promise<boolean> {
         },
       })
     })
+    // T109: 协商更大 MTU（默认 ATT MTU=23，单次 Notify 最多 20 字节；
+    //       B513 每帧 40 字节需拆 2 包，协商 MTU=247 可单包传输）。
+    //       失败不阻断（分包拼接兜底）。
+    try {
+      await new Promise<void>((resolve) => {
+        uni.setBLEMTU({
+          deviceId,
+          mtu: 247,
+          success: (res: any) => {
+            bleLog.info(`setBLEMTU 协商成功 mtu=${res?.mtu || 247}`)
+            resolve()
+          },
+          fail: (err) => {
+            bleLog.warn(`setBLEMTU 协商失败（不阻断，走分包拼接）`, err?.errMsg)
+            resolve()
+          },
+        })
+      })
+    } catch (e) {
+      bleLog.warn(`setBLEMTU 异常（忽略）`, e instanceof Error ? e.message : String(e))
+    }
   } catch (e) {
     // T109: 连接已建立但服务/特征发现失败 → 必须 closeBLEConnection 释放连接，
     //       否则微信内部认为设备已连接，后续重连必报 "create BLE connect fail"。
@@ -555,6 +576,8 @@ let realtimeTimer: ReturnType<typeof setInterval> | null = null
 let realtimeCallback: ((frame: number[]) => void) | null = null
 let realtimeNotifyRegistered = false
 let realtimeDeviceId = ''
+// T109: B513 分包拼接缓冲区（默认 MTU 下 40 字节帧被拆成 2×20 字节 Notify）
+let realtimeBuffer: number[] = []
 
 /**
  * 启动 BLE 实时压力推送
@@ -586,18 +609,27 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
     uni.onBLECharacteristicValueChange((res) => {
       if (res.characteristicId?.toLowerCase() !== CHAR_REALTIME.toLowerCase()) return
       try {
-        const bytes = new Uint8Array(res.value)
-        // 20 个 uint16 小端 → number[20]（÷100 转 N）
-        const frame: number[] = []
-        for (let i = 0; i < 20 && i * 2 + 1 < bytes.length; i++) {
-          const raw = bytes[i * 2] | (bytes[i * 2 + 1] << 8)
-          const signed = raw > 32767 ? raw - 65536 : raw
-          frame.push(signed / 100)
+        const bytes = Array.from(new Uint8Array(res.value))
+        // T109: 分包拼接——默认 MTU 下 40 字节帧被拆成 2×20 字节 Notify
+        realtimeBuffer.push(...bytes)
+        // 防异常累积：超过 2 帧（80 字节）清空重置
+        if (realtimeBuffer.length > 80) {
+          bleLog.warn(`B513 缓冲区溢出（${realtimeBuffer.length}B），清空重置`)
+          realtimeBuffer = []
+          return
         }
-        if (frame.length === 20) {
+        bleLog.info(`B513 收到 ${bytes.length}B，缓冲区=${realtimeBuffer.length}B`)
+        // 凑够 40 字节解析一帧
+        while (realtimeBuffer.length >= 40) {
+          const frameBytes = realtimeBuffer.splice(0, 40)
+          const frame: number[] = []
+          for (let i = 0; i < 20; i++) {
+            const raw = frameBytes[i * 2] | (frameBytes[i * 2 + 1] << 8)
+            const signed = raw > 32767 ? raw - 65536 : raw
+            frame.push(signed / 100)
+          }
+          bleLog.info(`B513 解析一帧 P01..P05=${frame.slice(0, 5).map((v) => v.toFixed(2)).join(',')}N`)
           realtimeCallback?.(frame)
-        } else {
-          bleLog.warn(`B513 数据帧长度不符：期望 40 字节，实际 ${bytes.length} 字节，解析出 ${frame.length} 点`)
         }
       } catch (e) {
         bleLog.error('B513 数据解析失败', e instanceof Error ? e.message : String(e))
@@ -629,6 +661,7 @@ export async function stopRealtimePressure(deviceId: string): Promise<void> {
     clearInterval(realtimeTimer)
     realtimeTimer = null
   }
+  realtimeBuffer = []
   if (isH5()) return
   bleLog.info(`stopRealtimePressure deviceId=${deviceId}，写入 0x00 停止 B513 Notify`)
   await new Promise<void>((resolve) => {
