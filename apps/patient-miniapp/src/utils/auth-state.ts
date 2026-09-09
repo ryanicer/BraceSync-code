@@ -28,12 +28,32 @@ export interface AuthStateResult {
  * 解析 wx-login 接口 code → 状态 + 去向页面。
  * PRD §7A.1.1：0→SUCCESS，10601→NEED_BIND，10001/401→FAIL，10502/502→ERROR。
  */
-export function resolveWxLoginResult(_code: number): AuthStateResult {
-  // STUB: 固定返回错误占位值，使单测断言失败（红）。Iris 转绿时实现真实映射。
-  return {
-    state: 'ERROR',
-    targetPage: '',
-    message: 'STUB: 未实现',
+export function resolveWxLoginResult(code: number): AuthStateResult {
+  switch (code) {
+    case 0:
+      return { state: 'SUCCESS', targetPage: '/pages/monitor/index' }
+    case 10601:
+      return { state: 'NEED_BIND', targetPage: '/pages/login/bind' }
+    case 10001:
+    case 401:
+      return {
+        state: 'FAIL',
+        targetPage: '',
+        message: '登录失败，请联系门诊工作人员',
+      }
+    case 10502:
+    case 502:
+      return {
+        state: 'ERROR',
+        targetPage: '',
+        message: '微信服务暂不可用，请稍后重试',
+      }
+    default:
+      return {
+        state: 'ERROR',
+        targetPage: '',
+        message: '服务异常，请稍后重试',
+      }
   }
 }
 
@@ -41,11 +61,19 @@ export function resolveWxLoginResult(_code: number): AuthStateResult {
  * 解析 bind-phone 接口 code → 状态 + 去向页面。
  * PRD §7A.1.1：0→BOUND，10602→NO_MATCH，10603→CONFLICT。
  */
-export function resolveBindPhoneResult(_code: number): AuthStateResult {
-  // STUB: 固定返回错误占位值，使单测断言失败（红）。Iris 转绿时实现真实映射。
-  return {
-    state: 'CONFLICT',
-    targetPage: '',
-    message: 'STUB: 未实现',
+export function resolveBindPhoneResult(code: number): AuthStateResult {
+  switch (code) {
+    case 0:
+      return { state: 'BOUND', targetPage: '/pages/monitor/index' }
+    case 10602:
+      return { state: 'NO_MATCH', targetPage: '/pages/login/no-match' }
+    case 10603:
+      return { state: 'CONFLICT', targetPage: '/pages/login/conflict' }
+    default:
+      return {
+        state: 'NO_MATCH',
+        targetPage: '',
+        message: '绑定失败，请稍后重试',
+      }
   }
 }
