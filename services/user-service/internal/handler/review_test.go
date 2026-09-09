@@ -88,11 +88,11 @@ func TestCreateReviewRecord_Success(t *testing.T) {
 	}
 
 	body := map[string]any{
-		"patientId":  "P001",
-		"reviewDate": "2026-09-09",
-		"reviewType": "follow-up",
-		"findings":   "矫正效果良好",
-		"doctorId":   "DOC001",
+		"patientId":    "P001",
+		"reviewDate":   "2026-09-09",
+		"reviewType":   "follow-up",
+		"findings":     "矫正效果良好",
+		"doctorId":     "DOC001",
 		"reportFileId": "FILE001",
 	}
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/review-records", body,

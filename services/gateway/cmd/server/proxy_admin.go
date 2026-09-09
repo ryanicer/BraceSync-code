@@ -113,8 +113,8 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPut, "/admin/settings"},
 
 	// T130 复查记录（合同患者端「复查管理」）
-	{http.MethodPost, "/admin/review-records"},                    // 医生/管理员创建复查记录
-	{http.MethodGet, "/patients/:patientId/review-records"},       // 患者复查记录列表（含报告下载URL）
+	{http.MethodPost, "/admin/review-records"},              // 医生/管理员创建复查记录
+	{http.MethodGet, "/patients/:patientId/review-records"}, // 患者复查记录列表（含报告下载URL）
 }
 
 // deviceServiceRoutes 设备/安装记录管理端列表（T030 #3 patientName join）

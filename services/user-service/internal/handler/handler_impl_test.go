@@ -154,9 +154,9 @@ type fakeStore struct {
 	lastRemoveMType    string
 
 	// T130 复查记录
-	reviewRows     []repo.ReviewRecordRow
-	reviewRowsErr  error
-	createdReview  *repo.ReviewRecordRow
+	reviewRows      []repo.ReviewRecordRow
+	reviewRowsErr   error
+	createdReview   *repo.ReviewRecordRow
 	createReviewErr error
 }
 

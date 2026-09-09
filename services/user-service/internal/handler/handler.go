@@ -78,8 +78,8 @@ type Handler struct {
 	signer           *token.Signer
 	bindSigner       *token.Signer // T085：绑定态 JWT signer（同 secret，ttl=30min）
 	phone            *phone.Cipher
-	wxClient         wxClientI // 接口化：单测注入内存 fake；生产为 *wechat.Client
-	phoneTokenSecret string    // T085：phoneToken 签发/校验密钥（独立于 JWT_SECRET）
+	wxClient         wxClientI      // 接口化：单测注入内存 fake；生产为 *wechat.Client
+	phoneTokenSecret string         // T085：phoneToken 签发/校验密钥（独立于 JWT_SECRET）
 	fileSvc          fileSvcClientI // T130：file-service 客户端（获取报告文件元数据+下载URL）
 }
 

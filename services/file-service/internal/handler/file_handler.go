@@ -223,7 +223,7 @@ func (h *FileHandler) handleDownloadURL(c *gin.Context) {
 		"code":    0,
 		"message": "success",
 		"data": gin.H{
-			"file_id":    resp.FileID,
+			"file_id":      resp.FileID,
 			"download_url": resp.URL,
 			"expires_at":   resp.ExpiresAt.UTC().Format(time.RFC3339),
 		},
