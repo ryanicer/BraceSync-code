@@ -143,3 +143,32 @@ func TestRBAC_DeleteTechnician_BypassClosed(t *testing.T) {
 
 	assert.Empty(t, *received, "DELETE 技师请求不得触达后端")
 }
+
+// TestRBAC_T130_DoctorAdminOnly T130：复查记录创建端点仅 doctor/admin 可访问
+func TestRBAC_T130_DoctorAdminOnly(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	createReviewPath := "/api/v1/admin/review-records"
+
+	// 非 doctor/admin 角色 → 403
+	for _, role := range []string{"ROLE_CS", "technician", "patient"} {
+		code, body := httpDoFull(t, http.MethodPost, gw.URL+createReviewPath, `{}`, rbacToken(t, role))
+		assert.Equal(t, http.StatusForbidden, code, "role=%s POST review-records 应 403", role)
+		assert.Contains(t, body, `"code":403`)
+	}
+
+	// doctor/admin → 放行（转发后端）
+	for _, role := range []string{"ROLE_DOCTOR", "ROLE_ADMIN"} {
+		code, _ := httpDoFull(t, http.MethodPost, gw.URL+createReviewPath, `{}`, rbacToken(t, role))
+		assert.Equal(t, http.StatusOK, code, "role=%s POST review-records 应放行", role)
+	}
+
+	// 患者复查记录列表端点：全角色放行（水平鉴权在 user-service handler 层）
+	for _, role := range []string{"patient", "ROLE_DOCTOR", "ROLE_ADMIN", "ROLE_CS"} {
+		code, _ := httpDoFull(t, http.MethodGet, gw.URL+"/api/v1/patients/P001/review-records", "", rbacToken(t, role))
+		assert.Equal(t, http.StatusOK, code, "role=%s GET review-records 不应被网关 RBAC 拦截", role)
+	}
+
+	assert.Len(t, *received, 6, "doctor/admin create(2) + 全角色 list(4) 应全部转发后端")
+}

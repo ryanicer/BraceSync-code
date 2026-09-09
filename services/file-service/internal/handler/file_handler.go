@@ -51,6 +51,7 @@ func (h *FileHandler) Router() *gin.Engine {
 		api.POST("/presign", h.handlePresignURL)
 		api.POST("/upload-complete", h.handleUploadComplete)
 		api.GET("/query", h.queryFiles)
+		api.GET("/:fileID/download", h.handleDownloadURL) // T130 下载预签名 URL
 		api.GET("/:fileID", h.getFileByID)
 	}
 	return r
@@ -90,6 +91,11 @@ func (h *FileHandler) handlePresignURL(c *gin.Context) {
 	// 参数合法性先于授权（非法类型对任何角色都是 400，避免角色探测）
 	if !model.ValidFileType(fileType) {
 		errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "unsupported file_type")
+		return
+	}
+	// T130 R4-a 硬约束：复查报告 MIME 必须在白名单内（pdf/jpg/png）
+	if fileType == model.FileTypeReviewReport && !service.ValidReviewReportContentType(req.ContentType) {
+		errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "unsupported content_type for review_report (allow: pdf/jpg/png)")
 		return
 	}
 	// 端点级授权：角色 × 文件类型矩阵（service.Authorize，任务需求 4）
@@ -188,6 +194,40 @@ func (h *FileHandler) getFileByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": fm})
+}
+
+// handleDownloadURL 签发文件下载预签名 URL（T130 复查报告下载）
+// GET /api/v1/files/:fileID/download
+func (h *FileHandler) handleDownloadURL(c *gin.Context) {
+	if _, _, ok := identity(c); !ok {
+		errorJSON(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "user identity missing")
+		return
+	}
+
+	fileID := c.Param("fileID")
+	resp, err := h.presigner.GenerateDownloadURL(c.Request.Context(), fileID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrFileNotFound):
+			errorJSON(c, http.StatusNotFound, ErrorCodeFileNotFound, "file not found or not uploaded")
+		case errors.Is(err, service.ErrInvalidRequest):
+			errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid file id")
+		default:
+			log.Error().Err(err).Str("file_id", fileID).Msg("generate download url failed")
+			errorJSON(c, http.StatusInternalServerError, ErrorCodePresignFailed, "failed to generate download url")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "success",
+		"data": gin.H{
+			"file_id":    resp.FileID,
+			"download_url": resp.URL,
+			"expires_at":   resp.ExpiresAt.UTC().Format(time.RFC3339),
+		},
+	})
 }
 
 // queryFiles 按 owner/type/status 过滤分页查询（total 为过滤后总数）

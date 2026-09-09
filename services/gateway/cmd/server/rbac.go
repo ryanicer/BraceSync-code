@@ -28,8 +28,9 @@ import (
 
 // 预置角色常量（对齐 user-service/internal/rbac.Role*，跨模块不直接依赖）
 const (
-	roleAdmin = "ROLE_ADMIN"
-	roleTech  = "technician" // 技师登录签发 role="technician"（user-service handler.go techLogin）
+	roleAdmin  = "ROLE_ADMIN"
+	roleDoctor = "ROLE_DOCTOR"
+	roleTech   = "technician" // 技师登录签发 role="technician"（user-service handler.go techLogin）
 )
 
 // rbacPattern admin 专属端点（method + gin 风格路径模板，":param" 段匹配任意值）
@@ -68,6 +69,17 @@ var adminOnlyPatterns = []rbacPattern{
 // 患者/医生/客服等角色 → 403。T089 技师端调用时本就携带技师登录 JWT，前端零改动。
 var techAdminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/provision-key"), // T067 配网密钥（T091 收紧）
+}
+
+// doctorAdminOnlyPatterns 仅医生+管理员可访问端点矩阵（T130）：
+// 复查记录创建——仅医生（ROLE_DOCTOR）与管理员（ROLE_ADMIN）可创建，患者/客服等 → 403。
+var doctorAdminOnlyPatterns = []rbacPattern{
+	rbacOf(http.MethodPost, "/api/v1/admin/review-records"), // T130 创建复查记录
+}
+
+// matchDoctorAdminPattern 判断 method+path 是否命中 doctor+admin 专属端点矩阵
+func matchDoctorAdminPattern(method, path string) bool {
+	return matchPatterns(method, path, doctorAdminOnlyPatterns)
 }
 
 // matchTechAdminPattern 判断 method+path 是否命中 tech+admin 专属端点矩阵
@@ -127,6 +139,14 @@ func roleAuthz() gin.HandlerFunc {
 		if matchTechAdminPattern(c.Request.Method, c.Request.URL.Path) && role != roleTech {
 			log.Warn().Str("role", role).Str("method", c.Request.Method).
 				Str("path", c.Request.URL.Path).Msg("rbac denied: tech-or-admin-only endpoint")
+			abortJSON(c, http.StatusForbidden, http.StatusForbidden,
+				"forbidden: role not allowed for this endpoint")
+			return
+		}
+		// T130：doctor+admin 专属端点（如复查记录创建）——仅 ROLE_DOCTOR 与 ROLE_ADMIN 可访问
+		if matchDoctorAdminPattern(c.Request.Method, c.Request.URL.Path) && role != roleDoctor {
+			log.Warn().Str("role", role).Str("method", c.Request.Method).
+				Str("path", c.Request.URL.Path).Msg("rbac denied: doctor-or-admin-only endpoint")
 			abortJSON(c, http.StatusForbidden, http.StatusForbidden,
 				"forbidden: role not allowed for this endpoint")
 			return

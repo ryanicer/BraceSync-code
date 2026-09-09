@@ -72,6 +72,7 @@ func validFileType(ft model.FileType) bool { return model.ValidFileType(ft) }
 //   - admin（ROLE_ADMIN/ROLE_DOCTOR/ROLE_CS）：全类型（沟通图/日志图/运维留档）
 //   - technician：电子签名图 + 安装照片（安装流程产物）
 //   - patient：沟通图片 + 矫形日志图片（患者端产物）
+//   - review_report（T130）：仅 admin / ROLE_ADMIN / ROLE_DOCTOR 可上传
 //
 // 未知角色（含空）一律拒绝（fail-closed）。
 var roleFileTypeMatrix = map[string]map[model.FileType]bool{
@@ -80,16 +81,19 @@ var roleFileTypeMatrix = map[string]map[model.FileType]bool{
 		model.FileTypeInstallPhoto: true,
 		model.FileTypeCommPhoto:    true,
 		model.FileTypeLogPhoto:     true,
+		model.FileTypeReviewReport: true,
 	},
 	"ROLE_ADMIN": {
 		model.FileTypeSignature:    true,
 		model.FileTypeInstallPhoto: true,
 		model.FileTypeCommPhoto:    true,
 		model.FileTypeLogPhoto:     true,
+		model.FileTypeReviewReport: true,
 	},
 	"ROLE_DOCTOR": {
-		model.FileTypeCommPhoto: true,
-		model.FileTypeLogPhoto:  true,
+		model.FileTypeCommPhoto:    true,
+		model.FileTypeLogPhoto:     true,
+		model.FileTypeReviewReport: true,
 	},
 	"ROLE_CS": {
 		model.FileTypeCommPhoto: true,
@@ -103,6 +107,17 @@ var roleFileTypeMatrix = map[string]map[model.FileType]bool{
 		model.FileTypeLogPhoto:  true,
 	},
 }
+
+// reviewReportContentTypes T130 R4-a 硬约束：复查报告上传 MIME 白名单
+// （pdf/jpg/png，最终清单在自报中列出待 Boss 确认）
+var reviewReportContentTypes = map[string]bool{
+	"application/pdf": true,
+	"image/jpeg":      true,
+	"image/png":       true,
+}
+
+// ValidReviewReportContentType 校验复查报告 MIME 是否在白名单内
+func ValidReviewReportContentType(ct string) bool { return reviewReportContentTypes[ct] }
 
 // Authorize 校验角色对文件类型的签发权限（网关已完成 JWT 鉴权，此处做端点级授权）
 func Authorize(role string, fileType model.FileType) error {
@@ -124,6 +139,10 @@ func (p *Presigner) GenerateUploadURL(ctx context.Context, req UploadRequest) (*
 		return nil, ErrInvalidRequest
 	}
 	if req.OwnerType == "" || req.OwnerID == "" {
+		return nil, ErrInvalidRequest
+	}
+	// T130 R4-a 硬约束：复查报告 MIME 必须在白名单内（pdf/jpg/png）
+	if req.FileType == model.FileTypeReviewReport && !ValidReviewReportContentType(req.ContentType) {
 		return nil, ErrInvalidRequest
 	}
 
@@ -216,4 +235,48 @@ func fileExtension(contentType string) string {
 	default:
 		return "bin"
 	}
+}
+
+// downloadExpires 下载预签名 URL 有效期：5 分钟（短时效，防长期有效 URL 泄露）
+const downloadExpires = 5 * time.Minute
+
+// DownloadResponse 下载预签名响应
+type DownloadResponse struct {
+	FileID    string
+	URL       string
+	ExpiresAt time.Time
+}
+
+// GenerateDownloadURL 为已上传文件签发短时效 GET 预签名 URL（T130 复查报告下载）。
+// file_id 不存在 → ErrFileNotFound；仅 uploaded 状态文件可下载。
+func (p *Presigner) GenerateDownloadURL(ctx context.Context, fileID string) (*DownloadResponse, error) {
+	if fileID == "" {
+		return nil, ErrInvalidRequest
+	}
+	if p.store == nil {
+		return nil, errors.New("metadata store not configured")
+	}
+
+	fm, err := p.store.GetFileByFileID(ctx, fileID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			return nil, ErrFileNotFound
+		}
+		return nil, err
+	}
+	// 仅已上传完成的文件可下载
+	if fm.Status != model.FileStatusUploaded {
+		return nil, ErrFileNotFound
+	}
+
+	now := p.now()
+	signedURL, err := p.cosClient.GeneratePresignedURL(ctx, fm.Bucket, fm.ObjectKey, "GET", downloadExpires)
+	if err != nil {
+		return nil, fmt.Errorf("presign download url: %w", err)
+	}
+	return &DownloadResponse{
+		FileID:    fileID,
+		URL:       signedURL,
+		ExpiresAt: now.Add(downloadExpires),
+	}, nil
 }

@@ -1186,3 +1186,76 @@ func (s *PGStore) RemoveTeamMember(ctx context.Context, teamID, memberID, member
 		`UPDATE technicians SET team_id = NULL WHERE tech_id = $1 AND team_id = $2`, memberID, teamID)
 	return err
 }
+
+// ─────────────────────────────────────────────────────────────
+// T130 复查记录
+// ─────────────────────────────────────────────────────────────
+
+const reviewColumns = `review_id, patient_id, review_date, review_type, findings,
+	next_review_date, doctor_id, report_file_id, created_at, updated_at`
+
+func scanReviewRecord(row pgx.Row) (*ReviewRecordRow, error) {
+	var r ReviewRecordRow
+	err := row.Scan(&r.ReviewID, &r.PatientID, &r.ReviewDate, &r.ReviewType, &r.Findings,
+		&r.NextReviewDate, &r.DoctorID, &r.ReportFileID, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// CreateReviewRecord 创建复查记录（review_id 由调用方生成）
+func (s *PGStore) CreateReviewRecord(ctx context.Context, row ReviewRecordRow) (*ReviewRecordRow, error) {
+	// 患者存在性校验
+	var patientOK bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM patients WHERE patient_id = $1)`, row.PatientID).Scan(&patientOK); err != nil {
+		return nil, err
+	}
+	if !patientOK {
+		return nil, ErrReviewPatientNotFound
+	}
+	query := `INSERT INTO review_records (` + reviewColumns + `)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),now())
+		RETURNING ` + reviewColumns
+	r, err := scanReviewRecord(s.pool.QueryRow(ctx, query,
+		row.ReviewID, row.PatientID, row.ReviewDate, row.ReviewType, row.Findings,
+		row.NextReviewDate, row.DoctorID, row.ReportFileID))
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// ListReviewRecordsByPatient 按患者列出复查记录（review_date 倒序）
+func (s *PGStore) ListReviewRecordsByPatient(ctx context.Context, patientID string) ([]ReviewRecordRow, error) {
+	query := `SELECT ` + reviewColumns + ` FROM review_records
+		WHERE patient_id = $1 ORDER BY review_date DESC, created_at DESC`
+	rows, err := s.pool.Query(ctx, query, patientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []ReviewRecordRow
+	for rows.Next() {
+		r, err := scanReviewRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *r)
+	}
+	return list, rows.Err()
+}
+
+// GetReviewRecord 按 ID 查复查记录
+func (s *PGStore) GetReviewRecord(ctx context.Context, reviewID string) (*ReviewRecordRow, error) {
+	query := `SELECT ` + reviewColumns + ` FROM review_records WHERE review_id = $1`
+	r, err := scanReviewRecord(s.pool.QueryRow(ctx, query, reviewID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrReviewRecordNotFound
+		}
+		return nil, err
+	}
+	return r, nil
+}
