@@ -65,7 +65,7 @@ func (c *FileSvcClient) doGet(ctx context.Context, path string) (json.RawMessage
 	if err != nil {
 		return nil, fmt.Errorf("file-service request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read file-service response: %w", err)

@@ -4,15 +4,15 @@ import { ROLE_PAGE_MATRIX, canAccess, roleName, PRESET_ROLES, roleKeyFromRoleId 
 import { pageRoutes } from '../src/router'
 
 describe('ROLE_PAGE_MATRIX（PRD §7D.11）', () => {
-  it('运营管理员可访问全部 12 页', () => {
-    expect(ROLE_PAGE_MATRIX.admin).toHaveLength(12)
+  it('运营管理员可访问全部 13 页', () => {
+    expect(ROLE_PAGE_MATRIX.admin).toHaveLength(13) // 断言更新：12→13，依据 T130 新增复查报告页
     for (const route of pageRoutes) {
       expect(canAccess('admin', route.path)).toBe(true)
     }
   })
 
-  it('医生仅可访问 数据概览/实时监控/告警管理/矫形日志 4 页', () => {
-    expect(ROLE_PAGE_MATRIX.doctor).toEqual(['/dashboard', '/monitor', '/alerts', '/orthosis-log'])
+  it('医生仅可访问 数据概览/实时监控/告警管理/矫形日志/复查报告 5 页', () => {
+    expect(ROLE_PAGE_MATRIX.doctor).toEqual(['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records']) // 断言更新：4→5，依据 T130 新增复查报告页
     expect(canAccess('doctor', '/patients')).toBe(false)
     expect(canAccess('doctor', '/settings')).toBe(false)
   })
