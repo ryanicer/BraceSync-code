@@ -12,6 +12,8 @@
 //	POST /api/v1/devices/:deviceId/wifi           WiFi 配置状态（wifi_ssid 维护）
 //	POST /api/v1/devices/:deviceId/provision-key  配网密钥派生（T067，HKDF-SHA256 16B→32hex）
 //	POST /api/v1/install-records                  新建安装记录（技师安装流程）
+//	GET  /api/v1/install-records/:id              单条安装记录详情（T122）
+//	PUT  /api/v1/install-records/:id              回填安装元数据 notes/signatureUrl（T122）
 //	GET  /api/v1/install-records                  安装记录分页列表（T030：姓名 join）
 //	POST /api/v1/baselines                        校准基线落库（契约 saveBaseline）
 //	POST /internal/devices/:deviceId/report       上报/补传状态校正（服务间，不经网关）
@@ -66,6 +68,8 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/devices/:deviceId/wifi", h.setWifi)
 		v1.POST("/devices/:deviceId/provision-key", h.provisionKey) // T067
 		v1.POST("/install-records", h.createInstall)
+		v1.GET("/install-records/:id", h.getInstall)            // T122 单条详情
+		v1.PUT("/install-records/:id", h.updateInstallMeta)     // T122 回填元数据
 		v1.POST("/baselines", h.saveBaseline)
 		h.registerListRoutes(v1) // T030：GET /devices 列表 + GET /install-records 列表
 	}
@@ -129,6 +133,27 @@ type installRequest struct {
 	TechID       string `json:"techId"`
 	Notes        string `json:"notes"`
 	SignatureURL string `json:"signatureUrl"`
+}
+
+// installMetaRequest PUT /api/v1/install-records/:id 入参（T122）。
+// notes / signatureUrl 均可选：空字符串不覆盖该列（对齐 repo.UpdateInstallMeta COALESCE 语义）。
+type installMetaRequest struct {
+	Notes        string `json:"notes"`
+	SignatureURL string `json:"signatureUrl"`
+}
+
+// installDetailDTO 单条安装记录响应体（T122 GET /:id）
+type installDetailDTO struct {
+	InstallID     string  `json:"installId"`
+	DeviceID      string  `json:"deviceId"`
+	PatientID     string  `json:"patientId"`
+	TechID        string  `json:"techId"`
+	CalibrateTime string  `json:"calibrateTime"`
+	BaselineID    *string `json:"baselineId"`
+	Notes         string  `json:"notes"`
+	SignatureURL  string  `json:"signatureUrl"`
+	WifiStatus    string  `json:"wifiStatus"`
+	CreatedAt     string  `json:"createdAt"`
 }
 
 type baselineRequest struct {
@@ -297,6 +322,68 @@ func (h *Handler) createInstall(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"installId": strconv.FormatInt(rec.InstallID, 10)})
+}
+
+// getInstall GET /api/v1/install-records/:id —— 单条安装记录详情（T122）
+func (h *Handler) getInstall(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		fail(c, model.ErrInvalidParam("invalid install id %q", c.Param("id")))
+		return
+	}
+	rec, appErr := h.svc.GetInstall(c.Request.Context(), id)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	ok(c, toInstallDetailDTO(rec))
+}
+
+// updateInstallMeta PUT /api/v1/install-records/:id —— 回填 notes / signatureUrl（T122）。
+// 空字符串字段不覆盖（repo COALESCE 语义），与 saveBaseline 回填行为一致。
+func (h *Handler) updateInstallMeta(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		fail(c, model.ErrInvalidParam("invalid install id %q", c.Param("id")))
+		return
+	}
+	var req installMetaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	var notes, sigURL *string
+	if req.Notes != "" {
+		notes = &req.Notes
+	}
+	if req.SignatureURL != "" {
+		sigURL = &req.SignatureURL
+	}
+	if appErr := h.svc.UpdateInstallMeta(c.Request.Context(), id, notes, sigURL); appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	ok(c, nil)
+}
+
+// toInstallDetailDTO model.InstallRecord → 单条详情响应 DTO
+func toInstallDetailDTO(r *model.InstallRecord) installDetailDTO {
+	dto := installDetailDTO{
+		InstallID:     strconv.FormatInt(r.InstallID, 10),
+		DeviceID:      r.DeviceID,
+		PatientID:     r.PatientID,
+		TechID:        r.TechID,
+		CalibrateTime: r.CalibrateTime.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Notes:         strOrEmpty(r.Notes),
+		SignatureURL:  strOrEmpty(r.SignatureURL),
+		WifiStatus:    r.WifiStatus,
+		CreatedAt:     r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if r.BaselineID != nil {
+		s := strconv.FormatInt(*r.BaselineID, 10)
+		dto.BaselineID = &s
+	}
+	return dto
 }
 
 // saveBaseline 校准基线落库（契约 saveBaseline → ApiResponse<null>）

@@ -117,6 +117,7 @@ var userServiceRoutes = []proxyRoute{
 var deviceServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/devices"},
 	{http.MethodGet, "/install-records"},
+	{http.MethodGet, "/install-records/:id"}, // T122 单条详情
 }
 
 // dataServiceRoutes 患者数据查询（realtime/records 既有契约 + T030 health-reports +

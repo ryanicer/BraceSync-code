@@ -297,6 +297,18 @@ func (s *DeviceService) CreateInstall(ctx context.Context, req *CreateInstallReq
 	return stored, nil
 }
 
+// GetInstall 按 install_id 查询单条安装记录（T122：GET /api/v1/install-records/:id）
+func (s *DeviceService) GetInstall(ctx context.Context, installID int64) (*model.InstallRecord, *model.AppError) {
+	if installID <= 0 {
+		return nil, model.ErrInvalidParam("invalid install_id %d", installID)
+	}
+	rec, err := s.store.GetInstall(ctx, installID)
+	if err != nil {
+		return nil, mapRepoErr(err, model.ErrNotFound("install record %d not found", installID))
+	}
+	return rec, nil
+}
+
 // SaveBaseline 校准基线落库：offset_values 长度必须=20（服务层校验 + DB CHECK 双保险），
 // 一次安装至多一条基线（uk_install_baseline）
 func (s *DeviceService) SaveBaseline(ctx context.Context, installID int64, offsetValues []float32, calibratorID string) (int64, *model.AppError) {
