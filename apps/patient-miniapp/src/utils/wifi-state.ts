@@ -32,9 +32,8 @@ export const PROVISION_TIMEOUT_MS = 15000
  * 过滤 BLE 扫描结果：仅保留 BSYNC- 前缀且为 2.4G 的设备。
  * PRD §7A.9：扫描阶段仅显示 BSYNC- 前缀设备，2.4G 前置提示。
  */
-export function filterBleDevices(_devices: ScanDevice[]): ScanDevice[] {
-  // STUB: 固定返回空数组，使单测断言失败（红）。Iris 转绿时实现前缀+频段过滤。
-  return []
+export function filterBleDevices(devices: ScanDevice[]): ScanDevice[] {
+  return devices.filter((d) => d.name.startsWith('BSYNC-') && d.is24G)
 }
 
 /**
@@ -43,18 +42,33 @@ export function filterBleDevices(_devices: ScanDevice[]): ScanDevice[] {
  * @param current 当前步骤（0-3）
  * @returns 下一步骤；若已到 3 则返回 3（不再推进）
  */
-export function nextProvisionStep(_current: ProvisionStep): ProvisionStep {
-  // STUB: 固定返回 0，使单测断言失败（红）。Iris 转绿时实现递增逻辑。
-  return 0
+export function nextProvisionStep(current: ProvisionStep): ProvisionStep {
+  return current < 3 ? ((current + 1) as ProvisionStep) : 3
 }
 
 /**
  * 解析配网状态码 → 进度/成功/失败。
  * PRD §7A.9：0-3 进度，9 成功，-1 密码错，-2 无网络，-3 地址失败，-4 服务器不可达。
  */
-export function resolveProvisionStatus(_code: number): ProvisionStatus {
-  // STUB: 固定返回失败(-1)，使单测断言失败（红）。Iris 转绿时实现真实映射。
-  return { kind: 'failure', code: -1, message: 'STUB: 未实现' }
+export function resolveProvisionStatus(code: number): ProvisionStatus {
+  if (code >= 0 && code <= 3) {
+    return { kind: 'progress', step: code as ProvisionStep }
+  }
+  if (code === 9) {
+    return { kind: 'success' }
+  }
+  switch (code) {
+    case -1:
+      return { kind: 'failure', code: -1, message: 'WiFi 密码错误，请检查密码后重试' }
+    case -2:
+      return { kind: 'failure', code: -2, message: '找不到 WiFi 网络，请检查网络名称' }
+    case -3:
+      return { kind: 'failure', code: -3, message: '网络地址获取失败，请检查路由器' }
+    case -4:
+      return { kind: 'failure', code: -4, message: '服务器不可达，请稍后重试' }
+    default:
+      return { kind: 'failure', code: -1, message: '配网失败，请重试' }
+  }
 }
 
 /**
@@ -62,7 +76,6 @@ export function resolveProvisionStatus(_code: number): ProvisionStatus {
  * PRD §7A.9：患者端 15s 响应超时。
  * @param elapsedMs 已耗时（毫秒）
  */
-export function isProvisionTimeout(_elapsedMs: number): boolean {
-  // STUB: 固定返回 false，使单测断言失败（红）。Iris 转绿时实现 15000ms 阈值判断。
-  return false
+export function isProvisionTimeout(elapsedMs: number): boolean {
+  return elapsedMs > PROVISION_TIMEOUT_MS
 }
