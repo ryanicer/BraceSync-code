@@ -64,11 +64,16 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/doctors"),
 }
 
-// techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T091）：
-// 配网密钥领卡端点——仅安装技师（technician）与管理员（ROLE_ADMIN）可领取，
+// techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T091 / T122）：
+// 配网密钥领卡端点 + 安装记录元数据回填——仅安装技师（technician）与管理员（ROLE_ADMIN）可写，
 // 患者/医生/客服等角色 → 403。T089 技师端调用时本就携带技师登录 JWT，前端零改动。
+//
+// 注意口径不一致（已知，见独立安全加固任务）：
+//   - PUT /api/v1/install-records/:id 已收紧为 tech+admin（签名=责任归属，医生/客服不得代签）
+//   - POST /api/v1/install-records 仍为全 full-scope 角色开放（创建端点，收紧需另评）
 var techAdminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/provision-key"), // T067 配网密钥（T091 收紧）
+	rbacOf(http.MethodPut, "/api/v1/install-records/:id"),              // T122 安装记录元数据回填（技师+管理员）
 }
 
 // doctorAdminOnlyPatterns 仅医生+管理员可访问端点矩阵（T130）：

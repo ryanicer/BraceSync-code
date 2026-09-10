@@ -31,6 +31,8 @@ func TestFullRoutes_DeviceManageRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/devices/DEV-1/unbind", "", "POST /api/v1/devices/DEV-1/unbind"},
 		{http.MethodPost, "/api/v1/devices/DEV-1/wifi", `{"ssid":"Home"}`, "POST /api/v1/devices/DEV-1/wifi"},
 		{http.MethodPost, "/api/v1/install-records", `{"deviceId":"DEV-1"}`, "POST /api/v1/install-records"},
+		{http.MethodPut, "/api/v1/install-records/17", `{"notes":"x"}`, "PUT /api/v1/install-records/17"}, // T122
+		{http.MethodGet, "/api/v1/install-records/17", "", "GET /api/v1/install-records/17"},              // T122
 		{http.MethodPost, "/api/v1/baselines", `{"installId":"1"}`, "POST /api/v1/baselines"},
 		{http.MethodGet, "/api/v1/devices?keyword=PRS&page=2", "", "GET /api/v1/devices?keyword=PRS&page=2"},
 		{http.MethodGet, "/api/v1/install-records?page=1", "", "GET /api/v1/install-records?page=1"},
