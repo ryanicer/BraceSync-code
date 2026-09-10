@@ -34,7 +34,7 @@ var deviceManageRoutes = []proxyRoute{
 	{http.MethodPost, "/devices/:deviceId/unbind"},  // 解绑（幂等）
 	{http.MethodPost, "/devices/:deviceId/wifi"},    // 配网状态
 	{http.MethodPost, "/install-records"},           // 新建安装记录
-	{http.MethodPut, "/install-records/:id"},         // T122 回填安装元数据
+	{http.MethodPut, "/install-records/:id"},        // T122 回填安装元数据
 	{http.MethodPost, "/baselines"},                 // 校准基线落库
 }
 

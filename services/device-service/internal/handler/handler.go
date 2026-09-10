@@ -68,8 +68,8 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/devices/:deviceId/wifi", h.setWifi)
 		v1.POST("/devices/:deviceId/provision-key", h.provisionKey) // T067
 		v1.POST("/install-records", h.createInstall)
-		v1.GET("/install-records/:id", h.getInstall)            // T122 单条详情
-		v1.PUT("/install-records/:id", h.updateInstallMeta)     // T122 回填元数据
+		v1.GET("/install-records/:id", h.getInstall)        // T122 单条详情
+		v1.PUT("/install-records/:id", h.updateInstallMeta) // T122 回填元数据
 		v1.POST("/baselines", h.saveBaseline)
 		h.registerListRoutes(v1) // T030：GET /devices 列表 + GET /install-records 列表
 	}
