@@ -39,7 +39,7 @@
                 {{ selectedFile ? selectedFile.name : '选择文件' }}
               </el-button>
             </el-upload>
-            <span class="file-hint">仅支持 PDF / JPG / PNG</span>
+            <span class="file-hint">支持 PDF / JPG / PNG / DOC / DOCX / XLSX / PPTX / ZIP</span>
             <el-tag v-if="uploadedFileId" type="success" size="small" style="margin-left: 8px">已上传</el-tag>
           </el-form-item>
           <el-form-item>
@@ -94,6 +94,7 @@ import {
   uploadFileDirect,
   completeUpload,
 } from '../../api'
+import { validateReviewReportFile } from '../../utils/review-report-whitelist'
 import type { Patient, ReviewRecord, CreateReviewRecordRequest } from '@bracesync/shared-types'
 
 const auth = useAuthStore()
@@ -115,18 +116,10 @@ const submitting = ref(false)
 
 const canSubmit = computed(() => form.value.reviewDate && form.value.reviewType && patientId.value)
 
-// 白名单校验（R4-a 硬约束）
-const ALLOWED_EXT = ['.pdf', '.jpg', '.jpeg', '.png']
-const ALLOWED_MIME = ['application/pdf', 'image/jpeg', 'image/png']
-
 function validateFile(file: File): boolean {
-  const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
-  if (!ALLOWED_EXT.includes(ext)) {
-    ElMessage.error(`不支持的文件类型：${ext}，仅支持 ${ALLOWED_EXT.join(' / ')}`)
-    return false
-  }
-  if (!ALLOWED_MIME.includes(file.type)) {
-    ElMessage.error(`不支持的 MIME 类型：${file.type}`)
+  const result = validateReviewReportFile(file)
+  if (!result.ok) {
+    ElMessage.error(result.message || '不支持的文件类型')
     return false
   }
   return true
