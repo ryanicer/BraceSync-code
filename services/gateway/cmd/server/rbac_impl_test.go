@@ -143,3 +143,34 @@ func TestRBAC_DeleteTechnician_BypassClosed(t *testing.T) {
 
 	assert.Empty(t, *received, "DELETE 技师请求不得触达后端")
 }
+
+// TestRBAC_TechAdminOnlyPatterns T122：PUT /install-records/:id 收紧为 tech+admin
+// 覆盖：technician / ROLE_ADMIN → 放行；ROLE_DOCTOR / ROLE_CS → 403 不触达后端
+func TestRBAC_TechAdminOnlyPatterns(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	techAdmin := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/devices/D001/provision-key"}, // T091 既有
+		{http.MethodPut, "/api/v1/install-records/17"},          // T122 新增
+	}
+
+	// doctor / cs → 403
+	for _, role := range []string{"ROLE_CS", "ROLE_DOCTOR"} {
+		for _, c := range techAdmin {
+			code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusForbidden, code, "role=%s %s %s 应 403", role, c.method, c.path)
+			assert.Contains(t, body, `"code":403`)
+		}
+	}
+	assert.Empty(t, *received, "越权请求不得触达后端")
+
+	// technician / ROLE_ADMIN → 放行
+	for _, role := range []string{"technician", "ROLE_ADMIN"} {
+		for _, c := range techAdmin {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			require.Equal(t, http.StatusOK, code, "role=%s %s %s 应放行", role, c.method, c.path)
+		}
+	}
+	assert.Len(t, *received, len(techAdmin)*2, "technician + ROLE_ADMIN 请求全部转发后端")
+}
