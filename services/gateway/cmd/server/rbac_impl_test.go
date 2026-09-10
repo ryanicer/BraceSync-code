@@ -203,3 +203,37 @@ func TestRBAC_T130_DoctorAdminOnly(t *testing.T) {
 
 	assert.Len(t, *received, 6, "doctor/admin create(2) + 全角色 list(4) 应全部转发后端")
 }
+
+// TestRBAC_T135_DoctorAdminOnly T135：复查报告模板管理端点仅 doctor/admin 可访问。
+// 合同运营后台「复查报告模板管理」：admin 后台上传/替换/列表/下载，doctor 列表/下载空白模板。
+func TestRBAC_T135_DoctorAdminOnly(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	templateRoutes := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/admin/review-templates"},               // 上传/创建模板
+		{http.MethodPost, "/api/v1/admin/review-templates/GRP_1/replace"}, // 版本替换
+		{http.MethodGet, "/api/v1/admin/review-templates"},                // 模板列表
+		{http.MethodGet, "/api/v1/admin/review-templates/GRP_1/download"}, // 模板下载
+	}
+
+	// 非 doctor/admin 角色 → 403（不触达后端）
+	for _, role := range []string{"ROLE_CS", "technician", "patient"} {
+		for _, c := range templateRoutes {
+			code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusForbidden, code, "role=%s %s %s 应 403", role, c.method, c.path)
+			assert.Contains(t, body, `"code":403`)
+		}
+	}
+
+	// doctor/admin → 放行（转发后端）
+	for _, role := range []string{"ROLE_DOCTOR", "ROLE_ADMIN"} {
+		for _, c := range templateRoutes {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusOK, code, "role=%s %s %s 应放行", role, c.method, c.path)
+		}
+	}
+
+	// 3 低角色 × 4 端点 全被拦（0 触达） + 2 高角色 × 4 端点 全转发 = 8
+	assert.Len(t, *received, 8, "high-role template 请求应转发后端，low-role 应被网关 RBAC 拦截")
+}

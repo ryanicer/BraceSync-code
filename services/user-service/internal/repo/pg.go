@@ -1259,3 +1259,150 @@ func (s *PGStore) GetReviewRecord(ctx context.Context, reviewID string) (*Review
 	}
 	return r, nil
 }
+
+// ─────────────────────────────────────────────────────────────
+// T135 复查报告模板
+// ─────────────────────────────────────────────────────────────
+
+const reviewTemplateColumns = `template_id, template_group_id, name, version, file_id,
+	status, uploaded_by, created_at, updated_at`
+
+func scanReviewTemplate(row pgx.Row) (*ReviewTemplateRow, error) {
+	var r ReviewTemplateRow
+	err := row.Scan(&r.TemplateID, &r.TemplateGroupID, &r.Name, &r.Version, &r.FileID,
+		&r.Status, &r.UploadedBy, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// CreateReviewTemplateVersion 事务创建/替换模板版本（T135）。
+//
+//	groupID==""  → 新建组：name 存在返回 ErrTemplateNameExists，否则 version=1。
+//	groupID!=""  → 版本替换：组不存在返回 ErrTemplateNotFound；
+//	                新版本 = MAX(version)+1，同组旧 active 置 retired（非删除）。
+//
+// 已上传的填写报告(review_records)只引用各自 file_id，与模板文件互不影响，
+// 版本替换不改动历史文件对象，「已填报告不受影响」由数据模型天然保证。
+func (s *PGStore) CreateReviewTemplateVersion(ctx context.Context, templateGroupID, name, fileID, uploadedBy string) (*ReviewTemplateRow, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var groupID string
+	if templateGroupID == "" {
+		// 新建组：name 查重
+		var nameExists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM review_templates WHERE name = $1)`, name).Scan(&nameExists); err != nil {
+			return nil, err
+		}
+		if nameExists {
+			return nil, ErrTemplateNameExists
+		}
+		groupID, err = newTemplateGroupID()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// 版本替换：确认组存在（按组 or 按名）
+		var existed bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM review_templates WHERE template_group_id = $1 OR name = $1)`,
+			templateGroupID).Scan(&existed); err != nil {
+			return nil, err
+		}
+		if !existed {
+			return nil, ErrTemplateNotFound
+		}
+		groupID = templateGroupID
+		// 同组旧 active 置 retired（非物理删除）
+		if _, err := tx.Exec(ctx,
+			`UPDATE review_templates SET status = 'retired', updated_at = now()
+			 WHERE template_group_id = $1 AND status = 'active'`, groupID); err != nil {
+			return nil, err
+		}
+	}
+
+	// 新版本号 = 组内 max(version)+1（无历史则 1）
+	var nextVersion int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(version),0) + 1 FROM review_templates WHERE template_group_id = $1`,
+		groupID).Scan(&nextVersion); err != nil {
+		return nil, err
+	}
+
+	templateID, err := newTemplateID()
+	if err != nil {
+		return nil, err
+	}
+
+	row, scanErr := scanReviewTemplate(tx.QueryRow(ctx,
+		`INSERT INTO review_templates (template_id, template_group_id, name, version, file_id, status, uploaded_by, created_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,'active',$6,now(),now())
+		 RETURNING `+reviewTemplateColumns,
+		templateID, groupID, name, nextVersion, fileID, uploadedBy))
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+// newTemplateID 生成模板版本 ID（TPL + 12 位随机 hex，VARCHAR(32) 内）
+func newTemplateID() (string, error) {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "TPL_" + hex.EncodeToString(buf), nil
+}
+
+// newTemplateGroupID 生成模板组 ID（GRP + 12 位随机 hex，VARCHAR(32) 内）
+func newTemplateGroupID() (string, error) {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "GRP_" + hex.EncodeToString(buf), nil
+}
+
+// ListActiveReviewTemplates 每模板组当前 active 版本（name 升序）。
+func (s *PGStore) ListActiveReviewTemplates(ctx context.Context) ([]ReviewTemplateRow, error) {
+	query := `SELECT ` + reviewTemplateColumns + ` FROM review_templates
+		WHERE status = 'active' ORDER BY name, version DESC`
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []ReviewTemplateRow
+	for rows.Next() {
+		r, err := scanReviewTemplate(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *r)
+	}
+	return list, rows.Err()
+}
+
+// GetReviewTemplateGroup 按组查当前 active 版本；无匹配返回 ErrTemplateNotFound。
+func (s *PGStore) GetReviewTemplateGroup(ctx context.Context, groupID string) (*ReviewTemplateRow, error) {
+	r, err := scanReviewTemplate(s.pool.QueryRow(ctx,
+		`SELECT `+reviewTemplateColumns+` FROM review_templates
+		 WHERE template_group_id = $1 AND status = 'active'
+		 ORDER BY version DESC LIMIT 1`, groupID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTemplateNotFound
+		}
+		return nil, err
+	}
+	return r, nil
+}

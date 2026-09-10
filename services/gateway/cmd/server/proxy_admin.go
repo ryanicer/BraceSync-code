@@ -115,6 +115,13 @@ var userServiceRoutes = []proxyRoute{
 	// T130 复查记录（合同患者端「复查管理」）
 	{http.MethodPost, "/admin/review-records"},              // 医生/管理员创建复查记录
 	{http.MethodGet, "/patients/:patientId/review-records"}, // 患者复查记录列表（含报告下载URL）
+
+	// T135 复查报告模板（合同运营后台「复查报告模板管理」；RBAC 限 admin+doctor）
+	// 下载/文件本体走 file-service review_report 预签名通道（owner_type=ReviewTemplate）。
+	{http.MethodPost, "/admin/review-templates"},                  // 上传/创建模板
+	{http.MethodPost, "/admin/review-templates/:groupId/replace"}, // 版本替换（旧版 retired）
+	{http.MethodGet, "/admin/review-templates"},                   // 模板列表
+	{http.MethodGet, "/admin/review-templates/:groupId/download"}, // 模板下载
 }
 
 // deviceServiceRoutes 设备/安装记录管理端列表（T030 #3 patientName join）

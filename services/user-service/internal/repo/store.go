@@ -77,6 +77,18 @@ var ErrReviewRecordNotFound = errors.New("review record not found")
 // ErrReviewPatientNotFound 复查关联的患者不存在。
 var ErrReviewPatientNotFound = errors.New("patient not found for review record")
 
+// ─────────────────────────────────────────────────────────────
+// T135 复查报告模板 sentinel 错误
+// ─────────────────────────────────────────────────────────────
+
+// ErrTemplateNotFound 复查报告模板（组）不存在。
+// store.GetReviewTemplateGroup 命中 0 行返回；handler 映射为 404 CodeNotFound。
+var ErrTemplateNotFound = errors.New("review template not found")
+
+// ErrTemplateNameExists 模板名已存在（新建 v1 时撞已有组名）。
+// store.CreateReviewTemplateVersion 以 groupID=="" 但 name 已存在返回；handler 映射为 409 CodeConflict。
+var ErrTemplateNameExists = errors.New("review template name already exists")
+
 // ReviewRecordRow review_records 表投影
 type ReviewRecordRow struct {
 	ReviewID       string
@@ -89,6 +101,19 @@ type ReviewRecordRow struct {
 	ReportFileID   *string
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+// ReviewTemplateRow review_templates 表投影（T135）
+type ReviewTemplateRow struct {
+	TemplateID      string
+	TemplateGroupID string
+	Name            string
+	Version         int
+	FileID          string
+	Status          string // active / retired
+	UploadedBy      string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -412,4 +437,15 @@ type Store interface {
 	CreateReviewRecord(ctx context.Context, row ReviewRecordRow) (*ReviewRecordRow, error)
 	ListReviewRecordsByPatient(ctx context.Context, patientID string) ([]ReviewRecordRow, error)
 	GetReviewRecord(ctx context.Context, reviewID string) (*ReviewRecordRow, error)
+
+	// T135 复查报告模板
+	// CreateReviewTemplateVersion 事务：新版本 active + 同组旧 active 标 retired（非删除）。
+	// groupID=="" 表示新建组（version=1；name 已存在返回 ErrTemplateNameExists）；
+	// groupID!= "" 表示版本替换（组内 version 递增，组不存在返回 ErrTemplateNotFound）。
+	// uploadedBy 由 handler 从登录凭证 X-User-Id 传入（防伪造上传人）。
+	CreateReviewTemplateVersion(ctx context.Context, groupID, name, fileID, uploadedBy string) (*ReviewTemplateRow, error)
+	// ListActiveReviewTemplates 每模板组当前 active 版本（name 升序）。
+	ListActiveReviewTemplates(ctx context.Context) ([]ReviewTemplateRow, error)
+	// GetReviewTemplateGroup 按组查当前 active 版本；组不存在或无非active返回 ErrTemplateNotFound。
+	GetReviewTemplateGroup(ctx context.Context, groupID string) (*ReviewTemplateRow, error)
 }

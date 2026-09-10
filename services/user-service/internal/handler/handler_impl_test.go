@@ -158,6 +158,14 @@ type fakeStore struct {
 	reviewRowsErr   error
 	createdReview   *repo.ReviewRecordRow
 	createReviewErr error
+
+	// T135 复查报告模板
+	createdTemplate   *repo.ReviewTemplateRow
+	createTemplateErr error
+	templateRows      []repo.ReviewTemplateRow
+	templateRowsErr   error
+	activeTemplate    *repo.ReviewTemplateRow
+	activeTemplateErr error
 }
 
 func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {
@@ -1607,6 +1615,37 @@ func (f *fakeStore) GetReviewRecord(_ context.Context, _ string) (*repo.ReviewRe
 	return nil, nil
 }
 
+// T135 fakeStore review template methods
+func (f *fakeStore) CreateReviewTemplateVersion(_ context.Context, groupID, name, fileID, uploadedBy string) (*repo.ReviewTemplateRow, error) {
+	if f.activeTemplateErr != nil {
+		return nil, f.activeTemplateErr
+	}
+	if f.createTemplateErr != nil {
+		return nil, f.createTemplateErr
+	}
+	if f.createdTemplate != nil {
+		return f.createdTemplate, nil
+	}
+	row := &repo.ReviewTemplateRow{
+		TemplateID:      "TPL_test",
+		TemplateGroupID: groupID,
+		Name:            name,
+		Version:         1,
+		FileID:          fileID,
+		Status:          "active",
+		UploadedBy:      uploadedBy,
+	}
+	return row, nil
+}
+
+func (f *fakeStore) ListActiveReviewTemplates(_ context.Context) ([]repo.ReviewTemplateRow, error) {
+	return f.templateRows, f.templateRowsErr
+}
+
+func (f *fakeStore) GetReviewTemplateGroup(_ context.Context, _ string) (*repo.ReviewTemplateRow, error) {
+	return f.activeTemplate, f.activeTemplateErr
+}
+
 // ─────────────────────────────────────────────────────────────
 // 患者端微信登录（T069）
 // ─────────────────────────────────────────────────────────────
@@ -1806,4 +1845,149 @@ func TestWXLogin_NoSigner(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c9"}, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Equal(t, model.CodeInternal, resp.Code)
+}
+
+// ─────────────────────────────────────────────────────────────
+// 复查报告模板（T135，合同运营后台「复查报告模板管理」）
+// ─────────────────────────────────────────────────────────────
+
+func TestReviewTemplate_Create(t *testing.T) {
+	e := newEnv(t, false, false)
+	// 未设 createdTemplate → fakeStore 回退返回默认 version=1 行且 name 回显
+	w, resp := e.do(http.MethodPost, "/api/v1/admin/review-templates",
+		map[string]string{"name": "XX医院脊柱侧弯复查报告模板", "fileId": "FILE-a"},
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.CodeOK, resp.Code)
+
+	var dto model.ReviewTemplateDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Equal(t, "XX医院脊柱侧弯复查报告模板", dto.Name)
+	assert.Equal(t, 1, dto.Version)
+	assert.Equal(t, "FILE-a", dto.FileID)
+	assert.Equal(t, "active", dto.Status)
+	// 重名冲突 → 409
+	e.store.createTemplateErr = repo.ErrTemplateNameExists
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates",
+		map[string]string{"name": "重名", "fileId": "FILE-b"},
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, model.CodeConflict, resp.Code)
+}
+
+func TestReviewTemplate_CreateValidation(t *testing.T) {
+	e := newEnv(t, false, false)
+	admin := map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"}
+	// 空 name
+	w, resp := e.do(http.MethodPost, "/api/v1/admin/review-templates", map[string]string{"fileId": "FILE-a"}, admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	// 空白 name
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates", map[string]string{"name": "   ", "fileId": "FILE-a"}, admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// 超长 name（>128 字符）
+	longName := strings.Repeat("模", 129)
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates", map[string]string{"name": longName, "fileId": "FILE-a"}, admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	// 缺 fileId
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates", map[string]string{"name": "模板"}, admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	// 非法请求体
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates", "not-json", admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestReviewTemplate_RBAC(t *testing.T) {
+	e := newEnv(t, false, false)
+	// 医生允许
+	w, _ := e.do(http.MethodPost, "/api/v1/admin/review-templates",
+		map[string]string{"name": "医生上传模板", "fileId": "FILE-d"},
+		map[string]string{"X-Role": "ROLE_DOCTOR", "X-User-Id": "D0001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	// 患者/客服等 → 403（网关 RBAC 兜底外端点级兜底）
+	for _, role := range []string{"ROLE_PATIENT", "ROLE_CS", "ROLE_TECHNICIAN"} {
+		w, resp := e.do(http.MethodPost, "/api/v1/admin/review-templates",
+			map[string]string{"name": "越权", "fileId": "FILE-x"},
+			map[string]string{"X-Role": role, "X-User-Id": "X0001"})
+		assert.Equal(t, http.StatusForbidden, w.Code, "role=%s 应被拒", role)
+		assert.Equal(t, model.CodeForbidden, resp.Code)
+	}
+	// 列表越权 → 403
+	w, resp := e.do(http.MethodGet, "/api/v1/admin/review-templates", nil,
+		map[string]string{"X-Role": "ROLE_CS", "X-User-Id": "C0001"})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, model.CodeForbidden, resp.Code)
+}
+
+func TestReviewTemplate_List(t *testing.T) {
+	e := newEnv(t, false, false)
+	now := time.Now()
+	e.store.templateRows = []repo.ReviewTemplateRow{
+		{TemplateID: "TPL-1", TemplateGroupID: "GRP-1", Name: "模板甲", Version: 1, FileID: "FILE-1",
+			Status: "active", UploadedBy: "A0001", CreatedAt: now, UpdatedAt: now},
+		{TemplateID: "TPL-2", TemplateGroupID: "GRP-2", Name: "模板乙", Version: 3, FileID: "FILE-2",
+			Status: "active", UploadedBy: "A0002", CreatedAt: now, UpdatedAt: now},
+	}
+	w, resp := e.do(http.MethodGet, "/api/v1/admin/review-templates", nil,
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	var list []model.ReviewTemplateDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &list))
+	assert.Len(t, list, 2)
+	assert.Equal(t, "模板甲", list[0].Name)
+	assert.Equal(t, 3, list[1].Version)
+	assert.Equal(t, now.Format("2006-01-02"), list[0].UploadedAt)
+}
+
+func TestReviewTemplate_Replace(t *testing.T) {
+	e := newEnv(t, false, false)
+	// 用 activeTemplate 返回旧版本，再用 createdTemplate 返回新版本（version=2）
+	e.store.activeTemplate = &repo.ReviewTemplateRow{
+		TemplateID: "TPL-1", TemplateGroupID: "GRP-1", Name: "模板甲", Version: 1,
+		FileID: "FILE-1", Status: "active", UploadedBy: "A0001", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	e.store.createdTemplate = &repo.ReviewTemplateRow{
+		TemplateID: "TPL-3", TemplateGroupID: "GRP-1", Name: "模板甲", Version: 2,
+		FileID: "FILE-3", Status: "active", UploadedBy: "A0001", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	w, resp := e.do(http.MethodPost, "/api/v1/admin/review-templates/GRP-1/replace",
+		map[string]string{"fileId": "FILE-3"},
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.CodeOK, resp.Code)
+	var dto model.ReviewTemplateDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Equal(t, "GRP-1", dto.GroupID)
+	assert.Equal(t, 2, dto.Version)
+	assert.Equal(t, "FILE-3", dto.FileID)
+
+	// 组不存在 → 404
+	e.store.activeTemplateErr = repo.ErrTemplateNotFound
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates/NOPE/replace",
+		map[string]string{"fileId": "FILE-x"},
+		map[string]string{"X-Role": "ROLE_DOCTOR", "X-User-Id": "D0001"})
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, model.CodeNotFound, resp.Code)
+	// 缺 groupId
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates//replace",
+		map[string]string{"fileId": "FILE-x"},
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestReviewTemplate_Download(t *testing.T) {
+	e := newEnv(t, false, false)
+	e.store.activeTemplate = &repo.ReviewTemplateRow{
+		TemplateID: "TPL-1", TemplateGroupID: "GRP-1", Name: "模板甲", Version: 1,
+		FileID: "FILE-1", Status: "active", UploadedBy: "A0001", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	// 测试环境未注入 fileSvc → 下载 URL 不可用降级 500
+	w, resp := e.do(http.MethodGet, "/api/v1/admin/review-templates/GRP-1/download", nil,
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, model.CodeInternal, resp.Code)
+	// 组不存在 → 404
+	e.store.activeTemplateErr = repo.ErrTemplateNotFound
+	w, resp = e.do(http.MethodGet, "/api/v1/admin/review-templates/NOPE/download", nil,
+		map[string]string{"X-Role": "ROLE_DOCTOR", "X-User-Id": "D0001"})
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

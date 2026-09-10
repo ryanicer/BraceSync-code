@@ -4,7 +4,7 @@ import type {
   AdminLoginResult, ApiResponse, DashboardKPI, TeamRanking, DoctorRanking, PaginatedResponse, Patient, Device,
   Alert, InstallRecord, Technician, Team, TeamDetail, TeamMember, Doctor, Feedback, OrthosisPlan,
   FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
-  ReviewRecord, CreateReviewRecordRequest,
+  ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
 } from '@bracesync/shared-types'
 import { USE_MOCK, request } from '../utils/request'
 import * as dashboardMock from '../mock/dashboard'
@@ -392,4 +392,78 @@ export async function fetchReviewRecords(patientId: string): Promise<ReviewRecor
     return []
   }
   return request<ReviewRecord[]>({ url: `/api/v1/patients/${patientId}/review-records` })
+}
+
+// ========== T135 复查报告模板（合同运营后台「复查报告模板管理」） ==========
+
+/** 模板列表（每模板组当前 active 版本，含下载 URL；admin/doctor） */
+export async function fetchReviewTemplates(): Promise<ReviewTemplate[]> {
+  if (USE_MOCK) {
+    await delay()
+    return []
+  }
+  return request<ReviewTemplate[]>({ url: '/api/v1/admin/review-templates' })
+}
+
+/** 上传/创建模板（版本 v1；重名 409；admin/doctor） */
+export async function createReviewTemplateApi(input: CreateReviewTemplateRequest): Promise<ReviewTemplate> {
+  if (USE_MOCK) {
+    await delay()
+    return {
+      templateId: `TPL-${Date.now()}`,
+      groupId: `GRP-${Date.now()}`,
+      name: input.name,
+      version: 1,
+      fileId: input.fileId,
+      status: 'active',
+      uploadedBy: 'ADMIN',
+      uploadedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: new Date().toISOString(),
+      fileName: null,
+      contentType: null,
+      fileSize: null,
+      downloadUrl: null,
+    }
+  }
+  return request<ReviewTemplate>({
+    url: '/api/v1/admin/review-templates',
+    method: 'POST',
+    data: input as unknown as Record<string, unknown>,
+  })
+}
+
+/** 模板版本替换（新版本 active、旧版 retired；admin/doctor） */
+export async function replaceReviewTemplateApi(groupId: string, fileId: string): Promise<ReviewTemplate> {
+  if (USE_MOCK) {
+    await delay()
+    return {
+      templateId: `TPL-${Date.now()}`,
+      groupId,
+      name: '模板',
+      version: 2,
+      fileId,
+      status: 'active',
+      uploadedBy: 'ADMIN',
+      uploadedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: new Date().toISOString(),
+      fileName: null,
+      contentType: null,
+      fileSize: null,
+      downloadUrl: null,
+    }
+  }
+  return request<ReviewTemplate>({
+    url: `/api/v1/admin/review-templates/${groupId}/replace`,
+    method: 'POST',
+    data: { fileId },
+  })
+}
+
+/** 模板下载（组当前 active 版本文件） */
+export async function downloadReviewTemplateApi(groupId: string): Promise<{ downloadUrl: string }> {
+  if (USE_MOCK) {
+    await delay()
+    return { downloadUrl: '' }
+  }
+  return request<{ downloadUrl: string }>({ url: `/api/v1/admin/review-templates/${groupId}/download` })
 }

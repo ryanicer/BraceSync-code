@@ -253,6 +253,57 @@ func TestOnUploadComplete_NilStore(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestOnUploadComplete_ReviewTemplateSizeLimit(t *testing.T) {
+	// T135（R4-b 定稿值，服务端强制）：复查模板文件本体复用 review_report 通道，
+	// 以 owner_type=ReviewTemplate 区分，upload-complete 时校验 20MB 上限（前端预校验外最后一道门）。
+	// 直接构造 pending 的模板文件元数据，验证 >20MB 拒绝、=20MB 放行。
+	newTemplateFile := func(store repo.Store, fileID string) {
+		require.NoError(t, store.CreateFile(context.Background(), &model.FileMetadata{
+			FileID:    fileID,
+			Bucket:    "test-bucket",
+			ObjectKey: "review-reports/tpl.pdf",
+			FileType:  model.FileTypeReviewReport,
+			OwnerType: OwnerTypeReviewTemplate,
+			OwnerID:   "ADMIN",
+			Status:    model.FileStatusPending,
+		}))
+	}
+
+	t.Run("超过20MB拒绝", func(t *testing.T) {
+		store := newMemStore()
+		p := newTestPresigner(store)
+		newTemplateFile(store, "TPL-big")
+		err := p.OnUploadComplete(context.Background(), "TPL-big", "u", ReviewReportMaxBytes+1)
+		assert.ErrorIs(t, err, ErrFileTooLarge)
+		// 拒绝后保持 pending，未置 uploaded
+		fm, _ := store.GetFileByFileID(context.Background(), "TPL-big")
+		assert.Equal(t, model.FileStatusPending, fm.Status)
+	})
+
+	t.Run("等于20MB放行", func(t *testing.T) {
+		store := newMemStore()
+		p := newTestPresigner(store)
+		newTemplateFile(store, "TPL-ok")
+		require.NoError(t, p.OnUploadComplete(context.Background(), "TPL-ok", "u", ReviewReportMaxBytes))
+		fm, _ := store.GetFileByFileID(context.Background(), "TPL-ok")
+		assert.Equal(t, model.FileStatusUploaded, fm.Status)
+	})
+
+	t.Run("非模板类型不受20MB限制", func(t *testing.T) {
+		store := newMemStore()
+		p := newTestPresigner(store)
+		require.NoError(t, store.CreateFile(context.Background(), &model.FileMetadata{
+			FileID: "FILE-patient", Bucket: "test-bucket", ObjectKey: "review-reports/r.pdf",
+			FileType: model.FileTypeReviewReport, OwnerType: "patient",
+			OwnerID: "P0001", Status: model.FileStatusPending,
+		}))
+		// 非 ReviewTemplate 的复查报告文件 >20MB 不触发 T135 限制，正常置 uploaded
+		require.NoError(t, p.OnUploadComplete(context.Background(), "FILE-patient", "u", ReviewReportMaxBytes+1))
+		fm, _ := store.GetFileByFileID(context.Background(), "FILE-patient")
+		assert.Equal(t, model.FileStatusUploaded, fm.Status)
+	})
+}
+
 // ─────────────────────────────────────────────────────────────
 // Authorize 角色权限矩阵（需求 4）
 // ─────────────────────────────────────────────────────────────
