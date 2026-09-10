@@ -8,8 +8,8 @@ export interface RoleInfo {
 }
 
 export const PRESET_ROLES: RoleInfo[] = [
-  { key: 'admin', name: '运营管理员', description: '全量数据，无团队隔离，可访问全部 12 页' },
-  { key: 'doctor', name: '医生', description: '仅限本团队患者数据（矫形日志/告警/实时监控）' },
+  { key: 'admin', name: '运营管理员', description: '全量数据，无团队隔离，可访问全部页面' },
+  { key: 'doctor', name: '医生', description: '仅限本团队患者数据（矫形日志/告警/实时监控/复查报告）' },
   { key: 'cs', name: '客服', description: '仅患者沟通模块，全量患者（查看与标记）' },
 ]
 
@@ -46,11 +46,12 @@ export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
     '/communication',
     '/orthosis-log',
     '/install-records',
+    '/review-records',
     '/technicians',
     '/roles',
     '/settings',
   ],
-  doctor: ['/dashboard', '/monitor', '/alerts', '/orthosis-log'],
+  doctor: ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records'],
   cs: ['/communication'],
 }
 

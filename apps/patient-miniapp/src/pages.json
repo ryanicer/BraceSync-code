@@ -5,6 +5,26 @@
       "style": { "navigationBarTitleText": "登录", "navigationStyle": "custom" }
     },
     {
+      "path": "pages/login/bind",
+      "style": { "navigationBarTitleText": "绑定就诊档案", "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/login/bind-success",
+      "style": { "navigationBarTitleText": "绑定成功", "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/login/no-match",
+      "style": { "navigationBarTitleText": "未找到就诊档案", "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/login/conflict",
+      "style": { "navigationBarTitleText": "绑定冲突", "navigationStyle": "custom" }
+    },
+    {
+      "path": "pages/login/profile",
+      "style": { "navigationBarTitleText": "我的" }
+    },
+    {
       "path": "pages/monitor/index",
       "style": { "navigationBarTitleText": "实时监测", "enablePullDownRefresh": true }
     },
@@ -23,6 +43,10 @@
     {
       "path": "pages/anomaly/index",
       "style": { "navigationBarTitleText": "异常事件" }
+    },
+    {
+      "path": "pages/report/index",
+      "style": { "navigationBarTitleText": "复查管理" }
     }
   ],
   "tabBar": {
@@ -33,6 +57,7 @@
     "list": [
       { "pagePath": "pages/monitor/index", "text": "实时监测" },
       { "pagePath": "pages/history/index", "text": "异常监测" },
+      { "pagePath": "pages/report/index", "text": "复查管理" },
       { "pagePath": "pages/device/index", "text": "设备管理" }
     ]
   }

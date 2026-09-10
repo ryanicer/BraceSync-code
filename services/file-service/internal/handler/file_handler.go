@@ -7,6 +7,7 @@
 package handler
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strconv"
@@ -51,6 +52,7 @@ func (h *FileHandler) Router() *gin.Engine {
 		api.POST("/presign", h.handlePresignURL)
 		api.POST("/upload-complete", h.handleUploadComplete)
 		api.GET("/query", h.queryFiles)
+		api.GET("/:fileID/download", h.handleDownloadURL) // T130 下载预签名 URL
 		api.GET("/:fileID", h.getFileByID)
 	}
 	return r
@@ -69,6 +71,8 @@ type presignRequest struct {
 	OwnerType   string `json:"owner_type" binding:"required"`
 	OwnerID     string `json:"owner_id" binding:"required"`
 	ContentType string `json:"content_type"`
+	FileName    string `json:"file_name"`   // T130 增补单：原始文件名（含扩展名）
+	FileHeader  string `json:"file_header"` // T130 增补单：文件头魔数指纹（base64，前 8 字节）
 }
 
 // handlePresignURL 签发 COS PUT 预签名 URL（短时效 10 分钟）
@@ -92,6 +96,22 @@ func (h *FileHandler) handlePresignURL(c *gin.Context) {
 		errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "unsupported file_type")
 		return
 	}
+	// T130 增补单：复查报告三道校验（扩展名白名单 + MIME + 魔数指纹）
+	var fileHeader []byte
+	if fileType == model.FileTypeReviewReport {
+		if req.FileHeader != "" {
+			decoded, err := base64.StdEncoding.DecodeString(req.FileHeader)
+			if err != nil {
+				errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid file_header encoding (expect base64)")
+				return
+			}
+			fileHeader = decoded
+		}
+		if err := service.ValidateReviewReportFile(req.FileName, req.ContentType, fileHeader); err != nil {
+			errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, err.Error())
+			return
+		}
+	}
 	// 端点级授权：角色 × 文件类型矩阵（service.Authorize，任务需求 4）
 	if err := service.Authorize(role, fileType); err != nil {
 		errorJSON(c, http.StatusForbidden, ErrorCodeForbidden, "role not allowed for this file type")
@@ -103,6 +123,8 @@ func (h *FileHandler) handlePresignURL(c *gin.Context) {
 		OwnerType:   req.OwnerType,
 		OwnerID:     req.OwnerID,
 		ContentType: req.ContentType,
+		FileName:    req.FileName,
+		FileHeader:  fileHeader,
 	})
 	if err != nil {
 		switch {
@@ -188,6 +210,40 @@ func (h *FileHandler) getFileByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": fm})
+}
+
+// handleDownloadURL 签发文件下载预签名 URL（T130 复查报告下载）
+// GET /api/v1/files/:fileID/download
+func (h *FileHandler) handleDownloadURL(c *gin.Context) {
+	if _, _, ok := identity(c); !ok {
+		errorJSON(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "user identity missing")
+		return
+	}
+
+	fileID := c.Param("fileID")
+	resp, err := h.presigner.GenerateDownloadURL(c.Request.Context(), fileID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrFileNotFound):
+			errorJSON(c, http.StatusNotFound, ErrorCodeFileNotFound, "file not found or not uploaded")
+		case errors.Is(err, service.ErrInvalidRequest):
+			errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid file id")
+		default:
+			log.Error().Err(err).Str("file_id", fileID).Msg("generate download url failed")
+			errorJSON(c, http.StatusInternalServerError, ErrorCodePresignFailed, "failed to generate download url")
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "success",
+		"data": gin.H{
+			"file_id":      resp.FileID,
+			"download_url": resp.URL,
+			"expires_at":   resp.ExpiresAt.UTC().Format(time.RFC3339),
+		},
+	})
 }
 
 // queryFiles 按 owner/type/status 过滤分页查询（total 为过滤后总数）

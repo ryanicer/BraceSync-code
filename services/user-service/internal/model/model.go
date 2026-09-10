@@ -393,3 +393,39 @@ type TeamMemberDTO struct {
 type WXLoginRequestDTO struct {
 	Code string `json:"code"` // 必填，wx.login() 签发的临时登录凭证
 }
+
+// ─────────────────────────────────────────────────────────────
+// 复查记录（T130，合同患者端「复查管理」）
+// ─────────────────────────────────────────────────────────────
+
+// ReviewRecordDTO 复查记录响应（含报告文件元数据，从 file-service 拉取）
+type ReviewRecordDTO struct {
+	ReviewID       string  `json:"reviewId"`
+	PatientID      string  `json:"patientId"`
+	ReviewDate     string  `json:"reviewDate"`     // YYYY-MM-DD
+	ReviewType     *string `json:"reviewType"`     // initial / follow-up
+	Findings       *string `json:"findings"`       // 检查所见/结论
+	NextReviewDate *string `json:"nextReviewDate"` // 下次复查日期 YYYY-MM-DD
+	DoctorID       *string `json:"doctorId"`
+	ReportFileID   *string `json:"reportFileId"` // file-service file_id
+	CreatedAt      string  `json:"createdAt"`
+	UpdatedAt      string  `json:"updatedAt"`
+
+	// 报告文件元数据（从 file-service 拉取，可空）
+	ReportFileName    *string `json:"reportFileName"`
+	ReportContentType *string `json:"reportContentType"`
+	ReportSize        *int64  `json:"reportSize"`
+	ReportUploadedAt  *string `json:"reportUploadedAt"`
+	ReportDownloadURL *string `json:"reportDownloadUrl"` // 预签名 GET URL（5min）
+}
+
+// CreateReviewRecordRequest 创建复查记录请求（医生/管理员）
+type CreateReviewRecordRequest struct {
+	PatientID      string  `json:"patientId" binding:"required"`
+	ReviewDate     string  `json:"reviewDate" binding:"required"` // YYYY-MM-DD
+	ReviewType     *string `json:"reviewType"`
+	Findings       *string `json:"findings"`
+	NextReviewDate *string `json:"nextReviewDate"`
+	DoctorID       *string `json:"doctorId"`
+	ReportFileID   *string `json:"reportFileId"` // 已上传完成的 file_id（可空）
+}

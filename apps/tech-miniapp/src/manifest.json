@@ -13,6 +13,11 @@
   "mp-weixin": {
     "appid": "wx296778df7c1b1503",
     "setting": { "urlCheck": false },
-    "usingComponents": true
+    "usingComponents": true,
+    "permission": {
+      "scope.userLocation": {
+        "desc": "用于扫描附近的 BraceSync 蓝牙设备"
+      }
+    }
   }
 }

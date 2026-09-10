@@ -18,7 +18,7 @@ export const ROLE_ACCOUNT: Record<AdminRole, { name: string; label: string }> = 
   cs: { name: '客服小美', label: '客服' },
 }
 
-/** 12 页路由（对齐 router/index.ts pageRoutes） */
+/** 13 页路由（对齐 router/index.ts pageRoutes，T130 新增复查报告页） */
 export const adminRoutes = {
   login: '/login',
   forbidden: '/403',
@@ -31,19 +31,20 @@ export const adminRoutes = {
   communication: '/communication',
   orthosisLog: '/orthosis-log',
   installRecords: '/install-records',
+  reviewRecords: '/review-records',
   technicians: '/technicians',
   roles: '/roles',
   settings: '/settings',
 } as const
 
-/** admin 全量 12 页路径（权限矩阵 ROLE_PAGE_MATRIX.admin） */
+/** admin 全量 13 页路径（权限矩阵 ROLE_PAGE_MATRIX.admin，T130 新增 /review-records） */
 export const ADMIN_PAGES: string[] = [
   '/dashboard', '/monitor', '/patients', '/teams', '/devices', '/alerts',
-  '/communication', '/orthosis-log', '/install-records', '/technicians', '/roles', '/settings',
+  '/communication', '/orthosis-log', '/install-records', '/review-records', '/technicians', '/roles', '/settings',
 ]
 
-/** doctor 可见 4 页 / cs 可见 1 页（ROLE_PAGE_MATRIX） */
-export const DOCTOR_PAGES: string[] = ['/dashboard', '/monitor', '/alerts', '/orthosis-log']
+/** doctor 可见 5 页 / cs 可见 1 页（ROLE_PAGE_MATRIX，T130 新增 /review-records） */
+export const DOCTOR_PAGES: string[] = ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records']
 export const CS_PAGES: string[] = ['/communication']
 
 /**

@@ -68,6 +68,30 @@ func (e *ErrTeamInUse) Error() string {
 }
 
 // ─────────────────────────────────────────────────────────────
+// T130 复查记录 sentinel 错误
+// ─────────────────────────────────────────────────────────────
+
+// ErrReviewRecordNotFound 复查记录不存在。
+var ErrReviewRecordNotFound = errors.New("review record not found")
+
+// ErrReviewPatientNotFound 复查关联的患者不存在。
+var ErrReviewPatientNotFound = errors.New("patient not found for review record")
+
+// ReviewRecordRow review_records 表投影
+type ReviewRecordRow struct {
+	ReviewID       string
+	PatientID      string
+	ReviewDate     time.Time
+	ReviewType     *string
+	Findings       *string
+	NextReviewDate *time.Time
+	DoctorID       *string
+	ReportFileID   *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// ─────────────────────────────────────────────────────────────
 // 行投影（repo 层出参；handler 层转 DTO）
 // ─────────────────────────────────────────────────────────────
 
@@ -383,4 +407,9 @@ type Store interface {
 	// 系统配置
 	GetConfigs(ctx context.Context, keys []string) (map[string]string, error)
 	UpsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy string) error
+
+	// T130 复查记录
+	CreateReviewRecord(ctx context.Context, row ReviewRecordRow) (*ReviewRecordRow, error)
+	ListReviewRecordsByPatient(ctx context.Context, patientID string) ([]ReviewRecordRow, error)
+	GetReviewRecord(ctx context.Context, reviewID string) (*ReviewRecordRow, error)
 }
