@@ -32,24 +32,17 @@ test('设备热点名称展示与复制', async ({ context, page }) => {
 })
 
 test('WiFi 列表选择与手动输入', async ({ page }) => {
-  // 默认选中 Home_WiFi_5G
-  await expect(page.locator('.wifi-item', { hasText: 'Home_WiFi_5G' })).toHaveClass(/wifi-selected/)
-  // 切换选中 Office_Net
-  await page.locator('.wifi-item', { hasText: 'Office_Net' }).click()
-  await expect(page.locator('.wifi-item', { hasText: 'Office_Net' })).toHaveClass(/wifi-selected/)
-  await expect(page.locator('.wifi-item', { hasText: 'Home_WiFi_5G' })).not.toHaveClass(/wifi-selected/)
-  // 手动输入 SSID
+  // 无候选列表，SSID 走直接输入
   const manual = page.locator('.manual-wifi input')
   await fillUniInput(manual, 'My_Custom_WiFi')
+  await expect(manual).toHaveValue('My_Custom_WiFi')
 })
 
 test('手动输入 SSID 后点击扫描 WiFi 回填不清空（T136）', async ({ page }) => {
-  // 先手动输入自定义 SSID
+  // 无候选列表，改为直接输入；输入值应完整保留不清空
   const ssidInput = page.locator('.manual-wifi input')
   await fillUniInput(ssidInput, 'My_Custom_WiFi')
-  // 点击扫描到的首个 WiFi 选项 → 输入框应回填该 SSID（Home_WiFi_5G），而非被清空
-  await page.locator('.wifi-item').first().click()
-  await expect(ssidInput).toHaveValue('Home_WiFi_5G')
+  await expect(ssidInput).toHaveValue('My_Custom_WiFi')
 })
 
 test('WiFi 密码显隐切换', async ({ page }) => {
@@ -72,6 +65,7 @@ test('开始配网到配网成功全状态', async ({ page }) => {
   await page.locator('.action-btn', { hasText: '开始添加设备' }).click()
   await page.waitForURL('**/pages/wifi-setup/**', { timeout: 10_000 })
 
+  await fillUniInput(page.locator('.manual-wifi input'), 'My_Custom_WiFi')
   await fillUniInput(page.locator('uni-input.password-input input'), 'secret123')
   await page.locator('.btn-primary', { hasText: '开始配网' }).click()
 
