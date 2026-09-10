@@ -37,3 +37,18 @@ jobs:
         run: npm run lint
       - name: Vitest with coverage
         run: npm run test -- --coverage --run
+
+  # T144 契约漂移门禁：防止「前端消费的响应字段名」与「契约类型（packages/shared-types）」漂移（参考案例 T143）
+  contract-drift-gate:
+    name: Contract Drift Gate（契约漂移门禁）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Contract Drift Gate
+        run: npm run test:contract-gate

@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "test": "npm run typecheck && vitest run"
+    "test": "npm run typecheck && vitest run",
+    "contract:gate-test": "vitest run test/contract-drift-gate.spec.ts"
   },
   "dependencies": {
     "@bracesync/constants": "*",
