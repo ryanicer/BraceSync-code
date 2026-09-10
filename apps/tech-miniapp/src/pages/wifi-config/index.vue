@@ -51,27 +51,16 @@
             <text class="notice-text">请确保手机已连接到目标 WiFi 网络，或通过 BLE 将 WiFi 信息写入设备。</text>
           </view>
 
-          <text class="section-title">选择 WiFi 网络</text>
-          <view class="wifi-list">
-            <view
-              v-for="wifi in wifiList"
-              :key="wifi.ssid"
-              :class="['wifi-item', { 'wifi-selected': selectedSSID === wifi.ssid }]"
-              @click="selectWifi(wifi.ssid)"
-            >
-              <view class="wifi-info">
-                <text class="wifi-ssid">{{ wifi.ssid }}</text>
-                <text class="wifi-signal">{{ wifi.signal }}</text>
-              </view>
-              <text class="wifi-secure">{{ wifi.secure ? '🔒' : '' }}</text>
-            </view>
-          </view>
-
+          <text class="section-title">WiFi 名称</text>
           <view class="manual-wifi">
-            <text class="form-label">或手动输入 SSID</text>
-            <input class="form-input" type="text" placeholder="WiFi名称" v-model="manualSSID" />
+            <text class="form-label">WiFi 名称 (SSID)</text>
+            <input class="form-input" type="text" placeholder="请输入 WiFi 名称" v-model="manualSSID" />
           </view>
-        </view>
+          <view class="wifi-hint">
+            <text>仅支持 2.4GHz Wi-Fi 网络，不支持 5GHz（含 5G 频段的合一路由器请填 2.4G 那个网络名）</text>
+            <text>请手动输入准确的 WiFi 名称与密码</text>
+          </view>
+          </view>
       </view>
 
       <view class="section">
@@ -116,14 +105,9 @@ import { bleLog } from '../../utils/ble-log'
 const installStore = useInstallStore()
 
 const wifiSteps = ['收到', '连AP', '取IP', '探测', '成功']
-const wifiList = ref([
-  { ssid: 'Hospital_5G', signal: '强', secure: true },
-  { ssid: 'Hospital_Guest', signal: '中', secure: true },
-])
 const manualSSID = ref('')
 const password = ref('')
 const showPassword = ref(false)
-const selectedSSID = ref('')
 const provisioning = ref(false)
 
 // T119: 最小重试间隔（ms）。防止连点导致高频 BLE 写入 / 重复申领。
@@ -169,11 +153,6 @@ function isStepDone(i: number): boolean {
   return i < code
 }
 
-function selectWifi(ssid: string) {
-  selectedSSID.value = ssid
-  // T117: 点击扫描 WiFi 回填输入框，不再清空已输入内容
-  manualSSID.value = ssid
-}
 function goBack() {
   uni.navigateBack()
 }
@@ -188,7 +167,7 @@ async function startWifiConfig() {
   }
   lastProvisionAttempt = now
 
-  const ssid = manualSSID.value || selectedSSID.value
+  const ssid = manualSSID.value
   if (!ssid) {
     uni.showToast({ title: '请选择或输入 WiFi 网络', icon: 'none' })
     return
@@ -282,7 +261,6 @@ function handleTimeout() {
 function retryWifi() {
   wifiStatusCode.value = null
   errorCode.value = null
-  selectedSSID.value = ''
   password.value = ''
 }
 
@@ -328,14 +306,9 @@ onUnmounted(() => {
 .notice-icon { font-size: 28rpx; }
 .notice-text { font-size: 24rpx; color: #0369a1; line-height: 1.5; }
 .section-title { font-size: 28rpx; font-weight: 500; color: #1e293b; margin-bottom: 16rpx; display: block; }
-.wifi-list { display: flex; flex-direction: column; gap: 12rpx; margin-bottom: 20rpx; }
-.wifi-item { background: #f8fafc; border: 1rpx solid #e2e8f0; border-radius: 12rpx; padding: 20rpx 24rpx; display: flex; align-items: center; justify-content: space-between; }
-.wifi-selected { border-color: #3B82F6; background: #eff6ff; }
-.wifi-info { display: flex; flex-direction: column; gap: 4rpx; }
-.wifi-ssid { font-size: 28rpx; color: #1e293b; }
-.wifi-signal { font-size: 20rpx; color: #94a3b8; }
-.wifi-secure { font-size: 24rpx; }
 .manual-wifi { margin-top: 16rpx; }
+.wifi-hint { display: flex; flex-direction: column; gap: 8rpx; margin-top: 20rpx; padding: 20rpx 24rpx; background: #fff7ed; border-radius: 12rpx; }
+.wifi-hint text { font-size: 22rpx; color: #b45309; line-height: 1.5; }
 .form-group { margin-bottom: 20rpx; }
 .form-label { font-size: 26rpx; color: #64748b; display: block; margin-bottom: 12rpx; }
 .form-input { width: 100%; height: 76rpx; line-height: 76rpx; padding: 0 24rpx; border: 1rpx solid #e2e8f0; border-radius: 12rpx; font-size: 28rpx; color: #1e293b; background: #f8fafc; box-sizing: border-box; }

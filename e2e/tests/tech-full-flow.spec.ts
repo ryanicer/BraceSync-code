@@ -45,8 +45,8 @@ test.describe('技师端全链路', () => {
     await page.locator('.btn-primary', { hasText: '配置 WiFi' }).click()
     await page.waitForURL('**/pages/wifi-config/**', { timeout: 10_000 })
 
-    // wifi-config: 选 WiFi + 输密码 + 配网
-    await page.locator('.wifi-item').first().click()
+    // wifi-config: 输入 SSID + 密码 + 配网
+    await fillTechInput(page.locator('.manual-wifi .form-input').first(), 'My_Custom_WiFi')
     const pwdInput = page.locator('.password-input').first()
     await fillTechInput(pwdInput, 'test1234')
     await page.locator('.btn-primary', { hasText: '开始配网' }).click()
