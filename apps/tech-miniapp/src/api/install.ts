@@ -1,4 +1,4 @@
-﻿import { request, USE_MOCK } from '../utils/request'
+import { request, USE_MOCK } from '../utils/request'
 import type { InstallRecord } from '@bracesync/shared-types'
 import type { ReachabilityStatus } from '../types/app-extends'
 
@@ -79,7 +79,7 @@ interface ListInstallParams {
  */
 export async function listInstallRecords(
   params: ListInstallParams = {}
-): Promise<{ total: number; records: InstallRecord[] }> {
+): Promise<{ list: InstallRecord[]; total: number }> {
   if (USE_MOCK) {
     // T089-MOCK: 等后端 T084 就绪后切换
     await new Promise((r) => setTimeout(r, 200))
@@ -99,13 +99,13 @@ export async function listInstallRecords(
       reachabilityStatus:
         (i % 3 === 0 ? 'verified' : i % 3 === 1 ? 'pending' : 'skipped') as 'verified',
     }))
-    return { total: seed.length, records: seed }
+    return { total: seed.length, list: seed }
   }
   const qs = Object.entries(params)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
     .join('&')
-  return request<{ total: number; records: InstallRecord[] }>({
+  return request<{ list: InstallRecord[]; total: number }>({
     url: `/api/v1/install-records${qs ? '?' + qs : ''}`,
     method: 'GET',
   })
