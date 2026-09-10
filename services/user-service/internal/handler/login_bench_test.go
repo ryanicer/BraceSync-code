@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -34,37 +35,44 @@ func newTestEnv(t *testing.T) *testEnv {
 	return &testEnv{t: t, store: store, signer: signer, h: New(store, signer, nil)}
 }
 
-// TestLoginBenchSingleCost10 bcrypt cost10 单次校验耗时基准
+// TestLoginBenchSingleCost10 bcrypt cost10 校验耗时基准（T040）
+// 采用同进程内相对判据（cost10 中位耗时 vs cost9），与机器绝对性能 / 共享 CI runner 的
+// CPU 争用时基解耦，避免 T141 记录的 49ms < 50ms 这类 flaky；同时保留安全语义：
+// bcrypt cost 每 +1 迭代量约 ×2，cost10 应显著慢于 cost9（理论比值 ≈2.0）。
+// 若硬编码常量被降级为 cost8/cost9 哈希，其与 cost9 的比值会坍缩到 ≤1.0，被判失败。
 func TestLoginBenchSingleCost10(t *testing.T) {
 	t.Parallel()
 
-	const targetMinMs, targetMaxMs = 50, 150
 	pwd := []byte(itAdminPassword)
-	hash := []byte(itAdminHashCost10)
 
-	var times []time.Duration
-	for i := 0; i < 10; i++ {
-		start := time.Now()
-		err := bcrypt.CompareHashAndPassword(hash, pwd)
-		require.NoError(t, err)
-		dur := time.Since(start)
-		times = append(times, dur)
+	// 动态生成 cost8/cost9 哈希作为机器无关的参照标尺
+	hash8, err := bcrypt.GenerateFromPassword(pwd, 8)
+	require.NoError(t, err)
+	hash9, err := bcrypt.GenerateFromPassword(pwd, 9)
+	require.NoError(t, err)
+
+	const samples = 15
+	median := func(hash []byte) time.Duration {
+		durs := make([]time.Duration, 0, samples)
+		for i := 0; i < samples; i++ {
+			start := time.Now()
+			require.NoError(t, bcrypt.CompareHashAndPassword(hash, pwd))
+			durs = append(durs, time.Since(start))
+		}
+		sort.Slice(durs, func(i, j int) bool { return durs[i] < durs[j] })
+		return durs[len(durs)/2]
 	}
 
-	total := 0 * time.Microsecond
-	for _, d := range times {
-		total += d
-	}
-	avgDur := total / time.Duration(len(times))
-	avgMs := avgDur.Milliseconds()
+	med8 := median(hash8)
+	med9 := median(hash9)
+	med10 := median([]byte(itAdminHashCost10))
 
-	t.Logf("bcrypt cost10 平均耗时：%d ms（样本数=10）", avgMs)
+	ratio := float64(med10) / float64(med9)
+	t.Logf("cost8=%dms cost9=%dms cost10=%dms ratio=%0.2fx (samples=%d)",
+		med8.Milliseconds(), med9.Milliseconds(), med10.Milliseconds(), ratio, samples)
 
-	if avgMs < targetMinMs {
-		t.Errorf("cost10 平均耗时%dms < 最低要求%dms", avgMs, targetMinMs)
-	}
-	if avgMs > targetMaxMs {
-		t.Errorf("cost10 平均耗时%dms > 最高允许%dms", avgMs, targetMaxMs)
+	if ratio < 1.5 {
+		t.Errorf("cost10 中位耗时仅 %.2fx cost9（应≥1.5x），疑似哈希成本被降级", ratio)
 	}
 }
 
