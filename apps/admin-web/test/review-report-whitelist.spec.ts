@@ -3,8 +3,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   validateReviewReportFile,
+  checkReviewReportFileSize,
   REVIEW_REPORT_ALLOWED_EXT,
   REVIEW_REPORT_ALLOWED_MIME,
+  REVIEW_REPORT_MAX_BYTES,
 } from '../src/utils/review-report-whitelist'
 
 function mockFile(name: string, type: string) {
@@ -73,5 +75,24 @@ describe('validateReviewReportFile 白名单校验', () => {
     for (const ext of blocked) {
       expect(REVIEW_REPORT_ALLOWED_EXT).not.toContain(ext)
     }
+  })
+})
+
+// T135（R4-b 定稿值 20MB，前端预校验；后端 upload-complete 权威强制）
+describe('checkReviewReportFileSize 大小校验', () => {
+  it('恰 20MB → 放行', () => {
+    const r = checkReviewReportFileSize({ size: REVIEW_REPORT_MAX_BYTES })
+    expect(r.ok).toBe(true)
+  })
+
+  it('超过 20MB → 拒绝，提示「文件大小超过 20MB，请压缩后重试」', () => {
+    const r = checkReviewReportFileSize({ size: REVIEW_REPORT_MAX_BYTES + 1 })
+    expect(r.ok).toBe(false)
+    expect(r.reason).toBe('size')
+    expect(r.message).toContain('文件大小超过 20MB')
+  })
+
+  it('20MB 常量与后端同源（20<<20）', () => {
+    expect(REVIEW_REPORT_MAX_BYTES).toBe(20 * 1024 * 1024)
   })
 })

@@ -47,11 +47,12 @@ export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
     '/orthosis-log',
     '/install-records',
     '/review-records',
+    '/review-templates', // T135 复查模板管理
     '/technicians',
     '/roles',
     '/settings',
   ],
-  doctor: ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records'],
+  doctor: ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records', '/review-templates'], // T135 医生可下载空白模板
   cs: ['/communication'],
 }
 

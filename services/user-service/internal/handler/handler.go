@@ -194,6 +194,12 @@ func (h *Handler) Router() *gin.Engine {
 		// T130 复查记录（合同患者端「复查管理」）
 		v1.POST("/admin/review-records", h.createReviewRecord)
 		v1.GET("/patients/:patientId/review-records", h.listReviewRecords)
+
+		// T135 复查报告模板（合同运营后台「复查报告模板管理」；RBAC 限 admin+doctor）
+		v1.POST("/admin/review-templates", h.createReviewTemplate)
+		v1.POST("/admin/review-templates/:groupId/replace", h.replaceReviewTemplate)
+		v1.GET("/admin/review-templates", h.listReviewTemplates)
+		v1.GET("/admin/review-templates/:groupId/download", h.downloadReviewTemplate)
 	}
 	return r
 }

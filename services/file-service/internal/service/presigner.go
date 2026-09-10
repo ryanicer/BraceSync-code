@@ -24,11 +24,22 @@ var (
 	ErrInvalidRequest = errors.New("invalid request parameters")
 	ErrForbidden      = errors.New("role not allowed for this file type")
 	ErrFileNotFound   = errors.New("file not found")
+	// ErrFileTooLarge 复查模板文件超过 20MB 上限（T135，R4-b 定稿值）
+	ErrFileTooLarge = errors.New("文件大小超过 20MB，请压缩后重试")
 )
 
 // presignExpires 预签名 URL 有效期：短时效 10 分钟（任务要求 5–15 分钟区间），
 // 防长期有效 URL 泄露；单次 PUT 语义由 COS 预签名本身保证。
 const presignExpires = 10 * time.Minute
+
+// T135（R4-b 定稿值，代码内常量不配置化）：复查模板/文件上传 20MB 上限。
+// 与前端 apps/admin-web/src/utils/review-report-whitelist.ts 的 REVIEW_REPORT_MAX_BYTES 同源。
+const ReviewReportMaxBytes int64 = 20 << 20 // 20MB
+
+// OwnerTypeReviewTemplate 复查报告模板文件的 owner_type 标识（T135）。
+// 模板文件本体复用 review_report 预签名通道（不扩展 files.file_type 枚举），
+// 以 owner_type 区分运营后台空白模板。
+const OwnerTypeReviewTemplate = "ReviewTemplate"
 
 // Presigner 预签名签发 + 元数据登记服务
 type Presigner struct {
@@ -319,6 +330,12 @@ func (p *Presigner) OnUploadComplete(ctx context.Context, fileID, publicURL stri
 	// 终态防回退：已 uploaded/failed 的行不允许再次变更（幂等返回成功）
 	if fm.Status != model.FileStatusPending {
 		return nil
+	}
+
+	// T135（R4-b 定稿值，服务端强制）：复查模板文件本体复用 review_report 通道，
+	// 以 owner_type=ReviewTemplate 区分，上传完成时校验 20MB 上限（前端预校验外最后一道门）。
+	if fm.OwnerType == OwnerTypeReviewTemplate && fileSize > ReviewReportMaxBytes {
+		return ErrFileTooLarge
 	}
 
 	// url 缺省回填 COS 对象地址（未提供公网 URL 时保障元数据可定位）

@@ -76,10 +76,17 @@ var techAdminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPut, "/api/v1/install-records/:id"),              // T122 安装记录元数据回填（技师+管理员）
 }
 
-// doctorAdminOnlyPatterns 仅医生+管理员可访问端点矩阵（T130）：
-// 复查记录创建——仅医生（ROLE_DOCTOR）与管理员（ROLE_ADMIN）可创建，患者/客服等 → 403。
+// doctorAdminOnlyPatterns 仅医生+管理员可访问端点矩阵（T130 / T135）：
+// 复查记录创建、复查报告模板管理——仅医生（ROLE_DOCTOR）与管理员（ROLE_ADMIN）可访问，
+// 患者/客服等 → 403。
 var doctorAdminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/admin/review-records"), // T130 创建复查记录
+	// T135 复查报告模板管理（合同运营后台「复查报告模板管理」；admin+doctor 均需：
+	//   admin 后台上传/替换/列表/下载；doctor 列表/下载空白模板线下填写）
+	rbacOf(http.MethodPost, "/api/v1/admin/review-templates"),                  // 上传/创建模板
+	rbacOf(http.MethodPost, "/api/v1/admin/review-templates/:groupId/replace"), // 版本替换
+	rbacOf(http.MethodGet, "/api/v1/admin/review-templates"),                   // 模板列表
+	rbacOf(http.MethodGet, "/api/v1/admin/review-templates/:groupId/download"), // 模板下载
 }
 
 // matchDoctorAdminPattern 判断 method+path 是否命中 doctor+admin 专属端点矩阵

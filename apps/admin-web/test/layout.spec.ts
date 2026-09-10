@@ -45,10 +45,10 @@ describe('MainLayout 布局', () => {
     vi.useRealTimers()
   })
 
-  it('admin 侧边栏展示全部 13 页菜单', async () => {
+  it('admin 侧边栏展示全部 14 页菜单', async () => {
     const wrapper = await mountLayout('admin')
     const items = wrapper.findAll('.sidebar-menu li.el-menu-item')
-    expect(items.length).toBe(13) // 断言更新：12→13，依据 T130 新增复查报告页
+    expect(items.length).toBe(14) // 断言更新：13→14，依据 T135 新增复查模板管理页
     expect(wrapper.text()).toContain('数据概览')
     expect(wrapper.text()).toContain('系统配置')
     expect(wrapper.text()).toContain('复查报告')

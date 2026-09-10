@@ -429,3 +429,44 @@ type CreateReviewRecordRequest struct {
 	DoctorID       *string `json:"doctorId"`
 	ReportFileID   *string `json:"reportFileId"` // 已上传完成的 file_id（可空）
 }
+
+// ─────────────────────────────────────────────────────────────
+// T135 复查报告模板管理（合同运营后台子系统「复查报告模板管理」）
+//
+// 模板 = 医院空白复查报告（空白模板文件：pdf/jpg/png/…，R4-a 白名单 + 20MB，R4-b）。
+// 生命周期：上传（版本 1）→ 版本替换（同组递增，旧版 retired 非删除）。
+// 文件本体走 file-service review_report 预签名通道，owner_type=ReviewTemplate 区分，
+// 【不扩展】files.file_type 枚举。uploaded_by 一律取登录凭证 X-User-Id（防伪造）。
+// 系统仅承载模板文件管理（R1-c 读法 A），【不】据模板自动生成报告。
+// ─────────────────────────────────────────────────────────────
+
+// ReviewTemplateDTO 复查报告模板响应（列表条目 = 每模板组当前 active 版本）
+type ReviewTemplateDTO struct {
+	// 通用模板信息
+	TemplateID  string  `json:"templateId"`
+	GroupID     string  `json:"groupId"`
+	Name        string  `json:"name"`
+	Version     int     `json:"version"`
+	FileID      string  `json:"fileId"`
+	Status      string  `json:"status"` // active / retired
+	UploadedBy  string  `json:"uploadedBy"`
+	UploadedAt  string  `json:"uploadedAt"` // YYYY-MM-DD（页面要求）
+	UpdatedAt   string  `json:"updatedAt"`
+	DownloadURL *string `json:"downloadUrl"` // 预签名 GET URL（5min，可空）
+
+	// 文件元数据（从 file-service 拉取，可空）
+	FileName    *string `json:"fileName"`
+	ContentType *string `json:"contentType"`
+	FileSize    *int64  `json:"fileSize"`
+}
+
+// CreateReviewTemplateRequest 上传/创建复查报告模板请求
+type CreateReviewTemplateRequest struct {
+	Name   string `json:"name" binding:"required"` // 模板显示名
+	FileID string `json:"fileId" binding:"required"`
+}
+
+// ReplaceReviewTemplateRequest 模板版本替换请求（确认后生效，旧版 retired）
+type ReplaceReviewTemplateRequest struct {
+	FileID string `json:"fileId" binding:"required"`
+}

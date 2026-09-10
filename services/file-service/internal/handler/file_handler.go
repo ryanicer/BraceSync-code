@@ -177,6 +177,8 @@ func (h *FileHandler) handleUploadComplete(c *gin.Context) {
 		switch {
 		case errors.Is(err, service.ErrFileNotFound):
 			errorJSON(c, http.StatusNotFound, ErrorCodeFileNotFound, "file not found")
+		case errors.Is(err, service.ErrFileTooLarge):
+			errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, err.Error())
 		case errors.Is(err, service.ErrInvalidRequest):
 			errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid upload-complete request")
 		default:

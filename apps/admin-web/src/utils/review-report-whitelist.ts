@@ -24,9 +24,14 @@ export const REVIEW_REPORT_ALLOWED_MIME = [
   '',
 ] as const
 
+/** 复查报告/复查模板文件大小上限（20MB，R4-b 定稿值）。
+ * 与后端 services/file-service/internal/service/presigner.go 的 ReviewReportMaxBytes 同源；
+ * 代码内常量不配置化。 */
+export const REVIEW_REPORT_MAX_BYTES = 20 * 1024 * 1024 // 20MB
+
 export interface ValidateResult {
   ok: boolean
-  reason?: 'ext' | 'mime'
+  reason?: 'ext' | 'mime' | 'size'
   message?: string
 }
 
@@ -45,6 +50,18 @@ export function validateReviewReportFile(file: { name: string; type: string }): 
       ok: false,
       reason: 'mime',
       message: `不支持的 MIME 类型：${file.type}`,
+    }
+  }
+  return { ok: true }
+}
+
+/** 前端校验：文件大小 ≤ 20MB（R4-b；后端 upload-complete 为权威强制，此处做体验层快反馈） */
+export function checkReviewReportFileSize(file: { size: number }): ValidateResult {
+  if (file.size > REVIEW_REPORT_MAX_BYTES) {
+    return {
+      ok: false,
+      reason: 'size',
+      message: '文件大小超过 20MB，请压缩后重试',
     }
   }
   return { ok: true }
