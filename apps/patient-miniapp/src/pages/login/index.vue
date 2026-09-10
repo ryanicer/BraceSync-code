@@ -29,6 +29,11 @@
         <text class="agree-text">（含儿童个人信息保护及监护人授权声明）</text>
       </view>
     </view>
+
+    <view v-if="toastVisible" class="toast">
+      <text class="toast-icon">✓</text>
+      <text class="toast-text">{{ toastText }}</text>
+    </view>
   </view>
 </template>
 
@@ -41,6 +46,20 @@ import { resolveWxLoginResult } from '../../utils/auth-state'
 const authStore = useAuthStore()
 const agreed = ref(true)
 const loginLoading = ref(false)
+const toastVisible = ref(false)
+const toastText = ref('')
+
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+
+function showSuccessToast(text: string, navigate?: () => void) {
+  toastText.value = text
+  toastVisible.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    toastVisible.value = false
+    navigate?.()
+  }, 800)
+}
 
 let pending: Promise<void> | null = null
 
@@ -48,7 +67,7 @@ function checkAgreed(): boolean {
   if (agreed.value) return true
   uni.showModal({
     title: '提示',
-    content: '请先阅读并同意用户协议和隐私政策',
+    content: '请先阅读并同意协议和隐私政策',
     showCancel: false,
     confirmText: '确定',
   })
@@ -87,10 +106,9 @@ async function wechatLoginInner() {
           return
         }
         authStore.login(data.token, data.patientId)
-        uni.showToast({ title: '登录成功，正在进入首页...', icon: 'none' })
-        setTimeout(() => {
+        showSuccessToast('登录成功，正在进入首页...', () => {
           uni.switchTab({ url: '/pages/monitor/index' })
-        }, 800)
+        })
         break
       }
       case 'NEED_BIND': {
@@ -145,4 +163,7 @@ function wechatLogin() {
 .check-mark { color: #fff; font-size: 20rpx; line-height: 1; }
 .agree-text { color: #64748b; }
 .agree-link { color: #2563EB; }
+.toast { position: fixed; top: 160rpx; left: 50%; transform: translateX(-50%); background: #1e293b; color: #fff; padding: 20rpx 36rpx; border-radius: 16rpx; z-index: 999; display: flex; align-items: center; gap: 12rpx; box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.2); }
+.toast-icon { color: #22c55e; font-size: 28rpx; }
+.toast-text { font-size: 26rpx; white-space: nowrap; }
 </style>

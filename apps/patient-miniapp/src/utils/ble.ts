@@ -212,3 +212,61 @@ export async function provisionBleDevice(
     disconnectBleDevice(deviceId)
   }
 }
+
+// =====================================================================
+// H5 Mock BLE 函数（4 步配网页使用，H5/E2E 环境 BLE 不可用）
+// 真机环境由上方 provisionBleDevice 等真实 BLE 函数处理
+// =====================================================================
+
+function isH5(): boolean {
+  // #ifdef H5
+  return true
+  // #endif
+  // #ifndef H5
+  return false
+  // #endif
+}
+
+/** H5 mock：蓝牙初始化（真机走 uni.openBluetoothAdapter） */
+export async function initBluetooth(): Promise<boolean> {
+  if (isH5()) {
+    console.log('[BLE Mock] initBluetooth - H5 mode, skipping')
+    return true
+  }
+  return new Promise((resolve, reject) => {
+    uni.openBluetoothAdapter({
+      success: () => resolve(true),
+      fail: (err) => reject(new Error(`蓝牙初始化失败: ${err.errMsg}`)),
+    })
+  })
+}
+
+/** H5 mock：BLE 连接（1s 延时模拟，真机走 uni.createBLEConnection） */
+export async function createBLEConnection(deviceId: string): Promise<boolean> {
+  if (isH5()) {
+    console.log(`[BLE Mock] createBLEConnection - ${deviceId}`)
+    await new Promise((r) => setTimeout(r, 1000))
+    return true
+  }
+  return new Promise((resolve, reject) => {
+    uni.createBLEConnection({
+      deviceId,
+      success: () => resolve(true),
+      fail: (err) => reject(new Error(`连接失败: ${err.errMsg}`)),
+    })
+  })
+}
+
+/** H5 mock：写入 WiFi 配置（300ms 延时，真机走 AES-128-CTR 加密写入） */
+export async function writeWiFiConfig(ssid: string, password: string): Promise<boolean> {
+  if (isH5()) {
+    console.log(`[BLE Mock] writeWiFiConfig - SSID: ${ssid}`)
+    await new Promise((r) => setTimeout(r, 300))
+    return true
+  }
+  const payload = JSON.stringify({ ssid, password })
+  const buf = new ArrayBuffer(payload.length)
+  const view = new Uint8Array(buf)
+  for (let i = 0; i < payload.length; i++) view[i] = payload.charCodeAt(i)
+  return Boolean(buf.byteLength > 0)
+}
