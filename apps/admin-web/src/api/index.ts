@@ -305,6 +305,7 @@ export async function presignFile(params: {
   fileType: 'review_report'
   ownerType?: string
   ownerId?: string
+  fileHeader?: string // T130 增补单：文件头魔数指纹（base64，前 8 字节）
 }): Promise<PresignResult> {
   if (USE_MOCK) {
     await delay()
@@ -315,7 +316,19 @@ export async function presignFile(params: {
       expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
     }
   }
-  return request<PresignResult>({ url: '/api/v1/files/presign', method: 'POST', data: params as Record<string, unknown> })
+  // 后端 JSON 字段为 snake_case（file_type / owner_type / owner_id / content_type / file_name / file_header）
+  return request<PresignResult>({
+    url: '/api/v1/files/presign',
+    method: 'POST',
+    data: {
+      file_type: params.fileType,
+      owner_type: params.ownerType,
+      owner_id: params.ownerId,
+      content_type: params.contentType,
+      file_name: params.fileName,
+      file_header: params.fileHeader,
+    },
+  })
 }
 
 /** 直传文件到 COS（使用预签名 URL，不走网关 request） */

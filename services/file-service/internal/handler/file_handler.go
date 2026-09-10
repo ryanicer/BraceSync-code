@@ -7,6 +7,7 @@
 package handler
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strconv"
@@ -70,6 +71,8 @@ type presignRequest struct {
 	OwnerType   string `json:"owner_type" binding:"required"`
 	OwnerID     string `json:"owner_id" binding:"required"`
 	ContentType string `json:"content_type"`
+	FileName    string `json:"file_name"`   // T130 增补单：原始文件名（含扩展名）
+	FileHeader  string `json:"file_header"` // T130 增补单：文件头魔数指纹（base64，前 8 字节）
 }
 
 // handlePresignURL 签发 COS PUT 预签名 URL（短时效 10 分钟）
@@ -93,10 +96,21 @@ func (h *FileHandler) handlePresignURL(c *gin.Context) {
 		errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "unsupported file_type")
 		return
 	}
-	// T130 R4-a 硬约束：复查报告 MIME 必须在白名单内（pdf/jpg/png）
-	if fileType == model.FileTypeReviewReport && !service.ValidReviewReportContentType(req.ContentType) {
-		errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "unsupported content_type for review_report (allow: pdf/jpg/png)")
-		return
+	// T130 增补单：复查报告三道校验（扩展名白名单 + MIME + 魔数指纹）
+	var fileHeader []byte
+	if fileType == model.FileTypeReviewReport {
+		if req.FileHeader != "" {
+			decoded, err := base64.StdEncoding.DecodeString(req.FileHeader)
+			if err != nil {
+				errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid file_header encoding (expect base64)")
+				return
+			}
+			fileHeader = decoded
+		}
+		if err := service.ValidateReviewReportFile(req.FileName, req.ContentType, fileHeader); err != nil {
+			errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, err.Error())
+			return
+		}
 	}
 	// 端点级授权：角色 × 文件类型矩阵（service.Authorize，任务需求 4）
 	if err := service.Authorize(role, fileType); err != nil {
@@ -109,6 +123,8 @@ func (h *FileHandler) handlePresignURL(c *gin.Context) {
 		OwnerType:   req.OwnerType,
 		OwnerID:     req.OwnerID,
 		ContentType: req.ContentType,
+		FileName:    req.FileName,
+		FileHeader:  fileHeader,
 	})
 	if err != nil {
 		switch {

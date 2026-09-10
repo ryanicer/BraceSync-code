@@ -33,7 +33,7 @@
               :auto-upload="false"
               :show-file-list="false"
               :on-change="onFileChange"
-              accept=".pdf,.jpg,.jpeg,.png"
+              accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.pptx,.zip"
             >
               <el-button :loading="uploading">
                 {{ selectedFile ? selectedFile.name : '选择文件' }}
@@ -148,6 +148,9 @@ async function onFileChange(file: { raw: File }) {
 async function uploadReport(file: File) {
   uploading.value = true
   try {
+    // T130 增补单：读取文件头前 8 字节（魔数指纹），base64 编码后随 presign 请求发送
+    const headerBuffer = await file.slice(0, 8).arrayBuffer()
+    const fileHeader = btoa(String.fromCharCode(...new Uint8Array(headerBuffer)))
     // 1. 申请预签名上传 URL
     const presign = await presignFile({
       fileName: file.name,
@@ -155,6 +158,7 @@ async function uploadReport(file: File) {
       fileType: 'review_report',
       ownerType: 'patient',
       ownerId: patientId.value,
+      fileHeader,
     })
     // 2. 直传 COS
     await uploadFileDirect(presign.uploadUrl, file, file.type)
