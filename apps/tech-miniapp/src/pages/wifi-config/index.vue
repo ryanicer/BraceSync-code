@@ -171,7 +171,8 @@ function isStepDone(i: number): boolean {
 
 function selectWifi(ssid: string) {
   selectedSSID.value = ssid
-  manualSSID.value = ''
+  // T117: 点击扫描 WiFi 回填输入框，不再清空已输入内容
+  manualSSID.value = ssid
 }
 function goBack() {
   uni.navigateBack()

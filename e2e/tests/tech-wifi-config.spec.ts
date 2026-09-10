@@ -47,6 +47,14 @@ test('密码输入与切换显示', async ({ page }) => {
   await expect(innerInput).toHaveAttribute('type', 'text')
 })
 
+test('手动输入 SSID 后点击扫描 WiFi 回填不清空（T117）', async ({ page }) => {
+  const ssidInput = page.locator('.manual-wifi .form-input').first()
+  await fillTechInput(ssidInput, 'My_Custom_WiFi')
+  // 点击扫描到的 WiFi 选项 → 输入框应回填该 SSID（Hospital_5G），而非被清空
+  await page.locator('.wifi-item').first().click()
+  await expect(ssidInput.locator('input').first()).toHaveValue('Hospital_5G')
+})
+
 test('配网全流程到成功', async ({ page }) => {
   test.setTimeout(60_000)
   // 选择 WiFi + 输入密码
