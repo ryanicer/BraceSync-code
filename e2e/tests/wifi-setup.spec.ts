@@ -43,6 +43,15 @@ test('WiFi 列表选择与手动输入', async ({ page }) => {
   await fillUniInput(manual, 'My_Custom_WiFi')
 })
 
+test('手动输入 SSID 后点击扫描 WiFi 回填不清空（T136）', async ({ page }) => {
+  // 先手动输入自定义 SSID
+  const ssidInput = page.locator('.manual-wifi input')
+  await fillUniInput(ssidInput, 'My_Custom_WiFi')
+  // 点击扫描到的首个 WiFi 选项 → 输入框应回填该 SSID（Home_WiFi_5G），而非被清空
+  await page.locator('.wifi-item').first().click()
+  await expect(ssidInput).toHaveValue('Home_WiFi_5G')
+})
+
 test('WiFi 密码显隐切换', async ({ page }) => {
   const pwd = page.locator('uni-input.password-input input')
   await fillUniInput(pwd, 'secret123')

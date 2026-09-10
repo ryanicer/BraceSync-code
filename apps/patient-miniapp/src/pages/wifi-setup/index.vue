@@ -143,7 +143,7 @@ function copyHotspot() {
 
 function selectWifi(ssid: string) {
   selectedSSID.value = ssid
-  manualSSID.value = ''
+  manualSSID.value = ssid
 }
 
 async function startConfig() {
