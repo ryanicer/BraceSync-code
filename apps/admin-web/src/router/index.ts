@@ -13,6 +13,7 @@ export const pageRoutes: RouteRecordRaw[] = [
   { path: '/communication', name: 'Communication', component: () => import('../pages/communication/index.vue'), meta: { title: '患者沟通', icon: '💬' } },
   { path: '/orthosis-log', name: 'OrthosisLog', component: () => import('../pages/orthosis-log/index.vue'), meta: { title: '矫形日志', icon: '📝' } },
   { path: '/install-records', name: 'InstallRecords', component: () => import('../pages/install-records/index.vue'), meta: { title: '安装记录', icon: '📋' } },
+  { path: '/review-records', name: 'ReviewRecords', component: () => import('../pages/review-records/index.vue'), meta: { title: '复查报告', icon: '📄' } },
   { path: '/technicians', name: 'Technicians', component: () => import('../pages/technicians/index.vue'), meta: { title: '技师管理', icon: '🔧' } },
   { path: '/roles', name: 'Roles', component: () => import('../pages/roles/index.vue'), meta: { title: '权限控制', icon: '🔐' } },
   { path: '/settings', name: 'Settings', component: () => import('../pages/settings/index.vue'), meta: { title: '系统配置', icon: '⚙️' } },

@@ -10,6 +10,7 @@ const (
 	FileTypeInstallPhoto FileType = "install_photo" // 安装照片
 	FileTypeCommPhoto    FileType = "comm_photo"    // 沟通图片
 	FileTypeLogPhoto     FileType = "log_photo"     // 矫形日志图片
+	FileTypeReviewReport FileType = "review_report" // 复查报告（T130，医生上传，患者下载）
 )
 
 // FileStatus represents upload status
@@ -24,7 +25,7 @@ const (
 // ValidFileType 文件类型合法性校验（handler 参数校验与 service 签发共用同一口径）
 func ValidFileType(ft FileType) bool {
 	switch ft {
-	case FileTypeSignature, FileTypeInstallPhoto, FileTypeCommPhoto, FileTypeLogPhoto:
+	case FileTypeSignature, FileTypeInstallPhoto, FileTypeCommPhoto, FileTypeLogPhoto, FileTypeReviewReport:
 		return true
 	}
 	return false

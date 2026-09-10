@@ -111,6 +111,10 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPut, "/admin/roles/:roleId/permissions"},
 	{http.MethodGet, "/admin/settings"}, // T030 #8
 	{http.MethodPut, "/admin/settings"},
+
+	// T130 复查记录（合同患者端「复查管理」）
+	{http.MethodPost, "/admin/review-records"},              // 医生/管理员创建复查记录
+	{http.MethodGet, "/patients/:patientId/review-records"}, // 患者复查记录列表（含报告下载URL）
 }
 
 // deviceServiceRoutes 设备/安装记录管理端列表（T030 #3 patientName join）
@@ -149,6 +153,7 @@ var fileServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/files/upload-complete"},
 	{http.MethodGet, "/files/:fileID"},
 	{http.MethodGet, "/files/query"},
+	{http.MethodGet, "/files/:fileID/download"}, // T130：复查报告下载预签名 URL
 }
 
 // envOrURL 环境变量优先，缺省回 compose 服务名地址

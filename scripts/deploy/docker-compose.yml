@@ -65,6 +65,8 @@ services:
       # T069：患者端微信登录凭据（缺失则 /patient/wx-login 降级 500，不影响其他端点）
       - WX_APPID=${WX_APPID}
       - WX_APP_SECRET=${WX_APP_SECRET}
+      # T130：file-service 内部地址（复查报告元数据 + 下载预签名 URL）
+      - FILE_SERVICE_URL=http://file-service:8085
     depends_on:
       postgres:
         condition: service_healthy

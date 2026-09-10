@@ -152,6 +152,12 @@ type fakeStore struct {
 	lastRemoveTeamID   string
 	lastRemoveMID      string
 	lastRemoveMType    string
+
+	// T130 复查记录
+	reviewRows      []repo.ReviewRecordRow
+	reviewRowsErr   error
+	createdReview   *repo.ReviewRecordRow
+	createReviewErr error
 }
 
 func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {
@@ -1583,6 +1589,22 @@ func TestMaskAndMergeWifiPasswords(t *testing.T) {
 		[]model.WifiPresetDTO{{Ssid: "a", Password: "********"}, {Ssid: "c", Password: "new"}}, stored)
 	assert.Equal(t, "old", merged[0].Password)
 	assert.Equal(t, "new", merged[1].Password)
+}
+
+// T130 fakeStore review record methods
+func (f *fakeStore) CreateReviewRecord(_ context.Context, row repo.ReviewRecordRow) (*repo.ReviewRecordRow, error) {
+	if f.createdReview != nil {
+		return f.createdReview, f.createReviewErr
+	}
+	return &row, f.createReviewErr
+}
+
+func (f *fakeStore) ListReviewRecordsByPatient(_ context.Context, _ string) ([]repo.ReviewRecordRow, error) {
+	return f.reviewRows, f.reviewRowsErr
+}
+
+func (f *fakeStore) GetReviewRecord(_ context.Context, _ string) (*repo.ReviewRecordRow, error) {
+	return nil, nil
 }
 
 // ─────────────────────────────────────────────────────────────

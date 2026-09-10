@@ -43,6 +43,10 @@
     {
       "path": "pages/anomaly/index",
       "style": { "navigationBarTitleText": "异常事件" }
+    },
+    {
+      "path": "pages/report/index",
+      "style": { "navigationBarTitleText": "复查管理" }
     }
   ],
   "tabBar": {
@@ -53,6 +57,7 @@
     "list": [
       { "pagePath": "pages/monitor/index", "text": "实时监测" },
       { "pagePath": "pages/history/index", "text": "异常监测" },
+      { "pagePath": "pages/report/index", "text": "复查管理" },
       { "pagePath": "pages/device/index", "text": "设备管理" }
     ]
   }

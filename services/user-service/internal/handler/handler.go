@@ -51,12 +51,18 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
 	"github.com/bracesync/bracesync/services/user-service/internal/phone"
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
+	"github.com/bracesync/bracesync/services/user-service/internal/service"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
 	"github.com/bracesync/bracesync/services/user-service/internal/wechat"
 )
 
 // headerUserID gateway 鉴权通过后注入的操作人身份头（架构 §5.2）
 const headerUserID = "X-User-Id"
+
+// headerRole gateway 鉴权通过后注入的角色头（架构 §5.2）
+const headerRole = "X-Role"
+
+const roleAdmin = "ROLE_ADMIN"
 
 // 预置角色（PRD §7D.11，权限系统锁定标识）
 var presetRoles = map[string]struct{}{
@@ -72,8 +78,9 @@ type Handler struct {
 	signer           *token.Signer
 	bindSigner       *token.Signer // T085：绑定态 JWT signer（同 secret，ttl=30min）
 	phone            *phone.Cipher
-	wxClient         wxClientI // 接口化：单测注入内存 fake；生产为 *wechat.Client
-	phoneTokenSecret string    // T085：phoneToken 签发/校验密钥（独立于 JWT_SECRET）
+	wxClient         wxClientI      // 接口化：单测注入内存 fake；生产为 *wechat.Client
+	phoneTokenSecret string         // T085：phoneToken 签发/校验密钥（独立于 JWT_SECRET）
+	fileSvc          fileSvcClientI // T130：file-service 客户端（获取报告文件元数据+下载URL）
 }
 
 // New 创建 Handler（保持三参签名兼容现有测试与调用方；main.go 通过 SetWXClient 注入真实客户端）。
@@ -104,12 +111,23 @@ func (h *Handler) SetPhoneCipher(c *phone.Cipher) {
 	h.phone = c
 }
 
+// SetFileSvc T130：注入 file-service 客户端（nil 时复查记录列表不返回文件元数据/下载URL）。
+func (h *Handler) SetFileSvc(c fileSvcClientI) {
+	h.fileSvc = c
+}
+
 // wxClientI 微信客户端最小接口：
 // handler 测试可用内存 fake/wrapper 轻量注入；生产 *wechat.Client 自然实现。
 type wxClientI interface {
 	DoCode2Session(ctx context.Context, code string) (*wechat.Code2SessionResult, error)
 	// GetPhoneNumber T085：微信 phonenumber.getPhoneNumber（code 换手机号）。
 	GetPhoneNumber(ctx context.Context, code string) (pureNumber, countryCode string, err error)
+}
+
+// fileSvcClientI T130：file-service 客户端最小接口（handler 测试可注入 fake）。
+type fileSvcClientI interface {
+	GetFileByID(ctx context.Context, fileID string) (*service.FileMetadata, error)
+	GetDownloadURL(ctx context.Context, fileID string) (string, error)
 }
 
 // Router 组装路由（可测试）
@@ -172,6 +190,10 @@ func (h *Handler) Router() *gin.Engine {
 
 		v1.GET("/admin/settings", h.getSettings)
 		v1.PUT("/admin/settings", h.updateSettings)
+
+		// T130 复查记录（合同患者端「复查管理」）
+		v1.POST("/admin/review-records", h.createReviewRecord)
+		v1.GET("/patients/:patientId/review-records", h.listReviewRecords)
 	}
 	return r
 }
