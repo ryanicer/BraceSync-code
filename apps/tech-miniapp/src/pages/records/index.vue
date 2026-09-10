@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <view class="page">
     <view class="page-header">
       <text class="back-link" @click="goHome">← 返回</text>
@@ -93,7 +93,7 @@ async function loadRecords() {
   error.value = ''
   try {
     const res = await listInstallRecords({})
-    records.value = res.records
+    records.value = res.list || []
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
