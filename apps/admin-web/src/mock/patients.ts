@@ -146,7 +146,6 @@ export interface CreatePatientInput {
   age?: number | null
   diagnosis?: string | null
   cobbAngle?: number | null
-  deviceId?: string | null
   teamId?: string | null
   doctorId?: string | null
 }
@@ -176,7 +175,7 @@ export function mockCreatePatient(input: CreatePatientInput): Patient {
     age: input.age ?? null,
     diagnosis: input.diagnosis ?? null,
     cobbAngle: input.cobbAngle ?? null,
-    deviceId: input.deviceId ?? null,
+    deviceId: null,
     teamId: input.teamId ?? null,
     doctorId: input.doctorId ?? null,
     status: 'active',
