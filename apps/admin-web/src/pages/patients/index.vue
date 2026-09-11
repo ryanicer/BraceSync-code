@@ -110,9 +110,6 @@
             <el-option v-for="d in doctors" :key="d.doctorId" :label="d.name" :value="d.doctorId" />
           </el-select>
         </el-form-item>
-        <el-form-item label="设备ID">
-          <el-input v-model="createForm.deviceId" placeholder="请输入设备ID" />
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
@@ -186,7 +183,6 @@ const createForm = ref({
   age: '',
   diagnosis: '',
   cobbAngle: '',
-  deviceId: '',
   teamId: '',
   doctorId: '',
   gender: '' as '' | 'male' | 'female',
@@ -248,7 +244,7 @@ function onSelectionChange(rows: Patient[]) {
 function openCreate() {
   createForm.value = {
     name: '', phone: '', age: '', diagnosis: '',
-    cobbAngle: '', deviceId: '', teamId: '', doctorId: '', gender: '',
+    cobbAngle: '', teamId: '', doctorId: '', gender: '',
   }
   createFormRef.value?.clearValidate()
   createVisible.value = true
@@ -270,7 +266,6 @@ async function confirmCreate() {
       age: createForm.value.age ? Number(createForm.value.age) : null,
       diagnosis: createForm.value.diagnosis || null,
       cobbAngle: createForm.value.cobbAngle ? Number(createForm.value.cobbAngle) : null,
-      deviceId: createForm.value.deviceId || null,
       teamId: createForm.value.teamId || null,
       doctorId: createForm.value.doctorId || null,
     })
