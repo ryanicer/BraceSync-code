@@ -143,7 +143,7 @@ type AdminPatientDTO struct {
 	Age        *int     `json:"age"`
 	Diagnosis  *string  `json:"diagnosis"`
 	CobbAngle  *float64 `json:"cobbAngle"`
-	DeviceID   *string  `json:"deviceId"`
+	DeviceID   *string  `json:"deviceId"` // 当前绑定设备(devices.patient_id 只读关联)；非 patients.device_id(T151 方案1)
 	TeamID     *string  `json:"teamId"`
 	DoctorID   *string  `json:"doctorId"`
 	Phone      string   `json:"phone"` // 脱敏手机号（138****8000），由 handler.Masked(PhoneEnc) 生成
@@ -291,6 +291,7 @@ type PatientLoginResultDTO struct {
 // ─────────────────────────────────────────────────────────────
 
 // CreatePatientRequestDTO 创建患者请求（name + phone 必填，其余可空）
+// T151：非传 deviceId——患者-设备绑定以 devices.patient_id 为唯一事实源，建档无权绑定确诊设备。
 type CreatePatientRequestDTO struct {
 	Name      string   `json:"name"`
 	Phone     string   `json:"phone"` // 必填，11 位 1 开头手机号（validPhone 校验）
@@ -298,7 +299,6 @@ type CreatePatientRequestDTO struct {
 	Age       *int     `json:"age"`
 	Diagnosis *string  `json:"diagnosis"`
 	CobbAngle *float64 `json:"cobbAngle"`
-	DeviceID  *string  `json:"deviceId"`
 	TeamID    *string  `json:"teamId"`
 	DoctorID  *string  `json:"doctorId"`
 }

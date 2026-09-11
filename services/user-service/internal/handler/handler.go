@@ -1527,7 +1527,6 @@ func (h *Handler) createPatient(c *gin.Context) {
 		Age:       req.Age,
 		Diagnosis: req.Diagnosis,
 		CobbAngle: req.CobbAngle,
-		DeviceID:  req.DeviceID,
 		TeamID:    req.TeamID,
 		DoctorID:  req.DoctorID,
 	})
