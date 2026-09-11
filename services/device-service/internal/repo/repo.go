@@ -175,6 +175,12 @@ func (r *PGStore) Bind(ctx context.Context, p BindParams) (*model.Binding, error
 		reason = model.ReasonRebind
 	}
 
+	// T151(方案B)：保证「一个患者至多一台当前设备」(uk_devices_active_patient)——先解绑仍指向该患者的其它设备
+	//（先解绑旧设备、再绑新设备），避免跨设备换绑被唯一索引 uk_devices_active_patient 拒绝。
+	if err := r.clearPatientOtherDevices(ctx, tx, p.PatientID, p.DeviceID, p.OperatorID); err != nil {
+		return nil, err
+	}
+
 	if _, err = tx.Exec(ctx,
 		`INSERT INTO device_bindings (device_id, patient_id, reason, operator_id)
 		 VALUES ($1, $2, $3, $4)`, p.DeviceID, p.PatientID, reason, p.OperatorID,
@@ -242,6 +248,11 @@ func (r *PGStore) Rebind(ctx context.Context, p BindParams) (*model.Binding, err
 		return nil, fmt.Errorf("rebind: close previous: %w", err)
 	}
 
+	// T151(方案B)：换绑到新患者时，同样先解绑仍指向该新患者的其它设备（保证一个患者至多一台当前设备）
+	if err := r.clearPatientOtherDevices(ctx, tx, p.PatientID, p.DeviceID, p.OperatorID); err != nil {
+		return nil, err
+	}
+
 	if _, err = tx.Exec(ctx,
 		`INSERT INTO device_bindings (device_id, patient_id, reason, operator_id)
 		 VALUES ($1, $2, $3, $4)`, p.DeviceID, p.PatientID, model.ReasonRebind, p.OperatorID,
@@ -261,6 +272,28 @@ func (r *PGStore) Rebind(ctx context.Context, p BindParams) (*model.Binding, err
 		return nil, fmt.Errorf("rebind: commit: %w", err)
 	}
 	return prev, nil
+}
+
+// clearPatientOtherDevices 遵守「一个患者至多一台当前设备」不变量（uk_devices_active_patient / T151 方案B）：
+// 在把患者 patientID 绑定/换绑到 targetDeviceID 的事务内，先解绑仍指向该患者的其它设备——
+// 关闭其 active binding（reason=rebind 可追溯），并清空其 devices.patient_id/bind_time 冗余，
+// 即「先解绑旧设备，再绑新设备」，避免跨设备换绑被唯一索引 uk_devices_active_patient 拒绝。
+func (r *PGStore) clearPatientOtherDevices(ctx context.Context, tx pgx.Tx, patientID, targetDeviceID, operatorID string) error {
+	if _, err := tx.Exec(ctx,
+		`UPDATE device_bindings SET unbind_at = now(), reason = $2, operator_id = $3
+		 WHERE patient_id = $1 AND device_id <> $4 AND unbind_at IS NULL`,
+		patientID, model.ReasonRebind, operatorID, targetDeviceID,
+	); err != nil {
+		return fmt.Errorf("clear patient other bindings: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE devices SET patient_id = NULL, bind_time = NULL, status = $2, updated_at = now()
+		 WHERE patient_id = $1 AND device_id <> $3`,
+		patientID, model.StatusUnbound, targetDeviceID,
+	); err != nil {
+		return fmt.Errorf("clear patient other device patient_id: %w", err)
+	}
+	return nil
 }
 
 // Unbind 解绑事务（幂等：无 active binding 时 hadActive=false，不报错）
