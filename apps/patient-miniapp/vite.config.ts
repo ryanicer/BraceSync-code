@@ -40,15 +40,18 @@ function readEnvFile(filename: string): Record<string, string> {
 //
 // 模式策略：
 // - production：读取 .env.production（入库默认值），.env.local 可覆盖
-// - development：默认 mock 模式（USE_MOCK=true, API_BASE_URL=''），.env.local 可覆盖
+// - development：默认沿用患者端原硬编码值（API_BASE_URL=生产、USE_MOCK=false），
+//   保证「不配置任何 env 时行为与现状完全一致」；.env.local 仍可覆盖
+// 改自 apps/tech-miniapp/vite.config.ts：仅把开发默认回退值由「mock/空地址」改为患者端
+// 原始硬编码值（技师端页面走 mock 函数，患者端页面直接调 request()，故患者端默认必须非 mock）。
 export default defineConfig(({ mode }) => {
   const isProd = mode === 'production'
   const envProduction = isProd ? readEnvFile('.env.production') : {}
   const envLocal = readEnvFile('.env.local')
 
-  // 优先级：.env.local > .env.production（仅生产模式）> 开发模式默认值
-  const apiBaseUrl = envLocal.VITE_API_BASE_URL ?? envProduction.VITE_API_BASE_URL ?? ''
-  const useMock = (envLocal.VITE_USE_MOCK ?? envProduction.VITE_USE_MOCK ?? (isProd ? 'false' : 'true')) !== 'false'
+  // 优先级：.env.local > .env.production（仅生产模式）> 患者端原有硬编码默认值
+  const apiBaseUrl = envLocal.VITE_API_BASE_URL ?? envProduction.VITE_API_BASE_URL ?? 'https://api.hbksd.com.cn'
+  const useMock = (envLocal.VITE_USE_MOCK ?? envProduction.VITE_USE_MOCK ?? 'false') !== 'false'
 
   return {
     plugins: [uni()],
