@@ -238,11 +238,15 @@ func (s *PGStore) DoctorIDByAdmin(ctx context.Context, adminID string) (string, 
 // 患者（管理端只读，含 teams/doctors 姓名 join）
 // ─────────────────────────────────────────────────────────────
 
+// patientSelect 患者列表/详情投影。
+// T151(方案C)：当前绑定设备取自 devices（patient_id 只读关联；跨服务只读，写归属 device-service），
+// 依赖迁移 000012 的 uk_devices_active_patient 部分唯一索引保证一个患者至多一行；patients.device_id 已废弃、不再读取。
 const patientSelect = `
 SELECT p.patient_id, p.name, p.gender, p.age, p.diagnosis, p.cobb_angle,
-       p.device_id, p.team_id, p.primary_doctor_id, p.status, p.created_at, p.updated_at,
+       dev.device_id, p.team_id, p.primary_doctor_id, p.status, p.created_at, p.updated_at,
        t.name AS team_name, d.name AS doctor_name
 FROM patients p
+LEFT JOIN devices dev ON dev.patient_id = p.patient_id
 LEFT JOIN teams t ON t.team_id = p.team_id
 LEFT JOIN doctors d ON d.doctor_id = p.primary_doctor_id`
 
@@ -782,10 +786,10 @@ func (s *PGStore) CreatePatient(ctx context.Context, in PatientInput) (*PatientR
 	}
 	_, execErr := s.pool.Exec(ctx,
 		`INSERT INTO patients (patient_id, name, phone_enc, phone_hash, gender, age, diagnosis, cobb_angle,
-		                       device_id, team_id, primary_doctor_id, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active')`,
+		                       team_id, primary_doctor_id, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active')`,
 		patientID, in.Name, in.PhoneEnc, in.PhoneHash, in.Gender, in.Age, in.Diagnosis, in.CobbAngle,
-		in.DeviceID, in.TeamID, in.DoctorID)
+		in.TeamID, in.DoctorID)
 	if execErr != nil {
 		// 并发兜底：unique violation(phone_hash) → ErrPatientExists
 		var pgErr *pgconn.PgError

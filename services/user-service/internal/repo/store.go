@@ -121,6 +121,7 @@ type ReviewTemplateRow struct {
 // ─────────────────────────────────────────────────────────────
 
 // PatientRow patients LEFT JOIN teams/doctors 投影（管理端列表/详情）
+// DeviceID：当前绑定设备，来自 devices(patient_id 只读关联)；patients.device_id 已废弃(T151 方案1)。
 type PatientRow struct {
 	PatientID  string
 	Name       string
@@ -321,6 +322,7 @@ type TechInput struct {
 // PatientInput 创建患者入参（T057 写功能契约；T069 扩展可空 phone 支持微信-only 用户）。
 // Name 必填；PhoneEnc/PhoneHash 为 nil 表示微信-only 用户（对应 DB 列 NULL，
 // 迁移 000008 已解除 NOT NULL 约束）；其余可空指针。
+// T151：建档不再写入 device_id（患者-设备绑定以 devices.patient_id 为唯一事实源，建档无权绑定确诊设备）。
 type PatientInput struct {
 	Name      string
 	PhoneEnc  *[]byte // AES-GCM 密文（handler.preparePhone 生成；为 nil=微信-only 无手机号）
@@ -329,7 +331,6 @@ type PatientInput struct {
 	Age       *int
 	Diagnosis *string
 	CobbAngle *float64
-	DeviceID  *string
 	TeamID    *string
 	DoctorID  *string
 }
