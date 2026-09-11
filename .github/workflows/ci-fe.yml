@@ -52,3 +52,37 @@ jobs:
         run: npm ci
       - name: Run Contract Drift Gate
         run: npm run test:contract-gate
+
+  # T153 mp-weixin 构建关卡：拦截小程序出包构建失败（sass 依赖回归 / scss 编译等）
+  mp-weixin-build:
+    name: mp-weixin Build Gate（小程序构建门禁）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        app: [patient-miniapp, tech-miniapp]
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build mp-weixin (${{ matrix.app }})
+        run: npm -w apps/${{ matrix.app }} run build:mp-weixin
+      - name: Verify build artifacts
+        run: |
+          DIST_DIR="apps/${{ matrix.app }}/dist/build/mp-weixin"
+          if [ ! -d "$DIST_DIR" ]; then
+            echo "::error::Build output directory $DIST_DIR not found"
+            exit 1
+          fi
+          CONFIG_FILE="$DIST_DIR/project.config.json"
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "::error::project.config.json not found in $DIST_DIR"
+            exit 1
+          fi
+          python3 -c "import json; json.load(open('$CONFIG_FILE'))"
+          echo "✓ ${{ matrix.app }} mp-weixin build artifacts verified"
