@@ -113,8 +113,8 @@ async function wechatLoginInner() {
       }
       case 'NEED_BIND': {
         const data = env.data as WxLoginNeedBindData
-        if (data?.bindToken) {
-          authStore.saveBindToken(data.bindToken)
+        if (data?.token) {
+          authStore.saveBindToken(data.token)
         }
         uni.navigateTo({ url: '/pages/login/bind' })
         break

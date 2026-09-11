@@ -84,7 +84,7 @@ async function retryBind() {
       }
       case 'CONFLICT': {
         const data = env.data as BindPhoneFailData
-        if (data?.phoneToken) authStore.setPhoneToken(data.phoneToken)
+        if (data?.phone_token) authStore.setPhoneToken(data.phone_token)
         uni.redirectTo({ url: '/pages/login/conflict' })
         break
       }

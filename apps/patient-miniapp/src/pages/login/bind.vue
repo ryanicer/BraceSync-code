@@ -119,18 +119,18 @@ async function doBind(phoneCode?: string) {
       }
       case 'NO_MATCH': {
         const data = env.data as BindPhoneFailData
-        if (data?.phoneToken) {
-          phoneToken.value = data.phoneToken
-          authStore.setPhoneToken(data.phoneToken)
+        if (data?.phone_token) {
+          phoneToken.value = data.phone_token
+          authStore.setPhoneToken(data.phone_token)
         }
         uni.redirectTo({ url: '/pages/login/no-match' })
         break
       }
       case 'CONFLICT': {
         const data = env.data as BindPhoneFailData
-        if (data?.phoneToken) {
-          phoneToken.value = data.phoneToken
-          authStore.setPhoneToken(data.phoneToken)
+        if (data?.phone_token) {
+          phoneToken.value = data.phone_token
+          authStore.setPhoneToken(data.phone_token)
         }
         uni.redirectTo({ url: '/pages/login/conflict' })
         break
