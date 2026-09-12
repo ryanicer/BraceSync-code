@@ -134,9 +134,7 @@ func (s *t085Store) GetPatientWXOpenID(_ context.Context, patientID string) (str
 		}
 	}
 	return "", nil
-}
-
-// BindPatientOpenid 模拟行锁绑定：mutex 串行化，已绑定任意 openid → ErrAlreadyBound。
+} // BindPatientOpenid 模拟行锁绑定：mutex 串行化，已绑定任意 openid → ErrAlreadyBound。
 // 幂等由 handler 层 GetPatientWXOpenID 判断保证；store 层严格模拟 DB 行锁语义。
 //
 // 并发模拟：进入写锁前短暂让步，确保并发请求的 GetPatientWXOpenID（读锁）先于
@@ -234,14 +232,16 @@ func MustNewBindTokenSigner() *token.Signer {
 	return s
 }
 
-// createBindToken 签发绑定态 JWT (sub=openid, scope=bind)
-func (e *bindPhoneTestEnv) createBindToken(openid string) string {
+// createBindToken 签发绑定态 JWT (sub="openid_<raw>"，scope=bind；T159 契约)
+// 调用者传入 raw openid（与 wxLogin 返回 / DB patients.wx_openid / phoneToken.openid 字段对齐）；
+// 本函数内部统一加 scopeBindPrefix，模拟生产 wxLogin 签发逻辑。
+func (e *bindPhoneTestEnv) createBindToken(rawOpenid string) string {
 	e.fixedClock.Set(time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC))
 	tok, _ := e.bindTokenSigner.Sign(
-		openid,    // subject
-		"",        // username (patient 无 username)
-		"测试患者",    // name
-		"patient", // roleID
+		scopeBindPrefix+rawOpenid, // T159：模拟 wxLogin 签发侧加 openid_ 前缀
+		"",                        // username (patient 无 username)
+		"测试患者",                    // name
+		"patient",                 // roleID
 	)
 	return tok
 }
@@ -310,7 +310,7 @@ func TestBindPhoneHappyPath_SuccessfulBinding(t *testing.T) {
 	t.Run("success_200_with_JWT_and_wx_openid_written", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub handler 返回 500，预期 200 + JWT 8h + UPDATE wx_openid")
 
-		bindToken := e.createBindToken("openid_bind_B")
+		bindToken := e.createBindToken("bind_B")
 		w, resp := e.doBindPhone("wechat_code_xyz", "", bindToken)
 
 		assert.Equal(t, http.StatusOK, w.Code, "绑定成功应返回 200")
@@ -333,7 +333,12 @@ func TestBindPhoneHappyPath_SuccessfulBinding(t *testing.T) {
 		// 断言：store 被调用写入 wx_openid（Winner 扩展 Store 接口后生效）
 		assert.Equal(t, 1, e.store.bindOpenidCalls, "应恰好调用 1 次 wx_openid 写入")
 		assert.Equal(t, "P20260001", e.store.lastBindPatient, "写入的 PatientID 应匹配")
-		assert.Equal(t, "openid_bind_B", e.store.lastBindOpenid, "写入的 openid 应等于绑定态 sub")
+		// T159：bindToken sub="openid_bind_B"，handler 用 stripScopeBindPrefix 还原 raw openid="bind_B" 写 DB；
+		// DB / phoneToken 内部契约要求 raw（无前缀），故断言期望剥前缀后的值。
+		assert.Equal(t, "bind_B", e.store.lastBindOpenid,
+			"T159 契约：写入 DB 的 openid 必须等于 raw（剥 openid_ 前缀后）；原断言 'openid_bind_B' 是 PR #63 之前无 strip 的旧契约")
+		assert.NotContains(t, e.store.lastBindOpenid, scopeBindPrefix,
+			"DB 字段不带 scopeBindPrefix（保持 raw openid 内部契约）")
 	})
 }
 
@@ -354,7 +359,7 @@ func TestBindPhoneNoMatch_UnregisteredPhone(t *testing.T) {
 	t.Run("not_found_10602_with_phoneToken", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 10602 + phoneToken (purpose=phone_token/exp=7d)")
 
-		bindToken := e.createBindToken("openid_bind_C")
+		bindToken := e.createBindToken("bind_C")
 		w, resp := e.doBindPhone("wechat_code_unreg", "", bindToken)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -391,7 +396,7 @@ func TestBindPhoneInactiveStatus_Returns10602(t *testing.T) {
 	t.Run("inactive_status_returns_10602_same_code_as_no_match", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 10602 (status!=active 与 no match 同码防枚举)")
 
-		bindToken := e.createBindToken("openid_bind_C_inactive")
+		bindToken := e.createBindToken("bind_C_inactive")
 		w, resp := e.doBindPhone("wechat_code", "", bindToken)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -414,11 +419,11 @@ func TestBindPhoneAlreadyBoundByOtherOpenid(t *testing.T) {
 
 	// Fixture: phone_hash 匹配且 wx_openid≠当前 openid
 	// patientLogin 表示 phone 匹配到 P20260003；
-	// wxPatientByOpenID["openid_other_bound"] 表示该患者已被 openid_other_bound 绑定。
+	// wxPatientByOpenID["other_bound"] 表示该患者已被 other_bound 绑定。
 	patient := patientLoginForPhone("P20260003", "患者小明", "active")
 	e.store.patientLogin = patient
 	e.store.wxPatientByOpenID = map[string]*repo.PatientLoginRow{
-		"openid_other_bound": patient,
+		"other_bound": patient,
 	}
 	e.wechatClient.DisableError()
 	e.wechatClient.SetPhoneNumber("13800138003")
@@ -426,7 +431,7 @@ func TestBindPhoneAlreadyBoundByOtherOpenid(t *testing.T) {
 	t.Run("already_bound_other_openid_10603_with_phoneToken", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 10603 + phoneToken (禁止覆盖)")
 
-		newOpenid := "openid_bind_D"
+		newOpenid := "bind_D"
 		bindToken := e.createBindToken(newOpenid)
 		w, resp := e.doBindPhone("wechat_code", "", bindToken)
 
@@ -466,7 +471,7 @@ func TestBindPhoneConcurrency_TwoRequests(t *testing.T) {
 	t.Run("concurrent_requests_exactly_one_success_one_10603", func(t *testing.T) {
 		t.Log("KNOWN_RED: stub 返回 500，预期 database row lock 保证恰好 1 成功")
 
-		bindToken := e.createBindToken("openid_concurrent_H")
+		bindToken := e.createBindToken("concurrent_H")
 
 		var wg sync.WaitGroup
 		var mu sync.Mutex
@@ -508,7 +513,7 @@ func TestBindPhoneIdempotentSameOpenid(t *testing.T) {
 	e := newBindPhoneEnv(t)
 
 	// Fixture: phone_hash 匹配且 wx_openid==当前 openid (已绑定自身)
-	sameOpenid := "openid_idem_H"
+	sameOpenid := "idem_H" // raw openid（与 DB patients.wx_openid / phoneToken.openid 对齐）
 	patient := patientLoginForPhone("P20260005", "患者小明", "active")
 	e.store.patientLogin = patient
 	e.store.wxPatientByOpenID = map[string]*repo.PatientLoginRow{
@@ -527,5 +532,46 @@ func TestBindPhoneIdempotentSameOpenid(t *testing.T) {
 		assert.Equal(t, model.CodeOK, resp.Code, "幂等应返回 200 success")
 
 		// 断言：允许重复操作但不实际改变状态（不报错即幂等成功）
+	})
+}
+
+// ─────────────────────────────────────────────────────────────
+// T159：scope=bind JWT sub 含 "openid_" 前缀，消费侧 stripScopeBindPrefix 还原 raw openid
+// 契约（双侧）：网关 scopeAuthz 据 sub 前缀识别 scope=bind 放行 bind-phone；
+// user-service 消费侧剥前缀还原成 raw openid 后与 DB patients.wx_openid / phoneToken.openid 对齐。
+// 验证：带前缀 bindToken 走通 bind-phone，且写入 DB 的是 raw openid（去前缀后）。
+// ─────────────────────────────────────────────────────────────
+
+// TestBindPhoneScopeBindJWTSubPrefix_StripAndWriteRawOpenid 带前缀 bindToken → 写入 DB 的 openid 应为 raw（剥前缀）
+func TestBindPhoneScopeBindJWTSubPrefix_StripAndWriteRawOpenid(t *testing.T) {
+	t.Parallel()
+
+	e := newBindPhoneEnv(t)
+
+	// 模拟 wxLogin 行为：签发带 openid_ 前缀的 bindToken；sub 是 "openid_<raw>"
+	const rawOpenID = "oABC12345"
+	bindToken := e.createBindToken(rawOpenID) // T159: createBindToken 内部加 scopeBindPrefix
+
+	// Fixture：phone_hash 匹配 unique active + wx_openid=NULL → 触发 BindPatientOpenid 路径
+	phone := "13900139000"
+	_ = hashPhoneNumber(phone)
+	e.store.patientLogin = patientLoginForPhone("P20260099", "新绑定患者", "active")
+	e.wechatClient.DisableError()
+	e.wechatClient.SetPhoneNumber(phone)
+
+	t.Run("strip_prefix_then_bind_writes_raw_openid_to_db", func(t *testing.T) {
+		t.Log("T159：sub='openid_<raw>' 经 stripScopeBindPrefix 后写入 DB 应等于 raw；防契约漂移")
+
+		w, resp := e.doBindPhone("wechat_code_t159", "", bindToken)
+
+		require.Equal(t, http.StatusOK, w.Code, "带前缀 bindToken 应能走通 bind-phone（scope=bind 命中）")
+		require.Equal(t, model.CodeOK, resp.Code)
+
+		// 关键断言：写入 store 的 openid 必须是 raw（去前缀后），与 DB / phoneToken 契约对齐
+		assert.Equal(t, 1, e.store.bindOpenidCalls, "应恰好调用 1 次 wx_openid 写入")
+		assert.Equal(t, rawOpenID, e.store.lastBindOpenid,
+			"T159 契约：消费侧 stripScopeBindPrefix 后写入 DB 的 openid 必须等于 rawOpenID（不带 openid_ 前缀）")
+		assert.NotContains(t, e.store.lastBindOpenid, scopeBindPrefix,
+			"DB / phoneToken 内部契约 openid 字段不带前缀（raw 微信 openid）")
 	})
 }

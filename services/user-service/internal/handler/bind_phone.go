@@ -33,9 +33,14 @@ type bindPhoneRequest struct {
 // 在微信某些边界下（purePhoneNumber 带 +86/86 前缀、含不可见字符）会算出与 DB 不一致的 hash，
 // 触发 10602 patient_not_found（误诊为档案不存在）。phoneToken 路径取 claims.phone_hash 不
 // 走外部输入，保持原 phone.Hash 行为（claims 来源于服务端自身，安全可信）。
+//
+// T159：scope=bind 时 JWT sub="openid_<raw>"（网关 scopeAuthz 据此前缀放行 bind-phone）；
+// 本 handler 第一步用 stripScopeBindPrefix 还原成 raw openid 后与 DB / phoneToken.openid 对齐。
 func (h *Handler) bindPhone(c *gin.Context) {
-	openID, _ := c.Get("subject") // scopeGuard 已注入（scope=bind 时 sub=openid）
-	currentOpenID, _ := openID.(string)
+	openID, _ := c.Get("subject") // scopeGuard 已注入（scope=bind 时 sub="openid_<raw>"）
+	bareSubject, _ := openID.(string)
+	// T159：剥 scopeBindPrefix 还原 raw openid，与 DB patients.wx_openid / phoneToken.openid 字段对齐。
+	currentOpenID := stripScopeBindPrefix(bareSubject)
 
 	var req bindPhoneRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

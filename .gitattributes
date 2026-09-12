@@ -3,3 +3,6 @@
 *.sh text eol=lf
 services/Dockerfile text eol=lf
 .github/workflows/*.yml text eol=lf
+# Go 源文件统一 LF（golangci-lint gofmt 检查基于 git blob 内容；
+# Windows 开发环境 system autocrlf=true 会 checkout CRLF，导致 gofmt -s 误报）
+*.go text eol=lf
