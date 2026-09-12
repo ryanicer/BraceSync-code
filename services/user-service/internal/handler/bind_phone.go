@@ -3,6 +3,8 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -33,15 +35,51 @@ type bindPhoneRequest struct {
 // 在微信某些边界下（purePhoneNumber 带 +86/86 前缀、含不可见字符）会算出与 DB 不一致的 hash，
 // 触发 10602 patient_not_found（误诊为档案不存在）。phoneToken 路径取 claims.phone_hash 不
 // 走外部输入，保持原 phone.Hash 行为（claims 来源于服务端自身，安全可信）。
+//
+// T159：scope=bind 时 JWT sub="openid_<raw>"（网关 scopeAuthz 据此前缀放行 bind-phone）；
+// 本 handler 第一步用 stripScopeBindPrefix 还原成 raw openid 后与 DB / phoneToken.openid 对齐。
 func (h *Handler) bindPhone(c *gin.Context) {
-	openID, _ := c.Get("subject") // scopeGuard 已注入（scope=bind 时 sub=openid）
-	currentOpenID, _ := openID.(string)
+	openID, _ := c.Get("subject") // scopeGuard 已注入（scope=bind 时 sub="openid_<raw>"）
+	bareSubject, _ := openID.(string)
+	// T159：剥 scopeBindPrefix 还原 raw openid，与 DB patients.wx_openid / phoneToken.openid 字段对齐。
+	currentOpenID := stripScopeBindPrefix(bareSubject)
+
+	// T159-panic-502 排查：handler 入口 Info 日志；此前缺这条导致「user-service 没收到请求」
+	// 还是「handler 入口就 panic 但 panic recover 屏蔽日志」无法判定。
+	ctxLogger(c).Info().
+		Str("path", c.Request.URL.Path).
+		Str("method", c.Request.Method).
+		Str("remote_addr", c.ClientIP()).
+		Str("auth_header_prefix", func() string {
+			h := c.GetHeader("Authorization")
+			if len(h) > 20 {
+				return h[:20] + "...(truncated)"
+			}
+			return h
+		}()).
+		Str("subject_raw", bareSubject).
+		Str("openid_after_strip", currentOpenID).
+		Str("wx_client_nil", func() string {
+			if h.wxClient == nil {
+				return "true"
+			}
+			return "false"
+		}()).
+		Bool("phone_token_secret_set", h.phoneTokenSecret != "").
+		Msg("bind-phone: handler entered (T159-dbg)")
 
 	var req bindPhoneRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		ctxLogger(c).Info().Err(err).Msg("bind-phone: ShouldBindJSON failed (T159-dbg)")
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
+	ctxLogger(c).Info().
+		Bool("has_phone_code", req.PhoneCode != "").
+		Bool("has_phone_token", req.PhoneToken != "").
+		Int("phone_code_len", len(req.PhoneCode)).
+		Int("phone_token_len", len(req.PhoneToken)).
+		Msg("bind-phone: request parsed (T159-dbg)")
 	if req.PhoneCode == "" && req.PhoneToken == "" {
 		fail(c, model.ErrInvalidParam("phone_code or phone_token is required"))
 		return
@@ -67,9 +105,17 @@ func (h *Handler) bindPhone(c *gin.Context) {
 		if err != nil {
 			var we *wechat.WechatError
 			if errors.As(err, &we) {
+				ctxLogger(c).Info().
+					Int("wx_errcode", we.ErrCode).
+					Msg("bind-phone: wechat biz error → 10604 (T166-dbg)")
 				fail(c, model.ErrInvalidPhoneCode("wechat getPhoneNumber failed: errcode=%d", we.ErrCode))
 				return
 			}
+			// T166：本分支此前零日志，正是「handler 已 parsed 却无出口日志、外部只见 502」的盲区。
+			// 必须记 wechatErrText(err) 而不是 err 本身——见该函数注释，原始 URL 里带 AppSecret。
+			ctxLogger(c).Error().
+				Str("wechat_err", wechatErrText(err)).
+				Msg("bind-phone: wechat GetPhoneNumber failed → 10502 (T166-dbg)")
 			fail(c, model.NewWXServiceUnavailable("wechat service unavailable"))
 			return
 		}
@@ -97,15 +143,29 @@ func (h *Handler) bindPhone(c *gin.Context) {
 		h.respondWithPhoneToken(c, model.CodePatientNotFound, "patient not found or inactive", phoneHash, currentOpenID)
 		return
 	}
+	ctxLogger(c).Info().
+		Str("patient_id", row.PatientID).
+		Str("patient_status", row.Status).
+		Str("phone_hash", phoneHash).
+		Msg("bind-phone: patient matched (T159-dbg)")
 
 	// 步骤 4：查患者当前 wx_openid
 	boundOpenID, err := h.store.GetPatientWXOpenID(c.Request.Context(), row.PatientID)
 	if err != nil {
+		ctxLogger(c).Info().Err(err).Str("patient_id", row.PatientID).Msg("bind-phone: query wx_openid failed (T159-dbg)")
 		fail(c, model.ErrInternal("query patient wx_openid failed"))
 		return
 	}
+	ctxLogger(c).Info().
+		Str("patient_id", row.PatientID).
+		Str("bound_openid", boundOpenID).
+		Str("current_openid", currentOpenID).
+		Bool("is_idempotent", boundOpenID == currentOpenID).
+		Bool("is_already_bound_other", boundOpenID != "" && boundOpenID != currentOpenID).
+		Msg("bind-phone: wx_openid check done (T159-dbg)")
 	if boundOpenID == currentOpenID {
 		// 幂等：已绑定到当前 openid → 直接签发正式 JWT
+		ctxLogger(c).Info().Str("patient_id", row.PatientID).Msg("bind-phone: idempotent OK (T159-dbg)")
 		h.respondLoginOK(c, row)
 		return
 	}
@@ -122,12 +182,33 @@ func (h *Handler) bindPhone(c *gin.Context) {
 			h.respondWithPhoneToken(c, model.CodePhoneAlreadyBound, "phone already bound to another wechat", phoneHash, currentOpenID)
 			return
 		}
+		ctxLogger(c).Info().Err(err).Str("patient_id", row.PatientID).Msg("bind-phone: BindPatientOpenid failed (T159-dbg)")
 		fail(c, model.ErrInternal("bind openid failed"))
 		return
 	}
 
 	// 步骤 6：签发正式 JWT
+	ctxLogger(c).Info().Str("patient_id", row.PatientID).Msg("bind-phone: bind OK (T159-dbg)")
 	h.respondLoginOK(c, row)
+}
+
+// wechatErrText 把微信上游 error 转成可安全落日志的文本。
+//
+// 不能直接 .Err(err)：Go 的 *url.Error.Error() 会内嵌完整请求 URL，而
+// /cgi-bin/token 的 query 带 appid + AppSecret、手机号接口的 query 带 access_token
+// （wechat.go 用 query string 传凭据）。原样写日志＝把 AppSecret 落进 staging 日志。
+// 这里保留整条 wrap 链的可读文本（"http do token: Get ...: dial tcp ..." 这类前缀正是
+// 定位所需），只把出现的 URL 换成去掉 query 的版本。
+func wechatErrText(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.URL != "" {
+		msg = strings.ReplaceAll(msg, ue.URL, strings.SplitN(ue.URL, "?", 2)[0])
+	}
+	return msg
 }
 
 // respondWithPhoneToken 失败分支统一响应：code + phoneToken（供客户端重试免二次微信调用）
@@ -140,7 +221,12 @@ func (h *Handler) respondWithPhoneToken(c *gin.Context, code int, msg, phoneHash
 	})
 }
 
-// respondLoginOK 绑定成功响应：签发正式 JWT（sub=patientID，8h）
+// respondLoginOK 绑定成功响应：签发正式 JWT（sub=patientID，8h）。
+//
+// T168：响应体必须用 PatientLoginResultDTO（{token, patientId, name, role}，契约 T088-V2 §5.2
+// code=0 行，与 patientLogin / wx-login 两端一致）。此前误用 admin 契约 LoginResultDTO，
+// 线上 200 响应里根本没有 patientId 键，前端 bind.vue 的 data.token && data.patientId
+// 判空失败 → 绑定已落库却提示「绑定失败，请重试」。首次绑定与幂等重放共用本函数，两处同修。
 func (h *Handler) respondLoginOK(c *gin.Context, row *repo.PatientLoginRow) {
 	if h.signer == nil {
 		fail(c, model.ErrInternal("JWT_SECRET not configured"))
@@ -151,9 +237,10 @@ func (h *Handler) respondLoginOK(c *gin.Context, row *repo.PatientLoginRow) {
 		fail(c, model.ErrInternal("sign token failed"))
 		return
 	}
-	ok(c, model.LoginResultDTO{
-		Token:  tk,
-		Name:   row.Name,
-		RoleID: "patient",
+	ok(c, model.PatientLoginResultDTO{
+		Token:     tk,
+		PatientID: row.PatientID,
+		Name:      row.Name,
+		Role:      "patient",
 	})
 }

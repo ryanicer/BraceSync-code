@@ -64,6 +64,18 @@ const headerRole = "X-Role"
 
 const roleAdmin = "ROLE_ADMIN"
 
+// scopeBindPrefix T159：绑定态 JWT sub 前缀（标记 scope=bind）。
+// 与 services/gateway/cmd/server/scope_authz.go scopeBindPrefix 同名同值（双侧契约）。
+// wxLogin 签发 bindToken 时把 openid 包成 "openid_<raw>"；bindPhone 消费侧用
+// stripScopeBindPrefix 还原回 raw openid 后再与 DB wx_openid / phoneToken.openid 比较。
+const scopeBindPrefix = "openid_"
+
+// stripScopeBindPrefix 把绑定态 JWT sub 还原成 raw openid（DB / phoneToken 内部契约用 raw）。
+// 入参若没有前缀，原样返回（防御 gateway 注入异常 / 旧 token 残留场景）。
+func stripScopeBindPrefix(sub string) string {
+	return strings.TrimPrefix(sub, scopeBindPrefix)
+}
+
 // 预置角色（PRD §7D.11，权限系统锁定标识）
 var presetRoles = map[string]struct{}{
 	"ROLE_ADMIN":  {},
@@ -276,7 +288,7 @@ func (h *Handler) scopeGuard(c *gin.Context) {
 	}
 	sub := claims.Subject
 	scope := "full"
-	if strings.HasPrefix(sub, "openid_") {
+	if strings.HasPrefix(sub, scopeBindPrefix) {
 		scope = "bind"
 	}
 	c.Set("subject", sub)
@@ -534,11 +546,13 @@ func (h *Handler) wxLogin(c *gin.Context) {
 	}
 	if row == nil {
 		// T085：未绑定 → 返回 bindToken 引导绑定，不创建患者
+		// T159：sub 加 scopeBindPrefix（openid_），网关 scopeAuthz 据此识别 scope=bind 放行 bind-phone。
+		// 消费侧 bindPhone 用 stripScopeBindPrefix 还原为 raw openid 与 DB / phoneToken 对齐。
 		if h.bindSigner == nil {
 			fail(c, model.ErrInternal("JWT_SECRET not configured"))
 			return
 		}
-		bindTok, bErr := h.bindSigner.SignWithTeam(sess.OpenID, "微信用户", "", "patient")
+		bindTok, bErr := h.bindSigner.SignWithTeam(scopeBindPrefix+sess.OpenID, "微信用户", "", "patient")
 		if bErr != nil {
 			fail(c, model.ErrInternal("sign bind token failed"))
 			return
