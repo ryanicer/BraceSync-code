@@ -5,6 +5,7 @@ const fs = require('fs');
 
 // 用法：先构建 npm -w apps/patient-miniapp run build:mp-weixin，再在微信开发者工具可用的环境执行本脚本。
 // CLI 路径可用环境变量 WX_CLI 覆盖（沙箱内无法启动 IDE，需在沙箱外运行）。
+// CONNECT_ONLY=1 模式：跳过 CLI 启动，直接连接已运行的自动化端口（Boss 端启动后用）。
 const CLI_PATH = process.env.WX_CLI || 'C:\\Program Files (x86)\\Tencent\\微信web开发者工具\\cli.bat';
 const PATIENT_PROJECT = path.resolve(__dirname, '..', '..', 'apps', 'patient-miniapp', 'dist', 'build', 'mp-weixin');
 const SCREENSHOT_DIR = path.resolve(__dirname, 'artifacts');
@@ -50,9 +51,12 @@ async function retry(fn, times, intervalMs, label) {
   throw lastErr;
 }
 
+// 截图超时从 12s×3 缩短为 5s×1：
+// mp.screenshot() 在当前 IDE 版本偶发超时，长时间重试会导致 WebSocket 连接断开，
+// 影响后续步骤。改为快速失败不阻塞，主链路验证优先。
 async function shot(mp, file, label) {
   try {
-    await retry(() => withTimeout(mp.screenshot({ path: path.join(SCREENSHOT_DIR, file) }), 12000, label), 3, 3000, label);
+    await withTimeout(mp.screenshot({ path: path.join(SCREENSHOT_DIR, file) }), 5000, label);
     results.screenshots.push(file);
     console.log(`  [截图] ${file} 完成`);
   } catch (e) {
@@ -68,27 +72,36 @@ async function pageState(mp) {
   return JSON.parse(String(d));
 }
 
+const CONNECT_ONLY = process.env.CONNECT_ONLY === '1';
+
 async function run() {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
   let mp;
   let cliProcess;
   try {
-    console.log('[0/5] 通过 CLI 启动自动化端口...');
-    cliProcess = exec(`"${CLI_PATH}" auto --project "${PATIENT_PROJECT}" --auto-port ${AUTO_PORT}`, {
-      timeout: 120000,
-      maxBuffer: 1024 * 1024,
-    }, (err, stdout, stderr) => {
-      if (err && !err.killed) {
-        console.log('  CLI output:', stdout?.substring(0, 300));
-        console.log('  CLI stderr:', stderr?.substring(0, 300));
-      }
-    });
-    cliProcess.stdout?.on('data', (d) => console.log('  CLI:', d.toString().trim()));
-    cliProcess.stderr?.on('data', (d) => console.log('  CLI err:', d.toString().trim()));
+    if (CONNECT_ONLY) {
+      console.log('[0/5] CONNECT_ONLY 模式：跳过 CLI 启动，直接连接已运行的自动化端口...');
+      await withTimeout(waitForPort(AUTO_PORT, 60000), 65000, 'waitForPort');
+      console.log('[0/5] 端口就绪');
+      await new Promise(r => setTimeout(r, 3000));
+    } else {
+      console.log('[0/5] 通过 CLI 启动自动化端口...');
+      cliProcess = exec(`"${CLI_PATH}" auto --project "${PATIENT_PROJECT}" --auto-port ${AUTO_PORT}`, {
+        timeout: 120000,
+        maxBuffer: 1024 * 1024,
+      }, (err, stdout, stderr) => {
+        if (err && !err.killed) {
+          console.log('  CLI output:', stdout?.substring(0, 300));
+          console.log('  CLI stderr:', stderr?.substring(0, 300));
+        }
+      });
+      cliProcess.stdout?.on('data', (d) => console.log('  CLI:', d.toString().trim()));
+      cliProcess.stderr?.on('data', (d) => console.log('  CLI err:', d.toString().trim()));
 
-    await withTimeout(waitForPort(AUTO_PORT, 30000), 35000, 'waitForPort');
-    console.log('[0/5] 端口就绪');
-    await new Promise(r => setTimeout(r, 3000));
+      await withTimeout(waitForPort(AUTO_PORT, 30000), 35000, 'waitForPort');
+      console.log('[0/5] 端口就绪');
+      await new Promise(r => setTimeout(r, 3000));
+    }
 
     console.log('[1/5] 连接自动化端口...');
     mp = await retry(() => withTimeout(
