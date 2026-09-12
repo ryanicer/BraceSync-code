@@ -71,6 +71,6 @@ go.work.sum
 # TRAE plan/spec 文档（本地工作记录，不入库）
 .trae/
 
-# 小程序冒烟产物与本地调试脚本（不入库）
+# 小程序冒烟本地产物与调试脚本——每次运行产生的截图/日志，非源码，不入库（详见 scripts/wechat/README.md）
 scripts/wechat/artifacts/
 scripts/wechat/debug/
