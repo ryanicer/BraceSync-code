@@ -2,8 +2,9 @@ import { test, expect } from '@playwright/test'
 import { techRoutes, forceTechLoginMock } from '../tech-helpers'
 
 /**
- * tech-records 页：安装记录列表（WiFi 状态 + 可达性双筛选）
- * 对齐 T089 V2.1 records 页：6 条 mock 记录、双筛选、无详情弹窗、无 FAB
+ * tech-records 页：安装记录列表（WiFi 状态筛选）
+ * 对齐 T089 V2.1 records 页：6 条 mock 记录、WiFi 单筛选、无详情弹窗、无 FAB
+ * T162: 可达性筛选/徽标按 T138 裁定删除（记录不落"装机时刻可达性"静态标记）
  */
 
 test.beforeEach(async ({ page }) => {
@@ -39,22 +40,4 @@ test('WiFi 切回全部', async ({ page }) => {
   await expect(page.locator('.record-card')).toHaveCount(3)
   await page.locator('.seg-btn', { hasText: '全部 WiFi' }).click()
   await expect(page.locator('.record-card')).toHaveCount(6)
-})
-
-test('可达性筛选：已验证', async ({ page }) => {
-  await page.locator('.seg-btn', { hasText: '已验证' }).click()
-  await expect(page.locator('.seg-btn', { hasText: '已验证' })).toHaveClass(/seg-active/)
-  await expect(page.locator('.record-card')).toHaveCount(2)
-})
-
-test('可达性筛选：待验证', async ({ page }) => {
-  await page.locator('.seg-btn', { hasText: '待验证' }).click()
-  await expect(page.locator('.seg-btn', { hasText: '待验证' })).toHaveClass(/seg-active/)
-  await expect(page.locator('.record-card')).toHaveCount(2)
-})
-
-test('可达性筛选：已跳过', async ({ page }) => {
-  await page.locator('.seg-btn', { hasText: '已跳过' }).click()
-  await expect(page.locator('.seg-btn', { hasText: '已跳过' })).toHaveClass(/seg-active/)
-  await expect(page.locator('.record-card')).toHaveCount(2)
 })
