@@ -5,7 +5,6 @@ import { clearProvisionKeyCache } from '../api/provision'
 import type {
   InstallPhase,
   PhaseStatus,
-  ReachabilityStatus,
   PatientProfile,
   RealtimeFrame,
   CalibrationResult,
@@ -52,7 +51,8 @@ export const useInstallStore = defineStore('install', () => {
   // ===== 配网 & 可达性（阶段三） =====
   const wifiStatus = ref<'unconfigured' | 'connected'>('unconfigured')
   const wifiStatusCode = ref<number | null>(null)
-  const reachabilityStatus = ref<ReachabilityStatus>('pending')
+  // 装机过程中「已跳过配网」本地标记（内存态、不落库；resetInstall 自动清零）
+  const networkSkipped = ref(false)
 
   // ===== 配网 seq 计数器（协议 §3：会话内递增，防 CTR 重用；跨会话/断电重置为 1） =====
   const wifiSeq = ref(1)
@@ -127,8 +127,8 @@ export const useInstallStore = defineStore('install', () => {
     wifiStatusCode.value = code
   }
 
-  function setReachabilityVerified(status: ReachabilityStatus) {
-    reachabilityStatus.value = status
+  function setNetworkSkipped(v: boolean) {
+    networkSkipped.value = v
   }
 
   function setInstallNote(note: string) {
@@ -163,7 +163,7 @@ export const useInstallStore = defineStore('install', () => {
     baselineSaved.value = false
     wifiStatus.value = 'unconfigured'
     wifiStatusCode.value = null
-    reachabilityStatus.value = 'pending'
+    networkSkipped.value = false
     wifiSeq.value = 1
   }
 
@@ -187,7 +187,7 @@ export const useInstallStore = defineStore('install', () => {
     baselineSaved,
     wifiStatus,
     wifiStatusCode,
-    reachabilityStatus,
+    networkSkipped,
     wifiSeq,
     // computed
     phaseDone,
@@ -206,7 +206,7 @@ export const useInstallStore = defineStore('install', () => {
     setBaselineSaved,
     setWifiStatus,
     updateWifiStatusCode,
-    setReachabilityVerified,
+    setNetworkSkipped,
     setInstallNote,
     nextWifiSeq,
     resetInstall,

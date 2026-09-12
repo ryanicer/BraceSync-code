@@ -1,6 +1,5 @@
 import { request, USE_MOCK } from '../utils/request'
 import type { InstallRecord } from '@bracesync/shared-types'
-import type { ReachabilityStatus } from '../types/app-extends'
 
 interface CreateInstallResp {
   installId: string
@@ -35,13 +34,11 @@ export async function createInstall(
       techId,
       status: 'in_progress',
       wifiStatus: 'unconfigured',
-      reachabilityStatus: 'pending',
     },
   })
 }
 
 interface UpdateInstallMetaParams {
-  reachabilityStatus?: ReachabilityStatus
   wifiStatus?: 'connected' | 'unconfigured'
   baselineId?: string | null
   notes?: string
@@ -71,7 +68,6 @@ interface ListInstallParams {
   page?: number
   pageSize?: number
   wifiStatus?: 'connected' | 'unconfigured'
-  reachabilityStatus?: ReachabilityStatus
 }
 
 /**
@@ -95,9 +91,6 @@ export async function listInstallRecords(
       notes: i === 0 ? '患者初诊安装，支具型号 ML05' : '',
       signatureUrl: '',
       wifiStatus: i % 2 === 0 ? 'connected' : 'unconfigured',
-      // T089: reachabilityStatus 为局部扩展字段（TS 允许任意属性，shared-types 对齐时清理）
-      reachabilityStatus:
-        (i % 3 === 0 ? 'verified' : i % 3 === 1 ? 'pending' : 'skipped') as 'verified',
     }))
     return { total: seed.length, list: seed }
   }
