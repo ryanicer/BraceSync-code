@@ -39,7 +39,16 @@ log "   当前版本: $SHA (TAG=$TAG)"
 
 # ② 构建 Go 镜像
 log "② 构建 7 个 Go 服务镜像 (TAG=$TAG) ..."
-bash scripts/deploy/build-all.sh "$TAG" || fail "镜像构建失败"
+if [ ! -f scripts/deploy/build-all.sh ]; then
+  fail "build-all.sh 不存在，请确认仓库完整性"
+fi
+log "   调用 build-all.sh TAG=$TAG ..."
+bash scripts/deploy/build-all.sh "$TAG" || {
+  err "镜像构建失败 (TAG=$TAG)"
+  err "请检查上方 build-all.sh 输出中的错误信息"
+  err "常见原因：Go 编译错误、Docker daemon 未运行、磁盘空间不足"
+  exit 1
+}
 
 # ③ 构建 admin-web
 log "③ 构建 admin-web (VITE_USE_MOCK=false) ..."
