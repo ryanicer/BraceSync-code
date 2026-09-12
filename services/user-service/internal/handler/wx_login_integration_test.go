@@ -65,8 +65,13 @@ type wxLoginTestEnv struct {
 	wechatClient *testhelper.MockWechatClient
 }
 
-// fakeWechatOpenid 模拟微信登录返回的 openid
-const fakeWechatOpenid = "openid_ABC123XYZ789"
+// fakeWechatOpenid 模拟微信登录返回的 openid（raw 形态，不带 scopeBindPrefix；
+// 历史命名误导——曾写成 "openid_ABC..." 但实际微信返回的 openid 是 raw 形态）。
+// fakeWechatOpenidWithPrefix 仅供"绑定态 JWT sub 已带前缀"的契约断言使用。
+const (
+	fakeWechatOpenid         = "ABC123XYZ789"
+	fakeWechatOpenidWithPrefix = scopeBindPrefix + fakeWechatOpenid
+)
 
 // do 发起 wx-login HTTP 请求
 func (e *wxLoginTestEnv) do(code string) (*httptest.ResponseRecorder, *testResp) {
@@ -219,15 +224,15 @@ func TestWxLoginUnbound_ReturnsBindTokenClaims(t *testing.T) {
 		claims, err := e.signer.Verify(data.Token)
 		require.NoError(t, err)
 
-		assert.Equal(t, fakeWechatOpenid, claims.Subject, "sub 应等于 openid")
+		assert.Equal(t, fakeWechatOpenidWithPrefix, claims.Subject, "sub 应等于 scopeBindPrefix+raw openid（T159 契约）")
 		assert.Equal(t, "patient", claims.RoleID, "role 应为 patient")
 		// T159：签发侧 sub 必须带 scopeBindPrefix（"openid_"），网关 scopeAuthz 据此前缀识别 scope=bind
 		// 放行 bind-phone；契约详见 services/gateway/cmd/server/scope_authz.go。
 		assert.True(t, strings.HasPrefix(claims.Subject, scopeBindPrefix),
 			"T159 契约：未绑定场景签发的 bindToken sub 必须以 %q 开头，实际=%q", scopeBindPrefix, claims.Subject)
-		// T159：剥前缀后应还原成原始 openid，供下游 bind_phone 比对 / phoneToken 内部契约使用。
-		assert.Equal(t, strings.TrimPrefix(claims.Subject, scopeBindPrefix), "ABC123XYZ789",
-			"剥前缀后应等于 wxLogin 入参 raw openid（去掉测试 fixture 自带的前缀段）")
+		// T159：剥前缀后应还原成原始 raw openid，供下游 bind_phone 比对 / phoneToken 内部契约使用。
+		assert.Equal(t, fakeWechatOpenid, strings.TrimPrefix(claims.Subject, scopeBindPrefix),
+			"剥前缀后应等于 wxLogin 入参 raw openid（与 DB / phoneToken.openid 内部契约对齐）")
 
 		// exp 校验：30min TTL（bindToken signer 用 30min 创建）
 		ttl := claims.ExpireAt - claims.IssuedAt
