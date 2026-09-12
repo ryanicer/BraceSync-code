@@ -3,6 +3,12 @@
 // 对齐 device-service internal/crypto 的 AES-256-GCM 模式：密文格式 nonce(12B)||ciphertext，
 // 密钥为 64 位 hex（32 字节），经环境变量 PHONE_ENC_KEY 注入。
 // phone_hash = SHA-256(明文手机号) hex，用于登录/查重（与 technicians.phone_hash 语义一致）。
+//
+// T156：哈希前必须先规范化（NormalizeHash）。原因：微信 phonenumber.getPhoneNumber 在不同
+// AppID/客户端/SDK 版本下返回的 purePhoneNumber 可能带 "+86" / "86" 前缀或不可见字符
+// （零宽空格 / BOM），与 DB 中按明文 "18607101885" 算的 hash 不等，触发 10602 patient_not_found。
+// 规范化策略：trim 前后空白 → 去 +86 / 86 前缀 → 去所有非数字字符 → SHA-256。
+// 兼容输入空串/全空字符（返回 sha256("")，由上层判定）。
 package phone
 
 import (
@@ -13,6 +19,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrNoKey 加密密钥未配置（PHONE_ENC_KEY 缺失时写入路径返回）
@@ -94,4 +101,40 @@ func Mask(plain string) string {
 func Hash(plain string) string {
 	sum := sha256.Sum256([]byte(plain))
 	return hex.EncodeToString(sum[:])
+}
+
+// Normalize 手机号规范化（不哈希）：
+//   - 去除前后空白（含 \t \n \r 空格 中文空格 零宽字符）
+//   - 去前缀 +86 / 86（兼容微信 getPhoneNumber 返回带国家码的边界）
+//   - 过滤掉所有非数字字符（避免 BOM / 零宽空格 / 全角数字等污染）
+//
+// 仅当输入为有效手机号时返回 11 位数字字符串；否则返回原 trim 结果（保持兼容）。
+func Normalize(plain string) string {
+	// 去前后空白（包括零宽 \u200b、零宽非连接符 \u200c、不间断空格 \u00a0 等）
+	s := strings.TrimSpace(plain)
+	s = strings.Trim(s, "\u200b\u200c\u200d\ufeff\u00a0")
+
+	// 去前缀：+86 / +86- / 86 / 86-
+	switch {
+	case strings.HasPrefix(s, "+86"):
+		s = strings.TrimLeft(s[3:], "- ")
+	case strings.HasPrefix(s, "86"):
+		s = strings.TrimLeft(s[2:], "- ")
+	}
+
+	// 过滤非数字（保留 ASCII 0-9；全角数字由调用方自行转）
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// NormalizeHash 先规范化再哈希。bind-phone 等外部输入走此路径；
+// 对内已知干净的 phoneHash（如 verifyPhoneToken 取出的 claims.phone_hash）可直接用 Hash。
+func NormalizeHash(plain string) string {
+	return Hash(Normalize(plain))
 }
