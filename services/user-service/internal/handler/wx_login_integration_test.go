@@ -221,6 +221,13 @@ func TestWxLoginUnbound_ReturnsBindTokenClaims(t *testing.T) {
 
 		assert.Equal(t, fakeWechatOpenid, claims.Subject, "sub 应等于 openid")
 		assert.Equal(t, "patient", claims.RoleID, "role 应为 patient")
+		// T159：签发侧 sub 必须带 scopeBindPrefix（"openid_"），网关 scopeAuthz 据此前缀识别 scope=bind
+		// 放行 bind-phone；契约详见 services/gateway/cmd/server/scope_authz.go。
+		assert.True(t, strings.HasPrefix(claims.Subject, scopeBindPrefix),
+			"T159 契约：未绑定场景签发的 bindToken sub 必须以 %q 开头，实际=%q", scopeBindPrefix, claims.Subject)
+		// T159：剥前缀后应还原成原始 openid，供下游 bind_phone 比对 / phoneToken 内部契约使用。
+		assert.Equal(t, strings.TrimPrefix(claims.Subject, scopeBindPrefix), "ABC123XYZ789",
+			"剥前缀后应等于 wxLogin 入参 raw openid（去掉测试 fixture 自带的前缀段）")
 
 		// exp 校验：30min TTL（bindToken signer 用 30min 创建）
 		ttl := claims.ExpireAt - claims.IssuedAt

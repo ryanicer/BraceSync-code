@@ -529,3 +529,44 @@ func TestBindPhoneIdempotentSameOpenid(t *testing.T) {
 		// 断言：允许重复操作但不实际改变状态（不报错即幂等成功）
 	})
 }
+
+// ─────────────────────────────────────────────────────────────
+// T159：scope=bind JWT sub 含 "openid_" 前缀，消费侧 stripScopeBindPrefix 还原 raw openid
+// 契约（双侧）：网关 scopeAuthz 据 sub 前缀识别 scope=bind 放行 bind-phone；
+// user-service 消费侧剥前缀还原成 raw openid 后与 DB patients.wx_openid / phoneToken.openid 对齐。
+// 验证：带前缀 bindToken 走通 bind-phone，且写入 DB 的是 raw openid（去前缀后）。
+// ─────────────────────────────────────────────────────────────
+
+// TestBindPhoneScopeBindJWTSubPrefix_StripAndWriteRawOpenid 带前缀 bindToken → 写入 DB 的 openid 应为 raw（剥前缀）
+func TestBindPhoneScopeBindJWTSubPrefix_StripAndWriteRawOpenid(t *testing.T) {
+	t.Parallel()
+
+	e := newBindPhoneEnv(t)
+
+	// 模拟 wxLogin 行为：签发带 openid_ 前缀的 bindToken；sub 是 "openid_<raw>"
+	const rawOpenID = "oABC12345"
+	bindToken := e.createBindToken(scopeBindPrefix + rawOpenID)
+
+	// Fixture：phone_hash 匹配 unique active + wx_openid=NULL → 触发 BindPatientOpenid 路径
+	phone := "13900139000"
+	_ = hashPhoneNumber(phone)
+	e.store.patientLogin = patientLoginForPhone("P20260099", "新绑定患者", "active")
+	e.wechatClient.DisableError()
+	e.wechatClient.SetPhoneNumber(phone)
+
+	t.Run("strip_prefix_then_bind_writes_raw_openid_to_db", func(t *testing.T) {
+		t.Log("T159：sub='openid_<raw>' 经 stripScopeBindPrefix 后写入 DB 应等于 raw；防契约漂移")
+
+		w, resp := e.doBindPhone("wechat_code_t159", "", bindToken)
+
+		require.Equal(t, http.StatusOK, w.Code, "带前缀 bindToken 应能走通 bind-phone（scope=bind 命中）")
+		require.Equal(t, model.CodeOK, resp.Code)
+
+		// 关键断言：写入 store 的 openid 必须是 raw（去前缀后），与 DB / phoneToken 契约对齐
+		assert.Equal(t, 1, e.store.bindOpenidCalls, "应恰好调用 1 次 wx_openid 写入")
+		assert.Equal(t, rawOpenID, e.store.lastBindOpenid,
+			"T159 契约：消费侧 stripScopeBindPrefix 后写入 DB 的 openid 必须等于 rawOpenID（不带 openid_ 前缀）")
+		assert.NotContains(t, e.store.lastBindOpenid, scopeBindPrefix,
+			"DB / phoneToken 内部契约 openid 字段不带前缀（raw 微信 openid）")
+	})
+}
