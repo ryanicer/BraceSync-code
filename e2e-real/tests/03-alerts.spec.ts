@@ -37,9 +37,9 @@ test.describe('03-告警管理', () => {
       const first = rows.first()
       const firstText = await first.textContent()
       expect(firstText).toBeTruthy()
-      // 设备号：staging seed 是 D0002/D0003 等 D+数字 格式（DEV- 前缀也兼容）
+      // 设备号：staging seed 是 PRS-ML05-RC-20260701001 等 PRS- 序列号格式（D+数字 / DEV- 也兼容）
       const wrapperText = await page.locator('.el-table__body-wrapper').textContent() ?? ''
-      expect(wrapperText).toMatch(/D\d{3,}|DEV-/)
+      expect(wrapperText).toMatch(/PRS-|D\d{3,}|DEV-/)
 
       // 分页组件含「共」字样（共 X 条）
       const pagination = page.locator('.el-pagination')
