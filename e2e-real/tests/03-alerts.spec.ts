@@ -33,19 +33,13 @@ test.describe('03-告警管理', () => {
       expect(count).toBeGreaterThanOrEqual(9)
 
       // 首行列信息存在性（字段名 + 任意值）：
-      // 类型 / 患者名 / 设备号（DEV- 前缀）/ 压力值（数字或 "N/A"）/ 状态（待处理/已处理）
+      // 类型 / 患者名 / 设备号（D\d+ 或 DEV- 前缀）/ 压力值 / 状态
       const first = rows.first()
-      // 类型：压力偏高/佩戴中断/传感器异常等（含有"压力"/"中断"/"异常"/"波动"任一关键词）
       const firstText = await first.textContent()
       expect(firstText).toBeTruthy()
-      // 设备号 DEV-xxxxx 至少在列表中第一行或后续几行存在
-      const hasDevice = await page
-        .locator('.el-table__body-wrapper')
-        .getByText(/DEV-/)
-        .first()
-        .isVisible()
-        .catch(() => false)
-      expect(hasDevice).toBe(true)
+      // 设备号：staging seed 是 D0002/D0003 等 D+数字 格式（DEV- 前缀也兼容）
+      const wrapperText = await page.locator('.el-table__body-wrapper').textContent() ?? ''
+      expect(wrapperText).toMatch(/D\d{3,}|DEV-/)
 
       // 分页组件含「共」字样（共 X 条）
       const pagination = page.locator('.el-pagination')

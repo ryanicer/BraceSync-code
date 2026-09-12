@@ -110,8 +110,8 @@ test.describe('07-患者沟通', () => {
 
       const dialog = page.locator('.el-dialog')
       await expect(dialog).toBeVisible({ timeout: 10_000 })
-      // 回复输入框
-      const replyInput = dialog.locator('textarea, .reply-input, .el-textarea textarea').first()
+      // 回复输入框：el-textarea 包装的 textarea（直接定位 textarea 元素，避免命中外层 div）
+      const replyInput = dialog.locator('textarea').first()
       await expect(replyInput).toBeVisible({ timeout: 5_000 })
       const replyText = `${uniqueName(E2E_REPLY_PREFIX)} 已安排门诊复查，跟进处理中`
       await replyInput.fill(replyText)
