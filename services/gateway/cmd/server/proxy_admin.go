@@ -43,11 +43,43 @@ type proxyRoute struct {
 
 // newNamedProxy 构造指向指定服务的反向代理（保留原始路径/查询参数/方法）；
 // 后端不可用返回统一响应体 502（不泄漏内部地址），超时沿用 proxyTimeout（T028）。
+//
+// T159-panic-502 排查增强（v2 部署后验证用，根因定位后回归）：
+//   - ModifyResponse 钩子：捕获后端真实状态码 + response body 前 256 字节，
+//     用于判定「502 来自 ErrorHandler 兜底」vs「user-service 主动返 502」
+//   - ErrorHandler 强制 Info 级别 + 错误细节：原 log.Warn 可能被 staging 日志
+//     采集器按级别过滤掉，导致「proxy request failed」不出现却看到 502
 func newNamedProxy(target *url.URL, serviceName string) *httputil.ReverseProxy {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = &http.Transport{ResponseHeaderTimeout: proxyTimeout}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		log.Warn().Err(err).Str("service", serviceName).Msg("proxy request failed")
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		// 仅记录非 2xx，便于排错时不刷屏；状态码 < 600 表示上游主动返的（透传）
+		// 状态码 >= 600 不应出现，但 Go 允许任意 int；记录所有
+		log.Info().
+			Str("service", serviceName).
+			Str("upstream_url", target.String()).
+			Int("upstream_status", resp.StatusCode).
+			Str("upstream_proto", resp.Proto).
+			Int64("upstream_content_length", resp.ContentLength).
+			Str("upstream_content_type", resp.Header.Get("Content-Type")).
+			Str("request_method", resp.Request.Method).
+			Str("request_uri", resp.Request.RequestURI).
+			Str("remote_addr", resp.Request.RemoteAddr).
+			Msg("proxy upstream response (T159-dbg)")
+		return nil
+	}
+	// ErrorHandler 强制 Info 级别（之前 log.Warn 可能被 staging 日志采集器按级别过滤掉，
+	// 导致「proxy request failed」不出现却看到 502）
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Info().
+			Err(err).
+			Str("service", serviceName).
+			Str("upstream_url", target.String()).
+			Str("request_method", r.Method).
+			Str("request_uri", r.RequestURI).
+			Str("remote_addr", r.RemoteAddr).
+			Bool("url_error", r.URL != nil && r.URL.Scheme == "").
+			Msg("proxy transport error -> 502 (T159-dbg)")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"code":502,"message":"` + serviceName + ` unavailable"}`))
