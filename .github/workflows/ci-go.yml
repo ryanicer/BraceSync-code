@@ -88,6 +88,14 @@ jobs:
             # fi
           done
 
+  route-check:
+    name: Gateway ↔ User-Service Route Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check gateway route registration consistency
+        run: bash scripts/deploy/check-routes.sh
+
   go-integration:
     name: Go Integration Tests (testcontainers)
     runs-on: ubuntu-latest
