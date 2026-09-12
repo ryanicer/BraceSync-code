@@ -221,7 +221,12 @@ func (h *Handler) respondWithPhoneToken(c *gin.Context, code int, msg, phoneHash
 	})
 }
 
-// respondLoginOK 绑定成功响应：签发正式 JWT（sub=patientID，8h）
+// respondLoginOK 绑定成功响应：签发正式 JWT（sub=patientID，8h）。
+//
+// T168：响应体必须用 PatientLoginResultDTO（{token, patientId, name, role}，契约 T088-V2 §5.2
+// code=0 行，与 patientLogin / wx-login 两端一致）。此前误用 admin 契约 LoginResultDTO，
+// 线上 200 响应里根本没有 patientId 键，前端 bind.vue 的 data.token && data.patientId
+// 判空失败 → 绑定已落库却提示「绑定失败，请重试」。首次绑定与幂等重放共用本函数，两处同修。
 func (h *Handler) respondLoginOK(c *gin.Context, row *repo.PatientLoginRow) {
 	if h.signer == nil {
 		fail(c, model.ErrInternal("JWT_SECRET not configured"))
@@ -232,9 +237,10 @@ func (h *Handler) respondLoginOK(c *gin.Context, row *repo.PatientLoginRow) {
 		fail(c, model.ErrInternal("sign token failed"))
 		return
 	}
-	ok(c, model.LoginResultDTO{
-		Token:  tk,
-		Name:   row.Name,
-		RoleID: "patient",
+	ok(c, model.PatientLoginResultDTO{
+		Token:     tk,
+		PatientID: row.PatientID,
+		Name:      row.Name,
+		Role:      "patient",
 	})
 }
