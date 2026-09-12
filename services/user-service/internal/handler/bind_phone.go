@@ -42,11 +42,42 @@ func (h *Handler) bindPhone(c *gin.Context) {
 	// T159：剥 scopeBindPrefix 还原 raw openid，与 DB patients.wx_openid / phoneToken.openid 字段对齐。
 	currentOpenID := stripScopeBindPrefix(bareSubject)
 
+	// T159-panic-502 排查：handler 入口 Info 日志；此前缺这条导致「user-service 没收到请求」
+	// 还是「handler 入口就 panic 但 panic recover 屏蔽日志」无法判定。
+	ctxLogger(c).Info().
+		Str("path", c.Request.URL.Path).
+		Str("method", c.Request.Method).
+		Str("remote_addr", c.ClientIP()).
+		Str("auth_header_prefix", func() string {
+			h := c.GetHeader("Authorization")
+			if len(h) > 20 {
+				return h[:20] + "...(truncated)"
+			}
+			return h
+		}()).
+		Str("subject_raw", bareSubject).
+		Str("openid_after_strip", currentOpenID).
+		Str("wx_client_nil", func() string {
+			if h.wxClient == nil {
+				return "true"
+			}
+			return "false"
+		}()).
+		Bool("phone_token_secret_set", h.phoneTokenSecret != "").
+		Msg("bind-phone: handler entered (T159-dbg)")
+
 	var req bindPhoneRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		ctxLogger(c).Info().Err(err).Msg("bind-phone: ShouldBindJSON failed (T159-dbg)")
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
+	ctxLogger(c).Info().
+		Bool("has_phone_code", req.PhoneCode != "").
+		Bool("has_phone_token", req.PhoneToken != "").
+		Int("phone_code_len", len(req.PhoneCode)).
+		Int("phone_token_len", len(req.PhoneToken)).
+		Msg("bind-phone: request parsed (T159-dbg)")
 	if req.PhoneCode == "" && req.PhoneToken == "" {
 		fail(c, model.ErrInvalidParam("phone_code or phone_token is required"))
 		return
@@ -102,15 +133,29 @@ func (h *Handler) bindPhone(c *gin.Context) {
 		h.respondWithPhoneToken(c, model.CodePatientNotFound, "patient not found or inactive", phoneHash, currentOpenID)
 		return
 	}
+	ctxLogger(c).Info().
+		Str("patient_id", row.PatientID).
+		Str("patient_status", row.Status).
+		Str("phone_hash", phoneHash).
+		Msg("bind-phone: patient matched (T159-dbg)")
 
 	// 步骤 4：查患者当前 wx_openid
 	boundOpenID, err := h.store.GetPatientWXOpenID(c.Request.Context(), row.PatientID)
 	if err != nil {
+		ctxLogger(c).Info().Err(err).Str("patient_id", row.PatientID).Msg("bind-phone: query wx_openid failed (T159-dbg)")
 		fail(c, model.ErrInternal("query patient wx_openid failed"))
 		return
 	}
+	ctxLogger(c).Info().
+		Str("patient_id", row.PatientID).
+		Str("bound_openid", boundOpenID).
+		Str("current_openid", currentOpenID).
+		Bool("is_idempotent", boundOpenID == currentOpenID).
+		Bool("is_already_bound_other", boundOpenID != "" && boundOpenID != currentOpenID).
+		Msg("bind-phone: wx_openid check done (T159-dbg)")
 	if boundOpenID == currentOpenID {
 		// 幂等：已绑定到当前 openid → 直接签发正式 JWT
+		ctxLogger(c).Info().Str("patient_id", row.PatientID).Msg("bind-phone: idempotent OK (T159-dbg)")
 		h.respondLoginOK(c, row)
 		return
 	}
@@ -127,11 +172,13 @@ func (h *Handler) bindPhone(c *gin.Context) {
 			h.respondWithPhoneToken(c, model.CodePhoneAlreadyBound, "phone already bound to another wechat", phoneHash, currentOpenID)
 			return
 		}
+		ctxLogger(c).Info().Err(err).Str("patient_id", row.PatientID).Msg("bind-phone: BindPatientOpenid failed (T159-dbg)")
 		fail(c, model.ErrInternal("bind openid failed"))
 		return
 	}
 
 	// 步骤 6：签发正式 JWT
+	ctxLogger(c).Info().Str("patient_id", row.PatientID).Msg("bind-phone: bind OK (T159-dbg)")
 	h.respondLoginOK(c, row)
 }
 
