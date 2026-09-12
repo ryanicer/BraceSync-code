@@ -28,6 +28,11 @@ type bindPhoneRequest struct {
 //  4. 查患者 wx_openid：==当前 openid 幂等成功；!=空(他人) → 10603 + phoneToken；空 → 绑定
 //  5. BindPatientOpenid（原子行锁；0 行 → 10603 并发抢占）
 //  6. 签发正式 JWT（sub=patientID，8h）
+//
+// T156：步骤 2 拿到微信返回的 pure 后必须先 phone.NormalizeHash 再查库。直接 phone.Hash(pure)
+// 在微信某些边界下（purePhoneNumber 带 +86/86 前缀、含不可见字符）会算出与 DB 不一致的 hash，
+// 触发 10602 patient_not_found（误诊为档案不存在）。phoneToken 路径取 claims.phone_hash 不
+// 走外部输入，保持原 phone.Hash 行为（claims 来源于服务端自身，安全可信）。
 func (h *Handler) bindPhone(c *gin.Context) {
 	openID, _ := c.Get("subject") // scopeGuard 已注入（scope=bind 时 sub=openid）
 	currentOpenID, _ := openID.(string)
@@ -44,12 +49,14 @@ func (h *Handler) bindPhone(c *gin.Context) {
 
 	// 步骤 2：解析手机号 hash（phoneToken 优先，零微信调用）
 	var phoneHash string
+	var pureForLog string // T156：失败日志使用，便于定位是否 pure 带 +86/不可见字符
 	if req.PhoneToken != "" {
 		claims, err := verifyPhoneToken(h.phoneTokenSecret, req.PhoneToken, currentOpenID, time.Now())
 		if err != nil {
 			fail(c, model.ErrInvalidPhoneToken("invalid phone token: %v", err))
 			return
 		}
+		// phoneToken 来源于服务端自身签发（含 Normalize 后的 hash），安全可信，无需再 Normalize
 		phoneHash = claims.PhoneHash
 	} else {
 		if h.wxClient == nil {
@@ -66,16 +73,26 @@ func (h *Handler) bindPhone(c *gin.Context) {
 			fail(c, model.NewWXServiceUnavailable("wechat service unavailable"))
 			return
 		}
-		phoneHash = phone.Hash(pure)
+		// T156：先 Normalize 再 Hash，防止微信返回带 +86/不可见字符导致与 DB hash 不一致
+		pureForLog = pure
+		phoneHash = phone.NormalizeHash(pure)
 	}
 
 	// 步骤 3：按 phone_hash 查患者
 	row, err := h.store.GetPatientByPhoneHash(c.Request.Context(), phoneHash)
 	if err != nil {
+		ctxLogger(c).Error().Err(err).Str("phone_hash", phoneHash).Msg("bind-phone: query patient by phone hash failed")
 		fail(c, model.ErrInternal("query patient by phone hash failed"))
 		return
 	}
 	if row == nil || row.Status != "active" {
+		// T156：失败分支打 Info 级结构化日志，包含原始 pure（若有）与最终 hash，
+		// 便于将来复发 10602 时直接定位是微信侧返回格式异常 / DB 数据缺失 / 其它原因。
+		ctxLogger(c).Info().
+			Str("phone_hash", phoneHash).
+			Str("pure_from_wechat", pureForLog).
+			Str("openid", currentOpenID).
+			Msg("bind-phone: patient not found or inactive (10602)")
 		// 无匹配或非 active 同码 10602 防枚举；返回 phoneToken 供重试
 		h.respondWithPhoneToken(c, model.CodePatientNotFound, "patient not found or inactive", phoneHash, currentOpenID)
 		return
