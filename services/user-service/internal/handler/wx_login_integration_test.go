@@ -69,7 +69,7 @@ type wxLoginTestEnv struct {
 // 历史命名误导——曾写成 "openid_ABC..." 但实际微信返回的 openid 是 raw 形态）。
 // fakeWechatOpenidWithPrefix 仅供"绑定态 JWT sub 已带前缀"的契约断言使用。
 const (
-	fakeWechatOpenid         = "ABC123XYZ789"
+	fakeWechatOpenid           = "ABC123XYZ789"
 	fakeWechatOpenidWithPrefix = scopeBindPrefix + fakeWechatOpenid
 )
 
