@@ -3,6 +3,8 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -103,9 +105,17 @@ func (h *Handler) bindPhone(c *gin.Context) {
 		if err != nil {
 			var we *wechat.WechatError
 			if errors.As(err, &we) {
+				ctxLogger(c).Info().
+					Int("wx_errcode", we.ErrCode).
+					Msg("bind-phone: wechat biz error → 10604 (T166-dbg)")
 				fail(c, model.ErrInvalidPhoneCode("wechat getPhoneNumber failed: errcode=%d", we.ErrCode))
 				return
 			}
+			// T166：本分支此前零日志，正是「handler 已 parsed 却无出口日志、外部只见 502」的盲区。
+			// 必须记 wechatErrText(err) 而不是 err 本身——见该函数注释，原始 URL 里带 AppSecret。
+			ctxLogger(c).Error().
+				Str("wechat_err", wechatErrText(err)).
+				Msg("bind-phone: wechat GetPhoneNumber failed → 10502 (T166-dbg)")
 			fail(c, model.NewWXServiceUnavailable("wechat service unavailable"))
 			return
 		}
@@ -180,6 +190,25 @@ func (h *Handler) bindPhone(c *gin.Context) {
 	// 步骤 6：签发正式 JWT
 	ctxLogger(c).Info().Str("patient_id", row.PatientID).Msg("bind-phone: bind OK (T159-dbg)")
 	h.respondLoginOK(c, row)
+}
+
+// wechatErrText 把微信上游 error 转成可安全落日志的文本。
+//
+// 不能直接 .Err(err)：Go 的 *url.Error.Error() 会内嵌完整请求 URL，而
+// /cgi-bin/token 的 query 带 appid + AppSecret、手机号接口的 query 带 access_token
+// （wechat.go 用 query string 传凭据）。原样写日志＝把 AppSecret 落进 staging 日志。
+// 这里保留整条 wrap 链的可读文本（"http do token: Get ...: dial tcp ..." 这类前缀正是
+// 定位所需），只把出现的 URL 换成去掉 query 的版本。
+func wechatErrText(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.URL != "" {
+		msg = strings.ReplaceAll(msg, ue.URL, strings.SplitN(ue.URL, "?", 2)[0])
+	}
+	return msg
 }
 
 // respondWithPhoneToken 失败分支统一响应：code + phoneToken（供客户端重试免二次微信调用）
