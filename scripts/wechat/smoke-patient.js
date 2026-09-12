@@ -2,6 +2,7 @@ const automator = require('miniprogram-automator');
 const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const targetReport = require('./lib-target');
 
 // 用法：先构建 npm -w apps/patient-miniapp run build:mp-weixin，再在微信开发者工具可用的环境执行本脚本。
 // CLI 路径可用环境变量 WX_CLI 覆盖（沙箱内无法启动 IDE，需在沙箱外运行）。
@@ -76,6 +77,22 @@ const CONNECT_ONLY = process.env.CONNECT_ONLY === '1';
 
 async function run() {
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+
+  // T160：冒烟前自证产物实际打到的目标。生产目标默认拒绝运行（需显式 ALLOW_PRODUCTION=1）。
+  const APP_DIR = path.resolve(__dirname, '..', '..', 'apps', 'patient-miniapp');
+  const built = targetReport.printTargetReport(APP_DIR, PATIENT_PROJECT);
+  if (built.target === 'prod') {
+    console.warn('\n[WARN] ⚠ 当前产物为生产目标（直连生产后端）！冒烟将连生产后端。');
+    if (process.env.ALLOW_PRODUCTION !== '1') {
+      console.warn('[WARN] 已拒绝运行。若确要在生产目标上跑冒烟，请显式设置 ALLOW_PRODUCTION=1。\n');
+      process.exit(1);
+    }
+    console.warn('[WARN] 已通过 ALLOW_PRODUCTION=1 显式放行，继续冒烟。\n');
+  } else if (built.target === 'unknown') {
+    console.warn('\n[WARN] 产物中未命中任何已知后端地址（staging http://hbksd.com.cn:81 / prod https://api.hbksd.com.cn）。');
+    console.warn('[WARN] 可能尚未构建，或产物地址异常。继续运行，结果请谨慎判定。\n');
+  }
+
   let mp;
   let cliProcess;
   try {
