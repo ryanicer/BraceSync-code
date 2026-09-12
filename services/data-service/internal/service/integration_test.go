@@ -386,3 +386,107 @@ func TestIT_DeviceBindingErrors(t *testing.T) {
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeDeviceUnbound, appErr.Code)
 }
+
+// ─────────────────────────────────────────────────────────────
+// T137：上报链路回写 device-service（devices.last_report_at）
+// ─────────────────────────────────────────────────────────────
+
+const (
+	itWBDevice  = "DEV-IT-WB-001"
+	itWBPatient = "P-IT-WB-001"
+)
+
+// seedWBDevice 建一台已绑定、last_report_at 复位为 NULL 的设备（对齐 T126 生产实测初始态）
+func seedWBDevice(ctx context.Context, t *testing.T) {
+	t.Helper()
+	_, err := itPool.Exec(ctx,
+		`INSERT INTO patients (patient_id, name, phone_enc, phone_hash, status)
+		 VALUES ($1, 'T137患者', '\x00'::bytea, 'wb01' || repeat('0', 60), 'active')
+		 ON CONFLICT (patient_id) DO NOTHING`, itWBPatient)
+	require.NoError(t, err)
+	_, err = itPool.Exec(ctx,
+		`INSERT INTO devices (device_id, device_secret_enc, patient_id, status)
+		 VALUES ($1, '\x00'::bytea, $2, 'online')
+		 ON CONFLICT (device_id) DO NOTHING`, itWBDevice, itWBPatient)
+	require.NoError(t, err)
+	_, err = itPool.Exec(ctx,
+		`UPDATE devices SET last_report_at = NULL, status = 'online' WHERE device_id = $1`, itWBDevice)
+	require.NoError(t, err)
+}
+
+// itWBLastReportAt 读 devices.last_report_at；nil = 列仍为空
+func itWBLastReportAt(ctx context.Context, t *testing.T) *time.Time {
+	t.Helper()
+	var ts *time.Time
+	err := itPool.QueryRow(ctx, `SELECT last_report_at FROM devices WHERE device_id = $1`, itWBDevice).Scan(&ts)
+	require.NoError(t, err)
+	return ts
+}
+
+// itWBFrames 生成 n 帧补传数据，末帧最新。
+// 间隔取 4min（50 帧回溯约 3.3h）而非真实 30min 采集间隔：回溯过深会跨出
+// ensurePartitions 预建的月度分区范围，在月初跑 CI 时用例失败。
+func itWBFrames(n int, newest time.Time) []model.BatchFrame {
+	frames := make([]model.BatchFrame, n)
+	for i := range frames {
+		ago := time.Duration(n-1-i) * 4 * time.Minute
+		frames[i] = model.BatchFrame{
+			Timestamp: newest.Add(-ago).Unix(),
+			Points:    itPoints(float64(10 + i)),
+			Battery:   80,
+		}
+	}
+	return frames
+}
+
+// TestIT_NoDeviceClient_LeavesLastReportAtNull 复现 T126 生产现象：
+// 未配置 DEVICE_SERVICE_URL（本次改动前的唯一运行形态）时，50 帧全部落库，
+// devices.last_report_at 仍为 NULL —— 缺口在链路，不在校验或落库。
+func TestIT_NoDeviceClient_LeavesLastReportAtNull(t *testing.T) {
+	ctx := context.Background()
+	seedWBDevice(ctx, t)
+	truncateRecords(ctx)
+
+	svc := newITSvc(t, nil)
+	require.Nil(t, svc.deviceReport)
+	before := itWBLastReportAt(ctx, t)
+	require.Nil(t, before, "初始态须为空")
+
+	newest := time.Unix(time.Now().Add(-time.Minute).Unix(), 0)
+	resp, appErr := svc.UploadBatch(ctx, itWBDevice, &model.BatchRequest{DeviceID: itWBDevice, Frames: itWBFrames(50, newest)})
+	require.Nil(t, appErr)
+	assert.Equal(t, 50, resp.Accepted, "帧须全部落库")
+
+	assert.Nil(t, itWBLastReportAt(ctx, t), "无回写客户端时该列不推进（T126 实测同形）")
+}
+
+// TestIT_UploadBatch_WritebacksNewestFrame 接入回写后：一批补传只发一次状态校正，
+// 且携带本批最新采集帧的时刻与故障码（单调推进与陈旧帧挡回由 device-service 负责）。
+func TestIT_UploadBatch_WritebacksNewestFrame(t *testing.T) {
+	ctx := context.Background()
+	seedWBDevice(ctx, t)
+	truncateRecords(ctx)
+
+	rep := &recordingReporter{}
+	svc := newITSvc(t, nil)
+	svc.SetDeviceReporter(rep, 0)
+
+	newest := time.Unix(time.Now().Add(-time.Minute).Unix(), 0)
+	resp, appErr := svc.UploadBatch(ctx, itWBDevice, &model.BatchRequest{DeviceID: itWBDevice, Frames: itWBFrames(50, newest)})
+	require.Nil(t, appErr)
+	require.Equal(t, 50, resp.Accepted)
+
+	require.Len(t, rep.calls, 1, "一批补传只回写一次")
+	assert.Equal(t, itWBDevice, rep.calls[0].DeviceID)
+	assert.True(t, rep.calls[0].Timestamp.Equal(newest), "取本批最新采集帧，实际 %s", rep.calls[0].Timestamp.Format(time.RFC3339))
+
+	// 单帧实时上报同样触发
+	_, appErr = svc.UploadSingle(ctx, itWBDevice, &model.SingleFrameRequest{
+		DeviceID: itWBDevice, Timestamp: newest.Add(time.Minute).Unix(), Points: itPoints(30), Battery: 77, FaultCode: 2,
+	})
+	require.Nil(t, appErr)
+	require.Len(t, rep.calls, 2)
+	assert.Equal(t, 2, rep.calls[1].FaultCode)
+
+	// 端点侧的真实落库效果见 services/device-service/internal/handler/integration_test.go
+}

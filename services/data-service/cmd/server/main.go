@@ -24,6 +24,8 @@ import (
 //   REDIS_URL         Redis 连接串（redis://...）
 //   ALERT_SERVICE_URL alert-service 基地址（空则全量走 alert:pending 降级队列）
 //   ALERT_TIMEOUT_MS  内联评估熔断超时，默认 100（架构 §3.4）
+//   DEVICE_SERVICE_URL device-service 基地址（空则跳过 devices.last_report_at 回写）
+//   DEVICE_REPORT_TIMEOUT_MS 上报状态回写熔断超时，默认 300
 //   GIN_MODE          release 关闭调试日志
 //   ROLLUP_CRON       daily rollup cron，默认 "10 0 * * *"（每日 00:10 CST）
 //   WEEKLY_CRON       周报 cron，默认 "30 0 * * 1"（周一 00:30 CST）
@@ -95,6 +97,20 @@ func main() {
 		service.NewDefaultRateLimiter(),
 	)
 	h := handler.New(svc)
+
+	// device-service 上报状态回写（devices.last_report_at 单调推进；devices 表写归 device-service）
+	if deviceURL := os.Getenv("DEVICE_SERVICE_URL"); deviceURL != "" {
+		timeout := service.DefaultDeviceReportTimeout
+		if ms := os.Getenv("DEVICE_REPORT_TIMEOUT_MS"); ms != "" {
+			if n, convErr := time.ParseDuration(ms + "ms"); convErr == nil && n > 0 {
+				timeout = n
+			}
+		}
+		svc.SetDeviceReporter(service.NewHTTPDeviceClient(deviceURL, timeout), timeout)
+		log.Info().Str("device_service_url", deviceURL).Msg("device last_report_at writeback enabled")
+	} else {
+		log.Warn().Msg("DEVICE_SERVICE_URL not set: devices.last_report_at will not be backfilled")
+	}
 
 	port := envOr("PORT", "8083")
 

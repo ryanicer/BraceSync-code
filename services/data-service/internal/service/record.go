@@ -65,8 +65,13 @@ type RecordService struct {
 	limiter *RateLimiter
 	latest  latestRecordStore // 构造时从 records 类型断言；nil 时 GetRealtime 走 Redis 回退
 
-	alertTimeout time.Duration
-	now          func() time.Time
+	// deviceReport 上报事件回写 device-service（nil=未配置地址，跳过回写，
+	// devices.last_report_at 不回填但上报主链路不受影响）
+	deviceReport DeviceReporter
+
+	alertTimeout        time.Duration
+	deviceReportTimeout time.Duration
+	now                 func() time.Time
 
 	// degradedSinceUnixNano 降级窗口起点（0=正常）；连续降级 >5min 输出告警日志
 	degradedSinceUnixNano int64
@@ -75,14 +80,15 @@ type RecordService struct {
 // NewRecordService 组装 RecordService
 func NewRecordService(records repo.RecordStore, devices repo.DeviceStore, configs repo.ConfigStore, cache repo.CacheStore, alerts AlertEvaluator, limiter *RateLimiter) *RecordService {
 	svc := &RecordService{
-		records:      records,
-		devices:      devices,
-		configs:      configs,
-		cache:        cache,
-		alerts:       alerts,
-		limiter:      limiter,
-		alertTimeout: DefaultAlertTimeout,
-		now:          time.Now,
+		records:             records,
+		devices:             devices,
+		configs:             configs,
+		cache:               cache,
+		alerts:              alerts,
+		limiter:             limiter,
+		alertTimeout:        DefaultAlertTimeout,
+		deviceReportTimeout: DefaultDeviceReportTimeout,
+		now:                 time.Now,
 	}
 	if l, ok := records.(latestRecordStore); ok {
 		svc.latest = l
@@ -90,11 +96,20 @@ func NewRecordService(records repo.RecordStore, devices repo.DeviceStore, config
 	return svc
 }
 
+// SetDeviceReporter 注入 device-service 状态回写客户端（生产由 main 按 DEVICE_SERVICE_URL 注入）。
+// timeout ≤ 0 时沿用 DefaultDeviceReportTimeout；传 nil 客户端则关闭回写。
+func (s *RecordService) SetDeviceReporter(r DeviceReporter, timeout time.Duration) {
+	s.deviceReport = r
+	if timeout > 0 {
+		s.deviceReportTimeout = timeout
+	}
+}
+
 // ─────────────────────────────────────────────────────────────
 // 1. 单帧实时上报 POST /api/v1/device/records
 // ─────────────────────────────────────────────────────────────
 
-// UploadSingle 单帧上报：限流 → 校验 → 幂等落库 → Redis 三写 → 内联告警（超时降级）
+// UploadSingle 单帧上报：限流 → 校验 → 幂等落库 → Redis 三写 → 状态回写 device-service → 内联告警（超时降级）
 func (s *RecordService) UploadSingle(ctx context.Context, headerDeviceID string, req *model.SingleFrameRequest) (*model.SingleFrameResponse, *model.AppError) {
 	deviceID, appErr := resolveDeviceID(headerDeviceID, req.DeviceID)
 	if appErr != nil {
@@ -128,6 +143,7 @@ func (s *RecordService) UploadSingle(ctx context.Context, headerDeviceID string,
 	if appErr := s.applyRealtimeCache(ctx, deviceID, patientID, frame, now, inserted); appErr != nil {
 		return nil, appErr
 	}
+	s.notifyDeviceReport(ctx, deviceID, frame.Ts, req.FaultCode)
 
 	if inserted {
 		s.evaluateInline(ctx, deviceID, patientID, frame, now)
@@ -261,7 +277,7 @@ func (s *RecordService) markRecovered() {
 // 2. 批量补传 POST /api/v1/device/records/batch
 // ─────────────────────────────────────────────────────────────
 
-// UploadBatch 批量补传：独立限流 → 逐帧校验 → 单事务幂等批量落库 →
+// UploadBatch 批量补传：独立限流 → 逐帧校验 → 单事务幂等批量落库 → 状态回写 device-service →
 // 跳过实时告警 → 受影响日期投递 rollup 重算
 func (s *RecordService) UploadBatch(ctx context.Context, headerDeviceID string, req *model.BatchRequest) (*model.BatchResponse, *model.AppError) {
 	deviceID, appErr := resolveDeviceID(headerDeviceID, req.DeviceID)
@@ -312,6 +328,11 @@ func (s *RecordService) UploadBatch(ctx context.Context, headerDeviceID string, 
 	if err := s.cache.SetLastSeen(ctx, deviceID, now); err != nil {
 		log.Error().Err(err).Str("device_id", deviceID).Msg("redis set lastseen failed (batch)")
 		return nil, model.ErrInternal("redis unavailable")
+	}
+	// 状态回写取本批最新采集帧：陈旧帧不会推进 last_report_at，由 device-service 的
+	// GREATEST/CASE 语义挡下（repo.PGStore.Touch），此处无需再排序判断。
+	if newest, ok := newestFrame(valid); ok {
+		s.notifyDeviceReport(ctx, deviceID, newest.Ts, newest.FaultCode)
 	}
 
 	s.enqueueRollup(ctx, patientID, acceptedTS)
@@ -645,6 +666,41 @@ func toPendingFrame(ts time.Time, points []float64, battery, faultCode int) repo
 		arr[i] = float32(points[i])
 	}
 	return repo.PendingFrame{Ts: ts, Points: arr, Battery: battery, FaultCode: faultCode}
+}
+
+// newestFrame 取一批已通过校验帧中采集时刻最新的一帧（并列取末个）；空批 ok=false
+func newestFrame(frames []repo.PendingFrame) (repo.PendingFrame, bool) {
+	if len(frames) == 0 {
+		return repo.PendingFrame{}, false
+	}
+	newest := frames[0]
+	for _, f := range frames[1:] {
+		if !f.Ts.Before(newest.Ts) {
+			newest = f
+		}
+	}
+	return newest, true
+}
+
+// notifyDeviceReport 上报/补传事件回写 device-service，驱动 devices.last_report_at 单调推进
+// （架构 §4.6：devices 表写归 device-service，故经 /internal 端点而非直接 UPDATE）。
+//
+// 失败仅告警不阻塞上报：与 §3.4「上报成功率优先」一致，缺一次回填由设备下一次上报补齐。
+// WithoutCancel 派生超时 ctx：保留上报请求的值域（trace 等），但不继承其临近到期的 deadline。
+func (s *RecordService) notifyDeviceReport(ctx context.Context, deviceID string, ts time.Time, faultCode int) {
+	if s.deviceReport == nil {
+		return
+	}
+	timeout := s.deviceReportTimeout
+	if timeout <= 0 {
+		timeout = DefaultDeviceReportTimeout
+	}
+	reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	if err := s.deviceReport.Report(reportCtx, deviceID, ts, faultCode); err != nil {
+		log.Warn().Err(err).Str("device_id", deviceID).Time("ts", ts).
+			Msg("device-service report writeback failed, devices.last_report_at not updated")
+	}
 }
 
 // ─────────────────────────────────────────────────────────────
