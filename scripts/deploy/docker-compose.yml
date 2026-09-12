@@ -103,6 +103,8 @@ services:
       - REDIS_URL=${REDIS_URL}
       # 服务间直连白名单（架构 §3.4）：内联告警评估；不可用时降级写 alert:pending
       - ALERT_SERVICE_URL=http://alert-service:8080
+      # T137：上报/补传状态回写（devices.last_report_at 写归 device-service）；不可用时仅告警不阻塞上报
+      - DEVICE_SERVICE_URL=http://device-service:8082
     depends_on:
       postgres:
         condition: service_healthy
