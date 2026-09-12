@@ -67,7 +67,7 @@ async function retryBind() {
       }
       case 'NO_MATCH': {
         const data = env.data as BindPhoneFailData
-        if (data?.phoneToken) authStore.setPhoneToken(data.phoneToken)
+        if (data?.phone_token) authStore.setPhoneToken(data.phone_token)
         uni.redirectTo({ url: '/pages/login/no-match' })
         break
       }

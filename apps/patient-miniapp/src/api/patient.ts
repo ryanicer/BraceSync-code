@@ -19,9 +19,9 @@ export interface WxLoginData {
   role: string
 }
 
-/** wx-login 未绑定 data（code=10601） */
+/** wx-login 未绑定 data（code=10601），bindToken 由后端置于 token 字段 */
 export interface WxLoginNeedBindData {
-  bindToken: string
+  token: string
 }
 
 /** bind-phone 成功 data */
@@ -34,7 +34,7 @@ export interface BindPhoneData {
 
 /** bind-phone 失败 data（code=10602/10603） */
 export interface BindPhoneFailData {
-  phoneToken: string
+  phone_token: string
 }
 
 /**
