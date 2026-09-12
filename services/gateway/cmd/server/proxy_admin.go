@@ -68,8 +68,10 @@ func newNamedProxy(target *url.URL, serviceName string) *httputil.ReverseProxy {
 			Msg("proxy upstream response (T159-dbg)")
 		return nil
 	}
+	// ErrorHandler 强制 Info 级别（之前 log.Warn 可能被 staging 日志采集器按级别过滤掉，
+	// 导致「proxy request failed」不出现却看到 502）
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Info(). // 强制 Info（之前 log.Warn 可能被吞）
+		log.Info().
 			Err(err).
 			Str("service", serviceName).
 			Str("upstream_url", target.String()).
@@ -77,7 +79,7 @@ func newNamedProxy(target *url.URL, serviceName string) *httputil.ReverseProxy {
 			Str("request_uri", r.RequestURI).
 			Str("remote_addr", r.RemoteAddr).
 			Bool("url_error", r.URL != nil && r.URL.Scheme == "").
-			Msg("proxy transport error → 502 (T159-dbg)")
+			Msg("proxy transport error -> 502 (T159-dbg)")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"code":502,"message":"` + serviceName + ` unavailable"}`))
