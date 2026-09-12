@@ -1,28 +1,46 @@
 // Package main provides HMAC-SHA256 signing utilities for device simulator.
-// 对齐：docs/ §4 · docs/ §3.2
+// 对齐：docs/ §4 · docs/ §3.2 · 硬件清单 §2.2（T067 6 行 \n 分隔格式）
 package main
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"time"
 )
 
+// RandomNonce 生成 32 字符 hex nonce（16 随机字节，硬件清单 §2.2）。
+func RandomNonce() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}
+
+// BodySHA256Hex 返回请求 body 的 SHA256 hex（空 body = hex(sha256(""))）。
+func BodySHA256Hex(body string) string {
+	h := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(h[:])
+}
+
 // SignDeviceRequest generates HMAC-SHA256 signature for device API requests.
-// Signature string format: {method}{path}{timestamp_unix}{body}
-func SignDeviceRequest(secret, method, path, body string, ts time.Time) string {
+// Signature string format (§2.2, 6-line \n separated, no trailing newline):
+//
+//	{METHOD}\n{path}\n{device_id}\n{timestamp_unix_sec}\n{nonce}\n{body_sha256_hex}
+func SignDeviceRequest(secret, method, path, deviceID, nonce, body string, ts time.Time) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	sigStr := fmt.Sprintf("%s%s%d%s", method, path, ts.Unix(), body)
+	sigStr := fmt.Sprintf("%s\n%s\n%s\n%d\n%s\n%s", method, path, deviceID, ts.Unix(), nonce, BodySHA256Hex(body))
 	mac.Write([]byte(sigStr))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // VerifyDeviceSignature verifies a device HMAC-SHA256 signature.
 // Returns true if the signature matches.
-func VerifyDeviceSignature(secret, method, path, body string, ts time.Time, expectedSig string) bool {
-	actualSig := SignDeviceRequest(secret, method, path, body, ts)
+func VerifyDeviceSignature(secret, method, path, deviceID, nonce, body string, ts time.Time, expectedSig string) bool {
+	actualSig := SignDeviceRequest(secret, method, path, deviceID, nonce, body, ts)
 	return hmac.Equal([]byte(actualSig), []byte(expectedSig))
 }
 

@@ -1,5 +1,5 @@
 // Package main — HMAC-SHA256 signing tests
-// 对齐：docs/ §3.2 (S5: RFC 4231 TC2)
+// 对齐：docs/ §3.2 (S5: RFC 4231 TC2) · 硬件清单 §2.2 (T067 6 行格式)
 package main
 
 import (
@@ -13,6 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// simTestNonce 32 hex 测试固定 nonce（硬件清单 §2.2）
+const simTestNonce = "0123456789abcdef0123456789abcdef"
+
 // TestRFC4231TC2 validates HMAC-SHA256 against RFC 4231 Test Case 2.
 // This is a self-validation vector to ensure the HMAC implementation is correct.
 func TestRFC4231TC2(t *testing.T) {
@@ -23,12 +26,28 @@ func TestRFC4231TC2(t *testing.T) {
 		"HMAC-SHA256 RFC 4231 TC2 mismatch — check crypto implementation")
 }
 
+// TestSignStringSixLineFormat 验证签名串 6 行 \n 分隔格式（T067）。
+func TestSignStringSixLineFormat(t *testing.T) {
+	// 签名串内部构造不可直接访问，通过 BodySHA256Hex + 手工拼接验证格式语义
+	ts := time.Unix(1723028400, 0)
+	body := `{"device_id":"DEV001"}`
+	wantSigStr := "POST\n/api/v1/device/report\nDEV001\n1723028400\n" + simTestNonce + "\n" + BodySHA256Hex(body)
+
+	// SignDeviceRequest 内部 sigStr 应等于 wantSigStr（间接验证：手算 HMAC 应等于函数输出）
+	mac := hmac.New(sha256.New, []byte("test_secret_abc"))
+	mac.Write([]byte(wantSigStr))
+	want := hex.EncodeToString(mac.Sum(nil))
+
+	got := SignDeviceRequest("test_secret_abc", "POST", "/api/v1/device/report", "DEV001", simTestNonce, body, ts)
+	assert.Equal(t, want, got, "签名串须为 6 行 \\n 格式（含 device_id/nonce/body_sha256_hex）")
+}
+
 func TestSignDeviceRequest(t *testing.T) {
 	secret := "test_secret_abc"
 	body := `{"device_id":"DEV001","timestamp":"2026-08-07T12:00:00Z"}`
 	ts := time.Unix(1723028400, 0) // 2026-08-07T12:00:00 UTC
 
-	sig := SignDeviceRequest(secret, "POST", "/api/v1/device/report", body, ts)
+	sig := SignDeviceRequest(secret, "POST", "/api/v1/device/report", "DEV001", simTestNonce, body, ts)
 
 	// 签名应非空
 	assert.NotEmpty(t, sig)
@@ -42,14 +61,14 @@ func TestVerifyDeviceSignature(t *testing.T) {
 	ts := time.Unix(1723028400, 0)
 
 	// 正确签名应通过
-	sig := SignDeviceRequest(secret, "POST", "/api/v1/device/report", body, ts)
-	assert.True(t, VerifyDeviceSignature(secret, "POST", "/api/v1/device/report", body, ts, sig))
+	sig := SignDeviceRequest(secret, "POST", "/api/v1/device/report", "DEV002", simTestNonce, body, ts)
+	assert.True(t, VerifyDeviceSignature(secret, "POST", "/api/v1/device/report", "DEV002", simTestNonce, body, ts, sig))
 
 	// 篡改 body 应被拒绝
-	assert.False(t, VerifyDeviceSignature(secret, "POST", "/api/v1/device/report", `{"device_id":"DEV003"}`, ts, sig))
+	assert.False(t, VerifyDeviceSignature(secret, "POST", "/api/v1/device/report", "DEV002", simTestNonce, `{"device_id":"DEV003"}`, ts, sig))
 
 	// 错误密钥应被拒绝
-	assert.False(t, VerifyDeviceSignature("wrong_secret", "POST", "/api/v1/device/report", body, ts, sig))
+	assert.False(t, VerifyDeviceSignature("wrong_secret", "POST", "/api/v1/device/report", "DEV002", simTestNonce, body, ts, sig))
 }
 
 func TestIsTimestampValid(t *testing.T) {
@@ -131,15 +150,15 @@ func TestHMACTamperDetection(t *testing.T) {
 	ts := time.Now()
 
 	// 生成合法签名
-	validSig := SignDeviceRequest(secret, method, path, body, ts)
+	validSig := SignDeviceRequest(secret, method, path, "DEV_SIM_001", simTestNonce, body, ts)
 
 	// 篡改 body 后重新签名（模拟攻击者不知道密钥）
 	tamperedBody := `{"device_id":"DEV_SIM_001","pressures":[99,99,99,99]}` // 实际攻击者改 body
-	assert.False(t, VerifyDeviceSignature(secret, method, path, tamperedBody, ts, validSig),
+	assert.False(t, VerifyDeviceSignature(secret, method, path, "DEV_SIM_001", simTestNonce, tamperedBody, ts, validSig),
 		"tampered body with original signature should be rejected")
 
 	// 合法 body + 合法签名应通过
-	assert.True(t, VerifyDeviceSignature(secret, method, path, body, ts, validSig),
+	assert.True(t, VerifyDeviceSignature(secret, method, path, "DEV_SIM_001", simTestNonce, body, ts, validSig),
 		"valid body+signature should pass verification")
 }
 
@@ -149,8 +168,8 @@ func TestSignatureDeterministic(t *testing.T) {
 	body := `{"device_id":"DEV001"}`
 	ts := time.Unix(1723028400, 0)
 
-	sig1 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", body, ts)
-	sig2 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", body, ts)
+	sig1 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", "DEV001", simTestNonce, body, ts)
+	sig2 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", "DEV001", simTestNonce, body, ts)
 
 	require.Equal(t, sig1, sig2, "HMAC-SHA256 should produce deterministic signatures for same inputs")
 }
@@ -162,17 +181,17 @@ func TestSignatureDifferentInputs(t *testing.T) {
 
 	// 不同 timestamp 应产生不同签名
 	ts2 := time.Unix(1723028401, 0)
-	sig1 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", body, ts)
-	sig2 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", body, ts2)
+	sig1 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", "DEV001", simTestNonce, body, ts)
+	sig2 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", "DEV001", simTestNonce, body, ts2)
 	assert.NotEqual(t, sig1, sig2, "different timestamps should produce different signatures")
 
 	// 不同 body 应产生不同签名
 	body2 := `{"device_id":"DEV002"}`
-	sig3 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", body2, ts)
+	sig3 := SignDeviceRequest(secret, "POST", "/api/v1/device/report", "DEV001", simTestNonce, body2, ts)
 	assert.NotEqual(t, sig1, sig3, "different bodies should produce different signatures")
 
 	// 不同 secret 应产生不同签名
 	secret2 := "different_secret"
-	sig4 := SignDeviceRequest(secret2, "POST", "/api/v1/device/report", body, ts)
+	sig4 := SignDeviceRequest(secret2, "POST", "/api/v1/device/report", "DEV001", simTestNonce, body, ts)
 	assert.NotEqual(t, sig1, sig4, "different secrets should produce different signatures")
 }

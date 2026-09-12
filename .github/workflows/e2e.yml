@@ -206,3 +206,33 @@ jobs:
         run: |
           echo "TODO: miniprogram-automator 冒烟测试（登录/monitor/绑定流程）"
           echo "需配置微信开发者工具 CI 环境，Phase 3 启用"
+
+  # T144 P1：真实后端冒烟（登录→列表接口非空→页面渲染≥1条）。
+  # 不进 PR 门禁（独立 job）；nightly / 手动触发。凭证由 TRT_ADMIN_USERNAME(ADMIN_USERNAME)/ADMIN_PASSWORD 注入，缺失则用例自动 skip。
+  real-backend-smoke:
+    name: Real Backend Smoke（真实后端冒烟，T144 P1）
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run real backend smoke
+        run: npx playwright test --config=./e2e-real/playwright.config.ts
+        env:
+          STAGING_URL: ${{ env.STAGING_URL }}
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-real-report
+          path: e2e-real/playwright-report/
+          retention-days: 14

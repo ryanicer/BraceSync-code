@@ -76,14 +76,17 @@ func TestAdminProxy_OtherServices(t *testing.T) {
 	msgBackend, msgReceived := startBackend(t)
 	gw := startAdminGateway(t, "http://127.0.0.1:1", deviceBackend.URL, dataBackend.URL, msgBackend.URL)
 
-	// device-service：设备列表 + 安装记录列表（T030 #3）
+	// device-service：设备列表 + 安装记录列表 + 单条详情（T030 #3 + T122）
 	code, _ := httpDo(t, http.MethodGet, gw.URL+"/api/v1/devices?keyword=PRS")
 	require.Equal(t, http.StatusOK, code)
 	code, _ = httpDo(t, http.MethodGet, gw.URL+"/api/v1/install-records?page=1")
 	require.Equal(t, http.StatusOK, code)
-	require.Len(t, *deviceReceived, 2)
+	code, _ = httpDo(t, http.MethodGet, gw.URL+"/api/v1/install-records/17")
+	require.Equal(t, http.StatusOK, code)
+	require.Len(t, *deviceReceived, 3)
 	assert.Equal(t, "GET /api/v1/devices?keyword=PRS", (*deviceReceived)[0])
 	assert.Equal(t, "GET /api/v1/install-records?page=1", (*deviceReceived)[1])
+	assert.Equal(t, "GET /api/v1/install-records/17", (*deviceReceived)[2])
 
 	// data-service：realtime / records / health-reports
 	code, _ = httpDo(t, http.MethodGet, gw.URL+"/api/v1/patients/P001/realtime")

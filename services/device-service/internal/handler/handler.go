@@ -10,7 +10,10 @@
 //	POST /api/v1/devices/:deviceId/rebind         换绑（旧绑定历史可追溯）
 //	POST /api/v1/devices/:deviceId/unbind         解绑（幂等）
 //	POST /api/v1/devices/:deviceId/wifi           WiFi 配置状态（wifi_ssid 维护）
+//	POST /api/v1/devices/:deviceId/provision-key  配网密钥派生（T067，HKDF-SHA256 16B→32hex）
 //	POST /api/v1/install-records                  新建安装记录（技师安装流程）
+//	GET  /api/v1/install-records/:id              单条安装记录详情（T122）
+//	PUT  /api/v1/install-records/:id              回填安装元数据 notes/signatureUrl（T122）
 //	GET  /api/v1/install-records                  安装记录分页列表（T030：姓名 join）
 //	POST /api/v1/baselines                        校准基线落库（契约 saveBaseline）
 //	POST /internal/devices/:deviceId/report       上报/补传状态校正（服务间，不经网关）
@@ -63,7 +66,10 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/devices/:deviceId/rebind", h.rebind)
 		v1.POST("/devices/:deviceId/unbind", h.unbind)
 		v1.POST("/devices/:deviceId/wifi", h.setWifi)
+		v1.POST("/devices/:deviceId/provision-key", h.provisionKey) // T067
 		v1.POST("/install-records", h.createInstall)
+		v1.GET("/install-records/:id", h.getInstall)        // T122 单条详情
+		v1.PUT("/install-records/:id", h.updateInstallMeta) // T122 回填元数据
 		v1.POST("/baselines", h.saveBaseline)
 		h.registerListRoutes(v1) // T030：GET /devices 列表 + GET /install-records 列表
 	}
@@ -129,6 +135,27 @@ type installRequest struct {
 	SignatureURL string `json:"signatureUrl"`
 }
 
+// installMetaRequest PUT /api/v1/install-records/:id 入参（T122）。
+// notes / signatureUrl 均可选：空字符串不覆盖该列（对齐 repo.UpdateInstallMeta COALESCE 语义）。
+type installMetaRequest struct {
+	Notes        string `json:"notes"`
+	SignatureURL string `json:"signatureUrl"`
+}
+
+// installDetailDTO 单条安装记录响应体（T122 GET /:id）
+type installDetailDTO struct {
+	InstallID     string  `json:"installId"`
+	DeviceID      string  `json:"deviceId"`
+	PatientID     string  `json:"patientId"`
+	TechID        string  `json:"techId"`
+	CalibrateTime string  `json:"calibrateTime"`
+	BaselineID    *string `json:"baselineId"`
+	Notes         string  `json:"notes"`
+	SignatureURL  string  `json:"signatureUrl"`
+	WifiStatus    string  `json:"wifiStatus"`
+	CreatedAt     string  `json:"createdAt"`
+}
+
 type baselineRequest struct {
 	InstallID    string    `json:"installId"` // 契约 saveBaseline：string
 	OffsetValues []float32 `json:"offsetValues"`
@@ -140,6 +167,17 @@ type baselineRequest struct {
 type reportRequest struct {
 	Timestamp int64 `json:"timestamp"` // Unix 秒；0=服务器当前时刻
 	FaultCode int   `json:"fault_code"`
+}
+
+// BindResponseDTO 绑定/换绑响应体（对齐前端 bindDevice 契约）
+type BindResponseDTO struct {
+	model.DeviceDTO
+	Swapped bool `json:"swapped"` // true=本次为换绑（旧 binding 已关闭）
+}
+
+// toBindResponse service.BindResult → 前端响应 DTO
+func toBindResponse(r *service.BindResult) BindResponseDTO {
+	return BindResponseDTO{DeviceDTO: r.Device.ToDTO(), Swapped: r.Rebound}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -185,19 +223,19 @@ func (h *Handler) listBindings(c *gin.Context) {
 	ok(c, gin.H{"list": list})
 }
 
-// bind 绑定（契约 bindDevice → ApiResponse<null>；互斥：已被他患者绑定 → 409）
+// bind 绑定（契约 bindDevice → ApiResponse<BindResponseDTO>；互斥：已被他患者绑定 → 自动换绑）
 func (h *Handler) bind(c *gin.Context) {
 	var req bindRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	_, appErr := h.svc.Bind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
+	result, appErr := h.svc.Bind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
-	ok(c, nil)
+	ok(c, toBindResponse(result))
 }
 
 // rebind 换绑（旧绑定写 unbind_at+reason=rebind+operator，历史可追溯）
@@ -207,12 +245,12 @@ func (h *Handler) rebind(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	_, appErr := h.svc.Rebind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
+	result, appErr := h.svc.Rebind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
-	ok(c, nil)
+	ok(c, toBindResponse(result))
 }
 
 // unbind 解绑（幂等）
@@ -247,6 +285,19 @@ func (h *Handler) setWifi(c *gin.Context) {
 	ok(c, nil)
 }
 
+// provisionKey 配网密钥派生（T067，硬件清单 §2.1 HKDF-SHA256 16B→32hex）。
+// T091：端点已迁入 gateway JWT 组（JWT + tech/admin RBAC + per-user 限流）；
+// 操作人取网关注入的 X-User-Id（§5.2 内部信任链），用于审计日志与重发间隔。
+// 未注册 device → 20404；同设备重发间隔内 → 20429。
+func (h *Handler) provisionKey(c *gin.Context) {
+	keyHex, appErr := h.svc.GetProvisionKey(c.Request.Context(), c.Param("deviceId"), c.GetHeader(headerUserID))
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	ok(c, gin.H{"provision_key_hex": keyHex, "expires_in_sec": service.ProvisionKeyExpiresInSec})
+}
+
 // createInstall 新建安装记录（技师安装流程 bind → matrix → save-baseline → complete）
 func (h *Handler) createInstall(c *gin.Context) {
 	var req installRequest
@@ -273,6 +324,68 @@ func (h *Handler) createInstall(c *gin.Context) {
 	ok(c, gin.H{"installId": strconv.FormatInt(rec.InstallID, 10)})
 }
 
+// getInstall GET /api/v1/install-records/:id —— 单条安装记录详情（T122）
+func (h *Handler) getInstall(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		fail(c, model.ErrInvalidParam("invalid install id %q", c.Param("id")))
+		return
+	}
+	rec, appErr := h.svc.GetInstall(c.Request.Context(), id)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	ok(c, toInstallDetailDTO(rec))
+}
+
+// updateInstallMeta PUT /api/v1/install-records/:id —— 回填 notes / signatureUrl（T122）。
+// 空字符串字段不覆盖（repo COALESCE 语义），与 saveBaseline 回填行为一致。
+func (h *Handler) updateInstallMeta(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		fail(c, model.ErrInvalidParam("invalid install id %q", c.Param("id")))
+		return
+	}
+	var req installMetaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	var notes, sigURL *string
+	if req.Notes != "" {
+		notes = &req.Notes
+	}
+	if req.SignatureURL != "" {
+		sigURL = &req.SignatureURL
+	}
+	if appErr := h.svc.UpdateInstallMeta(c.Request.Context(), id, notes, sigURL); appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	ok(c, nil)
+}
+
+// toInstallDetailDTO model.InstallRecord → 单条详情响应 DTO
+func toInstallDetailDTO(r *model.InstallRecord) installDetailDTO {
+	dto := installDetailDTO{
+		InstallID:     strconv.FormatInt(r.InstallID, 10),
+		DeviceID:      r.DeviceID,
+		PatientID:     r.PatientID,
+		TechID:        r.TechID,
+		CalibrateTime: r.CalibrateTime.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Notes:         strOrEmpty(r.Notes),
+		SignatureURL:  strOrEmpty(r.SignatureURL),
+		WifiStatus:    r.WifiStatus,
+		CreatedAt:     r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if r.BaselineID != nil {
+		s := strconv.FormatInt(*r.BaselineID, 10)
+		dto.BaselineID = &s
+	}
+	return dto
+}
+
 // saveBaseline 校准基线落库（契约 saveBaseline → ApiResponse<null>）
 func (h *Handler) saveBaseline(c *gin.Context) {
 	var req baselineRequest
@@ -286,7 +399,8 @@ func (h *Handler) saveBaseline(c *gin.Context) {
 		return
 	}
 	calibrator := operatorID(c, req.CalibratorID)
-	if _, appErr := h.svc.SaveBaseline(c.Request.Context(), installID, req.OffsetValues, calibrator); appErr != nil {
+	baselineID, appErr := h.svc.SaveBaseline(c.Request.Context(), installID, req.OffsetValues, calibrator)
+	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
@@ -304,7 +418,7 @@ func (h *Handler) saveBaseline(c *gin.Context) {
 			return
 		}
 	}
-	ok(c, nil)
+	ok(c, gin.H{"baselineId": strconv.FormatInt(baselineID, 10)})
 }
 
 // report 上报/补传状态校正（internal：data-service 联动或运维手工；不经网关）

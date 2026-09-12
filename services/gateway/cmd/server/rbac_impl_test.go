@@ -143,3 +143,97 @@ func TestRBAC_DeleteTechnician_BypassClosed(t *testing.T) {
 
 	assert.Empty(t, *received, "DELETE 技师请求不得触达后端")
 }
+
+// TestRBAC_TechAdminOnlyPatterns T122：PUT /install-records/:id 收紧为 tech+admin
+// 覆盖：technician / ROLE_ADMIN → 放行；ROLE_DOCTOR / ROLE_CS → 403 不触达后端
+func TestRBAC_TechAdminOnlyPatterns(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	techAdmin := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/devices/D001/provision-key"}, // T091 既有
+		{http.MethodPut, "/api/v1/install-records/17"},          // T122 新增
+	}
+
+	// doctor / cs → 403
+	for _, role := range []string{"ROLE_CS", "ROLE_DOCTOR"} {
+		for _, c := range techAdmin {
+			code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusForbidden, code, "role=%s %s %s 应 403", role, c.method, c.path)
+			assert.Contains(t, body, `"code":403`)
+		}
+	}
+	assert.Empty(t, *received, "越权请求不得触达后端")
+
+	// technician / ROLE_ADMIN → 放行
+	for _, role := range []string{"technician", "ROLE_ADMIN"} {
+		for _, c := range techAdmin {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			require.Equal(t, http.StatusOK, code, "role=%s %s %s 应放行", role, c.method, c.path)
+		}
+	}
+	assert.Len(t, *received, len(techAdmin)*2, "technician + ROLE_ADMIN 请求全部转发后端")
+}
+
+// TestRBAC_T130_DoctorAdminOnly T130：复查记录创建端点仅 doctor/admin 可访问
+func TestRBAC_T130_DoctorAdminOnly(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	createReviewPath := "/api/v1/admin/review-records"
+
+	// 非 doctor/admin 角色 → 403
+	for _, role := range []string{"ROLE_CS", "technician", "patient"} {
+		code, body := httpDoFull(t, http.MethodPost, gw.URL+createReviewPath, `{}`, rbacToken(t, role))
+		assert.Equal(t, http.StatusForbidden, code, "role=%s POST review-records 应 403", role)
+		assert.Contains(t, body, `"code":403`)
+	}
+
+	// doctor/admin → 放行（转发后端）
+	for _, role := range []string{"ROLE_DOCTOR", "ROLE_ADMIN"} {
+		code, _ := httpDoFull(t, http.MethodPost, gw.URL+createReviewPath, `{}`, rbacToken(t, role))
+		assert.Equal(t, http.StatusOK, code, "role=%s POST review-records 应放行", role)
+	}
+
+	// 患者复查记录列表端点：全角色放行（水平鉴权在 user-service handler 层）
+	for _, role := range []string{"patient", "ROLE_DOCTOR", "ROLE_ADMIN", "ROLE_CS"} {
+		code, _ := httpDoFull(t, http.MethodGet, gw.URL+"/api/v1/patients/P001/review-records", "", rbacToken(t, role))
+		assert.Equal(t, http.StatusOK, code, "role=%s GET review-records 不应被网关 RBAC 拦截", role)
+	}
+
+	assert.Len(t, *received, 6, "doctor/admin create(2) + 全角色 list(4) 应全部转发后端")
+}
+
+// TestRBAC_T135_DoctorAdminOnly T135：复查报告模板管理端点仅 doctor/admin 可访问。
+// 合同运营后台「复查报告模板管理」：admin 后台上传/替换/列表/下载，doctor 列表/下载空白模板。
+func TestRBAC_T135_DoctorAdminOnly(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	templateRoutes := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/admin/review-templates"},               // 上传/创建模板
+		{http.MethodPost, "/api/v1/admin/review-templates/GRP_1/replace"}, // 版本替换
+		{http.MethodGet, "/api/v1/admin/review-templates"},                // 模板列表
+		{http.MethodGet, "/api/v1/admin/review-templates/GRP_1/download"}, // 模板下载
+	}
+
+	// 非 doctor/admin 角色 → 403（不触达后端）
+	for _, role := range []string{"ROLE_CS", "technician", "patient"} {
+		for _, c := range templateRoutes {
+			code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusForbidden, code, "role=%s %s %s 应 403", role, c.method, c.path)
+			assert.Contains(t, body, `"code":403`)
+		}
+	}
+
+	// doctor/admin → 放行（转发后端）
+	for _, role := range []string{"ROLE_DOCTOR", "ROLE_ADMIN"} {
+		for _, c := range templateRoutes {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusOK, code, "role=%s %s %s 应放行", role, c.method, c.path)
+		}
+	}
+
+	// 3 低角色 × 4 端点 全被拦（0 触达） + 2 高角色 × 4 端点 全转发 = 8
+	assert.Len(t, *received, 8, "high-role template 请求应转发后端，low-role 应被网关 RBAC 拦截")
+}

@@ -95,6 +95,117 @@ func (s *PGStore) GetPatientByPhoneHash(ctx context.Context, phoneHash string) (
 	return &p, nil
 }
 
+// GetPatientByWXOpenID T069：按微信 openid 查患者登录行；不存在返回 (nil, nil)
+func (s *PGStore) GetPatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT patient_id, name, password_hash, status
+		 FROM patients WHERE wx_openid = $1`, openid)
+	var p PatientLoginRow
+	err := row.Scan(&p.PatientID, &p.Name, &p.PasswordHash, &p.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// CreatePatientByWXOpenID T069：按 openid 创建微信-only 新患者。
+// 默认 name="微信用户"、status="active"，其余字段 NULL；并发唯一冲突返回
+// ErrWXOpenIDExists（handler 据此重试 Get 实现幂等 upsert）。
+func (s *PGStore) CreatePatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error) {
+	patientID, err := newPatientID()
+	if err != nil {
+		return nil, err
+	}
+	_, execErr := s.pool.Exec(ctx,
+		`INSERT INTO patients (patient_id, name, wx_openid, status)
+		 VALUES ($1, '微信用户', $2, 'active')`,
+		patientID, openid)
+	if execErr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(execErr, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrWXOpenIDExists
+		}
+		return nil, execErr
+	}
+	return s.GetPatientByWXOpenID(ctx, openid)
+}
+
+// GetPatientWXOpenID T085：查患者当前绑定的 wx_openid；未绑定返回空串。
+func (s *PGStore) GetPatientWXOpenID(ctx context.Context, patientID string) (string, error) {
+	row := s.pool.QueryRow(ctx, `SELECT wx_openid FROM patients WHERE patient_id = $1`, patientID)
+	var openID *string
+	if err := row.Scan(&openID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrPatientNotFound
+		}
+		return "", err
+	}
+	if openID == nil {
+		return "", nil
+	}
+	return *openID, nil
+}
+
+// BindPatientOpenid T085：原子绑定 openid。UPDATE ... WHERE wx_openid IS NULL
+// 命中 0 行 → ErrAlreadyBound（已绑定其他 openid 或被并发抢占）。
+func (s *PGStore) BindPatientOpenid(ctx context.Context, patientID, openid string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE patients SET wx_openid = $1, updated_at = NOW()
+		 WHERE patient_id = $2 AND wx_openid IS NULL`,
+		openid, patientID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAlreadyBound
+	}
+	return nil
+}
+
+// UnbindWechat T085：解绑微信（wx_openid 置 NULL）。
+func (s *PGStore) UnbindWechat(ctx context.Context, patientID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE patients SET wx_openid = NULL, updated_at = NOW() WHERE patient_id = $1`,
+		patientID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPatientNotFound
+	}
+	return nil
+}
+
+// UpdatePatientPhone T085：改手机号，phone_enc + phone_hash 同步更新。
+func (s *PGStore) UpdatePatientPhone(ctx context.Context, patientID string, phoneEnc []byte, phoneHash string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE patients SET phone_enc = $1, phone_hash = $2, updated_at = NOW()
+		 WHERE patient_id = $3`,
+		phoneEnc, phoneHash, patientID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPatientNotFound
+	}
+	return nil
+}
+
+// PatientPhoneHashTaken T085：phone_hash 是否已被其他患者占用（排除自身）。
+func (s *PGStore) PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM patients WHERE phone_hash = $1 AND patient_id <> $2)`,
+		phoneHash, excludePatientID)
+	var taken bool
+	if err := row.Scan(&taken); err != nil {
+		return false, err
+	}
+	return taken, nil
+}
+
 // RoleScope 读角色数据范围（permissions_json->>'scope'）；角色不存在返回空串
 func (s *PGStore) RoleScope(ctx context.Context, roleID string) (string, error) {
 	row := s.pool.QueryRow(ctx, `SELECT permissions_json->>'scope' FROM roles WHERE role_id = $1`, roleID)
@@ -127,11 +238,15 @@ func (s *PGStore) DoctorIDByAdmin(ctx context.Context, adminID string) (string, 
 // 患者（管理端只读，含 teams/doctors 姓名 join）
 // ─────────────────────────────────────────────────────────────
 
+// patientSelect 患者列表/详情投影。
+// T151(方案C)：当前绑定设备取自 devices（patient_id 只读关联；跨服务只读，写归属 device-service），
+// 依赖迁移 000012 的 uk_devices_active_patient 部分唯一索引保证一个患者至多一行；patients.device_id 已废弃、不再读取。
 const patientSelect = `
 SELECT p.patient_id, p.name, p.gender, p.age, p.diagnosis, p.cobb_angle,
-       p.device_id, p.team_id, p.primary_doctor_id, p.status, p.created_at, p.updated_at,
+       dev.device_id, p.team_id, p.primary_doctor_id, p.status, p.created_at, p.updated_at,
        t.name AS team_name, d.name AS doctor_name
 FROM patients p
+LEFT JOIN devices dev ON dev.patient_id = p.patient_id
 LEFT JOIN teams t ON t.team_id = p.team_id
 LEFT JOIN doctors d ON d.doctor_id = p.primary_doctor_id`
 
@@ -650,15 +765,20 @@ func newPatientID() (string, error) {
 	return "P" + time.Now().Format("2006") + hex.EncodeToString(buf), nil
 }
 
-// CreatePatient 创建患者（phone_hash 查重 → INSERT → 回读 join 行）
+// CreatePatient 创建患者（phone_hash 查重 → INSERT → 回读 join 行）。
+// T069 扩展：PhoneEnc/PhoneHash 为 nil 表示微信-only 无手机号用户，
+// 查重步骤跳过（phone_hash IS NULL 不参与 uk 冲突语义，INSERT 直接写 NULL）。
 func (s *PGStore) CreatePatient(ctx context.Context, in PatientInput) (*PatientRow, error) {
-	var taken bool
-	if err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM patients WHERE phone_hash = $1)`, in.PhoneHash).Scan(&taken); err != nil {
-		return nil, err
-	}
-	if taken {
-		return nil, ErrPatientExists
+	// phone_hash 非空时走原有查重（T057 旧语义）；为 nil（微信-only）跳过查重
+	if in.PhoneHash != nil {
+		var taken bool
+		if err := s.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM patients WHERE phone_hash = $1)`, *in.PhoneHash).Scan(&taken); err != nil {
+			return nil, err
+		}
+		if taken {
+			return nil, ErrPatientExists
+		}
 	}
 	patientID, err := newPatientID()
 	if err != nil {
@@ -666,10 +786,10 @@ func (s *PGStore) CreatePatient(ctx context.Context, in PatientInput) (*PatientR
 	}
 	_, execErr := s.pool.Exec(ctx,
 		`INSERT INTO patients (patient_id, name, phone_enc, phone_hash, gender, age, diagnosis, cobb_angle,
-		                       device_id, team_id, primary_doctor_id, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active')`,
+		                       team_id, primary_doctor_id, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active')`,
 		patientID, in.Name, in.PhoneEnc, in.PhoneHash, in.Gender, in.Age, in.Diagnosis, in.CobbAngle,
-		in.DeviceID, in.TeamID, in.DoctorID)
+		in.TeamID, in.DoctorID)
 	if execErr != nil {
 		// 并发兜底：unique violation(phone_hash) → ErrPatientExists
 		var pgErr *pgconn.PgError
@@ -1069,4 +1189,224 @@ func (s *PGStore) RemoveTeamMember(ctx context.Context, teamID, memberID, member
 	_, err := s.pool.Exec(ctx,
 		`UPDATE technicians SET team_id = NULL WHERE tech_id = $1 AND team_id = $2`, memberID, teamID)
 	return err
+}
+
+// ─────────────────────────────────────────────────────────────
+// T130 复查记录
+// ─────────────────────────────────────────────────────────────
+
+const reviewColumns = `review_id, patient_id, review_date, review_type, findings,
+	next_review_date, doctor_id, report_file_id, created_at, updated_at`
+
+func scanReviewRecord(row pgx.Row) (*ReviewRecordRow, error) {
+	var r ReviewRecordRow
+	err := row.Scan(&r.ReviewID, &r.PatientID, &r.ReviewDate, &r.ReviewType, &r.Findings,
+		&r.NextReviewDate, &r.DoctorID, &r.ReportFileID, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// CreateReviewRecord 创建复查记录（review_id 由调用方生成）
+func (s *PGStore) CreateReviewRecord(ctx context.Context, row ReviewRecordRow) (*ReviewRecordRow, error) {
+	// 患者存在性校验
+	var patientOK bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM patients WHERE patient_id = $1)`, row.PatientID).Scan(&patientOK); err != nil {
+		return nil, err
+	}
+	if !patientOK {
+		return nil, ErrReviewPatientNotFound
+	}
+	query := `INSERT INTO review_records (` + reviewColumns + `)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),now())
+		RETURNING ` + reviewColumns
+	r, err := scanReviewRecord(s.pool.QueryRow(ctx, query,
+		row.ReviewID, row.PatientID, row.ReviewDate, row.ReviewType, row.Findings,
+		row.NextReviewDate, row.DoctorID, row.ReportFileID))
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// ListReviewRecordsByPatient 按患者列出复查记录（review_date 倒序）
+func (s *PGStore) ListReviewRecordsByPatient(ctx context.Context, patientID string) ([]ReviewRecordRow, error) {
+	query := `SELECT ` + reviewColumns + ` FROM review_records
+		WHERE patient_id = $1 ORDER BY review_date DESC, created_at DESC`
+	rows, err := s.pool.Query(ctx, query, patientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []ReviewRecordRow
+	for rows.Next() {
+		r, err := scanReviewRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *r)
+	}
+	return list, rows.Err()
+}
+
+// GetReviewRecord 按 ID 查复查记录
+func (s *PGStore) GetReviewRecord(ctx context.Context, reviewID string) (*ReviewRecordRow, error) {
+	query := `SELECT ` + reviewColumns + ` FROM review_records WHERE review_id = $1`
+	r, err := scanReviewRecord(s.pool.QueryRow(ctx, query, reviewID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrReviewRecordNotFound
+		}
+		return nil, err
+	}
+	return r, nil
+}
+
+// ─────────────────────────────────────────────────────────────
+// T135 复查报告模板
+// ─────────────────────────────────────────────────────────────
+
+const reviewTemplateColumns = `template_id, template_group_id, name, version, file_id,
+	status, uploaded_by, created_at, updated_at`
+
+func scanReviewTemplate(row pgx.Row) (*ReviewTemplateRow, error) {
+	var r ReviewTemplateRow
+	err := row.Scan(&r.TemplateID, &r.TemplateGroupID, &r.Name, &r.Version, &r.FileID,
+		&r.Status, &r.UploadedBy, &r.CreatedAt, &r.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// CreateReviewTemplateVersion 事务创建/替换模板版本（T135）。
+//
+//	groupID==""  → 新建组：name 存在返回 ErrTemplateNameExists，否则 version=1。
+//	groupID!=""  → 版本替换：组不存在返回 ErrTemplateNotFound；
+//	                新版本 = MAX(version)+1，同组旧 active 置 retired（非删除）。
+//
+// 已上传的填写报告(review_records)只引用各自 file_id，与模板文件互不影响，
+// 版本替换不改动历史文件对象，「已填报告不受影响」由数据模型天然保证。
+func (s *PGStore) CreateReviewTemplateVersion(ctx context.Context, templateGroupID, name, fileID, uploadedBy string) (*ReviewTemplateRow, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var groupID string
+	if templateGroupID == "" {
+		// 新建组：name 查重
+		var nameExists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM review_templates WHERE name = $1)`, name).Scan(&nameExists); err != nil {
+			return nil, err
+		}
+		if nameExists {
+			return nil, ErrTemplateNameExists
+		}
+		groupID, err = newTemplateGroupID()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// 版本替换：确认组存在（按组 or 按名）
+		var existed bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM review_templates WHERE template_group_id = $1 OR name = $1)`,
+			templateGroupID).Scan(&existed); err != nil {
+			return nil, err
+		}
+		if !existed {
+			return nil, ErrTemplateNotFound
+		}
+		groupID = templateGroupID
+		// 同组旧 active 置 retired（非物理删除）
+		if _, err := tx.Exec(ctx,
+			`UPDATE review_templates SET status = 'retired', updated_at = now()
+			 WHERE template_group_id = $1 AND status = 'active'`, groupID); err != nil {
+			return nil, err
+		}
+	}
+
+	// 新版本号 = 组内 max(version)+1（无历史则 1）
+	var nextVersion int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(version),0) + 1 FROM review_templates WHERE template_group_id = $1`,
+		groupID).Scan(&nextVersion); err != nil {
+		return nil, err
+	}
+
+	templateID, err := newTemplateID()
+	if err != nil {
+		return nil, err
+	}
+
+	row, scanErr := scanReviewTemplate(tx.QueryRow(ctx,
+		`INSERT INTO review_templates (template_id, template_group_id, name, version, file_id, status, uploaded_by, created_at, updated_at)
+		 VALUES ($1,$2,$3,$4,$5,'active',$6,now(),now())
+		 RETURNING `+reviewTemplateColumns,
+		templateID, groupID, name, nextVersion, fileID, uploadedBy))
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+// newTemplateID 生成模板版本 ID（TPL + 12 位随机 hex，VARCHAR(32) 内）
+func newTemplateID() (string, error) {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "TPL_" + hex.EncodeToString(buf), nil
+}
+
+// newTemplateGroupID 生成模板组 ID（GRP + 12 位随机 hex，VARCHAR(32) 内）
+func newTemplateGroupID() (string, error) {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "GRP_" + hex.EncodeToString(buf), nil
+}
+
+// ListActiveReviewTemplates 每模板组当前 active 版本（name 升序）。
+func (s *PGStore) ListActiveReviewTemplates(ctx context.Context) ([]ReviewTemplateRow, error) {
+	query := `SELECT ` + reviewTemplateColumns + ` FROM review_templates
+		WHERE status = 'active' ORDER BY name, version DESC`
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []ReviewTemplateRow
+	for rows.Next() {
+		r, err := scanReviewTemplate(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *r)
+	}
+	return list, rows.Err()
+}
+
+// GetReviewTemplateGroup 按组查当前 active 版本；无匹配返回 ErrTemplateNotFound。
+func (s *PGStore) GetReviewTemplateGroup(ctx context.Context, groupID string) (*ReviewTemplateRow, error) {
+	r, err := scanReviewTemplate(s.pool.QueryRow(ctx,
+		`SELECT `+reviewTemplateColumns+` FROM review_templates
+		 WHERE template_group_id = $1 AND status = 'active'
+		 ORDER BY version DESC LIMIT 1`, groupID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrTemplateNotFound
+		}
+		return nil, err
+	}
+	return r, nil
 }

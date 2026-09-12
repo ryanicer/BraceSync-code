@@ -38,6 +38,39 @@
       </div>
     </div>
 
+    <!-- 今日峰值卡片 -->
+    <div class="page-card peak-card">
+      <div class="card-title">
+        今日峰值
+        <span class="realtime-tag small">
+          <span class="realtime-dot" />
+          实时累计
+        </span>
+      </div>
+      <div class="peak-grid">
+        <div class="peak-cell peak-value">
+          <div class="peak-label">峰值压力</div>
+          <div class="peak-num" :style="{ color: hmColor(todayPeak?.value ?? 0, HM_MAX_N) }">
+            {{ todayPeak ? todayPeak.value.toFixed(1) + ' N' : '--' }}
+          </div>
+        </div>
+        <div class="peak-cell">
+          <div class="peak-label">最大点位</div>
+          <div class="peak-text">{{ todayPeak ? todayPeak.pointId + ' (' + todayPeak.label + ')' : '--' }}</div>
+        </div>
+        <div class="peak-cell">
+          <div class="peak-label">发生时间</div>
+          <div class="peak-text">{{ todayPeak?.time ?? '--' }}</div>
+        </div>
+        <div class="peak-cell">
+          <div class="peak-label">当前帧值</div>
+          <div class="peak-text" :style="{ color: hmColor(curFrameValue, HM_MAX_N) }">
+            {{ curFrameValue.toFixed(1) }} N
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 左右双栏：曲线 + 热力图 -->
     <div class="charts-row">
       <!-- 实时压力曲线 -->
@@ -131,6 +164,7 @@ const BLUE_ALPHA = 'rgba(26,109,181,0.08)'
 // ====== 类型辅助 ======
 interface PatientOption { patientId: string; name: string; deviceId: string | null }
 type HistoryPoint = { t: string; v: number }
+interface TodayPeak { value: number; pointId: string; label: string; time: string; dateKey: string }
 
 // ====== 状态 ======
 const patients = ref<PatientOption[]>([])
@@ -142,6 +176,8 @@ const pressureHistory = ref<HistoryPoint[]>([])
 const heatmapSelected = ref<PressureHeatmapPoint | null>(null)
 const chartReady = ref(false)
 const chartRef = ref<InstanceType<typeof Line> | null>(null)
+const todayPeak = ref<TodayPeak | null>(null)
+const curFrameValue = ref(0)
 let timer: ReturnType<typeof setInterval> | null = null
 
 // ====== 计算属性 ======
@@ -264,6 +300,8 @@ function pushHistory(val: number) {
 function resetHistory() {
   pressureHistory.value = []
   heatmapSelected.value = null
+  todayPeak.value = null
+  curFrameValue.value = 0
 }
 
 /** 构造 30 点初始历史：以当前值为基准，平滑正弦曲线 */
@@ -306,19 +344,40 @@ async function refreshTick() {
     // 竞态防护：请求返回时若患者已切换则丢弃
     if (currentPatientId.value !== pid) return
     snapshot.value = snap
-    // 曲线：优先 maxPressure 字段（对齐接口），否则退化为 heatmap 最大点
-    let curV = snap.maxPressure ?? 0
-    if (!curV || curV <= 0) {
-      const hm = snap.pressureHeatmap ?? []
-      curV = hm.reduce((m, p) => (p.pressureValue > m ? p.pressureValue : m), 0)
+
+    // ===== T079 逐帧 max：一律以 heatmap 20 点最大值为基准，弃用 snap.maxPressure =====
+    const hm = snap.pressureHeatmap ?? []
+    const curMaxPt = hm.reduce<PressureHeatmapPoint | null>((max, p) => {
+      if (!max || p.pressureValue > max.pressureValue) return p
+      return max
+    }, null)
+    const curV = curMaxPt?.pressureValue ?? 0
+    curFrameValue.value = curV
+
+    // ===== 今日峰值累计（跨日自动重置、仅 curV > 0 才写入，避免 0N 占位） =====
+    const now = new Date()
+    const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+    if (todayPeak.value && todayPeak.value.dateKey !== dateKey) {
+      // 跨日：清零昨日峰值
+      todayPeak.value = null
     }
+    if (curV > 0 && curV > (todayPeak.value?.value ?? -1) && curMaxPt) {
+      todayPeak.value = {
+        value: curV,
+        pointId: curMaxPt.pointId,
+        label: curMaxPt.label,
+        time: timeStr,
+        dateKey,
+      }
+    }
+
     if (pressureHistory.value.length === 0) {
       initHistory(curV)
     } else {
       pushHistory(curV)
     }
-    const now = new Date()
-    lastUpdated.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+    lastUpdated.value = timeStr
   } catch (e: unknown) {
     if (currentPatientId.value === pid) {
       ElMessage.error(e instanceof Error ? e.message : '实时数据刷新失败')
@@ -559,5 +618,47 @@ void h
   color: #ee5a24;
   font-weight: 500;
   min-height: 18px;
+}
+
+/* ===== 今日峰值卡片 ===== */
+.peak-card .peak-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 768px) {
+  .peak-card .peak-grid { grid-template-columns: repeat(2, 1fr); }
+}
+.peak-cell {
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #eef2f7;
+}
+.peak-label {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+.peak-num {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.peak-text {
+  font-size: 16px;
+  font-weight: 600;
+  color: #334155;
+  line-height: 1.2;
+}
+.peak-cell.peak-value {
+  background: linear-gradient(135deg, #f8fafc 0%, #eef5ff 100%);
+  border-color: #dbeafe;
 }
 </style>

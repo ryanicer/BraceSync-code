@@ -36,25 +36,14 @@
     </view>
 
     <view v-if="currentStep < 3" class="section">
-      <text class="section-title">选择 WiFi 网络</text>
       <view class="card">
-        <view class="wifi-list">
-          <view
-            v-for="wifi in wifiList"
-            :key="wifi.ssid"
-            :class="['wifi-item', { 'wifi-selected': selectedSSID === wifi.ssid }]"
-            @click="selectWifi(wifi.ssid)"
-          >
-            <view class="wifi-info">
-              <text class="wifi-ssid">{{ wifi.ssid }}</text>
-              <text class="wifi-signal">{{ wifi.signal }}</text>
-            </view>
-            <text class="wifi-secure">{{ wifi.secure ? '🔒' : '' }}</text>
-          </view>
-        </view>
         <view class="manual-wifi">
-          <text class="form-label">或手动输入</text>
-          <input class="form-input" type="text" placeholder="WiFi名称 (SSID)" v-model="manualSSID" />
+          <text class="form-label">WiFi 名称 (SSID)</text>
+          <input class="form-input" type="text" placeholder="请输入 WiFi 名称" v-model="manualSSID" />
+        </view>
+        <view class="wifi-hint">
+          <text>仅支持 2.4GHz Wi-Fi 网络，不支持 5GHz（含 5G 频段的合一路由器请填 2.4G 那个网络名）</text>
+          <text>请手动输入准确的 WiFi 名称与密码</text>
         </view>
       </view>
     </view>
@@ -108,7 +97,6 @@ import { initBluetooth, createBLEConnection, writeWiFiConfig } from '../../utils
 const stepList = ['设备开机', '连接设备热点', '配置WiFi', '完成绑定']
 const currentStep = ref(1)
 const hotspotName = 'PRS-ML05-RC-001'
-const selectedSSID = ref('Home_WiFi_5G')
 const manualSSID = ref('')
 const wifiPassword = ref('')
 const showPassword = ref(false)
@@ -117,13 +105,6 @@ const progressPercent = ref(0)
 const progressStepText = ref('')
 
 let configTimer: ReturnType<typeof setInterval> | null = null
-
-// Mock WiFi 列表 - 替换计划: 真机环境可用 uni.getWifiList 扫描
-const wifiList = ref([
-  { ssid: 'Home_WiFi_5G', signal: '●●●● 信号强', secure: true },
-  { ssid: 'Office_Net', signal: '●●● 信号中等', secure: true },
-  { ssid: 'Guest_WiFi', signal: '●● 信号较弱', secure: false },
-])
 
 function stepClass(i: number): string {
   if (i + 1 < currentStep.value) return 'step-done'
@@ -141,13 +122,8 @@ function copyHotspot() {
   uni.setClipboardData({ data: hotspotName })
 }
 
-function selectWifi(ssid: string) {
-  selectedSSID.value = ssid
-  manualSSID.value = ''
-}
-
 async function startConfig() {
-  const ssid = manualSSID.value || selectedSSID.value
+  const ssid = manualSSID.value
   if (!ssid) {
     uni.showToast({ title: '请选择或输入WiFi名称', icon: 'none' })
     return
@@ -235,14 +211,9 @@ onUnmounted(() => {
 .hotspot-name { font-size: 28rpx; font-weight: 500; color: #1e293b; flex: 1; }
 .btn-copy { padding: 8rpx 20rpx; border: 1rpx solid #e2e8f0; border-radius: 8rpx; background: #fff; }
 .btn-copy text { font-size: 22rpx; color: #2563EB; }
-.wifi-list { margin-bottom: 16rpx; }
-.wifi-item { display: flex; align-items: center; justify-content: space-between; padding: 20rpx 24rpx; border: 1rpx solid #e2e8f0; border-radius: 24rpx; margin-bottom: 12rpx; }
-.wifi-selected { border-color: #2563EB; background: #eff6ff; }
-.wifi-info { display: flex; flex-direction: column; gap: 4rpx; }
-.wifi-ssid { font-size: 28rpx; font-weight: 500; color: #1e293b; }
-.wifi-signal { font-size: 22rpx; color: #94a3b8; }
-.wifi-secure { font-size: 28rpx; }
 .manual-wifi { margin-top: 16rpx; }
+.wifi-hint { display: flex; flex-direction: column; gap: 8rpx; margin-top: 20rpx; padding: 20rpx 24rpx; background: #fff7ed; border-radius: 16rpx; }
+.wifi-hint text { font-size: 22rpx; color: #b45309; line-height: 1.5; }
 .form-label { font-size: 26rpx; font-weight: 500; color: #1e293b; margin-bottom: 12rpx; display: block; }
 .form-input { width: 100%; padding: 16rpx 24rpx; border: 1rpx solid #e2e8f0; border-radius: 24rpx; font-size: 26rpx; color: #1e293b; background: #f1f5f9; }
 .form-group { margin-bottom: 24rpx; }

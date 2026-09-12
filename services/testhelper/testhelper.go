@@ -13,6 +13,8 @@ package testhelper
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"testing"
@@ -100,10 +102,25 @@ func WithTestContainers(m *testing.M, run func(cfg *ContainerConfig) int) {
 	os.Exit(exitCode)
 }
 
-// GetEnvOrDefault returns environment variable value or default if not set
 func GetEnvOrDefault(key, defaultVal string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return defaultVal
+}
+
+// WithTransactionRollback 在事务上下文中执行 run() 函数并在结束后自动回滚（用于测试隔离）
+// 适用于每测试用例独立数据库状态验证，避免跨用例污染
+// usage:
+//   err := WithTransactionRollback(ctx, store, func() error {
+//       // ... 测试操作 ...
+//       return nil
+//   })
+// TODO: Winner 实现后需与 repo.Store 接口集成（目前 standalone helper）
+
+// SHA256Hex 返回输入字符串的 SHA-256 十六进制摘要（用于构造患者 phone_hash fixture）。
+// 与真实 pg.go 中 patients.phone_hash 的计算方式一致（SHA-256 纯手机号十六进制）。
+func SHA256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }

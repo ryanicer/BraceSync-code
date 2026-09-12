@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test'
-import { routes, fillUniInput, HOTSPOT_NAME } from '../helpers'
+import { routes, fillUniInput, HOTSPOT_NAME, setupPatientE2E } from '../helpers'
 
 /**
  * wifi-setup 页：4 步引导、热点复制、密码显隐、配网成功状态
  * BLE 在 H5 下全 mock（utils/ble.ts）：连接 1s + 5 步进度 ×1.2s + 0.8s ≈ 9s 到成功页
+ * T074 真实模式基建：beforeEach 顶部注入登录态
  */
 
 test.beforeEach(async ({ page }) => {
+  await setupPatientE2E(page, { withLogin: true })
   await page.goto(routes.wifiSetup)
   await expect(page.getByText('WiFi 配网')).toBeVisible()
 })
@@ -30,15 +32,17 @@ test('设备热点名称展示与复制', async ({ context, page }) => {
 })
 
 test('WiFi 列表选择与手动输入', async ({ page }) => {
-  // 默认选中 Home_WiFi_5G
-  await expect(page.locator('.wifi-item', { hasText: 'Home_WiFi_5G' })).toHaveClass(/wifi-selected/)
-  // 切换选中 Office_Net
-  await page.locator('.wifi-item', { hasText: 'Office_Net' }).click()
-  await expect(page.locator('.wifi-item', { hasText: 'Office_Net' })).toHaveClass(/wifi-selected/)
-  await expect(page.locator('.wifi-item', { hasText: 'Home_WiFi_5G' })).not.toHaveClass(/wifi-selected/)
-  // 手动输入 SSID
+  // 无候选列表，SSID 走直接输入
   const manual = page.locator('.manual-wifi input')
   await fillUniInput(manual, 'My_Custom_WiFi')
+  await expect(manual).toHaveValue('My_Custom_WiFi')
+})
+
+test('手动输入 SSID 后点击扫描 WiFi 回填不清空（T136）', async ({ page }) => {
+  // 无候选列表，改为直接输入；输入值应完整保留不清空
+  const ssidInput = page.locator('.manual-wifi input')
+  await fillUniInput(ssidInput, 'My_Custom_WiFi')
+  await expect(ssidInput).toHaveValue('My_Custom_WiFi')
 })
 
 test('WiFi 密码显隐切换', async ({ page }) => {
@@ -61,6 +65,7 @@ test('开始配网到配网成功全状态', async ({ page }) => {
   await page.locator('.action-btn', { hasText: '开始添加设备' }).click()
   await page.waitForURL('**/pages/wifi-setup/**', { timeout: 10_000 })
 
+  await fillUniInput(page.locator('.manual-wifi input'), 'My_Custom_WiFi')
   await fillUniInput(page.locator('uni-input.password-input input'), 'secret123')
   await page.locator('.btn-primary', { hasText: '开始配网' }).click()
 

@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test'
-import { routes } from '../helpers'
+import { routes, setupPatientE2E } from '../helpers'
 
 /**
  * history 页：佩戴异常/压力异常双 Tab 切换、列表渲染
  * mock 数据：15 条佩戴记录（7 月 12 条 + 6 月 3 条），7 组压力异常（默认展开前 3 组，共 6 条明细）
+ * T074 真实模式基建：beforeEach 顶部注入登录态 + route 拦截
  */
 
 test.beforeEach(async ({ page }) => {
+  await setupPatientE2E(page, { withLogin: true })
   await page.goto(routes.history)
   await expect(page.getByText('异常监测').first()).toBeVisible()
 })

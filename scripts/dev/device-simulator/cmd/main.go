@@ -75,12 +75,14 @@ func runBatch(deviceID, secret, baseURL string, count int) {
 	batch := BatchReport{DeviceID: deviceID, Frames: frames}
 	body, _ := json.Marshal(batch)
 	ts := time.Now()
+	nonce := RandomNonce() // T067：每请求 32 hex nonce
 
 	req := mustNewRequest("POST", baseURL+"/api/v1/device/report/batch", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Device-Id", deviceID)
 	req.Header.Set("X-Timestamp", fmt.Sprintf("%d", ts.Unix()))
-	req.Header.Set("X-Signature", SignDeviceRequest(secret, "POST", "/api/v1/device/report/batch", string(body), ts))
+	req.Header.Set("X-Nonce", nonce)
+	req.Header.Set("X-Signature", SignDeviceRequest(secret, "POST", "/api/v1/device/report/batch", deviceID, nonce, string(body), ts))
 
 	resp, err := httpClient().Do(req)
 	if err != nil {

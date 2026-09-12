@@ -201,6 +201,70 @@ export interface HealthReport {
   generateTime: string;
 }
 
+// ===== 复查记录域（T130，合同患者端「复查管理」） =====
+
+/** 复查记录（含报告文件信息 + 下载 URL） */
+export interface ReviewRecord {
+  reviewId: string;
+  patientId: string;
+  reviewDate: string;        // YYYY-MM-DD
+  reviewType: 'initial' | 'follow-up';
+  findings: string | null;
+  nextReviewDate: string | null; // YYYY-MM-DD
+  doctorId: string | null;
+  reportFileId: string | null;
+  // 报告文件元数据（由 file-service 提供，可能为空）
+  reportFileName: string | null;
+  reportContentType: string | null;
+  reportSize: number | null;
+  reportUploadedAt: string | null;
+  reportDownloadUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 创建复查记录请求体（admin-web 提交） */
+export interface CreateReviewRecordRequest {
+  patientId: string;
+  reviewDate: string;               // YYYY-MM-DD
+  reviewType: 'initial' | 'follow-up';
+  findings?: string;
+  nextReviewDate?: string;          // YYYY-MM-DD（可空）
+  doctorId?: string;
+  reportFileId?: string;            // file-service 上传完成后返回的 file_id
+}
+
+// ===== T135 复查报告模板（合同运营后台「复查报告模板管理」） =====
+
+/** 复查报告模板（列表条目 = 每模板组当前 active 版本） */
+export interface ReviewTemplate {
+  templateId: string;
+  groupId: string;
+  name: string;
+  version: number;
+  fileId: string;
+  status: 'active' | 'retired';
+  uploadedBy: string;
+  uploadedAt: string;               // YYYY-MM-DD（页面要求）
+  updatedAt: string;
+  // 文件元数据（file-service 提供，可能为空）
+  fileName: string | null;
+  contentType: string | null;
+  fileSize: number | null;
+  downloadUrl: string | null;       // 预签名 GET URL（5min）
+}
+
+/** 上传/创建复查报告模板请求体（admin-web 提交） */
+export interface CreateReviewTemplateRequest {
+  name: string;                     // 模板显示名
+  fileId: string;                   // file-service 上传完成后返回的 file_id
+}
+
+/** 模板版本替换请求体（确认后生效，旧版 retired） */
+export interface ReplaceReviewTemplateRequest {
+  fileId: string;
+}
+
 export interface PatientPreference {
   patientId: string;
   reminderEnabled: boolean;

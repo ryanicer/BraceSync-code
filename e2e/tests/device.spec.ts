@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test'
-import { routes, modal, toast, fillUniInput, HOTSPOT_NAME } from '../helpers'
+import { routes, modal, toast, fillUniInput, HOTSPOT_NAME, setupPatientE2E } from '../helpers'
 
 /**
  * device 页：设备卡片、配网步骤入口、WiFi 输入、解绑确认弹窗
  * mock 设备：PRS-ML05-RC-001（online）
+ * T074 真实模式基建：beforeEach 顶部注入登录态 + route 拦截
  */
 
 test.beforeEach(async ({ page }) => {
+  await setupPatientE2E(page, { withLogin: true })
   await page.goto(routes.device)
   await expect(page.getByText('设备管理').first()).toBeVisible()
 })

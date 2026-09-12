@@ -253,6 +253,57 @@ func TestOnUploadComplete_NilStore(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestOnUploadComplete_ReviewTemplateSizeLimit(t *testing.T) {
+	// T135（R4-b 定稿值，服务端强制）：复查模板文件本体复用 review_report 通道，
+	// 以 owner_type=ReviewTemplate 区分，upload-complete 时校验 20MB 上限（前端预校验外最后一道门）。
+	// 直接构造 pending 的模板文件元数据，验证 >20MB 拒绝、=20MB 放行。
+	newTemplateFile := func(store repo.Store, fileID string) {
+		require.NoError(t, store.CreateFile(context.Background(), &model.FileMetadata{
+			FileID:    fileID,
+			Bucket:    "test-bucket",
+			ObjectKey: "review-reports/tpl.pdf",
+			FileType:  model.FileTypeReviewReport,
+			OwnerType: OwnerTypeReviewTemplate,
+			OwnerID:   "ADMIN",
+			Status:    model.FileStatusPending,
+		}))
+	}
+
+	t.Run("超过20MB拒绝", func(t *testing.T) {
+		store := newMemStore()
+		p := newTestPresigner(store)
+		newTemplateFile(store, "TPL-big")
+		err := p.OnUploadComplete(context.Background(), "TPL-big", "u", ReviewReportMaxBytes+1)
+		assert.ErrorIs(t, err, ErrFileTooLarge)
+		// 拒绝后保持 pending，未置 uploaded
+		fm, _ := store.GetFileByFileID(context.Background(), "TPL-big")
+		assert.Equal(t, model.FileStatusPending, fm.Status)
+	})
+
+	t.Run("等于20MB放行", func(t *testing.T) {
+		store := newMemStore()
+		p := newTestPresigner(store)
+		newTemplateFile(store, "TPL-ok")
+		require.NoError(t, p.OnUploadComplete(context.Background(), "TPL-ok", "u", ReviewReportMaxBytes))
+		fm, _ := store.GetFileByFileID(context.Background(), "TPL-ok")
+		assert.Equal(t, model.FileStatusUploaded, fm.Status)
+	})
+
+	t.Run("非模板类型不受20MB限制", func(t *testing.T) {
+		store := newMemStore()
+		p := newTestPresigner(store)
+		require.NoError(t, store.CreateFile(context.Background(), &model.FileMetadata{
+			FileID: "FILE-patient", Bucket: "test-bucket", ObjectKey: "review-reports/r.pdf",
+			FileType: model.FileTypeReviewReport, OwnerType: "patient",
+			OwnerID: "P0001", Status: model.FileStatusPending,
+		}))
+		// 非 ReviewTemplate 的复查报告文件 >20MB 不触发 T135 限制，正常置 uploaded
+		require.NoError(t, p.OnUploadComplete(context.Background(), "FILE-patient", "u", ReviewReportMaxBytes+1))
+		fm, _ := store.GetFileByFileID(context.Background(), "FILE-patient")
+		assert.Equal(t, model.FileStatusUploaded, fm.Status)
+	})
+}
+
 // ─────────────────────────────────────────────────────────────
 // Authorize 角色权限矩阵（需求 4）
 // ─────────────────────────────────────────────────────────────
@@ -316,6 +367,93 @@ func TestFileExtension(t *testing.T) {
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, fileExtension(tt.contentType), "content_type=%s", tt.contentType)
 	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// T130 增补单：ValidateReviewReportFile（扩展名白名单 + MIME + 魔数三道校验）
+// ─────────────────────────────────────────────────────────────
+
+// 魔数常量（与 presigner.go reviewReportMagicNumbers 对齐）
+var (
+	magicPDF  = []byte("%PDF-1.4")
+	magicPNG  = []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}
+	magicJPG  = []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}
+	magicDOC  = []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
+	magicZIP  = []byte("PK\x03\x04\x14\x00\x00\x00")
+	magicEXE  = []byte("MZ\x90\x00\x03\x00\x00\x00")
+	magicTEXT = []byte("Hello Wo")
+)
+
+func TestValidateReviewReportFile_WhitelistPass(t *testing.T) {
+	// 白名单内扩展名 + 对应魔数 + 对应 MIME → 通过
+	cases := []struct {
+		fileName    string
+		contentType string
+		header      []byte
+	}{
+		{"report.pdf", "application/pdf", magicPDF},
+		{"photo.jpg", "image/jpeg", magicJPG},
+		{"photo.jpeg", "image/jpeg", magicJPG},
+		{"image.png", "image/png", magicPNG},
+		{"doc.doc", "application/msword", magicDOC},
+		{"doc.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", magicZIP},
+		{"sheet.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", magicZIP},
+		{"slide.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", magicZIP},
+		{"archive.zip", "application/zip", magicZIP},
+		// Office MIME 误报 octet-stream 放宽（魔数必须匹配）
+		{"doc.docx", "application/octet-stream", magicZIP},
+		{"sheet.xlsx", "application/octet-stream", magicZIP},
+		{"report.pdf", "application/octet-stream", magicPDF},
+	}
+	for _, tc := range cases {
+		err := ValidateReviewReportFile(tc.fileName, tc.contentType, tc.header)
+		assert.NoError(t, err, "fileName=%s contentType=%s should pass", tc.fileName, tc.contentType)
+	}
+}
+
+func TestValidateReviewReportFile_ExtensionRejected(t *testing.T) {
+	// 非白名单扩展名直接拒（xls/ppt 宏病毒、wps/et/dps WPS 自有格式、exe/bat/js 等）
+	rejected := []string{
+		"mal.xls", "bad.ppt", "doc.wps", "sheet.et", "slide.dps",
+		"run.exe", "script.bat", "evil.js", "template.dot",
+	}
+	for _, name := range rejected {
+		err := ValidateReviewReportFile(name, "application/octet-stream", magicZIP)
+		assert.Error(t, err, "extension %s should be rejected", name)
+		assert.Contains(t, err.Error(), "unsupported file extension")
+	}
+}
+
+func TestValidateReviewReportFile_MagicMismatchRejected(t *testing.T) {
+	// 扩展名在白名单但魔数不匹配 → 拒（防改名伪装）
+	cases := []struct {
+		fileName    string
+		contentType string
+		header      []byte
+	}{
+		{"fake.pdf", "application/pdf", magicEXE},           // exe 改名为 pdf
+		{"fake.png", "image/png", magicTEXT},                // 文本改名为 png
+		{"fake.docx", "application/octet-stream", magicDOC}, // doc(OLE2) 改名为 docx(PK)
+		{"fake.zip", "application/zip", magicPDF},           // pdf 改名为 zip
+	}
+	for _, tc := range cases {
+		err := ValidateReviewReportFile(tc.fileName, tc.contentType, tc.header)
+		assert.Error(t, err, "fileName=%s with mismatched magic should be rejected", tc.fileName)
+		assert.Contains(t, err.Error(), "magic number does not match")
+	}
+}
+
+func TestValidateReviewReportFile_MIMEMismatchRejected(t *testing.T) {
+	// MIME 既非扩展名对应类型也非 octet-stream → 拒
+	err := ValidateReviewReportFile("report.pdf", "text/html", magicPDF)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported content_type")
+}
+
+func TestValidateReviewReportFile_MissingExtension(t *testing.T) {
+	err := ValidateReviewReportFile("noext", "application/pdf", magicPDF)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "missing extension")
 }
 
 // hasSuffix 避免额外依赖的轻量断言辅助

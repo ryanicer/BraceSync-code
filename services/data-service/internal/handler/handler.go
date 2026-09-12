@@ -7,6 +7,7 @@
 //	GET  /api/v1/patients/:patientId/records   压力历史查询
 //	GET  /api/v1/patients/:patientId/realtime  实时快照（Redis，零 DB）
 //	GET  /api/v1/patients/:patientId/health-reports 健康报告列表（T030）
+//	GET  /api/v1/patients/:patientId/daily-wear      患者日佩戴聚合（T076）
 //	GET  /api/v1/admin/dashboard/*         admin Dashboard 6 聚合查询端点（T033）
 //	GET  /healthz                      存活探针
 //	GET  /metrics                      Prometheus 采集端点（架构 §6.1，T010）
@@ -15,6 +16,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -28,11 +30,19 @@ import (
 // headerDeviceID gateway 验签后注入的设备身份头（T006 骨架缺口：未上线前允许 body 回退）
 const headerDeviceID = "X-Device-Id"
 
+// Gateway 注入的身份头（JWT 中间件在 middleware.go 注入，见 setupRouter）
+const (
+	headerUserID = "X-User-Id"
+	headerRole   = "X-Role"
+	roleAdmin    = "ROLE_ADMIN"
+)
+
 // Handler HTTP 处理器
 type Handler struct {
 	svc       *service.RecordService
 	reports   ReportLister     // T030 健康报告查询（SetReportLister 注入；nil 时该端点 500）
 	dashboard DashboardQuerier // T033 Dashboard 聚合查询（SetDashboardQuerier 注入；nil 时端点 500）
+	dailyWear DailyWearQuerier // T076 患者日佩戴聚合（SetDailyWearQuerier 注入；nil 时端点 500）
 }
 
 // New 创建 Handler
@@ -55,6 +65,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/patients/:patientId/records", h.getHistory)
 		v1.GET("/patients/:patientId/realtime", h.getRealtime)
 		v1.GET("/patients/:patientId/health-reports", h.getHealthReports) // T030
+		v1.GET("/patients/:patientId/daily-wear", h.getDailyWear)         // T076
 		h.registerDashboardRoutes(v1)                                     // T033 admin Dashboard 6 端点
 	}
 	return r
@@ -155,4 +166,55 @@ func (h *Handler) getRealtime(c *gin.Context) {
 		return
 	}
 	ok(c, resp)
+}
+
+// ─────────────────────────────────────────────────────────────
+// T076：患者日佩戴聚合（daily_wear_stats 范围查询）
+// ─────────────────────────────────────────────────────────────
+
+// DailyWearQuerier 患者日佩戴聚合查询契约（service.DailyWearService 实现）
+type DailyWearQuerier interface {
+	GetDailyWear(ctx context.Context, patientID, start, end string) ([]*model.DailyWearDayDTO, *model.AppError)
+}
+
+// SetDailyWearQuerier 注入患者日佩戴聚合数据源（生产由 main 注入 DailyWearService）
+func (h *Handler) SetDailyWearQuerier(q DailyWearQuerier) { h.dailyWear = q }
+
+// getDailyWear GET /api/v1/patients/:patientId/daily-wear
+//
+//	?start=YYYY-MM-DD&end=YYYY-MM-DD（闭区间，Asia/Shanghai 切日；缺省 end=今日 start=end-6d）
+//	水平鉴权：ROLE_ADMIN 允许任意；其余角色仅当 X-User-Id == patientId 允许（否则 403）
+func (h *Handler) getDailyWear(c *gin.Context) {
+	if h.dailyWear == nil {
+		fail(c, model.ErrInternal("daily-wear querier not configured"))
+		return
+	}
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrQueryParam("patientId is required"))
+		return
+	}
+
+	// 水平越权校验（fail-closed：缺失头视为无权限）
+	role := c.GetHeader(headerRole)
+	userID := c.GetHeader(headerUserID)
+	if role != roleAdmin {
+		if userID == "" || userID != patientID {
+			fail(c, model.ErrForbidden("may only query your own daily-wear stats"))
+			return
+		}
+	}
+
+	start := c.Query("start")
+	end := c.Query("end")
+	list, appErr := h.dailyWear.GetDailyWear(c.Request.Context(), patientID, start, end)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	// nil → []，保证前端空态 JSON 是 "data":[]
+	if list == nil {
+		list = []*model.DailyWearDayDTO{}
+	}
+	ok(c, list)
 }

@@ -49,6 +49,12 @@ type rollupTask struct {
 	QueuedAt  string `json:"queued_at"`
 }
 
+// latestRecordStore DB 优先实时快照数据源（*repo.RecordRepo 实现；
+// 测试 stub 不实现时 latest=nil，GetRealtime 走 Redis 回退）
+type latestRecordStore interface {
+	GetLatestRecord(ctx context.Context, patientID string) (rec model.PressureRecord, exists bool, err error)
+}
+
 // RecordService 设备上报主链路编排
 type RecordService struct {
 	records repo.RecordStore
@@ -57,9 +63,15 @@ type RecordService struct {
 	cache   repo.CacheStore
 	alerts  AlertEvaluator
 	limiter *RateLimiter
+	latest  latestRecordStore // 构造时从 records 类型断言；nil 时 GetRealtime 走 Redis 回退
 
-	alertTimeout time.Duration
-	now          func() time.Time
+	// deviceReport 上报事件回写 device-service（nil=未配置地址，跳过回写，
+	// devices.last_report_at 不回填但上报主链路不受影响）
+	deviceReport DeviceReporter
+
+	alertTimeout        time.Duration
+	deviceReportTimeout time.Duration
+	now                 func() time.Time
 
 	// degradedSinceUnixNano 降级窗口起点（0=正常）；连续降级 >5min 输出告警日志
 	degradedSinceUnixNano int64
@@ -67,15 +79,29 @@ type RecordService struct {
 
 // NewRecordService 组装 RecordService
 func NewRecordService(records repo.RecordStore, devices repo.DeviceStore, configs repo.ConfigStore, cache repo.CacheStore, alerts AlertEvaluator, limiter *RateLimiter) *RecordService {
-	return &RecordService{
-		records:      records,
-		devices:      devices,
-		configs:      configs,
-		cache:        cache,
-		alerts:       alerts,
-		limiter:      limiter,
-		alertTimeout: DefaultAlertTimeout,
-		now:          time.Now,
+	svc := &RecordService{
+		records:             records,
+		devices:             devices,
+		configs:             configs,
+		cache:               cache,
+		alerts:              alerts,
+		limiter:             limiter,
+		alertTimeout:        DefaultAlertTimeout,
+		deviceReportTimeout: DefaultDeviceReportTimeout,
+		now:                 time.Now,
+	}
+	if l, ok := records.(latestRecordStore); ok {
+		svc.latest = l
+	}
+	return svc
+}
+
+// SetDeviceReporter 注入 device-service 状态回写客户端（生产由 main 按 DEVICE_SERVICE_URL 注入）。
+// timeout ≤ 0 时沿用 DefaultDeviceReportTimeout；传 nil 客户端则关闭回写。
+func (s *RecordService) SetDeviceReporter(r DeviceReporter, timeout time.Duration) {
+	s.deviceReport = r
+	if timeout > 0 {
+		s.deviceReportTimeout = timeout
 	}
 }
 
@@ -83,7 +109,7 @@ func NewRecordService(records repo.RecordStore, devices repo.DeviceStore, config
 // 1. 单帧实时上报 POST /api/v1/device/records
 // ─────────────────────────────────────────────────────────────
 
-// UploadSingle 单帧上报：限流 → 校验 → 幂等落库 → Redis 三写 → 内联告警（超时降级）
+// UploadSingle 单帧上报：限流 → 校验 → 幂等落库 → Redis 三写 → 状态回写 device-service → 内联告警（超时降级）
 func (s *RecordService) UploadSingle(ctx context.Context, headerDeviceID string, req *model.SingleFrameRequest) (*model.SingleFrameResponse, *model.AppError) {
 	deviceID, appErr := resolveDeviceID(headerDeviceID, req.DeviceID)
 	if appErr != nil {
@@ -117,6 +143,7 @@ func (s *RecordService) UploadSingle(ctx context.Context, headerDeviceID string,
 	if appErr := s.applyRealtimeCache(ctx, deviceID, patientID, frame, now, inserted); appErr != nil {
 		return nil, appErr
 	}
+	s.notifyDeviceReport(ctx, deviceID, frame.Ts, req.FaultCode)
 
 	if inserted {
 		s.evaluateInline(ctx, deviceID, patientID, frame, now)
@@ -250,7 +277,7 @@ func (s *RecordService) markRecovered() {
 // 2. 批量补传 POST /api/v1/device/records/batch
 // ─────────────────────────────────────────────────────────────
 
-// UploadBatch 批量补传：独立限流 → 逐帧校验 → 单事务幂等批量落库 →
+// UploadBatch 批量补传：独立限流 → 逐帧校验 → 单事务幂等批量落库 → 状态回写 device-service →
 // 跳过实时告警 → 受影响日期投递 rollup 重算
 func (s *RecordService) UploadBatch(ctx context.Context, headerDeviceID string, req *model.BatchRequest) (*model.BatchResponse, *model.AppError) {
 	deviceID, appErr := resolveDeviceID(headerDeviceID, req.DeviceID)
@@ -301,6 +328,11 @@ func (s *RecordService) UploadBatch(ctx context.Context, headerDeviceID string, 
 	if err := s.cache.SetLastSeen(ctx, deviceID, now); err != nil {
 		log.Error().Err(err).Str("device_id", deviceID).Msg("redis set lastseen failed (batch)")
 		return nil, model.ErrInternal("redis unavailable")
+	}
+	// 状态回写取本批最新采集帧：陈旧帧不会推进 last_report_at，由 device-service 的
+	// GREATEST/CASE 语义挡下（repo.PGStore.Touch），此处无需再排序判断。
+	if newest, ok := newestFrame(valid); ok {
+		s.notifyDeviceReport(ctx, deviceID, newest.Ts, newest.FaultCode)
 	}
 
 	s.enqueueRollup(ctx, patientID, acceptedTS)
@@ -364,13 +396,13 @@ func (s *RecordService) GetHistory(ctx context.Context, patientID, period, date 
 	return &model.HistoryPage{List: list, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-// GetRealtime 实时快照：读 Redis（lastseen / rt:frame / stat:today），零 DB 明细命中
+// GetRealtime 实时快照：DB 优先（pressure_records 最新行），无 DB reader 时走 Redis 回退
 func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*model.RealtimeSnapshot, *model.AppError) {
 	snapshot := &model.RealtimeSnapshot{
 		Status:          "offline",
 		MaxPoint:        "",
 		PressureRecords: []model.PressureRecordDTO{},
-		Alerts:          []any{}, // 今日告警明细由 alert-service 提供；此处仅 Redis 摘要
+		Alerts:          []any{},
 	}
 
 	deviceID, dbStatus, exists, err := s.devices.GetDeviceByPatient(ctx, patientID)
@@ -379,17 +411,81 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 	}
 	if !exists {
 		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
-		return snapshot, nil // 未绑定设备：返回空快照，heatmap 走 seed
+		return snapshot, nil // 未绑定设备
 	}
 
-	// 状态推导（架构 §4.6 查询时实时推导）：abnormal 优先，其次 lastseen ≤2h 判 online
+	// DB 优先路径（*repo.RecordRepo 实现 GetLatestRecord 时）
+	if s.latest != nil {
+		return s.getRealtimeFromDB(ctx, patientID, deviceID, dbStatus, snapshot)
+	}
+
+	// Redis 回退路径（测试 stub 无 GetLatestRecord 时走旧逻辑）
+	return s.getRealtimeFromRedis(ctx, patientID, deviceID, dbStatus, snapshot)
+}
+
+// getRealtimeFromDB DB 优先实时快照：pressure_records 最新行驱动，Redis 仅补充状态与今日统计
+// 口径对齐 Redis 路径：maxPressure/maxPoint 取 stat:today（当日全量最大），
+// 热力图 & PressureRecords 取 pressure_records 最新行（实时帧），
+// stat:today 为空时回退到最新帧的 max（避免前端空值）。
+func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot) (*model.RealtimeSnapshot, *model.AppError) {
+	rec, hasRecord, err := s.latest.GetLatestRecord(ctx, patientID)
+	if err != nil {
+		return nil, model.ErrInternal("read latest record: %v", err)
+	}
+	if !hasRecord {
+		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
+		return snapshot, nil // 有设备但无上报记录
+	}
+
+	snapshot.PressureRecords = []model.PressureRecordDTO{rec.ToDTO()}
+	snapshot.PressureHeatmap = model.BuildHeatmap(rec.Points)
+
+	// 一次性读 stat:today：wear_minutes / max_pressure / max_point / abnormal_count
+	if stats, stErr := s.cache.GetStatToday(ctx, patientID); stErr == nil {
+		if v, e := strconv.Atoi(stats["wear_minutes"]); e == nil {
+			snapshot.TodayHours = float64(v) / 60.0
+		}
+		if v, e := strconv.ParseFloat(stats["max_pressure"], 64); e == nil && v > 0 {
+			snapshot.MaxPressure = v
+		} else {
+			snapshot.MaxPressure = float64(rec.MaxPressure)
+		}
+		if stats["max_point"] != "" {
+			snapshot.MaxPoint = stats["max_point"]
+		} else {
+			snapshot.MaxPoint = rec.MaxPoint()
+		}
+		if v, e := strconv.Atoi(stats["abnormal_count"]); e == nil {
+			snapshot.Events = v
+		}
+	} else {
+		// stat:today 回退：用最新帧兜底（防止首次上报当日无 rollup 时前端空白）
+		snapshot.MaxPressure = float64(rec.MaxPressure)
+		snapshot.MaxPoint = rec.MaxPoint()
+	}
+
+	// 状态推导：abnormal 优先；Redis lastseen ≤2h → online；否则 DB ts ≤2h → online
+	if dbStatus == "abnormal" {
+		snapshot.Status = "abnormal"
+	} else if lastseen, ok, lsErr := s.cache.GetLastSeen(ctx, deviceID); lsErr == nil && ok && s.now().Sub(lastseen) <= 2*time.Hour {
+		snapshot.Status = "online"
+	} else if s.now().Sub(rec.Ts) <= 2*time.Hour {
+		snapshot.Status = "online"
+	}
+
+	return snapshot, nil
+}
+
+// getRealtimeFromRedis Redis 回退路径（issue 879 前旧逻辑，测试 stub 走此路径）
+func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot) (*model.RealtimeSnapshot, *model.AppError) {
+	// 状态推导：abnormal 优先，其次 lastseen ≤2h 判 online
 	if dbStatus == "abnormal" {
 		snapshot.Status = "abnormal"
 	} else if lastseen, ok, lsErr := s.cache.GetLastSeen(ctx, deviceID); lsErr == nil && ok && s.now().Sub(lastseen) <= 2*time.Hour {
 		snapshot.Status = "online"
 	}
 
-	// 最新帧（rt:frame，零 DB）→ 同时产出 PressureRecords 与热力图 20 点
+	// 最新帧（rt:frame）→ PressureRecords 与热力图
 	frameJSON, err := s.cache.GetRealtimeFrame(ctx, deviceID)
 	if err != nil {
 		return nil, model.ErrInternal("read rt:frame: %v", err)
@@ -412,7 +508,6 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 					heatmapReady = true
 				}
 			}
-			// PressureRecords 总是构建（即便 points 短，PressureRecord 逻辑保留原有对不齐能力）
 			var points [model.PointCount]float32
 			for i := 0; i < model.PointCount && i < len(rf.Points); i++ {
 				points[i] = float32(rf.Points[i])
@@ -571,4 +666,119 @@ func toPendingFrame(ts time.Time, points []float64, battery, faultCode int) repo
 		arr[i] = float32(points[i])
 	}
 	return repo.PendingFrame{Ts: ts, Points: arr, Battery: battery, FaultCode: faultCode}
+}
+
+// newestFrame 取一批已通过校验帧中采集时刻最新的一帧（并列取末个）；空批 ok=false
+func newestFrame(frames []repo.PendingFrame) (repo.PendingFrame, bool) {
+	if len(frames) == 0 {
+		return repo.PendingFrame{}, false
+	}
+	newest := frames[0]
+	for _, f := range frames[1:] {
+		if !f.Ts.Before(newest.Ts) {
+			newest = f
+		}
+	}
+	return newest, true
+}
+
+// notifyDeviceReport 上报/补传事件回写 device-service，驱动 devices.last_report_at 单调推进
+// （架构 §4.6：devices 表写归 device-service，故经 /internal 端点而非直接 UPDATE）。
+//
+// 失败仅告警不阻塞上报：与 §3.4「上报成功率优先」一致，缺一次回填由设备下一次上报补齐。
+// WithoutCancel 派生超时 ctx：保留上报请求的值域（trace 等），但不继承其临近到期的 deadline。
+func (s *RecordService) notifyDeviceReport(ctx context.Context, deviceID string, ts time.Time, faultCode int) {
+	if s.deviceReport == nil {
+		return
+	}
+	timeout := s.deviceReportTimeout
+	if timeout <= 0 {
+		timeout = DefaultDeviceReportTimeout
+	}
+	reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	if err := s.deviceReport.Report(reportCtx, deviceID, ts, faultCode); err != nil {
+		log.Warn().Err(err).Str("device_id", deviceID).Time("ts", ts).
+			Msg("device-service report writeback failed, devices.last_report_at not updated")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// T076：患者日佩戴聚合查询（daily_wear_stats 单患者范围查询）
+// ─────────────────────────────────────────────────────────────
+
+// maxDailyWearDays 单趟查询最大天数（防大面积聚合扫表，对齐 dashboard maxTrendDays=90）
+const maxDailyWearDays = 90
+
+// DailyWearService 患者视角的日佩戴聚合查询（数据源：repo.DailyWearStatsStore）
+type DailyWearService struct {
+	store repo.DailyWearStatsStore
+	now   func() time.Time
+}
+
+// NewDailyWearService 组装 DailyWearService（store 注入 RollupRepo）
+func NewDailyWearService(store repo.DailyWearStatsStore) *DailyWearService {
+	return &DailyWearService{store: store, now: time.Now}
+}
+
+// GetDailyWear 按日期范围（闭区间，YYYY-MM-DD，Asia/Shanghai 切日）返回 daily_wear_stats。
+// 参数规则：
+//   - start 空 → 缺省 end-6 天（默认近 7 天）；end 空 → 缺省今日。
+//   - 日期格式必须为 "2006-01-02"（CST）。
+//   - start > end 自动交换。
+//   - 实际天数 > maxDailyWearDays → CodeQueryParam 400。
+func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr, endStr string) ([]*model.DailyWearDayDTO, *model.AppError) {
+	nowCST := s.now().In(model.CSTZone())
+
+	// 缺省：end=今日，start=end-6d（近 7 日含今日，对齐 dashboard wear-trend）
+	if endStr == "" {
+		endStr = nowCST.Format("2006-01-02")
+	}
+	endDay, err := time.ParseInLocation("2006-01-02", endStr, model.CSTZone())
+	if err != nil {
+		return nil, model.ErrQueryParam("invalid end date %q (expect YYYY-MM-DD)", endStr)
+	}
+	if startStr == "" {
+		startStr = endDay.AddDate(0, 0, -6).Format("2006-01-02")
+	}
+	startDay, err := time.ParseInLocation("2006-01-02", startStr, model.CSTZone())
+	if err != nil {
+		return nil, model.ErrQueryParam("invalid start date %q (expect YYYY-MM-DD)", startStr)
+	}
+	if startDay.After(endDay) {
+		startDay, endDay = endDay, startDay
+	}
+
+	days := int(endDay.Sub(startDay).Hours()/24) + 1 // 闭区间 +1
+	if days > maxDailyWearDays {
+		return nil, model.ErrQueryParam("date range %d days exceeds max %d days", days, maxDailyWearDays)
+	}
+	if patientID == "" {
+		return nil, model.ErrQueryParam("patientId is required")
+	}
+
+	// UTC 时间窗与 QueryRange/RollupService.aggregateAndUpsert 一致：
+	//   [CST 当日 00:00 → UTC, 次日 CST 00:00 → UTC)
+	fromUTC := startDay.UTC()
+	toUTC := endDay.AddDate(0, 0, 1).UTC()
+
+	rows, err := s.store.QueryRange(ctx, patientID, fromUTC, toUTC)
+	if err != nil {
+		log.Error().Err(err).Str("patient_id", patientID).Msg("daily-wear query failed")
+		return nil, model.ErrInternal("query daily wear stats failed")
+	}
+
+	out := make([]*model.DailyWearDayDTO, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, &model.DailyWearDayDTO{
+			Date:          r.StatDate.In(model.CSTZone()).Format("2006-01-02"),
+			WearMinutes:   r.WearMinutes,
+			AvgPressure:   r.AvgPressure,
+			MaxPressure:   r.MaxPressure,
+			MaxPoint:      r.MaxPoint, // QueryRange SQL COALESCE(max_point, '') 兜底空串
+			FrameCount:    r.FrameCount,
+			AbnormalCount: r.AbnormalCount,
+		})
+	}
+	return out, nil
 }

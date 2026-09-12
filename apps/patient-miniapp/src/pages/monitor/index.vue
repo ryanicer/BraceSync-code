@@ -70,11 +70,23 @@ import { onPullDownRefresh } from '@dcloudio/uni-app'
 // 全仓库仅患者端使用，故移出共享包，单份维护，无需 #ifdef 双份导入。
 import PressureHeatmap from '../../components/PressureHeatmap.vue'
 import PressureCurve from '../../components/PressureCurve.vue'
-import type { SensorPoint } from '@bracesync/shared-types'
-import { mockSensorPoints, mockTrendData } from '../../mock/monitor'
+import type { PressureRecord, SensorPoint } from '@bracesync/shared-types'
+import { request } from '../../utils/request'
+import { useAuthStore } from '../../stores/auth'
 
-// MOCK 数据加载
-// 替换计划: 接 data-service getPatientRealtime + getPatientHistory
+// 后端 data-service RealtimeSnapshot（返回结构）简化接口描述
+interface RealtimeSnapshot {
+  deviceId?: string
+  status?: string
+  todayHours?: number
+  maxPressure?: number
+  maxPoint?: string
+  pressureRecords?: PressureRecord[]
+  events?: number
+}
+
+const authStore = useAuthStore()
+
 const sensorPoints = ref<SensorPoint[]>([])
 const activeIndex = ref(-1)
 const segment = ref<'day' | 'week' | 'month'>('day')
@@ -97,27 +109,92 @@ const trendLabels = computed(() => {
   return ['1日', '8日', '15日', '22日', '30日']
 })
 
-function loadData() {
-  const points = mockSensorPoints()
-  sensorPoints.value = points
-  let maxIdx = 0
-  points.forEach((p, i) => {
-    if (p.pressureValue > points[maxIdx].pressureValue) maxIdx = i
-  })
-  activeIndex.value = maxIdx
-  trendData.value = mockTrendData(points[maxIdx].pressureValue)
+// 根据 period 参数调用 records 端点，生成所选分段的 maxPressure 趋势
+async function loadTrend(baseVal: number) {
+  const patientId = authStore.patientId
+  if (!patientId) {
+    trendData.value = []
+    return
+  }
+  const today = new Date()
+  const yyyy = today.getFullYear()
+  const mm = String(today.getMonth() + 1).padStart(2, '0')
+  const dd = String(today.getDate()).padStart(2, '0')
+  const dateStr = `${yyyy}-${mm}-${dd}`
+  try {
+    const records = await request<PressureRecord[]>({
+      url: `/api/v1/patients/${patientId}/records`,
+      method: 'GET',
+      data: { period: segment.value, date: dateStr },
+    })
+    if (records && records.length > 0) {
+      trendData.value = records
+        .slice(0, 48)
+        .map((r) => {
+          // 计算该帧 maxPressure（取 points 数组最大值）
+          let maxP = 0
+          for (const p of r.points || []) {
+            if (p.pressureValue > maxP) maxP = p.pressureValue
+          }
+          return {
+            timestamp: r.timestamp,
+            value: parseFloat(maxP.toFixed(2)),
+          }
+        })
+        .filter(x => x.value > 0)
+      return
+    }
+    // 空记录：fallback 给当前 maxPressure 单点以避免图表空
+    trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
+  } catch {
+    trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
+  }
+}
+
+// 真实加载：data-service GET /patients/:patientId/realtime
+async function loadData() {
+  const patientId = authStore.patientId
+  if (!patientId) {
+    uni.showToast({ title: '请先登录', icon: 'none' })
+    return
+  }
+  try {
+    const snap = await request<RealtimeSnapshot>({
+      url: `/api/v1/patients/${patientId}/realtime`,
+      method: 'GET',
+    })
+    const recs = snap?.pressureRecords ?? []
+    const points: SensorPoint[] = recs.length && recs[0].points ? recs[0].points : []
+    sensorPoints.value = points
+    let maxIdx = -1
+    if (points.length > 0) {
+      maxIdx = 0
+      for (let i = 1; i < points.length; i++) {
+        if (points[i].pressureValue > points[maxIdx].pressureValue) maxIdx = i
+      }
+    }
+    activeIndex.value = maxIdx >= 0 ? maxIdx : -1
+    const base = maxIdx >= 0 ? points[maxIdx].pressureValue : snap?.maxPressure ?? 0
+    void loadTrend(base)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '加载实时数据失败'
+    uni.showToast({ title: msg, icon: 'none' })
+    sensorPoints.value = []
+    trendData.value = []
+  }
 }
 
 function onSelectPoint(index: number) {
   activeIndex.value = index
-  const base = sensorPoints.value[index]?.pressureValue || 42
-  trendData.value = mockTrendData(base)
+  const base = sensorPoints.value[index]?.pressureValue ?? 0
+  void loadTrend(base)
 }
 
 function switchSegment(seg: 'day' | 'week' | 'month') {
+  if (segment.value === seg) return
   segment.value = seg
-  const base = activePoint.value?.pressureValue || 42
-  trendData.value = mockTrendData(base)
+  const base = activePoint.value?.pressureValue ?? 0
+  void loadTrend(base)
 }
 
 // T019B: 导航至异常事件页
@@ -126,14 +203,15 @@ function goAnomaly() {
 }
 
 onMounted(() => {
-  loadData()
+  void loadData()
 })
 
 // 下拉刷新（PRD 7A.2）
 onPullDownRefresh(() => {
-  loadData()
-  uni.showToast({ title: '数据已刷新', icon: 'none', duration: 800 })
-  uni.stopPullDownRefresh()
+  void loadData().finally(() => {
+    uni.showToast({ title: '数据已刷新', icon: 'none', duration: 800 })
+    uni.stopPullDownRefresh()
+  })
 })
 </script>
 

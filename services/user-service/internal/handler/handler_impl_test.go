@@ -24,6 +24,7 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/phone"
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/bracesync/bracesync/services/user-service/internal/token"
+	"github.com/bracesync/bracesync/services/user-service/internal/wechat"
 )
 
 func init() { gin.SetMode(gin.TestMode) }
@@ -118,6 +119,16 @@ type fakeStore struct {
 	lastBatchIDs      []string
 	lastBatchTeam     string
 
+	// T069 微信登录：openid → 患者查找/创建
+	wxPatientByOpenID  map[string]*repo.PatientLoginRow
+	wxPatientErr       error
+	wxCreatePatient    *repo.PatientLoginRow
+	wxCreateErr        error
+	wxCreateCalls      int
+	wxCreateFirstErr   error                 // 首次调用返回的错误（模拟唯一索引冲突）；仅在 wxCreateCalls=1 时生效
+	wxLastCreateOpenID string                // 最后一次 CreatePatientByWXOpenID 传进来的 openid
+	wxCreateAfterFirst *repo.PatientLoginRow // 首次失败重试后返回的患者（如果配置）
+
 	// T059 团队/成员写操作 stub 字段（实现方转绿时由用例装配返回值）
 	createdTeam        *repo.TeamDetailRow
 	createTeamErr      error
@@ -141,6 +152,20 @@ type fakeStore struct {
 	lastRemoveTeamID   string
 	lastRemoveMID      string
 	lastRemoveMType    string
+
+	// T130 复查记录
+	reviewRows      []repo.ReviewRecordRow
+	reviewRowsErr   error
+	createdReview   *repo.ReviewRecordRow
+	createReviewErr error
+
+	// T135 复查报告模板
+	createdTemplate   *repo.ReviewTemplateRow
+	createTemplateErr error
+	templateRows      []repo.ReviewTemplateRow
+	templateRowsErr   error
+	activeTemplate    *repo.ReviewTemplateRow
+	activeTemplateErr error
 }
 
 func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {
@@ -301,15 +326,48 @@ func (f *fakeStore) RemoveTeamMember(_ context.Context, teamID, memberID, member
 	return f.removeMemberErr
 }
 
+// T069 微信登录：按 openid 查患者（nil,nil 表示不存在）
+func (f *fakeStore) GetPatientByWXOpenID(_ context.Context, openid string) (*repo.PatientLoginRow, error) {
+	if f.wxPatientErr != nil {
+		return nil, f.wxPatientErr
+	}
+	if f.wxPatientByOpenID != nil {
+		if p, ok := f.wxPatientByOpenID[openid]; ok {
+			return p, nil
+		}
+	}
+	return nil, nil
+}
+
+// T069 微信登录：以 openid 创建患者（支持冲突场景）
+// wxCreateFirstErr 只在首次调用生效（模拟冲突后第二次走成功路径）
+func (f *fakeStore) CreatePatientByWXOpenID(_ context.Context, openid string) (*repo.PatientLoginRow, error) {
+	f.wxCreateCalls++
+	f.wxLastCreateOpenID = openid
+	if f.wxCreateCalls == 1 && f.wxCreateFirstErr != nil {
+		return nil, f.wxCreateFirstErr
+	}
+	if f.wxCreateCalls > 1 && f.wxCreateAfterFirst != nil {
+		return f.wxCreateAfterFirst, f.wxCreateErr
+	}
+	return f.wxCreatePatient, f.wxCreateErr
+}
+
 // testEnv 装配 Handler + 请求工具
 type testEnv struct {
 	t      *testing.T
 	store  *fakeStore
 	signer *token.Signer
+	wx     *fakeWXClient
 	h      *Handler
 }
 
 func newEnv(t *testing.T, withSigner, withPhone bool) *testEnv {
+	return newEnvWithWX(t, withSigner, withPhone, nil)
+}
+
+// newEnvWithWX 支持注入 fake 微信客户端；wx=nil 表示未配置 WX_APPID（/patient/wx-login 应降级 500）
+func newEnvWithWX(t *testing.T, withSigner, withPhone bool, wx *fakeWXClient) *testEnv {
 	t.Helper()
 	var signer *token.Signer
 	if withSigner {
@@ -324,7 +382,17 @@ func newEnv(t *testing.T, withSigner, withPhone bool) *testEnv {
 		cipher = c
 	}
 	store := &fakeStore{}
-	return &testEnv{t: t, store: store, signer: signer, h: New(store, signer, cipher)}
+	// Handler 字面量构造，绕过 New 对 *wechat.Client 的具体类型要求，方便注入 fakeWXClient
+	// 注意：Go 接口 nil 判断需 type+value 双 nil；当 *fakeWXClient 本身为 nil 时不能赋给接口，
+	// 否则 h.wxClient==nil 会判断失败
+	h := &Handler{store: store, signer: signer, phone: cipher, wxClient: nil}
+	if wx != nil {
+		h.wxClient = wx
+	}
+	if signer != nil {
+		h.bindSigner = signer.CloneWithTTL(30 * time.Minute) // T085：bindToken signer
+	}
+	return &testEnv{t: t, store: store, signer: signer, wx: wx, h: h}
 }
 
 // do 发起请求并解析统一响应体
@@ -1529,4 +1597,397 @@ func TestMaskAndMergeWifiPasswords(t *testing.T) {
 		[]model.WifiPresetDTO{{Ssid: "a", Password: "********"}, {Ssid: "c", Password: "new"}}, stored)
 	assert.Equal(t, "old", merged[0].Password)
 	assert.Equal(t, "new", merged[1].Password)
+}
+
+// T130 fakeStore review record methods
+func (f *fakeStore) CreateReviewRecord(_ context.Context, row repo.ReviewRecordRow) (*repo.ReviewRecordRow, error) {
+	if f.createdReview != nil {
+		return f.createdReview, f.createReviewErr
+	}
+	return &row, f.createReviewErr
+}
+
+func (f *fakeStore) ListReviewRecordsByPatient(_ context.Context, _ string) ([]repo.ReviewRecordRow, error) {
+	return f.reviewRows, f.reviewRowsErr
+}
+
+func (f *fakeStore) GetReviewRecord(_ context.Context, _ string) (*repo.ReviewRecordRow, error) {
+	return nil, nil
+}
+
+// T135 fakeStore review template methods
+func (f *fakeStore) CreateReviewTemplateVersion(_ context.Context, groupID, name, fileID, uploadedBy string) (*repo.ReviewTemplateRow, error) {
+	if f.activeTemplateErr != nil {
+		return nil, f.activeTemplateErr
+	}
+	if f.createTemplateErr != nil {
+		return nil, f.createTemplateErr
+	}
+	if f.createdTemplate != nil {
+		return f.createdTemplate, nil
+	}
+	row := &repo.ReviewTemplateRow{
+		TemplateID:      "TPL_test",
+		TemplateGroupID: groupID,
+		Name:            name,
+		Version:         1,
+		FileID:          fileID,
+		Status:          "active",
+		UploadedBy:      uploadedBy,
+	}
+	return row, nil
+}
+
+func (f *fakeStore) ListActiveReviewTemplates(_ context.Context) ([]repo.ReviewTemplateRow, error) {
+	return f.templateRows, f.templateRowsErr
+}
+
+func (f *fakeStore) GetReviewTemplateGroup(_ context.Context, _ string) (*repo.ReviewTemplateRow, error) {
+	return f.activeTemplate, f.activeTemplateErr
+}
+
+// ─────────────────────────────────────────────────────────────
+// 患者端微信登录（T069）
+// ─────────────────────────────────────────────────────────────
+
+// fakeWXClient 内存版 wxClientI：单测用，绝不触达外网
+type fakeWXClient struct {
+	// 不同 code 映射不同结果；code 未命中则返回 defaultOpenid / defaultErr
+	Results    map[string]*wechat.Code2SessionResult
+	Errors     map[string]error
+	DefaultRes *wechat.Code2SessionResult
+	DefaultErr error
+
+	LastCode string // 记录最后一次调用入参
+	Calls    int
+}
+
+func (f *fakeWXClient) DoCode2Session(_ context.Context, code string) (*wechat.Code2SessionResult, error) {
+	f.Calls++
+	f.LastCode = code
+	if f.Results != nil {
+		if r, ok := f.Results[code]; ok {
+			if f.Errors != nil {
+				if err, ok := f.Errors[code]; ok {
+					return r, err
+				}
+			}
+			return r, nil
+		}
+	}
+	if f.Errors != nil {
+		if err, ok := f.Errors[code]; ok {
+			return f.DefaultRes, err
+		}
+	}
+	return f.DefaultRes, f.DefaultErr
+}
+
+// Case 1: code 为空 → 400
+func TestWXLogin_EmptyCode(t *testing.T) {
+	wx := &fakeWXClient{}
+	e := newEnvWithWX(t, true, true, wx)
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": ""}, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	assert.Equal(t, 0, wx.Calls, "空 code 不应请求微信")
+}
+
+// Case 2: wxClient 未配置（env 未注入）→ 500 CodeInternal（不影响其他端点）
+func TestWXLogin_NoWXClient(t *testing.T) {
+	e := newEnvWithWX(t, true, true, nil) // 传 nil = 未配置 WX_APPID
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "abc"}, nil)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, model.CodeInternal, resp.Code)
+}
+
+// Case 3: 微信返回 WechatError（如 code 过期 errCode=40029）→ 401 + 透传消息
+func TestWXLogin_WechatError(t *testing.T) {
+	wx := &fakeWXClient{
+		Errors: map[string]error{
+			"bad-code": &wechat.WechatError{ErrCode: 40029, ErrMsg: "invalid code"},
+		},
+	}
+	e := newEnvWithWX(t, true, true, wx)
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "bad-code"}, nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, model.CodeUnauthorized, resp.Code)
+	assert.Contains(t, resp.Message, "invalid code")
+}
+
+// Case 4: 微信下游网络错误 / HTTP 非 200 → 502 + CodeWXUnavail
+func TestWXLogin_WXDownstreamError(t *testing.T) {
+	wx := &fakeWXClient{
+		DefaultErr: errors.New("dial tcp: i/o timeout"),
+	}
+	e := newEnvWithWX(t, true, true, wx)
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c1"}, nil)
+	assert.Equal(t, http.StatusBadGateway, w.Code)
+	assert.Equal(t, model.CodeWXUnavail, resp.Code)
+}
+
+// Case 5: openid 命中 active 患者 → 200 + 签发 token（角色=patient）
+func TestWXLogin_ExistingActivePatient(t *testing.T) {
+	openid := "o1"
+	wx := &fakeWXClient{
+		DefaultRes: &wechat.Code2SessionResult{OpenID: openid, SessionKey: "sk"},
+	}
+	e := newEnvWithWX(t, true, true, wx)
+	e.store.wxPatientByOpenID = map[string]*repo.PatientLoginRow{
+		openid: {
+			PatientID:    "P90001",
+			Name:         "微信用户A",
+			PasswordHash: "", // 微信用户不设密码，不参与 bcrypt 校验
+			Status:       "active",
+		},
+	}
+
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c5"}, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 0, resp.Code)
+
+	var dto model.PatientLoginResultDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Equal(t, "P90001", dto.PatientID)
+	assert.Equal(t, "微信用户A", dto.Name)
+	assert.Equal(t, "patient", dto.Role)
+
+	claims, err := e.signer.Verify(dto.Token)
+	require.NoError(t, err)
+	assert.Equal(t, "P90001", claims.Subject)
+	assert.Equal(t, "patient", claims.RoleID)
+	assert.Equal(t, "", claims.TeamID)
+}
+
+// Case 6: openid 命中非 active 患者（pending/disabled）→ 401 统一文案防枚举（T085：10001）
+func TestWXLogin_ExistingInactivePatient(t *testing.T) {
+	openid := "o6"
+	wx := &fakeWXClient{
+		DefaultRes: &wechat.Code2SessionResult{OpenID: openid, SessionKey: "sk6"},
+	}
+	e := newEnvWithWX(t, true, true, wx)
+	e.store.wxPatientByOpenID = map[string]*repo.PatientLoginRow{
+		openid: {
+			PatientID:    "P90006",
+			Name:         "待激活",
+			PasswordHash: "",
+			Status:       "pending",
+		},
+	}
+
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c6"}, nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	// T085：inactive 统一返回 10001（invalid_credentials）防枚举
+	assert.Equal(t, model.CodeInvalidCredentials, resp.Code)
+	assert.Equal(t, "invalid_credentials", resp.Message)
+}
+
+// Case 7: openid 未命中 → T085 不创建患者，返回 10601 + bindToken（引导绑定手机号）
+func TestWXLogin_NewPatient(t *testing.T) {
+	openid := "o7"
+	wx := &fakeWXClient{
+		DefaultRes: &wechat.Code2SessionResult{OpenID: openid, SessionKey: "sk7"},
+	}
+	e := newEnvWithWX(t, true, true, wx)
+	// 未配置 wxPatientByOpenID → GetPatientByWXOpenID 返回 nil,nil（患者不存在）
+
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c7"}, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	// T085：未绑定返回 10601 + bindToken，禁止自动创建患者
+	assert.Equal(t, model.CodePatientNotBound, resp.Code)
+	assert.Equal(t, 0, e.store.wxCreateCalls, "未绑定场景不应创建患者")
+
+	// 响应应包含 bindToken
+	var data struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Data, &data))
+	assert.NotEmpty(t, data.Token, "响应应包含 bindToken")
+}
+
+// Case 8: T085 不再自动创建患者，openid 未命中直接返回 10601 + bindToken（无并发创建冲突）
+func TestWXLogin_ConcurrentConflictRetry(t *testing.T) {
+	openid := "o8"
+	wx := &fakeWXClient{
+		DefaultRes: &wechat.Code2SessionResult{OpenID: openid, SessionKey: "sk8"},
+	}
+	e := newEnvWithWX(t, true, true, wx)
+	e.store.wxPatientByOpenID = nil
+
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c8"}, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	// T085：无患者创建 → 无冲突 → 直接 10601 + bindToken
+	assert.Equal(t, model.CodePatientNotBound, resp.Code)
+	assert.Equal(t, 0, e.store.wxCreateCalls, "未绑定场景不应创建患者")
+
+	var data struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Data, &data))
+	assert.NotEmpty(t, data.Token, "响应应包含 bindToken")
+}
+
+// Case 9: signer=nil（JWT_SECRET 未配置）→ 即使 openid 命中也 500
+func TestWXLogin_NoSigner(t *testing.T) {
+	openid := "o9"
+	wx := &fakeWXClient{
+		DefaultRes: &wechat.Code2SessionResult{OpenID: openid, SessionKey: "sk9"},
+	}
+	e := newEnvWithWX(t, false, true, wx) // signer=nil
+	e.store.wxPatientByOpenID = map[string]*repo.PatientLoginRow{
+		openid: {
+			PatientID:    "P90009",
+			Name:         "无密钥",
+			PasswordHash: "",
+			Status:       "active",
+		},
+	}
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "c9"}, nil)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, model.CodeInternal, resp.Code)
+}
+
+// ─────────────────────────────────────────────────────────────
+// 复查报告模板（T135，合同运营后台「复查报告模板管理」）
+// ─────────────────────────────────────────────────────────────
+
+func TestReviewTemplate_Create(t *testing.T) {
+	e := newEnv(t, false, false)
+	// 未设 createdTemplate → fakeStore 回退返回默认 version=1 行且 name 回显
+	w, resp := e.do(http.MethodPost, "/api/v1/admin/review-templates",
+		map[string]string{"name": "XX医院脊柱侧弯复查报告模板", "fileId": "FILE-a"},
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.CodeOK, resp.Code)
+
+	var dto model.ReviewTemplateDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Equal(t, "XX医院脊柱侧弯复查报告模板", dto.Name)
+	assert.Equal(t, 1, dto.Version)
+	assert.Equal(t, "FILE-a", dto.FileID)
+	assert.Equal(t, "active", dto.Status)
+	// 重名冲突 → 409
+	e.store.createTemplateErr = repo.ErrTemplateNameExists
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates",
+		map[string]string{"name": "重名", "fileId": "FILE-b"},
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, model.CodeConflict, resp.Code)
+}
+
+func TestReviewTemplate_CreateValidation(t *testing.T) {
+	e := newEnv(t, false, false)
+	admin := map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"}
+	// 空 name
+	w, resp := e.do(http.MethodPost, "/api/v1/admin/review-templates", map[string]string{"fileId": "FILE-a"}, admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	// 空白 name
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates", map[string]string{"name": "   ", "fileId": "FILE-a"}, admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// 超长 name（>128 字符）
+	longName := strings.Repeat("模", 129)
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates", map[string]string{"name": longName, "fileId": "FILE-a"}, admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	// 缺 fileId
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates", map[string]string{"name": "模板"}, admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	// 非法请求体
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates", "not-json", admin)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestReviewTemplate_RBAC(t *testing.T) {
+	e := newEnv(t, false, false)
+	// 医生允许
+	w, _ := e.do(http.MethodPost, "/api/v1/admin/review-templates",
+		map[string]string{"name": "医生上传模板", "fileId": "FILE-d"},
+		map[string]string{"X-Role": "ROLE_DOCTOR", "X-User-Id": "D0001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	// 患者/客服等 → 403（网关 RBAC 兜底外端点级兜底）
+	for _, role := range []string{"ROLE_PATIENT", "ROLE_CS", "ROLE_TECHNICIAN"} {
+		w, resp := e.do(http.MethodPost, "/api/v1/admin/review-templates",
+			map[string]string{"name": "越权", "fileId": "FILE-x"},
+			map[string]string{"X-Role": role, "X-User-Id": "X0001"})
+		assert.Equal(t, http.StatusForbidden, w.Code, "role=%s 应被拒", role)
+		assert.Equal(t, model.CodeForbidden, resp.Code)
+	}
+	// 列表越权 → 403
+	w, resp := e.do(http.MethodGet, "/api/v1/admin/review-templates", nil,
+		map[string]string{"X-Role": "ROLE_CS", "X-User-Id": "C0001"})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, model.CodeForbidden, resp.Code)
+}
+
+func TestReviewTemplate_List(t *testing.T) {
+	e := newEnv(t, false, false)
+	now := time.Now()
+	e.store.templateRows = []repo.ReviewTemplateRow{
+		{TemplateID: "TPL-1", TemplateGroupID: "GRP-1", Name: "模板甲", Version: 1, FileID: "FILE-1",
+			Status: "active", UploadedBy: "A0001", CreatedAt: now, UpdatedAt: now},
+		{TemplateID: "TPL-2", TemplateGroupID: "GRP-2", Name: "模板乙", Version: 3, FileID: "FILE-2",
+			Status: "active", UploadedBy: "A0002", CreatedAt: now, UpdatedAt: now},
+	}
+	w, resp := e.do(http.MethodGet, "/api/v1/admin/review-templates", nil,
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	var list []model.ReviewTemplateDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &list))
+	assert.Len(t, list, 2)
+	assert.Equal(t, "模板甲", list[0].Name)
+	assert.Equal(t, 3, list[1].Version)
+	assert.Equal(t, now.Format("2006-01-02"), list[0].UploadedAt)
+}
+
+func TestReviewTemplate_Replace(t *testing.T) {
+	e := newEnv(t, false, false)
+	// 用 activeTemplate 返回旧版本，再用 createdTemplate 返回新版本（version=2）
+	e.store.activeTemplate = &repo.ReviewTemplateRow{
+		TemplateID: "TPL-1", TemplateGroupID: "GRP-1", Name: "模板甲", Version: 1,
+		FileID: "FILE-1", Status: "active", UploadedBy: "A0001", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	e.store.createdTemplate = &repo.ReviewTemplateRow{
+		TemplateID: "TPL-3", TemplateGroupID: "GRP-1", Name: "模板甲", Version: 2,
+		FileID: "FILE-3", Status: "active", UploadedBy: "A0001", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	w, resp := e.do(http.MethodPost, "/api/v1/admin/review-templates/GRP-1/replace",
+		map[string]string{"fileId": "FILE-3"},
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.CodeOK, resp.Code)
+	var dto model.ReviewTemplateDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Equal(t, "GRP-1", dto.GroupID)
+	assert.Equal(t, 2, dto.Version)
+	assert.Equal(t, "FILE-3", dto.FileID)
+
+	// 组不存在 → 404
+	e.store.activeTemplateErr = repo.ErrTemplateNotFound
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates/NOPE/replace",
+		map[string]string{"fileId": "FILE-x"},
+		map[string]string{"X-Role": "ROLE_DOCTOR", "X-User-Id": "D0001"})
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, model.CodeNotFound, resp.Code)
+	// 缺 groupId
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/review-templates//replace",
+		map[string]string{"fileId": "FILE-x"},
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestReviewTemplate_Download(t *testing.T) {
+	e := newEnv(t, false, false)
+	e.store.activeTemplate = &repo.ReviewTemplateRow{
+		TemplateID: "TPL-1", TemplateGroupID: "GRP-1", Name: "模板甲", Version: 1,
+		FileID: "FILE-1", Status: "active", UploadedBy: "A0001", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	// 测试环境未注入 fileSvc → 下载 URL 不可用降级 500
+	w, resp := e.do(http.MethodGet, "/api/v1/admin/review-templates/GRP-1/download", nil,
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "A0001"})
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, model.CodeInternal, resp.Code)
+	// 组不存在 → 404
+	e.store.activeTemplateErr = repo.ErrTemplateNotFound
+	w, resp = e.do(http.MethodGet, "/api/v1/admin/review-templates/NOPE/download", nil,
+		map[string]string{"X-Role": "ROLE_DOCTOR", "X-User-Id": "D0001"})
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

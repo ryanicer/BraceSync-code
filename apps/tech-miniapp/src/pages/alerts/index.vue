@@ -80,8 +80,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
-import { USE_MOCK, request } from '../../utils/request'
-import { mockAlerts } from '../../mock/alerts'
+import { request } from '../../utils/request'
 
 // 数据
 const alerts = ref<Alert[]>([])
@@ -127,17 +126,13 @@ async function loadAlerts() {
   loading.value = true
   error.value = ''
   try {
-    if (USE_MOCK) {
-      alerts.value = mockAlerts()
-    } else {
-      // 契约: GET /api/v1/alerts?page=1&pageSize=50
-      const res = await request<PaginatedResponse<Alert>>({
-        url: '/api/v1/alerts',
-        method: 'GET',
-        data: { page: 1, pageSize: 50 },
-      })
-      alerts.value = res.list
-    }
+    // 契约: GET /api/v1/alerts?page=1&pageSize=50
+    const res = await request<PaginatedResponse<Alert>>({
+      url: '/api/v1/alerts',
+      method: 'GET',
+      data: { page: 1, pageSize: 50 },
+    })
+    alerts.value = res.list || []
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -173,19 +168,13 @@ async function handleProcess(alert: Alert) {
     success: async (res) => {
       if (!res.confirm) return
       try {
-        if (USE_MOCK) {
-          // mock 模式：本地更新状态
-          alert.processStatus = 'processed'
-          alert.processedAt = new Date().toISOString()
-        } else {
-          // 契约: POST /api/v1/alerts/:alertId/process
-          await request({
-            url: `/api/v1/alerts/${alert.alertId}/process`,
-            method: 'POST',
-          })
-          alert.processStatus = 'processed'
-          alert.processedAt = new Date().toISOString()
-        }
+        // 契约: POST /api/v1/alerts/:alertId/process
+        await request({
+          url: `/api/v1/alerts/${alert.alertId}/process`,
+          method: 'POST',
+        })
+        alert.processStatus = 'processed'
+        alert.processedAt = new Date().toISOString()
         uni.showToast({ title: '处理成功', icon: 'success' })
       } catch (e: unknown) {
         uni.showToast({ title: e instanceof Error ? e.message : '处理失败', icon: 'none' })

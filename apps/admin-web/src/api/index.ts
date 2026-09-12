@@ -4,6 +4,7 @@ import type {
   AdminLoginResult, ApiResponse, DashboardKPI, TeamRanking, DoctorRanking, PaginatedResponse, Patient, Device,
   Alert, InstallRecord, Technician, Team, TeamDetail, TeamMember, Doctor, Feedback, OrthosisPlan,
   FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
+  ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
 } from '@bracesync/shared-types'
 import { USE_MOCK, request } from '../utils/request'
 import * as dashboardMock from '../mock/dashboard'
@@ -285,4 +286,184 @@ export function doctorNameOf(doctorId: string | null): string {
 
 export function techNameOf(techId: string): string {
   return orgMock.mockTechName(techId)
+}
+
+// ========== T130 复查报告（文件上传 + 复查记录） ==========
+
+/** file-service 预签名直传响应 */
+export interface PresignResult {
+  fileId: string
+  uploadUrl: string
+  objectKey: string
+  expiresAt: string
+}
+
+/** 申请预签名上传 URL（file-service T022） */
+export async function presignFile(params: {
+  fileName: string
+  contentType: string
+  fileType: 'review_report'
+  ownerType?: string
+  ownerId?: string
+  fileHeader?: string // T130 增补单：文件头魔数指纹（base64，前 8 字节）
+}): Promise<PresignResult> {
+  if (USE_MOCK) {
+    await delay()
+    return {
+      fileId: `FILE-${Date.now()}`,
+      uploadUrl: `https://mock-cos.example.com/upload/${Date.now()}`,
+      objectKey: `review-reports/${params.fileName}`,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    }
+  }
+  // 后端 JSON 字段为 snake_case（file_type / owner_type / owner_id / content_type / file_name / file_header）
+  return request<PresignResult>({
+    url: '/api/v1/files/presign',
+    method: 'POST',
+    data: {
+      file_type: params.fileType,
+      owner_type: params.ownerType,
+      owner_id: params.ownerId,
+      content_type: params.contentType,
+      file_name: params.fileName,
+      file_header: params.fileHeader,
+    },
+  })
+}
+
+/** 直传文件到 COS（使用预签名 URL，不走网关 request） */
+export async function uploadFileDirect(uploadUrl: string, file: File, contentType: string): Promise<void> {
+  const res = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: file,
+  })
+  if (!res.ok) {
+    throw new Error(`文件直传失败（HTTP ${res.status}）`)
+  }
+}
+
+/** 确认上传完成，返回 file_id */
+export async function completeUpload(fileId: string): Promise<{ fileId: string; status: string }> {
+  if (USE_MOCK) {
+    await delay()
+    return { fileId, status: 'uploaded' }
+  }
+  return request<{ fileId: string; status: string }>({
+    url: '/api/v1/files/upload-complete',
+    method: 'POST',
+    data: { fileId },
+  })
+}
+
+/** 创建复查记录（医生/管理员） */
+export async function createReviewRecordApi(input: CreateReviewRecordRequest): Promise<ReviewRecord> {
+  if (USE_MOCK) {
+    await delay()
+    return {
+      reviewId: `RV-${Date.now()}`,
+      patientId: input.patientId,
+      reviewDate: input.reviewDate,
+      reviewType: input.reviewType,
+      findings: input.findings ?? null,
+      nextReviewDate: input.nextReviewDate ?? null,
+      doctorId: input.doctorId ?? null,
+      reportFileId: input.reportFileId ?? null,
+      reportFileName: null,
+      reportContentType: null,
+      reportSize: null,
+      reportUploadedAt: null,
+      reportDownloadUrl: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+  return request<ReviewRecord>({
+    url: '/api/v1/admin/review-records',
+    method: 'POST',
+    data: input as unknown as Record<string, unknown>,
+  })
+}
+
+/** 查询某患者的复查记录列表（admin 可查任意患者） */
+export async function fetchReviewRecords(patientId: string): Promise<ReviewRecord[]> {
+  if (USE_MOCK) {
+    await delay()
+    return []
+  }
+  return request<ReviewRecord[]>({ url: `/api/v1/patients/${patientId}/review-records` })
+}
+
+// ========== T135 复查报告模板（合同运营后台「复查报告模板管理」） ==========
+
+/** 模板列表（每模板组当前 active 版本，含下载 URL；admin/doctor） */
+export async function fetchReviewTemplates(): Promise<ReviewTemplate[]> {
+  if (USE_MOCK) {
+    await delay()
+    return []
+  }
+  return request<ReviewTemplate[]>({ url: '/api/v1/admin/review-templates' })
+}
+
+/** 上传/创建模板（版本 v1；重名 409；admin/doctor） */
+export async function createReviewTemplateApi(input: CreateReviewTemplateRequest): Promise<ReviewTemplate> {
+  if (USE_MOCK) {
+    await delay()
+    return {
+      templateId: `TPL-${Date.now()}`,
+      groupId: `GRP-${Date.now()}`,
+      name: input.name,
+      version: 1,
+      fileId: input.fileId,
+      status: 'active',
+      uploadedBy: 'ADMIN',
+      uploadedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: new Date().toISOString(),
+      fileName: null,
+      contentType: null,
+      fileSize: null,
+      downloadUrl: null,
+    }
+  }
+  return request<ReviewTemplate>({
+    url: '/api/v1/admin/review-templates',
+    method: 'POST',
+    data: input as unknown as Record<string, unknown>,
+  })
+}
+
+/** 模板版本替换（新版本 active、旧版 retired；admin/doctor） */
+export async function replaceReviewTemplateApi(groupId: string, fileId: string): Promise<ReviewTemplate> {
+  if (USE_MOCK) {
+    await delay()
+    return {
+      templateId: `TPL-${Date.now()}`,
+      groupId,
+      name: '模板',
+      version: 2,
+      fileId,
+      status: 'active',
+      uploadedBy: 'ADMIN',
+      uploadedAt: new Date().toISOString().slice(0, 10),
+      updatedAt: new Date().toISOString(),
+      fileName: null,
+      contentType: null,
+      fileSize: null,
+      downloadUrl: null,
+    }
+  }
+  return request<ReviewTemplate>({
+    url: `/api/v1/admin/review-templates/${groupId}/replace`,
+    method: 'POST',
+    data: { fileId },
+  })
+}
+
+/** 模板下载（组当前 active 版本文件） */
+export async function downloadReviewTemplateApi(groupId: string): Promise<{ downloadUrl: string }> {
+  if (USE_MOCK) {
+    await delay()
+    return { downloadUrl: '' }
+  }
+  return request<{ downloadUrl: string }>({ url: `/api/v1/admin/review-templates/${groupId}/download` })
 }

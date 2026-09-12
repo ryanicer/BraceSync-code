@@ -73,9 +73,14 @@ func registerServiceRoutes(api *gin.RouterGroup, targetURL, serviceName string, 
 // userServiceRoutes T030 admin 域用户侧端点（patients/teams/doctors/technicians/feedbacks/
 // orthosis/feeling-logs/roles/settings/login，全部 user-service 归属）
 var userServiceRoutes = []proxyRoute{
-	{http.MethodPost, "/auth/login"},    // T030 #9 admin 登录（免 JWT 白名单）
-	{http.MethodPost, "/tech/login"},    // T037 技师登录（免 JWT 白名单）
-	{http.MethodPost, "/patient/login"}, // T037 患者登录（免 JWT 白名单）
+	{http.MethodPost, "/auth/login"},       // T030 #9 admin 登录（免 JWT 白名单）
+	{http.MethodPost, "/tech/login"},       // T037 技师登录（免 JWT 白名单）
+	{http.MethodPost, "/patient/login"},    // T037 患者登录（免 JWT 白名单）
+	{http.MethodPost, "/patient/wx-login"}, // T069 患者微信小程序登录（免 JWT 白名单）
+	// T085 患者微信绑定 + Admin 档案维护
+	{http.MethodPost, "/patient/bind-phone"},                      // 患者绑定手机号（scope=bind）
+	{http.MethodPost, "/admin/patients/:patientId/unbind-wechat"}, // 解绑微信
+	{http.MethodPut, "/admin/patients/:patientId/phone"},          // 改手机号
 
 	{http.MethodGet, "/admin/patients"},                     // T030 #1
 	{http.MethodGet, "/admin/patients/:patientId"},          // T030 #2
@@ -106,20 +111,33 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPut, "/admin/roles/:roleId/permissions"},
 	{http.MethodGet, "/admin/settings"}, // T030 #8
 	{http.MethodPut, "/admin/settings"},
+
+	// T130 复查记录（合同患者端「复查管理」）
+	{http.MethodPost, "/admin/review-records"},              // 医生/管理员创建复查记录
+	{http.MethodGet, "/patients/:patientId/review-records"}, // 患者复查记录列表（含报告下载URL）
+
+	// T135 复查报告模板（合同运营后台「复查报告模板管理」；RBAC 限 admin+doctor）
+	// 下载/文件本体走 file-service review_report 预签名通道（owner_type=ReviewTemplate）。
+	{http.MethodPost, "/admin/review-templates"},                  // 上传/创建模板
+	{http.MethodPost, "/admin/review-templates/:groupId/replace"}, // 版本替换（旧版 retired）
+	{http.MethodGet, "/admin/review-templates"},                   // 模板列表
+	{http.MethodGet, "/admin/review-templates/:groupId/download"}, // 模板下载
 }
 
 // deviceServiceRoutes 设备/安装记录管理端列表（T030 #3 patientName join）
 var deviceServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/devices"},
 	{http.MethodGet, "/install-records"},
+	{http.MethodGet, "/install-records/:id"}, // T122 单条详情
 }
 
 // dataServiceRoutes 患者数据查询（realtime/records 既有契约 + T030 health-reports +
-// T033 admin Dashboard 6 聚合查询端点）
+// T033 admin Dashboard 6 聚合查询端点 + T076 患者日佩戴聚合）
 var dataServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/patients/:patientId/realtime"},
 	{http.MethodGet, "/patients/:patientId/records"},
 	{http.MethodGet, "/patients/:patientId/health-reports"},
+	{http.MethodGet, "/patients/:patientId/daily-wear"}, // T076：患者日佩戴聚合（患者自查 + admin 任意）
 
 	// T033：admin Dashboard（KPI/趋势/排行/分布，data-service 聚合层）
 	{http.MethodGet, "/admin/dashboard/kpi"},
@@ -143,6 +161,7 @@ var fileServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/files/upload-complete"},
 	{http.MethodGet, "/files/:fileID"},
 	{http.MethodGet, "/files/query"},
+	{http.MethodGet, "/files/:fileID/download"}, // T130：复查报告下载预签名 URL
 }
 
 // envOrURL 环境变量优先，缺省回 compose 服务名地址

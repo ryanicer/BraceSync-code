@@ -21,7 +21,17 @@ const (
 	CodeForbidden    = 10403 // 无权限（如非医生保存矫形方案）
 	CodeNotFound     = 10404 // 用户域资源不存在（patient/technician/feedback/role…）
 	CodeConflict     = 10409 // 状态冲突（手机号重复等）
+	CodeWXUnavail    = 10502 // 微信 jscode2session 下游不可用（HTTP 502 语义）
+	CodeInvalidPhone = 10604 // 微信 phonenumber.getPhoneNumber 业务错误（code 非法/已用）
 	CodeInternal     = 90001 // 系统内部错误（DB/加密配置等）
+
+	// T085 患者微信登录绑定域错误码（设计源 T088-V2 §5）
+	CodeInvalidCredentials = 10001 // 凭据无效（status!=active 统一文案防枚举）
+	CodePatientNotBound    = 10601 // openid 未绑定（需走 bind-phone 流程）
+	CodePatientNotFound    = 10602 // phone_hash 无匹配或 status!=active（同码防枚举）
+	CodePhoneAlreadyBound  = 10603 // 手机号档案已绑定其他微信 openid
+	CodeInvalidPhoneToken  = 10605 // phoneToken 校验失败（签名/用途/openid/过期）
+	CodeForbiddenScope     = 40301 // scope 越权（如 full JWT 调用 bind-phone）
 )
 
 // AppError 业务错误：携带统一响应 code 与建议 HTTP 状态
@@ -61,6 +71,48 @@ func ErrInternal(format string, args ...any) *AppError {
 	return newAppError(CodeInternal, 500, format, args...)
 }
 
+// NewWXServiceUnavailable 微信服务端不可用（jscode2session 网络/HTTP 错误）
+func NewWXServiceUnavailable(format string, args ...any) *AppError {
+	return newAppError(CodeWXUnavail, 502, format, args...)
+}
+
+// T085 患者微信登录绑定域错误构造器
+
+// ErrInvalidCredentials 凭据无效（wx-login: status!=active 统一文案防枚举；HTTP 401）
+func ErrInvalidCredentials(format string, args ...any) *AppError {
+	return newAppError(CodeInvalidCredentials, 401, format, args...)
+}
+
+// ErrPatientNotBound openid 未绑定（wx-login: 返回 bindToken 引导绑定；HTTP 200）
+func ErrPatientNotBound(format string, args ...any) *AppError {
+	return newAppError(CodePatientNotBound, 200, format, args...)
+}
+
+// ErrPatientNotFound phone_hash 无匹配或档案非 active（bind-phone；与无匹配同码防枚举；HTTP 200）
+func ErrPatientNotFound(format string, args ...any) *AppError {
+	return newAppError(CodePatientNotFound, 200, format, args...)
+}
+
+// ErrPhoneAlreadyBound 手机号档案已绑定其他微信 openid（bind-phone；HTTP 200）
+func ErrPhoneAlreadyBound(format string, args ...any) *AppError {
+	return newAppError(CodePhoneAlreadyBound, 200, format, args...)
+}
+
+// ErrInvalidPhoneCode 微信 phonenumber.getPhoneNumber 业务错误（code 非法/已用；HTTP 200）
+func ErrInvalidPhoneCode(format string, args ...any) *AppError {
+	return newAppError(CodeInvalidPhone, 200, format, args...)
+}
+
+// ErrInvalidPhoneToken phoneToken 校验失败（签名/用途/openid/过期；HTTP 200）
+func ErrInvalidPhoneToken(format string, args ...any) *AppError {
+	return newAppError(CodeInvalidPhoneToken, 200, format, args...)
+}
+
+// ErrForbiddenScope scope 越权（如 full JWT 调用 bind-phone；HTTP 403）
+func ErrForbiddenScope(format string, args ...any) *AppError {
+	return newAppError(CodeForbiddenScope, 403, format, args...)
+}
+
 // ─────────────────────────────────────────────────────────────
 // 分页（架构 §3.5：page 1 起，pageSize 默认 20 上限 100）
 // ─────────────────────────────────────────────────────────────
@@ -91,7 +143,7 @@ type AdminPatientDTO struct {
 	Age        *int     `json:"age"`
 	Diagnosis  *string  `json:"diagnosis"`
 	CobbAngle  *float64 `json:"cobbAngle"`
-	DeviceID   *string  `json:"deviceId"`
+	DeviceID   *string  `json:"deviceId"` // 当前绑定设备(devices.patient_id 只读关联)；非 patients.device_id(T151 方案1)
 	TeamID     *string  `json:"teamId"`
 	DoctorID   *string  `json:"doctorId"`
 	Phone      string   `json:"phone"` // 脱敏手机号（138****8000），由 handler.Masked(PhoneEnc) 生成
@@ -239,6 +291,7 @@ type PatientLoginResultDTO struct {
 // ─────────────────────────────────────────────────────────────
 
 // CreatePatientRequestDTO 创建患者请求（name + phone 必填，其余可空）
+// T151：非传 deviceId——患者-设备绑定以 devices.patient_id 为唯一事实源，建档无权绑定确诊设备。
 type CreatePatientRequestDTO struct {
 	Name      string   `json:"name"`
 	Phone     string   `json:"phone"` // 必填，11 位 1 开头手机号（validPhone 校验）
@@ -246,7 +299,6 @@ type CreatePatientRequestDTO struct {
 	Age       *int     `json:"age"`
 	Diagnosis *string  `json:"diagnosis"`
 	CobbAngle *float64 `json:"cobbAngle"`
-	DeviceID  *string  `json:"deviceId"`
 	TeamID    *string  `json:"teamId"`
 	DoctorID  *string  `json:"doctorId"`
 }
@@ -331,4 +383,90 @@ type TeamMemberDTO struct {
 	PatientCount int    `json:"patientCount"`
 	JoinTime     string `json:"joinTime"`
 	Status       string `json:"status"`
+}
+
+// ─────────────────────────────────────────────────────────────
+// 微信登录（T069 患者端小程序）
+// ─────────────────────────────────────────────────────────────
+
+// WXLoginRequestDTO 患者端微信登录请求（小程序 wx.login 返回的 code）
+type WXLoginRequestDTO struct {
+	Code string `json:"code"` // 必填，wx.login() 签发的临时登录凭证
+}
+
+// ─────────────────────────────────────────────────────────────
+// 复查记录（T130，合同患者端「复查管理」）
+// ─────────────────────────────────────────────────────────────
+
+// ReviewRecordDTO 复查记录响应（含报告文件元数据，从 file-service 拉取）
+type ReviewRecordDTO struct {
+	ReviewID       string  `json:"reviewId"`
+	PatientID      string  `json:"patientId"`
+	ReviewDate     string  `json:"reviewDate"`     // YYYY-MM-DD
+	ReviewType     *string `json:"reviewType"`     // initial / follow-up
+	Findings       *string `json:"findings"`       // 检查所见/结论
+	NextReviewDate *string `json:"nextReviewDate"` // 下次复查日期 YYYY-MM-DD
+	DoctorID       *string `json:"doctorId"`
+	ReportFileID   *string `json:"reportFileId"` // file-service file_id
+	CreatedAt      string  `json:"createdAt"`
+	UpdatedAt      string  `json:"updatedAt"`
+
+	// 报告文件元数据（从 file-service 拉取，可空）
+	ReportFileName    *string `json:"reportFileName"`
+	ReportContentType *string `json:"reportContentType"`
+	ReportSize        *int64  `json:"reportSize"`
+	ReportUploadedAt  *string `json:"reportUploadedAt"`
+	ReportDownloadURL *string `json:"reportDownloadUrl"` // 预签名 GET URL（5min）
+}
+
+// CreateReviewRecordRequest 创建复查记录请求（医生/管理员）
+type CreateReviewRecordRequest struct {
+	PatientID      string  `json:"patientId" binding:"required"`
+	ReviewDate     string  `json:"reviewDate" binding:"required"` // YYYY-MM-DD
+	ReviewType     *string `json:"reviewType"`
+	Findings       *string `json:"findings"`
+	NextReviewDate *string `json:"nextReviewDate"`
+	DoctorID       *string `json:"doctorId"`
+	ReportFileID   *string `json:"reportFileId"` // 已上传完成的 file_id（可空）
+}
+
+// ─────────────────────────────────────────────────────────────
+// T135 复查报告模板管理（合同运营后台子系统「复查报告模板管理」）
+//
+// 模板 = 医院空白复查报告（空白模板文件：pdf/jpg/png/…，R4-a 白名单 + 20MB，R4-b）。
+// 生命周期：上传（版本 1）→ 版本替换（同组递增，旧版 retired 非删除）。
+// 文件本体走 file-service review_report 预签名通道，owner_type=ReviewTemplate 区分，
+// 【不扩展】files.file_type 枚举。uploaded_by 一律取登录凭证 X-User-Id（防伪造）。
+// 系统仅承载模板文件管理（R1-c 读法 A），【不】据模板自动生成报告。
+// ─────────────────────────────────────────────────────────────
+
+// ReviewTemplateDTO 复查报告模板响应（列表条目 = 每模板组当前 active 版本）
+type ReviewTemplateDTO struct {
+	// 通用模板信息
+	TemplateID  string  `json:"templateId"`
+	GroupID     string  `json:"groupId"`
+	Name        string  `json:"name"`
+	Version     int     `json:"version"`
+	FileID      string  `json:"fileId"`
+	Status      string  `json:"status"` // active / retired
+	UploadedBy  string  `json:"uploadedBy"`
+	UploadedAt  string  `json:"uploadedAt"` // YYYY-MM-DD（页面要求）
+	UpdatedAt   string  `json:"updatedAt"`
+	DownloadURL *string `json:"downloadUrl"` // 预签名 GET URL（5min，可空）
+
+	// 文件元数据（从 file-service 拉取，可空）
+	FileName    *string `json:"fileName"`
+	ContentType *string `json:"contentType"`
+	FileSize    *int64  `json:"fileSize"`
+}
+
+// CreateReviewTemplateRequest 上传/创建复查报告模板请求
+type CreateReviewTemplateRequest struct {
+	Name   string `json:"name" binding:"required"` // 模板显示名
+	FileID string `json:"fileId" binding:"required"`
+}
+
+// ReplaceReviewTemplateRequest 模板版本替换请求（确认后生效，旧版 retired）
+type ReplaceReviewTemplateRequest struct {
+	FileID string `json:"fileId" binding:"required"`
 }

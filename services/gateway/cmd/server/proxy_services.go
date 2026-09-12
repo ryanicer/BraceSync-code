@@ -34,6 +34,7 @@ var deviceManageRoutes = []proxyRoute{
 	{http.MethodPost, "/devices/:deviceId/unbind"},  // 解绑（幂等）
 	{http.MethodPost, "/devices/:deviceId/wifi"},    // 配网状态
 	{http.MethodPost, "/install-records"},           // 新建安装记录
+	{http.MethodPut, "/install-records/:id"},        // T122 回填安装元数据
 	{http.MethodPost, "/baselines"},                 // 校准基线落库
 }
 
@@ -48,6 +49,7 @@ var deviceReportRoutes = []proxyRoute{
 func registerAPIProxies(r *gin.Engine, agt *gatewayAuth) {
 	api := r.Group("/api/v1")
 	api.Use(jwtAuth(agt)) // T032：统一 JWT 鉴权（白名单见 middleware.go）
+	api.Use(scopeAuthz()) // T085：scope 授权（bind 仅放行 bind-phone；full 禁 bind-phone）
 	api.Use(roleAuthz())  // T039-H2：端点级 RBAC（admin 专属端点矩阵，见 rbac.go）
 
 	registerAlertsProxyOn(api, envOrURL("ALERT_SERVICE_URL", defaultAlertServiceURL)) // T028 保持
@@ -63,6 +65,13 @@ func registerAPIProxies(r *gin.Engine, agt *gatewayAuth) {
 	api.DELETE("/admin/technicians/:techId", func(c *gin.Context) {
 		abortJSON(c, http.StatusNotFound, http.StatusNotFound, "endpoint not available")
 	})
+
+	// T091：配网密钥端点从裸组迁入 JWT 组，叠加 tech+admin RBAC 与 per-user 限流。
+	// 子组继承 api 的 jwtAuth/scopeAuthz/roleAuthz，再加 provisionRateLimit 中间件。
+	prov := api.Group("")
+	prov.Use(provisionRateLimit(newUserRateLimiter()))
+	registerServiceRoutes(prov, envOrURL("DEVICE_SERVICE_URL", defaultDeviceServiceURL), "device-service",
+		[]proxyRoute{{http.MethodPost, "/devices/:deviceId/provision-key"}})
 }
 
 // registerDeviceReportRoutes 注册设备域路由（设备验签组，不经 JWT）：

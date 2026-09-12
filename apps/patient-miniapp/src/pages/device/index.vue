@@ -64,39 +64,100 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useDeviceStore } from '../../stores/device'
-import { mockDevice } from '../../mock/device'
+import { useAuthStore } from '../../stores/auth'
+import { request } from '../../utils/request'
+import type { Device } from '@bracesync/shared-types'
 
-// MOCK 数据加载
-// 替换计划: 接 device-service getDevices，解绑接 device-service 解绑接口
+// 患者端设备信息：来自 data-service GET /patients/:patientId/realtime（快照包含设备关联）
+interface RealtimeDeviceResp {
+  deviceId?: string | null
+  device?: Partial<Device> | null
+  status?: string
+}
+
 const deviceStore = useDeviceStore()
-const device = ref(deviceStore.currentDevice)
+const authStore = useAuthStore()
+const device = ref<Device | null>(deviceStore.currentDevice)
+const loading = ref(false)
 const wifiSSID = ref('')
 const wifiPassword = ref('')
 const steps = ['打开手机蓝牙', '选择目标设备', '输入WiFi网络信息', '等待配对完成']
 
 onMounted(() => {
-  if (!device.value) {
-    const mockDev = mockDevice()
-    deviceStore.setDevice(mockDev)
-    device.value = mockDev
-  }
+  void refreshDevice()
 })
+
+async function refreshDevice() {
+  const patientId = authStore.patientId
+  if (!patientId) {
+    uni.showToast({ title: '请先登录', icon: 'none' })
+    return
+  }
+  loading.value = true
+  try {
+    const snap = await request<RealtimeDeviceResp & Record<string, unknown>>({
+      url: `/api/v1/patients/${patientId}/realtime`,
+      method: 'GET',
+    })
+    if (snap) {
+      const did = (snap as { deviceId?: string }).deviceId
+      if (did) {
+        // 快照中构造成 Device 视图对象；缺失字段用默认值占位
+        const dev: Device = {
+          deviceId: did,
+          model: (snap as { device?: { model?: string } }).device?.model || 'PRS-ML05-RC',
+          firmwareVersion: (snap as { device?: { firmwareVersion?: string } }).device?.firmwareVersion || '-',
+          patientId,
+          wifiSsid: (snap as { device?: { wifiSsid?: string } }).device?.wifiSsid || '-',
+          bindTime: (snap as { device?: { bindTime?: string } }).device?.bindTime || new Date().toISOString(),
+          status: ((snap.status ?? 'offline') as Device['status']) || 'offline',
+          lastReportAt: (snap as { device?: { lastReportAt?: string } }).device?.lastReportAt || new Date().toISOString(),
+        }
+        deviceStore.setDevice(dev)
+        device.value = dev
+      } else {
+        deviceStore.clearDevice()
+        device.value = null
+      }
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '加载设备信息失败'
+    uni.showToast({ title: msg, icon: 'none' })
+  } finally {
+    loading.value = false
+  }
+}
 
 function goWifiSetup() {
   uni.navigateTo({ url: '/pages/wifi-setup/index' })
 }
 
+async function doUnbind() {
+  if (!device.value) return
+  const deviceId = device.value.deviceId
+  try {
+    await request<void>({
+      url: `/api/v1/devices/${deviceId}/unbind`,
+      method: 'POST',
+      data: { patientId: authStore.patientId || '' },
+    })
+    deviceStore.clearDevice()
+    device.value = null
+    uni.showToast({ title: '设备已解绑', icon: 'success' })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '解绑失败，请重试'
+    uni.showToast({ title: msg, icon: 'none' })
+  }
+}
+
 function confirmUnbind() {
+  if (!device.value) return
   uni.showModal({
     title: '确认解绑',
     content: '确定要解除当前设备绑定吗？解绑后需重新配对。',
     confirmColor: '#ef4444',
     success: (res) => {
-      if (res.confirm) {
-        deviceStore.clearDevice()
-        device.value = null
-        uni.showToast({ title: '设备已解绑', icon: 'success' })
-      }
+      if (res.confirm) void doUnbind()
     },
   })
 }

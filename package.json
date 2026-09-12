@@ -14,6 +14,7 @@
     "build:all": "npm run build --workspaces",
     "lint": "eslint . --ext .js --ignore-pattern node_modules --ignore-pattern dist",
     "test": "npm run test --workspaces",
+    "test:contract-gate": "npm -w apps/admin-web run contract:gate-test && npm -w apps/tech-miniapp run test:contract-gate",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "clean": "rimraf apps/*/dist packages/*/dist"

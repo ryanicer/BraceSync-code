@@ -20,6 +20,14 @@ var ErrPatientExists = errors.New("patient already exists")
 // store.AssignPatientTeam 返回此 sentinel，handler 映射为 404 CodeNotFound。
 var ErrPatientNotFound = errors.New("patient not found")
 
+// ErrWXOpenIDExists 创建微信患者 openid 冲突（并发竞态下 idx_patients_wx_openid
+// 命中 23505；handler 据此回退 GetPatientByWXOpenID 重试 1 次实现幂等 upsert）。
+var ErrWXOpenIDExists = errors.New("patient wx_openid already exists")
+
+// ErrAlreadyBound T085：患者 wx_openid 已绑定其他微信（并发绑定竞态下
+// UPDATE ... WHERE wx_openid IS NULL 命中 0 行；handler 映射为 10603）。
+var ErrAlreadyBound = errors.New("patient already bound to another wechat openid")
+
 // ─────────────────────────────────────────────────────────────
 // T059 团队/成员写操作 sentinel 错误（handler 据此映射 HTTP code）
 // ─────────────────────────────────────────────────────────────
@@ -60,10 +68,60 @@ func (e *ErrTeamInUse) Error() string {
 }
 
 // ─────────────────────────────────────────────────────────────
+// T130 复查记录 sentinel 错误
+// ─────────────────────────────────────────────────────────────
+
+// ErrReviewRecordNotFound 复查记录不存在。
+var ErrReviewRecordNotFound = errors.New("review record not found")
+
+// ErrReviewPatientNotFound 复查关联的患者不存在。
+var ErrReviewPatientNotFound = errors.New("patient not found for review record")
+
+// ─────────────────────────────────────────────────────────────
+// T135 复查报告模板 sentinel 错误
+// ─────────────────────────────────────────────────────────────
+
+// ErrTemplateNotFound 复查报告模板（组）不存在。
+// store.GetReviewTemplateGroup 命中 0 行返回；handler 映射为 404 CodeNotFound。
+var ErrTemplateNotFound = errors.New("review template not found")
+
+// ErrTemplateNameExists 模板名已存在（新建 v1 时撞已有组名）。
+// store.CreateReviewTemplateVersion 以 groupID=="" 但 name 已存在返回；handler 映射为 409 CodeConflict。
+var ErrTemplateNameExists = errors.New("review template name already exists")
+
+// ReviewRecordRow review_records 表投影
+type ReviewRecordRow struct {
+	ReviewID       string
+	PatientID      string
+	ReviewDate     time.Time
+	ReviewType     *string
+	Findings       *string
+	NextReviewDate *time.Time
+	DoctorID       *string
+	ReportFileID   *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// ReviewTemplateRow review_templates 表投影（T135）
+type ReviewTemplateRow struct {
+	TemplateID      string
+	TemplateGroupID string
+	Name            string
+	Version         int
+	FileID          string
+	Status          string // active / retired
+	UploadedBy      string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// ─────────────────────────────────────────────────────────────
 // 行投影（repo 层出参；handler 层转 DTO）
 // ─────────────────────────────────────────────────────────────
 
 // PatientRow patients LEFT JOIN teams/doctors 投影（管理端列表/详情）
+// DeviceID：当前绑定设备，来自 devices(patient_id 只读关联)；patients.device_id 已废弃(T151 方案1)。
 type PatientRow struct {
 	PatientID  string
 	Name       string
@@ -261,17 +319,18 @@ type TechInput struct {
 	TeamID    *string
 }
 
-// PatientInput 创建患者入参（T057 写功能契约）。Name 必填；PhoneEnc/PhoneHash 必填
-// （由 handler 层 preparePhone 加密+哈希后传入，与 TechInput 模式一致）；其余可空指针。
+// PatientInput 创建患者入参（T057 写功能契约；T069 扩展可空 phone 支持微信-only 用户）。
+// Name 必填；PhoneEnc/PhoneHash 为 nil 表示微信-only 用户（对应 DB 列 NULL，
+// 迁移 000008 已解除 NOT NULL 约束）；其余可空指针。
+// T151：建档不再写入 device_id（患者-设备绑定以 devices.patient_id 为唯一事实源，建档无权绑定确诊设备）。
 type PatientInput struct {
 	Name      string
-	PhoneEnc  []byte // AES-GCM 密文（handler.preparePhone 生成）
-	PhoneHash string // SHA-256 hex（handler.preparePhone 生成；store 据此查重）
+	PhoneEnc  *[]byte // AES-GCM 密文（handler.preparePhone 生成；为 nil=微信-only 无手机号）
+	PhoneHash *string // SHA-256 hex（handler.preparePhone 生成；为 nil=微信-only 无手机号）
 	Gender    *string
 	Age       *int
 	Diagnosis *string
 	CobbAngle *float64
-	DeviceID  *string
 	TeamID    *string
 	DoctorID  *string
 }
@@ -299,6 +358,23 @@ type Store interface {
 	UpdateAdminPasswordHash(ctx context.Context, adminID string, newHash string) error
 	GetTechByPhoneHash(ctx context.Context, phoneHash string) (*TechLoginRow, error)
 	GetPatientByPhoneHash(ctx context.Context, phoneHash string) (*PatientLoginRow, error)
+	// GetPatientByWXOpenID T069：按微信 openid 查患者登录行；不存在返回 (nil, nil)
+	GetPatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error)
+	// CreatePatientByWXOpenID T069：按 openid 创建微信-only 患者。
+	// 默认 name="微信用户" status="active" 其余字段 NULL；并发下 openid 唯一冲突返回
+	// ErrWXOpenIDExists（handler 据此回退 Get 1 次实现幂等 upsert）
+	CreatePatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error)
+	// T085 患者微信绑定与档案维护
+	GetPatientWXOpenID(ctx context.Context, patientID string) (openID string, err error)
+	// BindPatientOpenid 原子绑定 openid：UPDATE ... WHERE wx_openid IS NULL。
+	// 命中 0 行表示已绑定（或被并发抢占）→ ErrAlreadyBound；命中 1 行成功。
+	BindPatientOpenid(ctx context.Context, patientID, openid string) error
+	// UnbindWechat 解绑微信：wx_openid 置 NULL（admin 维护）。
+	UnbindWechat(ctx context.Context, patientID string) error
+	// UpdatePatientPhone 改手机号：phone_enc + phone_hash 同步更新（admin 维护）。
+	UpdatePatientPhone(ctx context.Context, patientID string, phoneEnc []byte, phoneHash string) error
+	// PatientPhoneHashTaken phone_hash 是否已被其他患者占用（excludePatientID 排除自身）。
+	PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error)
 	RoleScope(ctx context.Context, roleID string) (scope string, err error)
 	DoctorIDByAdmin(ctx context.Context, adminID string) (doctorID string, ok bool, err error)
 
@@ -357,4 +433,20 @@ type Store interface {
 	// 系统配置
 	GetConfigs(ctx context.Context, keys []string) (map[string]string, error)
 	UpsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy string) error
+
+	// T130 复查记录
+	CreateReviewRecord(ctx context.Context, row ReviewRecordRow) (*ReviewRecordRow, error)
+	ListReviewRecordsByPatient(ctx context.Context, patientID string) ([]ReviewRecordRow, error)
+	GetReviewRecord(ctx context.Context, reviewID string) (*ReviewRecordRow, error)
+
+	// T135 复查报告模板
+	// CreateReviewTemplateVersion 事务：新版本 active + 同组旧 active 标 retired（非删除）。
+	// groupID=="" 表示新建组（version=1；name 已存在返回 ErrTemplateNameExists）；
+	// groupID!= "" 表示版本替换（组内 version 递增，组不存在返回 ErrTemplateNotFound）。
+	// uploadedBy 由 handler 从登录凭证 X-User-Id 传入（防伪造上传人）。
+	CreateReviewTemplateVersion(ctx context.Context, groupID, name, fileID, uploadedBy string) (*ReviewTemplateRow, error)
+	// ListActiveReviewTemplates 每模板组当前 active 版本（name 升序）。
+	ListActiveReviewTemplates(ctx context.Context) ([]ReviewTemplateRow, error)
+	// GetReviewTemplateGroup 按组查当前 active 版本；组不存在或无非active返回 ErrTemplateNotFound。
+	GetReviewTemplateGroup(ctx context.Context, groupID string) (*ReviewTemplateRow, error)
 }

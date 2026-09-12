@@ -35,9 +35,13 @@ sudo docker pull alpine:3.20
 
 echo "==> 开始编译 7 个服务 ..."
 
+SVC_COUNT=$(echo "$SERVICES" | wc -w)
+SVC_IDX=0
+
 for svc in $SERVICES; do
+  SVC_IDX=$((SVC_IDX + 1))
   echo ""
-  echo "--- [$svc] ---"
+  echo "--- [$SVC_IDX/$SVC_COUNT] 编译 $svc ---"
   cd "$PROJECT_ROOT/services/$svc"
 
   # gateway 特殊处理：testhelper 只在测试中引用，构建前临时移除
@@ -51,7 +55,9 @@ for svc in $SERVICES; do
   fi
 
   # 编译静态二进制
+  echo "    [编译] go build -ldflags='-s -w' ..."
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$BUILD_DIR/$svc/server" ./cmd/server/
+  echo "    [编译完成] $svc 二进制已生成"
 
   # 恢复 gateway 的原始 go.mod
   if [ "$svc" = "gateway" ]; then
@@ -71,8 +77,9 @@ ENTRYPOINT ["/server"]
 DOCKERFILE
 
   # 构建镜像
+  echo "    [构建镜像] docker build -t bracesync/$svc:$TAG ..."
   sudo docker build -t "bracesync/$svc:$TAG" "$BUILD_DIR/$svc/"
-  echo "    [OK] bracesync/$svc:$TAG"
+  echo "    [镜像完成] bracesync/$svc:$TAG"
 done
 
 echo ""

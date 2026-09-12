@@ -51,12 +51,16 @@ func startDeviceGateway(t *testing.T, dataURL string, secrets SecretProvider) *h
 	return srv
 }
 
-// deviceHeaders 构造设备签名头（对齐 device-simulator sign.go）
+// testDeviceNonce 32 hex 测试固定 nonce（硬件清单 §2.2）
+const testDeviceNonce = "0123456789abcdef0123456789abcdef"
+
+// deviceHeaders 构造设备签名头（对齐 device-simulator sign.go；T067 6 行签名格式）
 func deviceHeaders(secret, method, path, body string, ts time.Time) map[string]string {
 	return map[string]string{
 		"X-Device-Id": "DEV-SIG-001",
 		"X-Timestamp": strconv.FormatInt(ts.Unix(), 10),
-		"X-Signature": auth.HMACSHA256(secret, auth.BuildSignString(method, path, body, ts)),
+		"X-Nonce":     testDeviceNonce,
+		"X-Signature": auth.HMACSHA256(secret, auth.BuildSignString(method, path, "DEV-SIG-001", testDeviceNonce, body, ts)),
 	}
 }
 

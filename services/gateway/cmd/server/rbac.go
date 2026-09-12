@@ -28,7 +28,9 @@ import (
 
 // 预置角色常量（对齐 user-service/internal/rbac.Role*，跨模块不直接依赖）
 const (
-	roleAdmin = "ROLE_ADMIN"
+	roleAdmin  = "ROLE_ADMIN"
+	roleDoctor = "ROLE_DOCTOR"
+	roleTech   = "technician" // 技师登录签发 role="technician"（user-service handler.go techLogin）
 )
 
 // rbacPattern admin 专属端点（method + gin 风格路径模板，":param" 段匹配任意值）
@@ -62,15 +64,50 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/doctors"),
 }
 
+// techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T091 / T122）：
+// 配网密钥领卡端点 + 安装记录元数据回填——仅安装技师（technician）与管理员（ROLE_ADMIN）可写，
+// 患者/医生/客服等角色 → 403。T089 技师端调用时本就携带技师登录 JWT，前端零改动。
+//
+// 注意口径不一致（已知，见独立安全加固任务）：
+//   - PUT /api/v1/install-records/:id 已收紧为 tech+admin（签名=责任归属，医生/客服不得代签）
+//   - POST /api/v1/install-records 仍为全 full-scope 角色开放（创建端点，收紧需另评）
+var techAdminOnlyPatterns = []rbacPattern{
+	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/provision-key"), // T067 配网密钥（T091 收紧）
+	rbacOf(http.MethodPut, "/api/v1/install-records/:id"),              // T122 安装记录元数据回填（技师+管理员）
+}
+
+// doctorAdminOnlyPatterns 仅医生+管理员可访问端点矩阵（T130 / T135）：
+// 复查记录创建、复查报告模板管理——仅医生（ROLE_DOCTOR）与管理员（ROLE_ADMIN）可访问，
+// 患者/客服等 → 403。
+var doctorAdminOnlyPatterns = []rbacPattern{
+	rbacOf(http.MethodPost, "/api/v1/admin/review-records"), // T130 创建复查记录
+	// T135 复查报告模板管理（合同运营后台「复查报告模板管理」；admin+doctor 均需：
+	//   admin 后台上传/替换/列表/下载；doctor 列表/下载空白模板线下填写）
+	rbacOf(http.MethodPost, "/api/v1/admin/review-templates"),                  // 上传/创建模板
+	rbacOf(http.MethodPost, "/api/v1/admin/review-templates/:groupId/replace"), // 版本替换
+	rbacOf(http.MethodGet, "/api/v1/admin/review-templates"),                   // 模板列表
+	rbacOf(http.MethodGet, "/api/v1/admin/review-templates/:groupId/download"), // 模板下载
+}
+
+// matchDoctorAdminPattern 判断 method+path 是否命中 doctor+admin 专属端点矩阵
+func matchDoctorAdminPattern(method, path string) bool {
+	return matchPatterns(method, path, doctorAdminOnlyPatterns)
+}
+
+// matchTechAdminPattern 判断 method+path 是否命中 tech+admin 专属端点矩阵
+func matchTechAdminPattern(method, path string) bool {
+	return matchPatterns(method, path, techAdminOnlyPatterns)
+}
+
 // rbacOf 构造 admin 专属端点模式（路径按 "/" 切段存储）
 func rbacOf(method, path string) rbacPattern {
 	return rbacPattern{method: method, segments: strings.Split(path, "/")}
 }
 
-// matchRBACPattern 判断 method+path 是否命中 admin 专属端点矩阵
-func matchRBACPattern(method, path string) bool {
+// matchPatterns 判断 method+path 是否命中给定端点模式列表
+func matchPatterns(method, path string, patterns []rbacPattern) bool {
 	segments := strings.Split(path, "/")
-	for _, p := range adminOnlyPatterns {
+	for _, p := range patterns {
 		if p.method != method || len(p.segments) != len(segments) {
 			continue
 		}
@@ -91,6 +128,11 @@ func matchRBACPattern(method, path string) bool {
 	return false
 }
 
+// matchRBACPattern 判断 method+path 是否命中 admin 专属端点矩阵
+func matchRBACPattern(method, path string) bool {
+	return matchPatterns(method, path, adminOnlyPatterns)
+}
+
 // roleAuthz 端点级 RBAC 授权中间件：挂载于 /api/v1 JWT 组，紧随 jwtAuth（依赖其注入
 // X-Role）。命中 admin 专属端点且角色非 ROLE_ADMIN → 403 统一响应体，不转发后端。
 // fail-closed：X-Role 缺失（如鉴权链路异常）视同无权限。
@@ -103,6 +145,22 @@ func roleAuthz() gin.HandlerFunc {
 		role := c.GetHeader("X-Role")
 		if role == roleAdmin {
 			c.Next()
+			return
+		}
+		// T091：tech+admin 专属端点（如配网密钥领卡）——仅 technician 与 ROLE_ADMIN 可访问
+		if matchTechAdminPattern(c.Request.Method, c.Request.URL.Path) && role != roleTech {
+			log.Warn().Str("role", role).Str("method", c.Request.Method).
+				Str("path", c.Request.URL.Path).Msg("rbac denied: tech-or-admin-only endpoint")
+			abortJSON(c, http.StatusForbidden, http.StatusForbidden,
+				"forbidden: role not allowed for this endpoint")
+			return
+		}
+		// T130：doctor+admin 专属端点（如复查记录创建）——仅 ROLE_DOCTOR 与 ROLE_ADMIN 可访问
+		if matchDoctorAdminPattern(c.Request.Method, c.Request.URL.Path) && role != roleDoctor {
+			log.Warn().Str("role", role).Str("method", c.Request.Method).
+				Str("path", c.Request.URL.Path).Msg("rbac denied: doctor-or-admin-only endpoint")
+			abortJSON(c, http.StatusForbidden, http.StatusForbidden,
+				"forbidden: role not allowed for this endpoint")
 			return
 		}
 		if matchRBACPattern(c.Request.Method, c.Request.URL.Path) {
