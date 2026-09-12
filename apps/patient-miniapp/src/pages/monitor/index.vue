@@ -2,6 +2,9 @@
   <view class="page">
     <view class="page-header">
       <text class="page-title">实时监测</text>
+      <view class="refresh-btn" :class="{ 'loading': loading }" @click="onRefresh">
+        <text>{{ loading ? '刷新中…' : '🔄 刷新' }}</text>
+      </view>
     </view>
 
     <!-- 异常事件入口（T019B：导航至告警详情页） -->
@@ -85,11 +88,21 @@ interface RealtimeSnapshot {
   events?: number
 }
 
+// GET /patients/:patientId/records 返回分页结构（data-service HistoryPage）
+// 防御式声明：同时兼容真实后端的 { list, total, page, pageSize } 和旧/裸数组
+interface HistoryPage {
+  list: PressureRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 const authStore = useAuthStore()
 
 const sensorPoints = ref<SensorPoint[]>([])
 const activeIndex = ref(-1)
 const segment = ref<'day' | 'week' | 'month'>('day')
+const loading = ref(false)
 
 const activePoint = computed(() =>
   activeIndex.value >= 0 ? sensorPoints.value[activeIndex.value] : undefined
@@ -122,12 +135,15 @@ async function loadTrend(baseVal: number) {
   const dd = String(today.getDate()).padStart(2, '0')
   const dateStr = `${yyyy}-${mm}-${dd}`
   try {
-    const records = await request<PressureRecord[]>({
+    // 真实后端返回 HistoryPage{ list, total, page, pageSize }；
+    // 防御式同时兼容裸数组（旧 mock 或前端自造）
+    const raw = await request<HistoryPage | PressureRecord[]>({
       url: `/api/v1/patients/${patientId}/records`,
       method: 'GET',
       data: { period: segment.value, date: dateStr },
     })
-    if (records && records.length > 0) {
+    const records: PressureRecord[] = Array.isArray(raw) ? raw : (raw?.list ?? [])
+    if (records.length > 0) {
       trendData.value = records
         .slice(0, 48)
         .map((r) => {
@@ -153,8 +169,11 @@ async function loadTrend(baseVal: number) {
 
 // 真实加载：data-service GET /patients/:patientId/realtime
 async function loadData() {
+  if (loading.value) return
+  loading.value = true
   const patientId = authStore.patientId
   if (!patientId) {
+    loading.value = false
     uni.showToast({ title: '请先登录', icon: 'none' })
     return
   }
@@ -181,7 +200,14 @@ async function loadData() {
     uni.showToast({ title: msg, icon: 'none' })
     sensorPoints.value = []
     trendData.value = []
+  } finally {
+    loading.value = false
   }
+}
+
+// 手动刷新按钮：直接调 loadData（loading 守卫防并发）
+function onRefresh() {
+  void loadData()
 }
 
 function onSelectPoint(index: number) {
@@ -217,8 +243,10 @@ onPullDownRefresh(() => {
 
 <style scoped>
 .page { padding-bottom: 180rpx; }
-.page-header { padding: 80rpx 48rpx 16rpx; }
+.page-header { padding: 80rpx 48rpx 16rpx; display: flex; align-items: center; justify-content: space-between; }
 .page-title { font-size: 28rpx; font-weight: 500; color: #94a3b8; letter-spacing: 1rpx; }
+.refresh-btn { font-size: 24rpx; color: #2563EB; background: #eff6ff; padding: 12rpx 24rpx; border-radius: 24rpx; transition: opacity 0.2s; }
+.refresh-btn.loading { opacity: 0.6; pointer-events: none; }
 .section { padding: 0 40rpx; margin-top: 24rpx; }
 .section-title { font-size: 28rpx; font-weight: 500; color: #1e293b; margin-bottom: 20rpx; display: block; letter-spacing: 0.6rpx; }
 .segmented { display: flex; background: #f1f5f9; border-radius: 20rpx; padding: 6rpx; gap: 4rpx; }
