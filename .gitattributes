@@ -7,4 +7,7 @@ services/Dockerfile text eol=lf
 # Windows 开发环境 system autocrlf=true 会 checkout CRLF，导致 gofmt -s 误报）
 *.go text eol=lf
 # T164：前端 .ts/.vue/.js 一并 LF 归一化（与 *.go 同款；patient.ts 工作区 CRLF 污染 diff 噪音源）
-apps/*/src/**/*.{ts,vue,js} text eol=lf
+# gitattributes 不支持 shell 的 {} 花括号展开，写成 *.{ts,vue,js} 会静默匹配不到任何文件
+*.ts text eol=lf
+*.vue text eol=lf
+*.js text eol=lf
