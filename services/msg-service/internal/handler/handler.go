@@ -14,7 +14,13 @@
 //	GET  /healthz                                           存活探针
 //
 // 统一响应体（架构 §3.5）：{ "code": 0, "message": "success", "data": {...} }
-// 鉴权归 gateway（JWT / RBAC）；内部接口以 X-Internal-Service 头 + Compose 内网隔离（架构 §5.2 内部信任链）。
+//
+// 鉴权边界（T185 澄清）：gateway 只做垂直 RBAC（角色 → 端点矩阵），**不做 per-patient 水平鉴权**；
+// 患者域端点的水平越权（传他人 patientId）由本包 requireSelfScope 强制，口径同
+// data-service getDailyWear / user-service listReviewRecords：ROLE_ADMIN 放行任意，
+// 其余角色仅 X-User-Id == patientId，缺失头 fail-closed → 403。
+// 订阅额度授予为权益写操作，收敛为仅 ROLE_ADMIN（requireAdmin）。
+// 内部接口以 X-Internal-Service 头 + Compose 内网隔离（架构 §5.2 内部信任链）。
 package handler
 
 import (
@@ -32,7 +38,11 @@ import (
 const (
 	headerInternalService = "X-Internal-Service"
 	headerUserID          = "X-User-Id" // gateway 鉴权通过后注入的操作人身份头
+	headerRole            = "X-Role"    // gateway 鉴权通过后注入的角色头（外部伪造同名头已被 gateway 剥离）
 )
+
+// roleAdmin 管理员角色标识（对齐 user-service / data-service 常量，跨模块不直接依赖）
+const roleAdmin = "ROLE_ADMIN"
 
 // Handler HTTP 处理器
 type Handler struct {
@@ -101,6 +111,35 @@ func (h *Handler) requireInternalHeader() gin.HandlerFunc {
 	}
 }
 
+// requireSelfScope 患者域水平鉴权（T185，口径同 data-service getDailyWear）：
+// ROLE_ADMIN 可访问任意 patientId；其余角色仅当 X-User-Id == patientId 时放行。
+// fail-closed：身份头缺失视为无权限。已写出失败响应，返回 false 时调用方须立即 return。
+func requireSelfScope(c *gin.Context) bool {
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return false
+	}
+	if c.GetHeader(headerRole) == roleAdmin {
+		return true
+	}
+	if uid := c.GetHeader(headerUserID); uid == "" || uid != patientID {
+		fail(c, model.ErrForbidden("may only access your own resources"))
+		return false
+	}
+	return true
+}
+
+// requireAdmin 仅 ROLE_ADMIN 可访问（T185）：用于订阅额度授予这类权益写操作，
+// 否则患者可通过 self-scope 自行加额。已写出失败响应，返回 false 时调用方须立即 return。
+func requireAdmin(c *gin.Context) bool {
+	if c.GetHeader(headerRole) != roleAdmin {
+		fail(c, model.ErrForbidden("admin only"))
+		return false
+	}
+	return true
+}
+
 // ─────────────────────────────────────────────────────────────
 // 请求 DTO（camelCase，对齐契约 SendAlertNotificationRequest 等）
 // ─────────────────────────────────────────────────────────────
@@ -164,8 +203,11 @@ func (h *Handler) sendAlert(c *gin.Context) {
 	ok(c, result)
 }
 
-// getQuota 查询订阅额度（契约 getSubscriptionQuota；患者仅可查本人，越权边界归 gateway JWT）
+// getQuota 查询订阅额度（契约 getSubscriptionQuota；T185 水平鉴权：患者仅本人，admin 任意）
 func (h *Handler) getQuota(c *gin.Context) {
+	if !requireSelfScope(c) {
+		return
+	}
 	quota, err := h.svc.GetQuota(c.Request.Context(), c.Param("patientId"))
 	if err != nil {
 		failAppErr(c, err)
@@ -175,7 +217,11 @@ func (h *Handler) getQuota(c *gin.Context) {
 }
 
 // grantQuota 授予额度（契约 grantSubscriptionQuota；Idempotency-Key 头幂等，缺失 → 400）
+// T185：权益写操作，仅 ROLE_ADMIN —— 若按 self-scope 放行，患者可自行加额度。
 func (h *Handler) grantQuota(c *gin.Context) {
+	if !requireAdmin(c) {
+		return
+	}
 	idemKey := c.GetHeader("Idempotency-Key")
 	if idemKey == "" {
 		fail(c, model.ErrInvalidParam("Idempotency-Key header is required"))
@@ -190,8 +236,11 @@ func (h *Handler) grantQuota(c *gin.Context) {
 	ok(c, gin.H{"remaining": quota.Remaining, "isLow": quota.IsLow})
 }
 
-// getWearReminder 读取佩戴提醒设置（契约 getWearReminder）
+// getWearReminder 读取佩戴提醒设置（契约 getWearReminder；T185 水平鉴权：患者仅本人）
 func (h *Handler) getWearReminder(c *gin.Context) {
+	if !requireSelfScope(c) {
+		return
+	}
 	settings, err := h.svc.GetWearReminder(c.Request.Context(), c.Param("patientId"))
 	if err != nil {
 		failAppErr(c, err)
@@ -201,7 +250,11 @@ func (h *Handler) getWearReminder(c *gin.Context) {
 }
 
 // updateWearReminder 更新佩戴提醒设置（契约 updateWearReminder；直写 patient_preferences 一期偏离）
+// T185 水平鉴权：患者仅可改本人设置，否则可篡改他人提醒。
 func (h *Handler) updateWearReminder(c *gin.Context) {
+	if !requireSelfScope(c) {
+		return
+	}
 	var req wearReminderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
@@ -216,7 +269,11 @@ func (h *Handler) updateWearReminder(c *gin.Context) {
 }
 
 // getPatientNotifications 患者通知记录（契约 getPatientNotifications；时间倒序分页）
+// T185 水平鉴权：患者仅可查本人记录，admin 任意。
 func (h *Handler) getPatientNotifications(c *gin.Context) {
+	if !requireSelfScope(c) {
+		return
+	}
 	page, pageSize := pageParams(c)
 	records, total, err := h.svc.GetNotificationLogs(c.Request.Context(), repo.RecordFilter{
 		PatientID: c.Param("patientId"),

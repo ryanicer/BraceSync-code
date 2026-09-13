@@ -62,6 +62,11 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/teams"),
 	rbacOf(http.MethodGet, "/api/v1/teams/:teamId/members"),
 	rbacOf(http.MethodGet, "/api/v1/doctors"),
+
+	// T185 订阅额度授予：权益写操作。患者域读端点（wear-reminder / subscription-quota /
+	// notifications）不进本矩阵——患者需自查本人，水平越权由 msg-service handler 层
+	// requireSelfScope 拦截；唯 grant 若放行 self-scope 等于患者可自行加额，故收敛为 admin-only。
+	rbacOf(http.MethodPost, "/api/v1/patients/:patientId/subscription-quota/grant"),
 }
 
 // techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T091 / T122）：
