@@ -8,7 +8,7 @@
  * 返回值字段名对齐技师端：{ provision_key_hex, expires_in_sec }
  */
 
-import { request } from '../utils/request'
+import { request, USE_MOCK } from '../utils/request'
 
 interface ProvisionKeyResp {
   provision_key_hex: string
@@ -26,28 +26,35 @@ const cache = new Map<string, CachedEntry>()
 /**
  * 获取配网密钥。
  * 优先内存缓存；缓存未命中时请求后端。
+ * USE_MOCK=true 时（H5 开发 / E2E）直接返回假 key，绕过 request() throw。
  */
 export async function getProvisionKey(deviceId: string): Promise<ProvisionKeyResp> {
-  // 1. 命中缓存
+  // 命中缓存
   const cached = cache.get(deviceId)
   if (cached && cached.expiresAt > Date.now()) {
     const remainingSec = Math.max(1, Math.ceil((cached.expiresAt - Date.now()) / 1000))
     return { provision_key_hex: cached.provision_key_hex, expires_in_sec: remainingSec }
   }
 
-  // 2. 请求后端
-  const resp = await request<ProvisionKeyResp>({
-    url: `/api/v1/devices/${deviceId}/provision-key`,
-    method: 'POST',
+  let result: ProvisionKeyResp
+  if (USE_MOCK) {
+    // T182-MOCK: H5/E2E 环境绕过 request() throw，直接返回假 key
+    await new Promise((r) => setTimeout(r, 250))
+    const key = 'a'.repeat(24) + Math.random().toString(16).slice(2, 10)
+    result = { provision_key_hex: key, expires_in_sec: 300 }
+  } else {
+    result = await request<ProvisionKeyResp>({
+      url: `/api/v1/devices/${deviceId}/provision-key`,
+      method: 'POST',
+    })
+  }
+
+  cache.set(deviceId, {
+    provision_key_hex: result.provision_key_hex,
+    expiresAt: Date.now() + result.expires_in_sec * 1000,
   })
 
-  const entry: CachedEntry = {
-    provision_key_hex: resp.provision_key_hex,
-    expiresAt: Date.now() + resp.expires_in_sec * 1000,
-  }
-  cache.set(deviceId, entry)
-
-  return resp
+  return result
 }
 
 /** 清除缓存（配网失败时可调用） */
