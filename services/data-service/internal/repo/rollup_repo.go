@@ -147,7 +147,7 @@ func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, inte
 		if err := rows.Scan(&s.PatientID, &s.FrameCount, &wearingFrames, &avgP, &maxP, &maxPoint); err != nil {
 			return nil, fmt.Errorf("scan aggregate row: %w", err)
 		}
-		s.WearMinutes = wearingFrames * intervalMinutes
+		s.WearMinutes = min(wearingFrames*intervalMinutes, model.MaxWearMinutesPerDay)
 		s.AvgPressure = avgP
 		s.MaxPressure = maxP
 		if maxPoint != nil {

@@ -352,6 +352,10 @@ type HistoryPage struct {
 // WearTargetMinutes 默认每日佩戴目标时长（PRD §7A.11：22h = 1320min）
 const WearTargetMinutes = 22 * 60
 
+// MaxWearMinutesPerDay 单患者每日佩戴分钟物理上限（24h = 1440min）
+// 用于 rollup clamp + Dashboard SQL 防御（T083：防止设备高频上报导致 wear_minutes 异常放大）
+const MaxWearMinutesPerDay = 24 * 60
+
 // DailyWearStats daily_wear_stats 表行（架构 §4.4 日聚合）
 type DailyWearStats struct {
 	PatientID     string
