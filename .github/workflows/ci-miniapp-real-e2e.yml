@@ -1,0 +1,60 @@
+# BraceSync MiniApp Real-E2E — PR 门禁（静态语法关卡）
+# T054：双端小程序「真实模式」E2E（miniprogram-automator 直驱 staging 真实 API，e2e-miniapp/）。
+#
+# 为什么只做「静态语法门禁」而不是实跑：
+#   miniprogram-automator 必须连接【运行中的微信开发者工具自动化端口】（9420/9422，Boss 侧
+#   start-automation.ps1 / CONNECT_ONLY），并依赖 staging 真机授权与实测数据 —— 无法在 CI runner 实跑。
+#   真实运行的验收权在 PM/Boss（Boss 侧 devtools 实跑）。因此本 workflow 用 node --check 捕获
+#   语法错误（历史教训：漏 import / 未定义符号直接致构建与 CI 失败），作为低成本前置门禁。
+#
+# 成本优化（对齐 T038/T045）：仅 e2e-miniapp/** 或本 workflow 变更时触发，最小触发集；
+#   不执行 npm ci、不启动 dev server、不拉 devtools —— 秒级完成。触发集可与 Andy 复核后收紧。
+name: MiniApp Real-E2E Gate
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'e2e-miniapp/**'
+      - '.github/workflows/ci-miniapp-real-e2e.yml'
+
+# 成本优化（对齐 T045）：同一 PR/分支并发 push 只保留最新一次，取消旧 run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "18"
+
+jobs:
+  miniapp-syntax:
+    name: e2e-miniapp Syntax Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Check e2e-miniapp exists
+        run: |
+          if [ ! -d "e2e-miniapp" ]; then
+            echo "::error::e2e-miniapp/ 目录不存在（门禁目标缺失）"
+            exit 1
+          fi
+      - name: node --check all spec/helper JS
+        run: |
+          set -e
+          files=$(find e2e-miniapp -maxdepth 1 -name '*.js' -type f | sort)
+          if [ -z "$files" ]; then
+            echo "::error::e2e-miniapp/ 下未找到 .js 文件（门禁失效）"
+            exit 1
+          fi
+          echo "共 $(printf '%s\n' "$files" | grep -c .) 个 .js 文件待检查"
+          while IFS= read -r f; do
+            printf 'checking: %s\n' "$f"
+            node --check "$f" || { echo "::error::语法错误 $f"; exit 1; }
+          done <<< "$files"
+          echo "✓ e2e-miniapp/*.js 语法全部通过（真实模式运行需 Boss 侧 devtools，CI 不实跑）"
+      - name: run-real-e2e.ps1 present
+        run: |
+          test -f e2e-miniapp/run-real-e2e.ps1 && echo "✓ run-real-e2e.ps1（Windows 一键编排）present"
