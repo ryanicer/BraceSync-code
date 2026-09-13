@@ -32,7 +32,7 @@ export async function reportDeviceWifi(
   ssid: string
 ): Promise<{ deviceId: string; wifiStatus: string }> {
   return request<{ deviceId: string; wifiStatus: string }>({
-    url: `/api/v1/devices/${deviceId}/wifi`,
+    url: `/devices/${deviceId}/wifi`,
     method: 'POST',
     data: { ssid },
   })
