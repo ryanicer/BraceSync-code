@@ -6,8 +6,9 @@ export const useDeviceStore = defineStore('device', () => {
   const currentDevice = ref<Device | null>(null)
   const isBound = ref(false)
 
-  // T182: BLE 连接相关字段（技师端已验路径）
-  const bleDeviceId = ref<string>('') // BLE MAC（微信 createBLEConnection 用此值）
+  // T192: BLE 连接相关字段——唯一来源是蓝牙扫描结果（配网页 onSelectDevice 前写入），
+  // 后端设备契约不提供 BLE 标识（冲突 C，已上报 PM）。
+  const bleDeviceId = ref<string>('') // 扫描结果 deviceId（微信 createBLEConnection 用此值）
   const bleName = ref<string>('') // BLE 广播名（BSYNC-xxx）
   const bleConnected = ref(false)
 
@@ -26,10 +27,6 @@ export const useDeviceStore = defineStore('device', () => {
   function setDevice(device: Device) {
     currentDevice.value = device
     isBound.value = device.status !== 'unbound'
-    // 从设备数据里取 BLE 标识（如果后端返回了 ble_mac / ble_name）
-    const anyDevice = device as unknown as { ble_mac?: string; ble_name?: string }
-    if (anyDevice.ble_mac) bleDeviceId.value = anyDevice.ble_mac
-    if (anyDevice.ble_name) bleName.value = anyDevice.ble_name
   }
 
   function clearDevice() {

@@ -1,378 +1,571 @@
 <template>
-  <view class="page">
-    <view class="page-header">
-      <text class="back-link" @click="goBack">← 设备管理</text>
-      <text class="header-title">WiFi 配网</text>
-    </view>
+  <view class="wifi-setup">
+    <!-- 01-entry -->
+    <WifiEntry
+      v-if="view === 'entry'"
+      ref="entryRef"
+      :device-name="deviceLabel"
+      :network-text="networkText"
+      :bluetooth-on="bluetoothOn"
+      :location-on="locationOn"
+      @start="onEntryStart"
+      @enable-bluetooth="onEnableBluetooth"
+      @grant-location="onGrantLocation"
+    />
 
-    <!-- 配网状态步骤条（技师端已验：0→1→2→3→9） -->
-    <view class="section">
-      <view class="steps">
-        <template v-for="(s, i) in wifiSteps" :key="i">
-          <view :class="['step', stepClass(i)]">
-            <view class="step-circle">
-              <text v-if="stepClass(i) !== 'step-done'">{{ i + 1 }}</text>
-              <text v-else>✓</text>
-            </view>
-            <text class="step-label">{{ s }}</text>
-          </view>
-          <view v-if="i < wifiSteps.length - 1" :class="['step-line', { 'step-line-done': isStepDone(i) }]"></view>
-        </template>
-      </view>
-    </view>
+    <!-- 02-scan -->
+    <WifiScan
+      v-else-if="view === 'scan'"
+      :devices="devices"
+      :scanning="scanning"
+      @select="onSelectDevice"
+      @retry="startScan"
+      @contact="goContact('nodevice', 'scan')"
+    />
 
-    <!-- 成功态 -->
-    <view v-if="wifiStatusCode === 9" class="section">
-      <view class="card success-card">
-        <text class="success-icon">✅</text>
-        <text class="success-text">配网成功</text>
-        <text class="success-sub">WiFi 已连接，数据可达性验证通过</text>
-        <text class="auto-return-tip">3 秒后自动返回设备管理...</text>
-      </view>
-    </view>
+    <!-- 03-connect -->
+    <WifiConnect
+      v-else-if="view === 'connect'"
+      ref="connectRef"
+      :phase="connectPhase"
+      :device-name="deviceLabel"
+      :connected="bleLinkUp"
+      @next="connectPhase = 'form'"
+      @start="onStartProvision"
+    />
 
-    <!-- 错误态 -->
-    <view v-else-if="errorCode !== null" class="section">
-      <view class="card error-card">
-        <text class="error-icon">!</text>
-        <text class="error-title">{{ errorMessage }}</text>
-        <view class="btn-outline" @click="retryWifi"><text>重新配网</text></view>
-        <view v-if="errorCode === -4" class="skip-hint">
-          <text class="skip-text">WiFi 已连接，但暂时无法连接云端。</text>
-          <view class="btn-outline-sm" @click="skipNetworkSetup"><text>先跳过</text></view>
-        </view>
-      </view>
-    </view>
+    <!-- 04-progress -->
+    <WifiProgress
+      v-else-if="view === 'progress'"
+      :code="provisionCode"
+      :device-name="deviceLabel"
+      @cancel="onCancelProvision"
+    />
 
-    <!-- 配网前 + 配网中 -->
-    <template v-else>
-      <view class="section">
-        <view class="card">
-          <view class="notice">
-            <text class="notice-icon">ℹ️</text>
-            <view class="notice-text">
-              <text>请确保设备已开机且蓝牙信号良好</text>
-            </view>
-          </view>
-          <view class="manual-wifi">
-            <text class="form-label">WiFi 名称 (SSID)</text>
-            <input class="form-input" type="text" placeholder="请输入 WiFi 名称" v-model="manualSSID" />
-          </view>
-          <view class="wifi-hint">
-            <text>仅支持 2.4GHz Wi-Fi 网络，不支持 5GHz（含 5G 频段的合一路由器请填 2.4G 那个网络名）</text>
-            <text>请手动输入准确的 WiFi 名称与密码</text>
-          </view>
-        </view>
-      </view>
+    <!-- 05-success -->
+    <WifiSuccess
+      v-else-if="view === 'success'"
+      :device-label="deviceLabel"
+      :network-name="enteredSsid"
+      @primary="goMonitor"
+      @secondary="goDevicePage"
+    />
 
-      <view class="section">
-        <view class="card">
-          <view class="form-group">
-            <text class="form-label">WiFi 密码</text>
-            <view class="password-wrap">
-              <input
-                class="form-input password-input"
-                :password="!showPassword"
-                placeholder="请输入 WiFi 密码"
-                v-model="wifiPassword"
-              />
-              <text class="password-toggle" @click="showPassword = !showPassword">{{ showPassword ? '👁' : '🙈' }}</text>
-            </view>
-          </view>
-          <view class="btn-primary" :class="{ 'btn-disabled': provisioning }" @click="startWifiConfig">
-            <text>{{ provisioning ? '配置中...' : '开始配网' }}</text>
-          </view>
-        </view>
-      </view>
-    </template>
+    <!-- 06a–06e -->
+    <WifiFailure
+      v-else-if="view === 'failure'"
+      :type="failureType"
+      @primary="onFailurePrimary"
+      @secondary="onFailureSecondary"
+      @contact="goContact(failureType, 'failure')"
+    />
 
-    <view style="padding-bottom: 100rpx;"></view>
+    <!-- 07-contact -->
+    <WifiContact
+      v-else
+      :issue-type="contactIssue"
+      :device-label="deviceLabel"
+      :occurred-at="occurredAt"
+      :submit-state="feedbackState"
+      @open-chat="onOpenChat"
+      @back="onContactBack"
+    />
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useDeviceStore } from '../../stores/device'
+import { useAuthStore } from '../../stores/auth'
+import { request } from '../../utils/request'
 import { getProvisionKey } from '../../api/provision'
 import { reportDeviceWifi } from '../../api/device'
+import { submitWifiFailureFeedback, buildFailureContent, formatFeedbackTime } from '../../api/feedback'
 import { encryptWifiPayload } from '../../utils/aes-ctr'
 import {
-  initBluetooth,
-  connectDevice,
   closeBLEConnection,
-  writeWifiConfigV2,
+  connectDevice,
+  ensureLocationPermission,
+  isBluetoothReady,
+  isLocationAuthed,
   onWifiStatus,
   registerBleStateListener,
+  startBleScan,
   startMockWifiStatusSequence,
+  stopBleScan,
   stopMockWifiStatusSequence,
+  writeWifiConfigV2,
+  type ScannedDevice,
 } from '../../utils/ble'
+import {
+  PROVISION_TIMEOUT_MS,
+  broadcastNameOf,
+  isBsyncDevice,
+  normalizeWifiName,
+} from '../../utils/wifi-state'
+import {
+  BLE_DISCONNECTED_TOAST,
+  CONNECT,
+  CONTACT,
+  ENTRY,
+  FAILURE_COMMON,
+  FAILURE_KEY_BY_CODE,
+  FAILURES,
+  PROGRESS,
+  SCAN,
+  SUCCESS,
+  type ContactIssue,
+  type FailureKey,
+} from './copy'
+import WifiEntry from '../../components/wifi-setup/WifiEntry.vue'
+import WifiScan from '../../components/wifi-setup/WifiScan.vue'
+import WifiConnect from '../../components/wifi-setup/WifiConnect.vue'
+import WifiProgress from '../../components/wifi-setup/WifiProgress.vue'
+import WifiSuccess from '../../components/wifi-setup/WifiSuccess.vue'
+import WifiFailure from '../../components/wifi-setup/WifiFailure.vue'
+import WifiContact from '../../components/wifi-setup/WifiContact.vue'
+
+/** 视图名与设计稿文件一一对应（01/02/03/04/05/06a-e/07） */
+type View = 'entry' | 'scan' | 'connect' | 'progress' | 'success' | 'failure' | 'contact'
+
+const NAV_TITLES: Record<View, string> = {
+  entry: ENTRY.navTitle,
+  scan: SCAN.navTitle,
+  connect: CONNECT.navTitle,
+  progress: PROGRESS.navTitle,
+  success: SUCCESS.navTitle,
+  failure: FAILURE_COMMON.navTitle,
+  contact: CONTACT.navTitle,
+}
+
+/** BLE 扫描时长：设计稿 02 为持续搜索，6s 后收敛到结果/空态 */
+const SCAN_DURATION_MS = 6000
+/** T119 防重入节流窗口 */
+const MIN_PROVISION_INTERVAL = 3000
 
 const deviceStore = useDeviceStore()
+const authStore = useAuthStore()
 
-// 配网步骤（技师端已验：0收到→1连AP→2取IP→3探测→9成功）
-const wifiSteps = ['收到', '连AP', '取IP', '探测', '成功']
+const entryRef = ref<InstanceType<typeof WifiEntry> | null>(null)
+const connectRef = ref<InstanceType<typeof WifiConnect> | null>(null)
 
-const manualSSID = ref('')
-const wifiPassword = ref('')
-const showPassword = ref(false)
-const provisioning = ref(false)
+const view = ref<View>('entry')
+const connectPhase = ref<'connecting' | 'form'>('connecting')
+const bleLinkUp = ref(false)
+const bluetoothOn = ref(false)
+const locationOn = ref(false)
+const devices = ref<ScannedDevice[]>([])
+const scanning = ref(false)
+const provisionCode = ref<number | null>(null)
+const failureType = ref<FailureKey>('timeout')
+const contactIssue = ref<ContactIssue>('timeout')
+const contactBack = ref<View>('failure')
+const occurredAt = ref('')
+const feedbackState = ref<'pending' | 'ok' | 'failed'>('pending')
+const enteredSsid = ref('')
 
-// T119: 3s 防重入节流
-const MIN_PROVISION_INTERVAL = 3000
-let lastProvisionAttempt = 0
+/** 云端 device_id（provision-key / wifi 回写用）与 BLE 侧 deviceId（建连/写入用）来源分离 */
+const cloudDeviceId = ref('')
+const bleDeviceId = ref('')
+const scannedName = ref('')
 
-// 配网状态
-const wifiStatusCode = ref<number | null>(null)
-const statusHistory: number[] = []
-const errorCode = ref<number | null>(null)
-const autoReturnTimer = ref<ReturnType<typeof setTimeout> | null>(null)
-const timeoutTimer = ref<ReturnType<typeof setTimeout> | null>(null)
-let successProcessed = false
-let bleMac = ''
+let enteredPwd = ''
+let successHandled = false
+let timeoutTimer: ReturnType<typeof setTimeout> | null = null
+let lastAttemptAt = 0
+let resumePending: 'bluetooth' | 'location' | '' = ''
+let deviceReady = false
+// #ifdef H5
+let mockSequence: number[] | undefined
+// #endif
 
-const errorMessage = computed(() => {
-  const map: Record<number, string> = {
-    [-1]: '密码错误，请检查 WiFi 密码',
-    [-2]: '未找到 WiFi 网络，请检查 SSID',
-    [-3]: '网络连接失败（DHCP），请检查路由器',
-    [-4]: '云端暂不可达，设备将在后台持续重试（约每 5 分钟一次），请保持设备通电与 WiFi 环境',
-  }
-  return map[errorCode.value!] || '配网失败，请重试'
+/** 患者端设备标识只到广播名（PRD §7A.9：不展示完整 device_id） */
+const deviceLabel = computed(() => scannedName.value || broadcastNameOf(cloudDeviceId.value))
+
+const networkText = computed(() => {
+  const ssid = deviceStore.currentDevice?.wifiSsid
+  if (deviceStore.wifiStatus === 'connected' || (ssid && ssid !== '-')) return ENTRY.networkConnected
+  return ENTRY.networkUnconnected
 })
 
-function stepClass(i: number): string {
-  const code = wifiStatusCode.value
-  if (code === null) return i === 0 ? 'step-active' : ''
-  if (code === 9) return 'step-done'
-  if (code < 0) return i <= 3 ? 'step-done' : 'step-error'
-  // 0/1/2/3
-  if (i < code) return 'step-done'
-  if (i === code) return 'step-active'
-  return ''
-}
+watch(
+  view,
+  (v) => uni.setNavigationBarTitle({ title: NAV_TITLES[v] }),
+  { immediate: true }
+)
 
-function isStepDone(i: number): boolean {
-  const code = wifiStatusCode.value
-  if (code === null) return false
-  if (code === 9) return true
-  if (code < 0) return i < 4
-  return i < code
-}
-
-function goBack() {
-  if (autoReturnTimer.value) clearTimeout(autoReturnTimer.value)
-  uni.navigateBack({
-    fail: () => uni.switchTab({ url: '/pages/device/index' }),
-  })
-}
-
-onMounted(() => {
-  // 注册 BLE 断连监听
-  registerBleStateListener((deviceId, connected) => {
-    if (!connected && provisioning.value) {
-      provisioning.value = false
-      uni.showToast({ title: '设备已断开连接', icon: 'none' })
-    }
+onLoad(async (options) => {
+  // #ifdef H5
+  const raw = (options as { mock?: string } | undefined)?.mock
+  if (raw) {
+    const parsed = raw.split(',').map((n) => Number(n)).filter((n) => !Number.isNaN(n))
+    if (parsed.length) mockSequence = parsed
+  }
+  // #endif
+  registerBleStateListener((_deviceId, connected) => {
     deviceStore.setBleConnected(connected)
+    if (connected) bleLinkUp.value = true
+    else bleLinkUp.value = false
+    if (connected || view.value !== 'progress' || successHandled) return
+    // 配网途中断连：不再有状态推送，按超时分支给可执行处置
+    stopProvisionTimer()
+    stopMockWifiStatusSequence()
+    failureType.value = 'timeout'
+    deviceStore.setWifiStatus('failed')
+    view.value = 'failure'
+    uni.showToast({ title: BLE_DISCONNECTED_TOAST, icon: 'none' })
   })
+  deviceReady = await ensureCloudDevice()
 })
 
-async function startWifiConfig() {
-  // 3s 防重入节流
+onShow(async () => {
+  const [bt, loc] = await Promise.all([isBluetoothReady(), isLocationAuthed()])
+  bluetoothOn.value = bt
+  locationOn.value = loc
+  if (view.value !== 'entry' || !resumePending) return
+  if ((resumePending === 'bluetooth' && bt) || (resumePending === 'location' && loc)) {
+    const which = resumePending
+    resumePending = ''
+    uni.showToast({ title: which === 'bluetooth' ? ENTRY.btReadyToast : ENTRY.locReadyToast, icon: 'none' })
+    await nextTick()
+    goScan()
+  }
+})
+
+/** 云端 device_id：优先设备页已加载的绑定设备，否则按快照补一次（不写占位值） */
+async function ensureCloudDevice(): Promise<boolean> {
+  cloudDeviceId.value = deviceStore.currentDevice?.deviceId || ''
+  if (cloudDeviceId.value) return true
+
+  const patientId = authStore.patientId
+  if (patientId) {
+    try {
+      const snap = await request<{ deviceId?: string | null }>({
+        url: `/api/v1/patients/${patientId}/realtime`,
+        method: 'GET',
+      })
+      cloudDeviceId.value = snap?.deviceId || ''
+    } catch (e) {
+      console.warn('[wifi-setup] 设备快照加载失败', e)
+    }
+  }
+  if (!cloudDeviceId.value) {
+    uni.showToast({ title: ENTRY.noDeviceToast, icon: 'none' })
+    setTimeout(() => uni.switchTab({ url: '/pages/device/index', fail: () => uni.navigateBack() }), 800)
+  }
+  return !!cloudDeviceId.value
+}
+
+/* ===== 01-entry ===== */
+
+function onEntryStart() {
+  if (!deviceReady) {
+    uni.showToast({ title: ENTRY.noDeviceToast, icon: 'none' })
+    return
+  }
+  if (!bluetoothOn.value) {
+    resumePending = 'bluetooth'
+    entryRef.value?.showBlockingModal('bluetooth')
+    return
+  }
+  if (!locationOn.value) {
+    resumePending = 'location'
+    entryRef.value?.showBlockingModal('location')
+    return
+  }
+  goScan()
+}
+
+function onEnableBluetooth() {
+  resumePending = 'bluetooth'
+  // #ifdef MP-WEIXIN
+  const sysBt = (uni as unknown as { openSystemBluetoothSetting?: (o: { fail?: () => void }) => void })
+    .openSystemBluetoothSetting
+  if (sysBt) {
+    sysBt({ fail: () => uni.showToast({ title: ENTRY.btSettingsToast, icon: 'none' }) })
+    return
+  }
+  // #endif
+  uni.showToast({ title: ENTRY.btSettingsToast, icon: 'none' })
+}
+
+async function onGrantLocation() {
+  resumePending = 'location'
+  locationOn.value = await ensureLocationPermission()
+}
+
+/* ===== 02-scan ===== */
+
+function goScan() {
+  view.value = 'scan'
+  startScan()
+}
+
+function startScan() {
+  stopBleScan()
+  devices.value = []
+  scanning.value = true
+  startBleScan(
+    (dev) => {
+      if (!isBsyncDevice(dev.name)) return
+      if (devices.value.some((d) => d.deviceId === dev.deviceId)) return
+      devices.value.push(dev)
+    },
+    () => {
+      scanning.value = false
+    },
+    SCAN_DURATION_MS
+  )
+}
+
+async function onSelectDevice(dev: ScannedDevice) {
+  stopBleScan()
+  scanning.value = false
+  scannedName.value = dev.name
+  bleDeviceId.value = dev.deviceId
+  bleLinkUp.value = false
+  deviceStore.bleDeviceId = dev.deviceId
+  deviceStore.bleName = dev.name
+  view.value = 'connect'
+  connectPhase.value = 'connecting'
+
+  // 发现设备 → 建立 BLE 连接 → 才允许进入凭据输入（T182 缺失的前置）
+  const connected = await connectDevice(dev.deviceId)
+  if (!connected) {
+    uni.showToast({ title: CONNECT.connectFailedToast, icon: 'none' })
+    goScan()
+    return
+  }
+  deviceStore.setBleConnected(true)
+  bleLinkUp.value = true
+}
+
+/* ===== 03-connect ===== */
+
+async function onStartProvision() {
   const now = Date.now()
-  if (now - lastProvisionAttempt < MIN_PROVISION_INTERVAL) {
-    const waitSec = Math.ceil((MIN_PROVISION_INTERVAL - (now - lastProvisionAttempt)) / 1000)
-    uni.showToast({ title: `操作过于频繁，请${waitSec}秒后重试`, icon: 'none' })
+  if (now - lastAttemptAt < MIN_PROVISION_INTERVAL) {
+    uni.showToast({ title: CONNECT.throttleToast, icon: 'none' })
     return
   }
-  lastProvisionAttempt = now
 
-  // 参数校验
-  const ssid = manualSSID.value.trim()
+  const creds = connectRef.value?.getCredentials() ?? { ssid: '', pwd: '' }
+  const ssid = normalizeWifiName(creds.ssid)
   if (!ssid) {
-    uni.showToast({ title: '请输入 WiFi 名称', icon: 'none' })
+    uni.showToast({ title: CONNECT.ssidRequiredToast, icon: 'none' })
     return
   }
-  if (!wifiPassword.value) {
-    uni.showToast({ title: '请输入 WiFi 密码', icon: 'none' })
+  if (!creds.pwd) {
+    uni.showToast({ title: CONNECT.pwdRequiredToast, icon: 'none' })
+    return
+  }
+  enteredSsid.value = ssid
+  enteredPwd = creds.pwd
+  lastAttemptAt = now
+  await runProvision()
+}
+
+/* ===== 04-progress ===== */
+
+async function runProvision() {
+  if (!bleDeviceId.value || !deviceStore.bleConnected) {
+    uni.showToast({ title: CONNECT.connectFailedToast, icon: 'none' })
+    goScan()
     return
   }
 
-  // BLE 标识：优先 store，fallback 用设备 ID，再 fallback 硬编码 mock 值（H5/E2E）
-  const DEVICE_ID_FALLBACK = 'PRS-ML05-RC-20260701001'
-  const deviceId = deviceStore.currentDevice?.id || DEVICE_ID_FALLBACK
-  bleMac = deviceStore.bleDeviceId || deviceStore.currentDevice?.id || DEVICE_ID_FALLBACK
-
-  if (!ssid) { uni.showToast({ title: '请输入 WiFi 名称', icon: 'none' }); return }
-  if (!wifiPassword.value) { uni.showToast({ title: '请输入 WiFi 密码', icon: 'none' }); return }
-
-  provisioning.value = true
-  wifiStatusCode.value = null
-  errorCode.value = null
-  successProcessed = false
-  statusHistory.length = 0
+  view.value = 'progress'
+  provisionCode.value = null
+  successHandled = false
+  deviceStore.setWifiStatus('configuring')
 
   try {
-    // === 完全对齐技师端 wifi-config/index.vue startWifiConfig ===
-    // H5 下各层函数内部 isH5() 自动处理：
-    //   writeWifiConfigV2 → return true
-    //   onWifiStatus → 存 callback 后 return
-    //   startMockWifiStatusSequence → 启动 0→1→2→3→9 定时器
-    const { provision_key_hex } = await getProvisionKey(deviceId)
-    const seq = deviceStore.nextWifiSeq()
-    const encrypted = encryptWifiPayload(ssid, wifiPassword.value, provision_key_hex, seq)
-    await writeWifiConfigV2(bleMac, encrypted)
+    uni.showLoading({ title: CONNECT.sendingToast, mask: true })
+    const { provision_key_hex } = await getProvisionKey(cloudDeviceId.value)
+    uni.hideLoading()
 
-    onWifiStatus((code: number) => {
-      wifiStatusCode.value = code
-      statusHistory.push(code)
-      deviceStore.updateWifiStatusCode(code)
-      if (code === 9) handleSuccess(ssid)
-      else if (code < 0) handleError(code)
-    }, bleMac)
+    // 先订阅 B512 Notify，再写 B511，否则首帧状态（0/1）会丢
+    onWifiStatus(handleStatus, bleDeviceId.value)
 
-    startMockWifiStatusSequence()
-
-    // 15s 超时兜底
-    timeoutTimer.value = setTimeout(() => {
-      if (wifiStatusCode.value !== 9) handleTimeout()
-    }, 15000)
+    const payload = encryptWifiPayload(enteredSsid.value, enteredPwd, provision_key_hex, deviceStore.nextWifiSeq())
+    await writeWifiConfigV2(bleDeviceId.value, payload)
+    armTimeout()
+    // #ifdef H5
+    startMockWifiStatusSequence(mockSequence)
+    // #endif
   } catch (e) {
     uni.hideLoading()
-    const msg = e instanceof Error ? e.message : '配网失败'
-    uni.showToast({ title: msg, icon: 'none' })
-    provisioning.value = false
-    // 清理 BLE 连接
-    try { await closeBLEConnection(bleMac) } catch {}
+    stopMockWifiStatusSequence()
+    stopProvisionTimer()
+    console.warn('[wifi-setup] 配网下发失败', e)
+    uni.showToast({ title: CONNECT.keyFailToast, icon: 'none' })
+    connectPhase.value = 'form'
+    view.value = 'connect'
   }
 }
 
-async function handleSuccess(ssid: string) {
-  // 固件可能 Notify 两次 9，第二次忽略
-  if (successProcessed) return
-  successProcessed = true
-  if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
-  stopMockWifiStatusSequence()
-  provisioning.value = false
+function handleStatus(code: number) {
+  provisionCode.value = code
+  deviceStore.updateWifiStatusCode(code)
 
-  // 云端 WiFi 状态回写（对齐技师端 POST /devices/:id/wifi { ssid }）
+  if (code === 9) {
+    void onProvisionSuccess()
+    return
+  }
+  if (code < 0) {
+    stopProvisionTimer()
+    stopMockWifiStatusSequence()
+    failureType.value = FAILURE_KEY_BY_CODE[code] ?? 'timeout'
+    deviceStore.setWifiStatus('failed')
+    view.value = 'failure'
+    return
+  }
+  if (code === 3) uni.showToast({ title: PROGRESS.nearlyDoneToast, icon: 'none' })
+  armTimeout() // PRD §7A.9：15s「无推送」超时，每收一帧重新计时
+}
+
+function armTimeout() {
+  stopProvisionTimer()
+  timeoutTimer = setTimeout(() => {
+    if (successHandled) return
+    stopMockWifiStatusSequence()
+    failureType.value = 'timeout'
+    deviceStore.setWifiStatus('failed')
+    view.value = 'failure'
+  }, PROVISION_TIMEOUT_MS)
+}
+
+function stopProvisionTimer() {
+  if (timeoutTimer) {
+    clearTimeout(timeoutTimer)
+    timeoutTimer = null
+  }
+}
+
+async function onProvisionSuccess() {
+  if (successHandled) return // 固件可能重复 Notify 9
+  successHandled = true
+  stopProvisionTimer()
+  stopMockWifiStatusSequence()
+  deviceStore.setWifiStatus('connected')
+  await teardownBle()
+  view.value = 'success'
+
   try {
-    const deviceId = deviceStore.currentDevice?.id || ''
-    if (deviceId) {
-      await reportDeviceWifi(deviceId, ssid)
-    }
+    if (cloudDeviceId.value) await reportDeviceWifi(cloudDeviceId.value, enteredSsid.value)
   } catch (e) {
-    // 回写失败不阻断配网成功状态，仅提示
-    uni.showToast({ title: 'WiFi 状态同步失败', icon: 'none' })
+    console.warn('[wifi-setup] WiFi 状态回写失败', e)
+    uni.showToast({ title: SUCCESS.syncFailToast, icon: 'none' })
   }
+}
 
-  deviceStore.setWifiStatus('connected')
+function onCancelProvision() {
+  stopProvisionTimer()
+  stopMockWifiStatusSequence()
+  uni.showToast({ title: PROGRESS.cancelToast, icon: 'none' })
+  connectPhase.value = 'form'
+  view.value = 'connect'
+}
 
-  // 关闭 BLE 连接（配网完成，设备已脱离手机连 WiFi）
-  try { await closeBLEConnection(bleMac) } catch {}
+/* ===== 05-success ===== */
+
+function goMonitor() {
+  uni.showToast({ title: SUCCESS.backToast, icon: 'none' })
+  setTimeout(() => uni.switchTab({ url: '/pages/monitor/index' }), 800)
+}
+
+function goDevicePage() {
+  uni.switchTab({ url: '/pages/device/index', fail: () => uni.navigateBack() })
+}
+
+/* ===== 06a–06e ===== */
+
+async function onFailurePrimary() {
+  const to = FAILURES[failureType.value].primaryTo
+  if (to === 'connect') {
+    connectPhase.value = 'form'
+    view.value = 'connect'
+    return
+  }
+  if (to === 'retry') {
+    await retryProvision()
+    return
+  }
+  await teardownBle()
+  view.value = 'entry'
+}
+
+function onFailureSecondary() {
+  void retryProvision()
+}
+
+/** 「重试配网」= 回到 04 并重跑下发；BLE 已断则先回 02 重新连接 */
+async function retryProvision() {
+  if (!enteredSsid.value || !enteredPwd) {
+    connectPhase.value = 'form'
+    view.value = 'connect'
+    return
+  }
+  await runProvision()
+}
+
+/* ===== 07-contact ===== */
+
+function goContact(issue: ContactIssue, from: View) {
+  contactIssue.value = issue
+  contactBack.value = from
+  const at = new Date()
+  occurredAt.value = formatFeedbackTime(at)
+  view.value = 'contact'
+  void submitFeedback(issue, at)
+}
+
+async function submitFeedback(issue: ContactIssue, at: Date) {
+  feedbackState.value = 'pending'
+  try {
+    await submitWifiFailureFeedback({
+      patientId: authStore.patientId || '',
+      content: buildFailureContent(CONTACT.typeMap[issue], deviceLabel.value, at),
+    })
+    feedbackState.value = 'ok'
+  } catch (e) {
+    console.warn('[wifi-setup] 配网反馈提交失败', e)
+    feedbackState.value = 'failed'
+    uni.showToast({ title: CONTACT.submitFailToast, icon: 'none' })
+  }
+}
+
+function onOpenChat() {
+  // 小程序端由 <button open-type="contact"> 原生打开客服会话
+  uni.showToast({ title: CONTACT.openingToast, icon: 'none' })
+}
+
+function onContactBack() {
+  view.value = contactBack.value
+}
+
+/* ===== 收尾 ===== */
+
+async function teardownBle() {
+  if (!bleDeviceId.value) return
+  try {
+    await closeBLEConnection(bleDeviceId.value)
+  } catch {
+    /* 关闭失败不影响页面收尾 */
+  }
   deviceStore.setBleConnected(false)
-
-  // 3 秒后自动返回
-  autoReturnTimer.value = setTimeout(() => {
-    uni.navigateBack({ fail: () => uni.switchTab({ url: '/pages/device/index' }) })
-  }, 3000)
-}
-
-function handleError(code: number) {
-  if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
-  stopMockWifiStatusSequence()
-  provisioning.value = false
-  errorCode.value = code
-  deviceStore.setWifiStatus('failed')
-}
-
-function handleTimeout() {
-  // 15s 超时 — 给提示但保留状态监听，迟到状态 9 仍可触发 handleSuccess
-  uni.showToast({ title: '设备无响应，请靠近设备后重试', icon: 'none' })
-  provisioning.value = false
-}
-
-function retryWifi() {
-  wifiStatusCode.value = null
-  errorCode.value = null
-  successProcessed = false
-  statusHistory.length = 0
-  // 清理可能残留的 BLE 状态
-  stopMockWifiStatusSequence()
-  try { closeBLEConnection(bleMac) } catch {}
-}
-
-function skipNetworkSetup() {
-  // -4 状态：云端不可达，本地标记 connected 但不落库
-  deviceStore.setWifiStatus('connected')
-  uni.navigateBack({ fail: () => uni.switchTab({ url: '/pages/device/index' }) })
+  bleLinkUp.value = false
 }
 
 onUnmounted(() => {
-  if (autoReturnTimer.value) clearTimeout(autoReturnTimer.value)
-  if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
+  stopProvisionTimer()
+  stopBleScan()
   stopMockWifiStatusSequence()
-  // 页面离开时关闭 BLE 连接
-  if (bleMac) {
-    try { closeBLEConnection(bleMac) } catch {}
-  }
+  void teardownBle()
 })
 </script>
 
 <style scoped>
-.page { padding-bottom: 100rpx; }
-.page-header { padding: 80rpx 48rpx 16rpx; display: flex; align-items: baseline; gap: 24rpx; }
-.back-link { font-size: 28rpx; color: #94a3b8; }
-.header-title { font-size: 28rpx; font-weight: 500; color: #94a3b8; letter-spacing: 1rpx; }
-.section { padding: 0 40rpx; margin-top: 24rpx; }
-.card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); padding: 32rpx; }
-
-/* 步骤条 */
-.steps { display: flex; align-items: flex-start; justify-content: center; padding: 16rpx 0; }
-.step { display: flex; flex-direction: column; align-items: center; gap: 12rpx; }
-.step-circle { width: 56rpx; height: 56rpx; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 4rpx solid #e2e8f0; background: #fff; }
-.step-circle text { font-size: 26rpx; font-weight: 500; color: #94a3b8; }
-.step-done .step-circle { background: #2563EB; border-color: #2563EB; }
-.step-done .step-circle text { color: #fff; }
-.step-active .step-circle { border-color: #2563EB; }
-.step-active .step-circle text { color: #2563EB; }
-.step-error .step-circle { background: #ef4444; border-color: #ef4444; }
-.step-label { font-size: 20rpx; color: #94a3b8; white-space: nowrap; }
-.step-done .step-label { color: #2563EB; }
-.step-active .step-label { color: #2563EB; font-weight: 500; }
-.step-error .step-label { color: #ef4444; }
-.step-line { flex: 1; height: 4rpx; background: #e2e8f0; margin: 26rpx 8rpx 0; min-width: 24rpx; }
-.step-line-done { background: #2563EB; }
-
-.notice { display: flex; gap: 20rpx; padding: 24rpx; background: #eff6ff; border-radius: 16rpx; margin-bottom: 24rpx; }
-.notice-icon { font-size: 32rpx; flex-shrink: 0; }
-.notice-text { font-size: 24rpx; color: #475569; line-height: 1.6; flex: 1; }
-.manual-wifi { margin-top: 16rpx; }
-.wifi-hint { display: flex; flex-direction: column; gap: 8rpx; margin-top: 20rpx; padding: 20rpx 24rpx; background: #fff7ed; border-radius: 16rpx; }
-.wifi-hint text { font-size: 22rpx; color: #b45309; line-height: 1.5; }
-.form-label { font-size: 26rpx; font-weight: 500; color: #1e293b; margin-bottom: 12rpx; display: block; }
-.form-input { width: 100%; padding: 16rpx 24rpx; border: 1rpx solid #e2e8f0; border-radius: 24rpx; font-size: 26rpx; color: #1e293b; background: #f1f5f9; box-sizing: border-box; }
-.form-group { margin-bottom: 24rpx; }
-.password-wrap { position: relative; }
-.password-input { padding-left: 24rpx; padding-right: 72rpx; }
-.password-toggle { position: absolute; right: 16rpx; top: 50%; transform: translateY(-50%); font-size: 32rpx; }
-.btn-primary { padding: 20rpx 40rpx; background: #2563EB; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; }
-.btn-primary text { color: #fff; font-size: 28rpx; }
-.btn-disabled { opacity: 0.5; }
-
-.success-card { text-align: center; padding: 64rpx 32rpx; }
-.success-icon { font-size: 96rpx; display: block; margin-bottom: 16rpx; }
-.success-text { font-size: 36rpx; font-weight: 500; color: #2563EB; display: block; margin-bottom: 8rpx; }
-.success-sub { font-size: 26rpx; color: #64748b; display: block; margin-top: 8rpx; }
-.auto-return-tip { font-size: 24rpx; color: #94a3b8; margin-top: 24rpx; display: block; }
-
-.error-card { padding: 48rpx 32rpx; text-align: center; }
-.error-icon { display: inline-flex; width: 80rpx; height: 80rpx; border-radius: 50%; background: #ef4444; color: #fff; font-size: 48rpx; align-items: center; justify-content: center; margin-bottom: 24rpx; }
-.error-title { font-size: 28rpx; color: #991b1b; line-height: 1.5; }
-.btn-outline { width: 100%; padding: 22rpx 0; background: #fff; border: 2rpx solid #3B82F6; border-radius: 16rpx; text-align: center; margin-top: 20rpx; }
-.btn-outline text { color: #3B82F6; font-size: 28rpx; font-weight: 500; }
-.btn-outline-sm { padding: 16rpx 0; background: #fff; border: 2rpx solid #f59e0b; border-radius: 12rpx; text-align: center; margin-top: 16rpx; }
-.btn-outline-sm text { color: #b45309; font-size: 26rpx; }
-.skip-hint { margin-top: 24rpx; }
-.skip-text { display: block; font-size: 24rpx; color: #b45309; line-height: 1.5; }
+.wifi-setup { background: #f8fafc; min-height: 100vh; }
 </style>

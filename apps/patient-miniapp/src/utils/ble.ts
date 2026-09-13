@@ -274,7 +274,11 @@ export async function closeBLEConnection(deviceId: string): Promise<void> {
  * （技师端已验，患者端复用）
  */
 export async function connectDevice(deviceId: string): Promise<boolean> {
-  if (isH5()) return true
+  if (isH5()) {
+    // H5 无蓝牙栈：模拟真机建连耗时（close + create + 服务发现），让 03 的「连接中」态可观测
+    await new Promise((r) => setTimeout(r, 800))
+    return true
+  }
   _log('info', `connectDevice 入口 deviceId=${deviceId}`)
 
   // 前置 close 清残留状态
@@ -378,6 +382,138 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
   })
 }
 
+// ===== 蓝牙/位置前置态查询（01-entry 用） =====
+
+/**
+ * 蓝牙是否可用（开关已开 + adapter 可初始化）。
+ * 与 initBluetooth 的区别：这里不把失败当异常抛出，只回布尔，供清单展示。
+ */
+export async function isBluetoothReady(): Promise<boolean> {
+  if (isH5()) return true
+  return new Promise((resolve) => {
+    uni.openBluetoothAdapter({
+      success: () => {
+        registerAdapterStateListener()
+        uni.getBluetoothAdapterState({
+          success: (res) => resolve(!!res.available),
+          fail: () => resolve(true), // 能 open 即视为可用（部分机型无 state 接口）
+        })
+      },
+      fail: (err) => {
+        _log('warn', `蓝牙不可用: ${err?.errMsg || 'unknown'}`)
+        resolve(false)
+      },
+    })
+  })
+}
+
+/**
+ * 位置权限是否已授权（只读查询，不触发授权弹窗；授权动作由页面按设计稿弹窗引导）。
+ */
+export async function isLocationAuthed(): Promise<boolean> {
+  if (isH5()) return true
+  // #ifdef MP-WEIXIN
+  return new Promise((resolve) => {
+    try {
+      wx.getSetting({
+        success: (res) => resolve(res.authSetting['scope.userLocation'] !== false),
+        fail: () => resolve(true),
+      })
+    } catch {
+      resolve(true)
+    }
+  })
+  // #endif
+  // #ifndef MP-WEIXIN
+  return true
+  // #endif
+}
+
+// ===== 渐进式扫描（02-scan：扫描期间逐个出列表） =====
+
+export interface ScannedDevice {
+  deviceId: string
+  name: string
+  RSSI: number
+}
+
+let scanActive = false
+
+/**
+ * 开始扫描并过滤 BSYNC- 前缀设备。
+ * @param onDevice 每发现一台新设备回调一次（列表边扫边出）
+ * @param onDone   扫描窗口结束回调；found=0 时页面展示空态引导
+ * @param duration 扫描窗口，默认 6s
+ */
+export function startBleScan(
+  onDevice: (dev: ScannedDevice) => void,
+  onDone: (found: number) => void,
+  duration = 6000
+): void {
+  // H5（dev / E2E）：无真实蓝牙，返回设计稿示例设备，让全流程可走通；真机不受影响
+  if (isH5()) {
+    scanActive = true
+    const mock: ScannedDevice = { deviceId: 'h5-mock-ble-701001', name: 'BSYNC-701001', RSSI: -50 }
+    setTimeout(() => {
+      if (!scanActive) return
+      onDevice(mock)
+    }, 800)
+    setTimeout(() => {
+      if (!scanActive) return
+      scanActive = false
+      onDone(1)
+    }, duration)
+    return
+  }
+
+  _log('info', 'startBleScan 入口')
+  scanActive = true
+  const seen = new Set<string>()
+
+  const finish = () => {
+    if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null }
+    uni.stopBluetoothDevicesDiscovery({ fail: () => {} })
+    uni.offBluetoothDeviceFound()
+    if (scanActive) {
+      scanActive = false
+      onDone(seen.size)
+    }
+  }
+
+  uni.startBluetoothDevicesDiscovery({
+    allowDuplicatesKey: false,
+    success: () => {
+      uni.onBluetoothDeviceFound((res) => {
+        const devs = res.devices as unknown as {
+          deviceId: string; name: string; localName?: string; RSSI: number
+        }[]
+        for (const dev of devs) {
+          const devName = dev.name || dev.localName || ''
+          if (!devName.startsWith('BSYNC-') || seen.has(dev.deviceId)) continue
+          seen.add(dev.deviceId)
+          _log('info', `发现设备 ${devName} RSSI=${dev.RSSI}`)
+          onDevice({ deviceId: dev.deviceId, name: devName, RSSI: dev.RSSI })
+        }
+      })
+      discoveryTimer = setTimeout(finish, duration)
+    },
+    fail: (err) => {
+      _log('error', `startBluetoothDevicesDiscovery 失败: ${err?.errMsg}`)
+      discoveryTimer = setTimeout(finish, 0)
+    },
+  })
+}
+
+/** 中止扫描（页面卸载 / 用户离开扫描页时调用） */
+export function stopBleScan(): void {
+  if (!scanActive) return
+  scanActive = false
+  if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null }
+  if (isH5()) return
+  uni.stopBluetoothDevicesDiscovery({ fail: () => {} })
+  uni.offBluetoothDeviceFound()
+}
+
 // ===== BLE 连接状态监听 =====
 
 export function registerBleStateListener(
@@ -471,10 +607,9 @@ export function onWifiStatus(cb: (code: number) => void, deviceId?: string): voi
   })
 }
 
-/** H5 mock：模拟配网状态机推进（0→1→2→3→9） */
-export function startMockWifiStatusSequence(): void {
+/** H5 mock：模拟配网状态机推进（默认 0→1→2→3→9；可传入失败序列） */
+export function startMockWifiStatusSequence(seq: number[] = [0, 1, 2, 3, 9]): void {
   if (!isH5()) return
-  const seq = [0, 1, 2, 3, 9]
   let idx = 0
   if (wifiStatusTimer) clearInterval(wifiStatusTimer)
   wifiStatusTimer = setInterval(() => {

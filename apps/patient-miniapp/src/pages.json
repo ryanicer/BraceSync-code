@@ -38,7 +38,7 @@
     },
     {
       "path": "pages/wifi-setup/index",
-      "style": { "navigationBarTitleText": "WiFi配网" }
+      "style": { "navigationBarTitleText": "配置家庭 WiFi" }
     },
     {
       "path": "pages/anomaly/index",
