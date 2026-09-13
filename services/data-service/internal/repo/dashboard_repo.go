@@ -142,7 +142,7 @@ func scanTrendRows(rows pgx.Rows) ([]TrendRow, error) {
 const teamRankingSQL = `
 SELECT t.name,
        COUNT(DISTINCT p.patient_id) AS patient_count,
-       COALESCE(AVG(s.wear_minutes), 0) AS avg_wear_minutes,
+       COALESCE(AVG(LEAST(s.wear_minutes, 1440)), 0) AS avg_wear_minutes,
        CASE WHEN COUNT(s.stat_date) = 0 THEN 0
             ELSE COUNT(s.stat_date) FILTER (WHERE s.wear_minutes >= $2) * 100.0 /
                  COUNT(s.stat_date) END AS compliance_rate
@@ -208,7 +208,7 @@ func scanRankingRows(rows pgx.Rows, withTeamName bool) ([]RankingRow, error) {
 }
 
 const patientAvgWearSQL = `
-SELECT AVG(wear_minutes)
+SELECT AVG(LEAST(wear_minutes, 1440))
 FROM daily_wear_stats
 WHERE stat_date >= $1::date
 GROUP BY patient_id`
