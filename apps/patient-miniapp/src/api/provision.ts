@@ -37,8 +37,18 @@ export async function getProvisionKey(deviceId: string): Promise<ProvisionKeyRes
   }
 
   let result: ProvisionKeyResp
+
+  // H5 环境（dev/E2E）强制 mock：患者端 vite 默认 USE_MOCK=false 与技师端相反，
+  // 条件编译确保 H5 不打真 request（dev 无登录态会 401 炸整条链路）。
+  // #ifdef H5
+  {
+    await new Promise((r) => setTimeout(r, 250))
+    const key = 'a'.repeat(24) + Math.random().toString(16).slice(2, 10)
+    result = { provision_key_hex: key, expires_in_sec: 300 }
+  }
+  // #endif
+  // #ifndef H5
   if (USE_MOCK) {
-    // T182-MOCK: H5/E2E 环境绕过 request() throw，直接返回假 key
     await new Promise((r) => setTimeout(r, 250))
     const key = 'a'.repeat(24) + Math.random().toString(16).slice(2, 10)
     result = { provision_key_hex: key, expires_in_sec: 300 }
@@ -48,6 +58,7 @@ export async function getProvisionKey(deviceId: string): Promise<ProvisionKeyRes
       method: 'POST',
     })
   }
+  // #endif
 
   cache.set(deviceId, {
     provision_key_hex: result.provision_key_hex,
