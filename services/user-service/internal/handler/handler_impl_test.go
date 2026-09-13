@@ -47,6 +47,7 @@ type fakeStore struct {
 	patientsErr      error
 	patient          *repo.PatientRow
 	patientErr       error
+	lastPatientQuery string // 记录 GetPatient 入参，用于验证 self-scope 的查询键来源
 	teams            []repo.TeamRow
 	teamsErr         error
 	teamExists       bool
@@ -192,8 +193,15 @@ func (f *fakeStore) ListPatients(_ context.Context, flt repo.PatientFilter) ([]r
 	f.lastFilter = flt
 	return f.patients, f.patientTotal, f.patientsErr
 }
-func (f *fakeStore) GetPatient(_ context.Context, _ string) (*repo.PatientRow, error) {
-	return f.patient, f.patientErr
+func (f *fakeStore) GetPatient(_ context.Context, pid string) (*repo.PatientRow, error) {
+	f.lastPatientQuery = pid
+	if f.patientErr != nil {
+		return nil, f.patientErr
+	}
+	if f.patient != nil && f.patient.PatientID != pid {
+		return nil, nil // 忠实模拟按 patient_id 主键查询：ID 不符即无行
+	}
+	return f.patient, nil
 }
 func (f *fakeStore) ListTeams(_ context.Context) ([]repo.TeamRow, error) { return f.teams, f.teamsErr }
 func (f *fakeStore) TeamExists(_ context.Context, _ string) (bool, error) {
@@ -1263,15 +1271,15 @@ func TestListPlansAndSave(t *testing.T) {
 	e.store.patientErr = nil
 	e.store.doctorFound = true
 	e.store.doctorErr = errors.New("db")
-	w, _ = e.do(http.MethodPost, "/api/v1/patients/P1/orthosis-plans", map[string]string{"content": "x"}, nil)
+	w, _ = e.do(http.MethodPost, "/api/v1/patients/P20260001/orthosis-plans", map[string]string{"content": "x"}, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	e.store.doctorErr = nil
 	e.store.latestErr = errors.New("db")
-	w, _ = e.do(http.MethodPost, "/api/v1/patients/P1/orthosis-plans", map[string]string{"content": "x"}, nil)
+	w, _ = e.do(http.MethodPost, "/api/v1/patients/P20260001/orthosis-plans", map[string]string{"content": "x"}, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	e.store.latestErr = nil
 	e.store.createPlanEr = errors.New("db")
-	w, _ = e.do(http.MethodPost, "/api/v1/patients/P1/orthosis-plans", map[string]string{"content": "x"}, nil)
+	w, _ = e.do(http.MethodPost, "/api/v1/patients/P20260001/orthosis-plans", map[string]string{"content": "x"}, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
