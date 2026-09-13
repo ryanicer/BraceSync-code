@@ -67,8 +67,8 @@ helpers.runSpec(cfg, {
       const r = await apiCall(cfg.staging, '/api/v1/install-records', { token })
       recList = (r.body && r.body.data && r.body.data.list) || []
     } catch (e) { logStep(result, 'api-verify-list', false, e.message); return false }
-    const found = recList.some((x) => x.installId === instId || x.deviceId === DEVICE_ID || x.notes === suffix)
-    logStep(result, 'api-verify-list', found, { total: recList.length, instId })
+    const found = recList.some((x) => x.installId === instId || x.notes === suffix)
+    logStep(result, 'api-verify-list', found, { total: recList.length, instId, suffix })
 
     // [4] 小程序 UI 复核：records 页渲染真实列表并含新记录
     await helpers.withTimeout(mp.reLaunch('/pages/home/index'), 15_000, 'reLaunch home')
@@ -76,13 +76,13 @@ helpers.runSpec(cfg, {
     await helpers.withTimeout(mp.reLaunch('/pages/records/index'), 15_000, 'reLaunch records')
     await new Promise((r) => setTimeout(r, 5000))
     const route = await pageRoute(mp)
-    const uiFound = await helpers.withTimeout(mp.evaluate(function (devId) {
+    const uiFound = await helpers.withTimeout(mp.evaluate(function (uniq) {
       const ps = getCurrentPages()
       const page = ps[ps.length - 1]
       const raw = JSON.stringify(page.data || {})
-      return raw.indexOf(devId) >= 0
-    }, DEVICE_ID), 10_000, 'records render')
-    logStep(result, 'ui-records-render', route === 'pages/records/index' && !!uiFound, { route, uiFound: !!uiFound })
+      return raw.indexOf(uniq) >= 0
+    }, suffix), 10_000, 'records render')
+    logStep(result, 'ui-records-render', route === 'pages/records/index' && !!uiFound, { route, uiFound: !!uiFound, suffix })
 
     return f2 && found && route === 'pages/records/index' && !!uiFound
   },

@@ -4,7 +4,8 @@
 //   1) ensurePatientToken
 //   2) Node 侧 GET /api/v1/alerts?patientId= → 断言 200 + 列表结构（容忍空 list = 正常空态）
 //      GET /patients/:id/daily-wear 后端当前可能 404 → 明确容忍空态（记录 tolerated 而非 FAIL）
-//   3) 小程序 UI：switchTab 到 history(异常监测) → 断言路由正确 + 页面无异常
+//   3) 小程序 UI：switchTab 到 history(异常监测) → 断言路由正确（页面 data 字段级断言需 devtools
+//      侧核对编译后键名后再补，不伪造；已落 alerts 条数供人工比对）
 //
 // 用法：node e2e-miniapp/patient-history.spec.js
 const cfg = require('./real-miniapp.config')
@@ -26,12 +27,14 @@ helpers.runSpec(cfg, {
 
     // [2] Node 侧 alerts 断言（容忍空 list）
     let alertsOk = false
+    let alertsFromApi = null
     try {
       const q = `patientId=${encodeURIComponent(auth.patientId)}&page=1&pageSize=100`
       const r = await apiCall(cfg.staging, `/api/v1/alerts?${q}`, { token: auth.token })
       if (r.status === 200) {
         const list = (r.body && r.body.data && r.body.data.list) || []
         alertsOk = true
+        alertsFromApi = list.length
         logStep(result, 'api-alerts', true, { list: list.length })
       } else {
         logStep(result, 'api-alerts', false, `status=${r.status}`)
@@ -43,10 +46,10 @@ helpers.runSpec(cfg, {
     try {
       const r = await apiCall(cfg.staging, `/api/v1/patients/${encodeURIComponent(auth.patientId)}/daily-wear`, { token: auth.token })
       wearNote = `daily-wear -> ${r.status}` + (r.status === 404 ? '（后端未开放，容忍空态）' : '')
-      logStep(result, 'api-daily-wear', true, wearNote)
+      logStep(result, 'api-daily-wear(tolerated)', true, wearNote)
     } catch (e) {
       wearNote = 'daily-wear 请求异常，容忍空态'
-      logStep(result, 'api-daily-wear', true, e.message)
+      logStep(result, 'api-daily-wear(tolerated)', true, e.message)
     }
     void wearNote
 
@@ -54,14 +57,13 @@ helpers.runSpec(cfg, {
     await helpers.withTimeout(mp.switchTab('/pages/history/index'), 20_000, 'switchTab history')
     await new Promise((r) => setTimeout(r, 5000))
     const route = await helpers.pageRoute(mp)
-    const uiOk = await helpers.withTimeout(mp.evaluate(function () {
+    const uiRouteOk = await helpers.withTimeout(mp.evaluate(function () {
       const ps = getCurrentPages()
       const page = ps[ps.length - 1]
-      if (!page || page.route !== 'pages/history/index') return false
-      return JSON.stringify(page.data || {}) != null
-    }), 10_000, 'history render')
-    const f3 = route === 'pages/history/index' && !!uiOk
-    logStep(result, 'ui-history-render', f3, { route })
+      return !!page && page.route === 'pages/history/index'
+    }), 10_000, 'history route')
+    const f3 = route === 'pages/history/index' && !!uiRouteOk
+    logStep(result, 'ui-history-route', f3, { route, alertsFromApi })
 
     return alertsOk && f3
   },
