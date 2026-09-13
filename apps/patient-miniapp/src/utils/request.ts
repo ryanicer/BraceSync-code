@@ -1,4 +1,5 @@
 import { getToken, removeToken } from './token'
+import { logger } from './logger'
 
 // 环境变量通过 vite.config.ts 的 define 静态注入（绕开 uni 插件对 import.meta.env 的破坏）
 declare const __API_BASE_URL__: string
@@ -62,6 +63,19 @@ function emit(payload: Record<string, unknown>): void {
     // eslint-disable-next-line no-console
     console.warn(line)
   } catch {/* ignore */}
+  // T177: 同时上报到微信实时日志平台（frontend --app patient 可反查）
+  const { event, url, method, error, elapsedMs } = payload as {
+    event: string; url: string; method?: string; error?: unknown; elapsedMs?: number
+  }
+  const tag = `[HTTP] ${event?.toUpperCase?.() ?? event}`
+  const brief = { url, method: method ?? 'GET', code: payload.code, status: payload.statusCode, elapsedMs }
+  if (event === 'ok') {
+    logger.info(tag, brief)
+  } else if (event === 'biz-error') {
+    logger.warn(tag, { ...brief, error })
+  } else {
+    logger.error(tag, { ...brief, error })
+  }
   try {
     // 仅在 H5 / CI 下生效；小程序 window 可能不可写
     // @ts-ignore
