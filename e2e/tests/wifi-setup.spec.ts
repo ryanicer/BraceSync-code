@@ -13,22 +13,13 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByText('WiFi 配网')).toBeVisible()
 })
 
-test('4 步引导展示', async ({ page }) => {
-  await expect(page.locator('.steps .step')).toHaveCount(4)
-  for (const label of ['设备开机', '连接设备热点', '配置WiFi', '完成绑定']) {
+test('5 步引导展示', async ({ page }) => {
+  await expect(page.locator('.steps .step')).toHaveCount(5)
+  for (const label of ['收到', '连AP', '取IP', '探测', '成功']) {
     await expect(page.locator('.steps .step-label', { hasText: label })).toBeVisible()
   }
   // 当前处于第 1 步
   await expect(page.locator('.steps .step').first()).toHaveClass(/step-active/)
-})
-
-test('设备热点名称展示与复制', async ({ context, page }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  await expect(page.locator('.hotspot-name')).toHaveText(HOTSPOT_NAME)
-  await page.locator('.btn-copy').click()
-  await expect
-    .poll(async () => page.evaluate(() => navigator.clipboard.readText()), { timeout: 5_000 })
-    .toBe(HOTSPOT_NAME)
 })
 
 test('WiFi 列表选择与手动输入', async ({ page }) => {
@@ -69,16 +60,16 @@ test('开始配网到配网成功全状态', async ({ page }) => {
   await fillUniInput(page.locator('uni-input.password-input input'), 'secret123')
   await page.locator('.btn-primary', { hasText: '开始配网' }).click()
 
-  // Step 3：配置进度卡片
-  await expect(page.locator('.progress-card')).toBeVisible()
-  await expect(page.locator('.progress-text')).toHaveText('正在配置 WiFi...')
-  await expect(page.locator('.progress-step')).toContainText('连接设备热点')
+  // 步骤条推进到 3（探测）以上，然后进入成功态
+  await expect(page.locator('.steps .step').nth(0)).toHaveClass(/step-done/, { timeout: 10_000 })
+  await expect(page.locator('.steps .step').nth(1)).toHaveClass(/step-done/, { timeout: 10_000 })
 
-  // 进度推进到完成（约 6s）后进入 Step 4 成功页（再 +0.8s）
-  await expect(page.locator('.success-text')).toHaveText('配网成功!', { timeout: 30_000 })
-  await expect(page.locator('.success-sub')).toContainText(HOTSPOT_NAME)
+  // 成功态（步骤条全部 done + 成功文案）
+  await expect(page.locator('.steps .step').nth(4)).toHaveClass(/step-done/, { timeout: 20_000 })
+  await expect(page.locator('.success-text')).toHaveText('配网成功', { timeout: 30_000 })
 
   // 返回设备管理（有真实历史栈，navigateBack 生效）
-  await page.locator('.btn-primary', { hasText: '返回设备管理' }).click()
-  await page.waitForURL('**/pages/device/**', { timeout: 20_000 })
+  await page.locator('.auto-return-tip').waitFor({ timeout: 5000 })
+  // 3s 自动返回，等导航
+  await page.waitForURL('**/pages/device/**', { timeout: 10_000 })
 })

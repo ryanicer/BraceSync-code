@@ -94,7 +94,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useDeviceStore } from '../../stores/device'
 import { getProvisionKey } from '../../api/provision'
-import { reportWifiStatus } from '../../api/device'
+import { reportDeviceWifi } from '../../api/device'
 import { encryptWifiPayload } from '../../utils/aes-ctr'
 import {
   initBluetooth,
@@ -271,11 +271,11 @@ async function handleSuccess(ssid: string) {
   stopMockWifiStatusSequence()
   provisioning.value = false
 
-  // 云端 WiFi 状态回写（患者端 reportWifiStatus）
+  // 云端 WiFi 状态回写（对齐技师端 POST /devices/:id/wifi { ssid }）
   try {
     const deviceId = deviceStore.currentDevice?.id || ''
     if (deviceId) {
-      await reportWifiStatus({ deviceId, status: 'success', ssid })
+      await reportDeviceWifi(deviceId, ssid)
     }
   } catch (e) {
     // 回写失败不阻断配网成功状态，仅提示

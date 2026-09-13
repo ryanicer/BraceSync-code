@@ -44,14 +44,13 @@ test('患者端核心全链路：微信登录到配网成功', async ({ page }) 
   // ===== 5. wifi-setup：配网到成功 =====
   await page.locator('.action-btn', { hasText: '开始添加设备' }).click()
   await page.waitForURL('**/pages/wifi-setup/**', { timeout: 10_000 })
-  await expect(page.locator('.steps .step')).toHaveCount(4)
+  await expect(page.locator('.steps .step')).toHaveCount(5)
   await fillUniInput(page.locator('.manual-wifi input'), 'My_Custom_WiFi')
   await fillUniInput(page.locator('uni-input.password-input input'), 'secret123')
   await page.locator('.btn-primary', { hasText: '开始配网' }).click()
-  await expect(page.locator('.success-text')).toHaveText('配网成功!', { timeout: 30_000 })
+  await expect(page.locator('.success-text')).toHaveText('配网成功', { timeout: 30_000 })
 
-  // ===== 6. 返回设备管理 =====
-  await page.locator('.btn-primary', { hasText: '返回设备管理' }).click()
+  // ===== 6. 自动返回设备管理 =====
   await page.waitForURL('**/pages/device/**', { timeout: 10_000 })
   await expect(page.locator('.device-card')).toBeVisible()
 })
