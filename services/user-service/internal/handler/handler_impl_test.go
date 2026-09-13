@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,14 +93,15 @@ type fakeStore struct {
 	configsErr       error
 	upsertErr        error
 
-	lastUpsert    []repo.ConfigKV
-	lastUpsertBy  string
-	lastFilter    repo.PatientFilter
-	lastProcessR  *string
-	lastTechInput repo.TechInput
-	lastPermJSON  string
-	lastReply     string
-	lastToggle    string
+	lastUpsert       []repo.ConfigKV
+	lastUpsertBy     string
+	lastFilter       repo.PatientFilter
+	lastProcessR     *string
+	lastTechInput    repo.TechInput
+	lastPermJSON     string
+	lastReply        string
+	lastToggle       string
+	lastFeelingQuery string
 
 	techLogin       *repo.TechLoginRow
 	techLoginErr    error
@@ -246,7 +248,8 @@ func (f *fakeStore) CreatePlan(_ context.Context, _, _, _, version string) (*rep
 	}
 	return f.createdPlan, f.createPlanEr
 }
-func (f *fakeStore) ListFeelingLogs(_ context.Context, _ string) ([]repo.FeelingLogRow, error) {
+func (f *fakeStore) ListFeelingLogs(_ context.Context, patientID string) ([]repo.FeelingLogRow, error) {
+	f.lastFeelingQuery = patientID
 	return f.feelings, f.feelingsErr
 }
 func (f *fakeStore) ReplyFeelingLog(_ context.Context, _ int64, reply string) (bool, error) {
@@ -1282,7 +1285,8 @@ func TestFeelingLogsAndReply(t *testing.T) {
 		ComfortScore: &score, DiscomfortAreas: nil, Notes: nil,
 		ReplyContent: &reply, ReplyTime: &replyTime,
 	}}
-	w, resp := e.do(http.MethodGet, "/api/v1/patients/P1/feeling-logs", nil, nil)
+	admin := map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "ADM001"}
+	w, resp := e.do(http.MethodGet, "/api/v1/patients/P1/feeling-logs", nil, admin)
 	assert.Equal(t, http.StatusOK, w.Code)
 	var list []model.FeelingLogDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &list))
@@ -1293,7 +1297,7 @@ func TestFeelingLogsAndReply(t *testing.T) {
 	assert.Empty(t, list[0].DiscomfortAreas)
 
 	e.store.feelingsErr = errors.New("db")
-	w, _ = e.do(http.MethodGet, "/api/v1/patients/P1/feeling-logs", nil, nil)
+	w, _ = e.do(http.MethodGet, "/api/v1/patients/P1/feeling-logs", nil, admin)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	e.store.feelingsErr = nil
 
@@ -1319,6 +1323,116 @@ func TestFeelingLogsAndReply(t *testing.T) {
 	e.store.replyErr = errors.New("db")
 	w, _ = e.do(http.MethodPost, "/api/v1/feeling-logs/5/reply", map[string]string{"replyContent": "x"}, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestListFeelingLogs_HorizontalAuthz T184 水平鉴权：患者仅可查本人，admin 可查任意。
+// 口径同 data-service getDailyWear / 本包 listReviewRecords。
+func TestListFeelingLogs_HorizontalAuthz(t *testing.T) {
+	e := newEnv(t, false, false)
+	e.store.feelings = []repo.FeelingLogRow{{
+		LogID: 5, PatientID: "P001", LogDate: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+	}}
+
+	// 患者查本人 → 200
+	w, resp := e.do(http.MethodGet, "/api/v1/patients/P001/feeling-logs", nil,
+		map[string]string{"X-Role": "patient", "X-User-Id": "P001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.CodeOK, resp.Code)
+	assert.Equal(t, "P001", e.store.lastFeelingQuery)
+
+	// 患者查他人 → 403，且不得触达 DB
+	e.store.lastFeelingQuery = ""
+	w, resp = e.do(http.MethodGet, "/api/v1/patients/P002/feeling-logs", nil,
+		map[string]string{"X-Role": "patient", "X-User-Id": "P001"})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, model.CodeForbidden, resp.Code)
+	assert.Empty(t, e.store.lastFeelingQuery, "越权请求必须在查库前被拒")
+
+	// 缺失 X-User-Id → 403（fail-closed）
+	w, resp = e.do(http.MethodGet, "/api/v1/patients/P001/feeling-logs", nil,
+		map[string]string{"X-Role": "patient"})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, model.CodeForbidden, resp.Code)
+
+	// admin 查任意患者 → 200
+	w, resp = e.do(http.MethodGet, "/api/v1/patients/P002/feeling-logs", nil,
+		map[string]string{"X-Role": "ROLE_ADMIN", "X-User-Id": "ADM001"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, model.CodeOK, resp.Code)
+
+	// 医生查他人 → 403（本卡仅 ADMIN 放行；医生团队范围读需 PM 另裁）
+	w, resp = e.do(http.MethodGet, "/api/v1/patients/P002/feeling-logs", nil,
+		map[string]string{"X-Role": "ROLE_DOCTOR", "X-User-Id": "DOC001"})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, model.CodeForbidden, resp.Code)
+}
+
+// doAsJWT 以真实 TCP 请求访问 addr，身份头按网关 §5.2 契约由该 JWT 校验后的载荷注入
+// （X-User-Id = claims.Subject、X-Role = claims.RoleID），返回状态码与原始响应体。
+func doAsJWT(t *testing.T, addr, path, jwt string, signer *token.Signer) (int, string) {
+	t.Helper()
+	claims, err := signer.Verify(jwt)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodGet, addr+path, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("X-User-Id", claims.Subject)
+	req.Header.Set("X-Role", claims.RoleID)
+	res, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	return res.StatusCode, strings.TrimSpace(string(body))
+}
+
+// TestFeelingLogs_HorizontalAuthz_RealWire T184 验收证据：真实 TCP 链路上的本人 200 / 越权 403。
+//
+// 与 TestListFeelingLogs_HorizontalAuthz 的区别：本用例经 httptest.NewServer 起真实监听，
+// JWT 由生产同款 token.Signer 签发，X-User-Id 取自该 JWT 校验后的 sub（复刻网关注入路径），
+// t.Logf 输出的 curl 命令与响应体即脱敏证据原文（CI -v 日志可查）。
+func TestFeelingLogs_HorizontalAuthz_RealWire(t *testing.T) {
+	e := newEnv(t, true, false)
+	score := 4.0
+	e.store.feelings = []repo.FeelingLogRow{{
+		LogID: 5, PatientID: "P0000001", LogDate: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+		ComfortScore: &score,
+	}}
+
+	srv := httptest.NewServer(e.h.Router())
+	t.Cleanup(srv.Close)
+
+	ownTk, err := e.signer.SignWithTeam("P0000001", "患者甲", "", "patient")
+	require.NoError(t, err)
+
+	const ownPath = "/api/v1/patients/P0000001/feeling-logs"
+	const victimPath = "/api/v1/patients/P0000002/feeling-logs"
+
+	// A：本人 token 查本人 → 200 + 数据
+	codeA, bodyA := doAsJWT(t, srv.URL, ownPath, ownTk, e.signer)
+	t.Logf("[T184-wire] A 本人  curl -s -X GET '%s%s' -H 'Authorization: Bearer <JWT sub=P0000001>' -H 'X-User-Id: P0000001' -H 'X-Role: patient'\n%s",
+		srv.URL, ownPath, bodyA)
+	assert.Equal(t, http.StatusOK, codeA)
+	assert.Contains(t, bodyA, "comfortScore")
+
+	// B：本人 token 枚举他人 → 403 且响应体不得泄漏任何日志字段
+	codeB, bodyB := doAsJWT(t, srv.URL, victimPath, ownTk, e.signer)
+	t.Logf("[T184-wire] B 越权  curl -s -X GET '%s%s' -H 'Authorization: Bearer <JWT sub=P0000001>' -H 'X-User-Id: P0000001' -H 'X-Role: patient'\n%s",
+		srv.URL, victimPath, bodyB)
+	assert.Equal(t, http.StatusForbidden, codeB)
+	assert.NotContains(t, bodyB, "comfortScore", "403 响应体不得泄漏日志数据")
+	assert.NotContains(t, bodyB, "P0000002")
+
+	// C：无任何身份头（等价网关未注入）→ 403 fail-closed
+	req, err := http.NewRequest(http.MethodGet, srv.URL+ownPath, nil)
+	require.NoError(t, err)
+	res, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer res.Body.Close()
+	bodyC, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	t.Logf("[T184-wire] C 无身份头  curl -s -X GET '%s%s'\n%s", srv.URL, ownPath, strings.TrimSpace(string(bodyC)))
+	assert.Equal(t, http.StatusForbidden, res.StatusCode)
 }
 
 // ─────────────────────────────────────────────────────────────
