@@ -60,7 +60,7 @@ func TestCreatePatient_KNOWN_RED(t *testing.T) {
 			TeamID:    strPtr("TEAM01"),
 			DoctorID:  strPtr("D0001"),
 		}
-		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients", body, nil)
+		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients", body, adminHdr)
 		assert.Equal(t, http.StatusOK, w.Code, "成功应返回 200")
 		assert.Equal(t, model.CodeOK, resp.Code)
 		var dto model.AdminPatientDTO
@@ -81,7 +81,7 @@ func TestCreatePatient_KNOWN_RED(t *testing.T) {
 		e.store.createdPatient = nil
 		e.store.createPatientErr = nil
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients",
-			model.CreatePatientRequestDTO{Phone: "13800138000"}, nil)
+			model.CreatePatientRequestDTO{Phone: "13800138000"}, adminHdr)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, model.CodeInvalidParam, resp.Code)
 	})
@@ -92,7 +92,7 @@ func TestCreatePatient_KNOWN_RED(t *testing.T) {
 		e.store.createdPatient = nil
 		e.store.createPatientErr = nil
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients",
-			model.CreatePatientRequestDTO{Name: "无手机号患者"}, nil)
+			model.CreatePatientRequestDTO{Name: "无手机号患者"}, adminHdr)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, model.CodeInvalidParam, resp.Code)
 	})
@@ -103,7 +103,7 @@ func TestCreatePatient_KNOWN_RED(t *testing.T) {
 		e.store.createdPatient = nil
 		e.store.createPatientErr = nil
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients",
-			model.CreatePatientRequestDTO{Name: "格式非法患者", Phone: "123"}, nil)
+			model.CreatePatientRequestDTO{Name: "格式非法患者", Phone: "123"}, adminHdr)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, model.CodeInvalidParam, resp.Code)
 	})
@@ -114,7 +114,7 @@ func TestCreatePatient_KNOWN_RED(t *testing.T) {
 		e.store.createdPatient = nil
 		e.store.createPatientErr = repo.ErrPatientExists
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients",
-			model.CreatePatientRequestDTO{Name: "重复手机号患者", Phone: "13800138000"}, nil)
+			model.CreatePatientRequestDTO{Name: "重复手机号患者", Phone: "13800138000"}, adminHdr)
 		assert.Equal(t, http.StatusConflict, w.Code)
 		assert.Equal(t, model.CodeConflict, resp.Code)
 	})
@@ -141,7 +141,7 @@ func TestAssignPatientTeam_KNOWN_RED(t *testing.T) {
 		e.store.assignedPatient = &p
 		e.store.assignPatientErr = nil
 		body := model.AssignTeamRequestDTO{TeamID: "TEAM02"}
-		w, resp := e.do(http.MethodPut, "/api/v1/admin/patients/P20260001/team", body, nil)
+		w, resp := e.do(http.MethodPut, "/api/v1/admin/patients/P20260001/team", body, adminHdr)
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, model.CodeOK, resp.Code)
 		var dto model.AdminPatientDTO
@@ -160,7 +160,7 @@ func TestAssignPatientTeam_KNOWN_RED(t *testing.T) {
 		e.store.assignedPatient = nil
 		e.store.assignPatientErr = repo.ErrPatientNotFound
 		body := model.AssignTeamRequestDTO{TeamID: "TEAM01"}
-		w, resp := e.do(http.MethodPut, "/api/v1/admin/patients/P-NOTEXIST/team", body, nil)
+		w, resp := e.do(http.MethodPut, "/api/v1/admin/patients/P-NOTEXIST/team", body, adminHdr)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 		assert.Equal(t, model.CodeNotFound, resp.Code)
 	})
@@ -171,7 +171,7 @@ func TestAssignPatientTeam_KNOWN_RED(t *testing.T) {
 		e.store.assignedPatient = nil
 		e.store.assignPatientErr = nil
 		w, resp := e.do(http.MethodPut, "/api/v1/admin/patients/P20260001/team",
-			model.AssignTeamRequestDTO{}, nil)
+			model.AssignTeamRequestDTO{}, adminHdr)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, model.CodeInvalidParam, resp.Code)
 	})
@@ -203,7 +203,7 @@ func TestBatchBindPatients_KNOWN_RED(t *testing.T) {
 			PatientIDs: []string{"P001", "P002", "P003"},
 			TeamID:     "TEAM01",
 		}
-		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients/batch-bind", body, nil)
+		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients/batch-bind", body, adminHdr)
 		assert.Equal(t, http.StatusOK, w.Code, "部分失败 HTTP 仍 200")
 		assert.Equal(t, model.CodeOK, resp.Code)
 		var dto model.BatchBindResultDTO
@@ -224,7 +224,7 @@ func TestBatchBindPatients_KNOWN_RED(t *testing.T) {
 		e.store.batchBindResult = nil
 		e.store.batchBindErr = nil
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients/batch-bind",
-			model.BatchBindRequestDTO{TeamID: "TEAM01"}, nil)
+			model.BatchBindRequestDTO{TeamID: "TEAM01"}, adminHdr)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, model.CodeInvalidParam, resp.Code)
 	})
@@ -235,7 +235,7 @@ func TestBatchBindPatients_KNOWN_RED(t *testing.T) {
 		e.store.batchBindResult = nil
 		e.store.batchBindErr = nil
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients/batch-bind",
-			model.BatchBindRequestDTO{PatientIDs: []string{"P001"}}, nil)
+			model.BatchBindRequestDTO{PatientIDs: []string{"P001"}}, adminHdr)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Equal(t, model.CodeInvalidParam, resp.Code)
 	})

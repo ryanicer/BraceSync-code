@@ -90,6 +90,7 @@ func (e *adminMaintTestEnv) doUnbindWechat(patientID, authToken string) (*httpte
 	w.Header.Set("Content-Type", "application/json")
 	w.Header.Set("Authorization", "Bearer "+authToken)
 	w.Header.Set("X-User-Id", testSuperAdminID)
+	w.Header.Set("X-Role", roleAdmin) // T190：admin-only 写端点，模拟网关注入的角色头
 
 	rec := httptest.NewRecorder()
 	e.h.Router().ServeHTTP(rec, w)
@@ -111,6 +112,7 @@ func (e *adminMaintTestEnv) doPutPhone(patientID, newPhone, reason, authToken st
 	w.Header.Set("Content-Type", "application/json")
 	w.Header.Set("Authorization", "Bearer "+authToken)
 	w.Header.Set("X-User-Id", testSuperAdminID)
+	w.Header.Set("X-Role", roleAdmin) // T190：admin-only 写端点，模拟网关注入的角色头
 
 	rec := httptest.NewRecorder()
 	e.h.Router().ServeHTTP(rec, w)

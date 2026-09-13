@@ -10,8 +10,19 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 )
 
+// requireAdminRole T190：后台患者管理写端点的 handler 层角色判定（纵深防御）。
+// gateway RBAC 矩阵已在入口拦下非 admin，此处兜底「绕过网关直连服务」的请求。
+// fail-closed：X-Role 缺失即视为无权限。
+func requireAdminRole(c *gin.Context) bool {
+	return c.GetHeader(headerRole) == roleAdmin
+}
+
 // unbindWechat T085：管理端解绑患者微信（wx_openid 置 NULL + 审计）。
 func (h *Handler) unbindWechat(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can unbind patient wechat"))
+		return
+	}
 	patientID := c.Param("patientId")
 	if patientID == "" {
 		fail(c, model.ErrInvalidParam("patientId is required"))
@@ -45,6 +56,10 @@ type updatePhoneRequest struct {
 
 // updatePatientPhone T085：管理端改手机号（格式校验 → hash 冲突 409 → 同步更新 enc+hash + 审计）。
 func (h *Handler) updatePatientPhone(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can update patient phone"))
+		return
+	}
 	patientID := c.Param("patientId")
 	if patientID == "" {
 		fail(c, model.ErrInvalidParam("patientId is required"))
