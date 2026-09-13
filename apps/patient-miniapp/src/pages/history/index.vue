@@ -187,7 +187,7 @@ async function loadPressure() {
     const res = await request<PaginatedResponse<Alert>>({
       url: '/api/v1/alerts',
       method: 'GET',
-      data: { patientId, page: 1, pageSize: 200 },
+      data: { patientId, page: 1, pageSize: 100 },
     })
     pressureData.value = alertsToPressureAnomalies(res?.list ?? [])
   } catch (e: unknown) {
