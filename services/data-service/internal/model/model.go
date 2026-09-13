@@ -410,7 +410,8 @@ type RealtimeSnapshot struct {
 	TodayHours      float64             `json:"todayHours"`
 	MaxPressure     float64             `json:"maxPressure"`
 	MaxPoint        string              `json:"maxPoint"`
-	Events          int                 `json:"events"` // 今日异常值
+	Battery         int                 `json:"battery"` // 最新帧电量 0-100，来自 Redis rt:frame
+	Events          int                 `json:"events"`  // 今日异常值
 	PressureRecords []PressureRecordDTO `json:"pressureRecords"`
 	Alerts          []any               `json:"alerts"`          // 今日告警摘要，明细由 alert-service 提供
 	PressureHeatmap []HeatmapPoint      `json:"pressureHeatmap"` // 热力图 20 点（独立数据源，有 seed 兜底）

@@ -473,6 +473,14 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 		snapshot.Status = "online"
 	}
 
+	// 电池电量：pressure_records 表无 battery 列，额外读 Redis rt:frame 取
+	if frameJSON, err := s.cache.GetRealtimeFrame(ctx, deviceID); err == nil && frameJSON != "" {
+		var rf realtimeFrame
+		if json.Unmarshal([]byte(frameJSON), &rf) == nil {
+			snapshot.Battery = rf.Battery
+		}
+	}
+
 	return snapshot, nil
 }
 
@@ -519,6 +527,7 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 				Points:     model.BuildSensorPoints(points),
 				UploadTime: rf.UploadTime.UTC().Format(time.RFC3339),
 			})
+			snapshot.Battery = rf.Battery
 		} else {
 			log.Warn().Err(jsonErr).Str("device_id", deviceID).Msg("invalid rt:frame json, heatmap fall back to seed")
 		}
