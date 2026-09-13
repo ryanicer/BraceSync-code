@@ -7,24 +7,7 @@
       </view>
     </view>
 
-    <!-- 异常事件入口（T019B：导航至告警详情页） -->
-    <view class="section" style="margin-top: 8rpx;">
-      <view class="anomaly-entry" @click="goAnomaly">
-        <view class="anomaly-entry-left">
-          <text class="anomaly-entry-icon">🔔</text>
-          <text class="anomaly-entry-text">异常事件</text>
-        </view>
-        <text class="anomaly-entry-arrow">›</text>
-      </view>
-    </view>
-
-    <view class="section" style="margin-top: 16rpx;">
-      <view class="segmented">
-        <view :class="['seg-btn', { 'seg-active': segment === 'day' }]" @click="switchSegment('day')"><text>日</text></view>
-        <view :class="['seg-btn', { 'seg-active': segment === 'week' }]" @click="switchSegment('week')"><text>周</text></view>
-        <view :class="['seg-btn', { 'seg-active': segment === 'month' }]" @click="switchSegment('month')"><text>月</text></view>
-      </view>
-    </view>
+    <!-- 异常事件入口（T019B：导航至告警详情页）— 暂时隐藏 -->
 
     <view class="hero">
       <text class="hero-label">{{ activePoint ? activePoint.pointId + ' · 当前压力值' : '暂无数据' }}</text>
@@ -39,8 +22,8 @@
         </view>
         <view class="hero-meta-right">
           <text class="battery-icon">🔋</text>
-          <text class="meta-bold">85%</text>
-          <view class="dot dot-green"></view>
+          <text class="meta-bold">{{ battery > 0 ? battery + '%' : '—' }}</text>
+          <view :class="['dot', battery >= 20 ? 'dot-green' : 'dot-red']"></view>
         </view>
       </view>
     </view>
@@ -57,10 +40,18 @@
       </view>
     </view>
 
+    <view class="section" style="margin-top: 16rpx;">
+      <view class="segmented">
+        <view :class="['seg-btn', { 'seg-active': segment === 'day' }]" @click="switchSegment('day')"><text>日</text></view>
+        <view :class="['seg-btn', { 'seg-active': segment === 'week' }]" @click="switchSegment('week')"><text>周</text></view>
+        <view :class="['seg-btn', { 'seg-active': segment === 'month' }]" @click="switchSegment('month')"><text>月</text></view>
+      </view>
+    </view>
+
     <view class="section trend-section">
       <text class="section-title">{{ activePoint ? activePoint.pointId : '' }} · {{ segLabel }}压力趋势</text>
       <view class="card curve-card">
-        <PressureCurve :data="trendData" :labels="trendLabels" :max-value="75" :height="180" />
+        <PressureCurve :data="trendData" :labels="trendLabels" :max-value="trendMaxValue" :time-range="trendTimeRange" :height="180" />
       </view>
     </view>
   </view>
@@ -69,12 +60,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { onPullDownRefresh } from '@dcloudio/uni-app'
-// T031 组件迁移：3 个压力组件已移至患者端本地（跨端 view/text/canvas 写法，H5/mp 通用）。
-// 全仓库仅患者端使用，故移出共享包，单份维护，无需 #ifdef 双份导入。
 import PressureHeatmap from '../../components/PressureHeatmap.vue'
 import PressureCurve from '../../components/PressureCurve.vue'
 import type { PressureRecord, SensorPoint } from '@bracesync/shared-types'
 import { request } from '../../utils/request'
+import { logger } from '../../utils/logger'
 import { useAuthStore } from '../../stores/auth'
 
 // 后端 data-service RealtimeSnapshot（返回结构）简化接口描述
@@ -84,6 +74,7 @@ interface RealtimeSnapshot {
   todayHours?: number
   maxPressure?: number
   maxPoint?: string
+  battery?: number
   pressureRecords?: PressureRecord[]
   events?: number
 }
@@ -103,6 +94,7 @@ const sensorPoints = ref<SensorPoint[]>([])
 const activeIndex = ref(-1)
 const segment = ref<'day' | 'week' | 'month'>('day')
 const loading = ref(false)
+const battery = ref(0)
 
 const activePoint = computed(() =>
   activeIndex.value >= 0 ? sensorPoints.value[activeIndex.value] : undefined
@@ -122,9 +114,99 @@ const trendLabels = computed(() => {
   return ['1日', '8日', '15日', '22日', '30日']
 })
 
-// 根据 period 参数调用 records 端点，生成所选分段的 maxPressure 趋势
+// 趋势图 Y 轴 max：有数据时向上取整到 15N 刻度，确保曲线不贴顶
+const trendMaxValue = computed(() => {
+  const values = trendData.value.map(p => p.value).filter(v => v > 0)
+  if (values.length === 0) return 75
+  const max = Math.max(...values)
+  return Math.max(75, Math.ceil(max / 15) * 15)
+})
+
+// 趋势图时间范围（毫秒），用于 PressureCurve 按真实时间定位 X 坐标
+const trendTimeRange = computed(() => {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+  const d = now.getDate()
+  if (segment.value === 'day') {
+    const start = new Date(y, m, d, 0, 0, 0).getTime()
+    return { start, end: start + 24 * 60 * 60 * 1000 }
+  }
+  if (segment.value === 'week') {
+    const weekday = now.getDay() === 0 ? 7 : now.getDay()
+    const monday = new Date(y, m, d - (weekday - 1), 0, 0, 0)
+    return { start: monday.getTime(), end: monday.getTime() + 7 * 24 * 60 * 60 * 1000 }
+  }
+  const first = new Date(y, m, 1, 0, 0, 0)
+  const nextMonth = new Date(y, m + 1, 1, 0, 0, 0)
+  return { start: first.getTime(), end: nextMonth.getTime() }
+})
+
+// 取某帧中指定点的压力值（找不到则返回最大值兜底）
+function getPointValue(r: PressureRecord, pointId?: string): number {
+  if (pointId) {
+    const p = (r.points || []).find(pt => pt.pointId === pointId)
+    if (p) return p.pressureValue
+  }
+  let maxP = 0
+  for (const p of r.points || []) {
+    if (p.pressureValue > maxP) maxP = p.pressureValue
+  }
+  return maxP
+}
+
+// 按 period 分桶聚合：day=30 分钟桶，week/month=1 天桶，取每桶平均值
+function aggregateByPeriod(records: PressureRecord[], pointId: string | undefined, period: 'day' | 'week' | 'month') {
+  if (records.length === 0) return []
+  const bucketMs = period === 'day' ? 30 * 60 * 1000 : 24 * 60 * 60 * 1000
+  const buckets = new Map<number, { sum: number; count: number }>()
+  for (const r of records) {
+    const ts = new Date(r.timestamp).getTime()
+    if (isNaN(ts)) continue
+    const key = Math.floor(ts / bucketMs) * bucketMs
+    const val = getPointValue(r, pointId)
+    if (val <= 0) continue
+    const b = buckets.get(key) || { sum: 0, count: 0 }
+    b.sum += val
+    b.count++
+    buckets.set(key, b)
+  }
+  return Array.from(buckets.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([ts, b]) => ({ timestamp: new Date(ts).toISOString(), value: parseFloat((b.sum / b.count).toFixed(2)) }))
+    .filter(x => x.value > 0)
+}
+
+// 分页采样：week/month 取多页覆盖全周期，day 一页足够
+async function fetchRecordsByPeriod(patientId: string, period: 'day' | 'week' | 'month', dateStr: string): Promise<PressureRecord[]> {
+  const PAGE_SIZE = 100
+  if (period === 'day') {
+    const raw = await request<HistoryPage | PressureRecord[]>({
+      url: `/api/v1/patients/${patientId}/records`,
+      method: 'GET',
+      data: { period, date: dateStr, pageSize: PAGE_SIZE },
+    })
+    return Array.isArray(raw) ? raw : (raw?.list ?? [])
+  }
+  // week/month：最多取 5 页（500 条），均匀采样覆盖时间段
+  const all: PressureRecord[] = []
+  for (let page = 1; page <= 5; page++) {
+    const raw = await request<HistoryPage | PressureRecord[]>({
+      url: `/api/v1/patients/${patientId}/records`,
+      method: 'GET',
+      data: { period, date: dateStr, page, pageSize: PAGE_SIZE },
+    })
+    const pageRecords = Array.isArray(raw) ? raw : (raw?.list ?? [])
+    all.push(...pageRecords)
+    if (pageRecords.length < PAGE_SIZE) break
+  }
+  return all
+}
+
+// 根据 period 参数调用 records 端点，按选中点 + 分桶聚合生成趋势
 async function loadTrend(baseVal: number) {
   const patientId = authStore.patientId
+  const pointId = activePoint.value?.pointId
   if (!patientId) {
     trendData.value = []
     return
@@ -135,34 +217,19 @@ async function loadTrend(baseVal: number) {
   const dd = String(today.getDate()).padStart(2, '0')
   const dateStr = `${yyyy}-${mm}-${dd}`
   try {
-    // 真实后端返回 HistoryPage{ list, total, page, pageSize }；
-    // 防御式同时兼容裸数组（旧 mock 或前端自造）
-    const raw = await request<HistoryPage | PressureRecord[]>({
-      url: `/api/v1/patients/${patientId}/records`,
-      method: 'GET',
-      data: { period: segment.value, date: dateStr },
-    })
-    const records: PressureRecord[] = Array.isArray(raw) ? raw : (raw?.list ?? [])
+    const records = await fetchRecordsByPeriod(patientId, segment.value, dateStr)
+    logger.info('[T178] loadTrend', { period: segment.value, pointId, recordCount: records.length })
     if (records.length > 0) {
-      trendData.value = records
-        .slice(0, 48)
-        .map((r) => {
-          // 计算该帧 maxPressure（取 points 数组最大值）
-          let maxP = 0
-          for (const p of r.points || []) {
-            if (p.pressureValue > maxP) maxP = p.pressureValue
-          }
-          return {
-            timestamp: r.timestamp,
-            value: parseFloat(maxP.toFixed(2)),
-          }
-        })
-        .filter(x => x.value > 0)
-      return
+      trendData.value = aggregateByPeriod(records, pointId, segment.value)
+      logger.info('[T178] trend 聚合后', { 点数: trendData.value.length, 首条: trendData.value[0], 末条: trendData.value[trendData.value.length - 1] })
+      if (trendData.value.length > 0) return
     }
-    // 空记录：fallback 给当前 maxPressure 单点以避免图表空
+    // 空记录或聚合后空：fallback 给当前单点避免图表空
     trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
-  } catch {
+    logger.warn('[T178] loadTrend: records 为空或聚合后无点, fallback', { baseVal, pointId })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    logger.error('[T178] loadTrend catch', { msg, pointId })
     trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
   }
 }
@@ -183,6 +250,7 @@ async function loadData() {
       method: 'GET',
     })
     const recs = snap?.pressureRecords ?? []
+    battery.value = snap?.battery ?? 0
     const points: SensorPoint[] = recs.length && recs[0].points ? recs[0].points : []
     sensorPoints.value = points
     let maxIdx = -1
@@ -262,6 +330,7 @@ onPullDownRefresh(() => {
 .dot { width: 12rpx; height: 12rpx; border-radius: 50%; flex-shrink: 0; }
 .dot-blue { background: #2563EB; }
 .dot-green { background: #22c55e; }
+.dot-red { background: #ef4444; }
 .battery-icon { font-size: 24rpx; }
 .meta-text { font-size: 24rpx; color: #94a3b8; }
 .meta-bold { font-size: 24rpx; color: #1e293b; font-weight: 500; }
