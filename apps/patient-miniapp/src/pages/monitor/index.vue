@@ -60,7 +60,7 @@
     <view class="section trend-section">
       <text class="section-title">{{ activePoint ? activePoint.pointId : '' }} · {{ segLabel }}压力趋势</text>
       <view class="card curve-card">
-        <PressureCurve :data="trendData" :labels="trendLabels" :max-value="75" :height="180" />
+        <PressureCurve :data="trendData" :labels="trendLabels" :max-value="trendMaxValue" :height="180" />
       </view>
     </view>
   </view>
@@ -116,17 +116,28 @@ const segLabel = computed(() => {
 })
 
 const trendData = ref<{ timestamp: string; value: number }[]>([])
+const trendMaxValue = computed(() => {
+  const vals = trendData.value.map(d => d.value)
+  const max = vals.length ? Math.max(...vals) : 75
+  // 保证至少覆盖正常范围上限 60，有 data 时向上取整到下一个 15N 刻度
+  const floor = 60
+  if (max <= floor) return floor
+  return Math.ceil(max / 15) * 15
+})
 const trendLabels = computed(() => {
   if (segment.value === 'day') return ['0:00', '6:00', '12:00', '18:00', '24:00']
   if (segment.value === 'week') return ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
   return ['1日', '8日', '15日', '22日', '30日']
 })
 
-// 根据 period 参数调用 records 端点，生成所选分段的 maxPressure 趋势
-async function loadTrend(baseVal: number) {
+// 根据 period 参数调用 records 端点，生成所选分段的压力趋势
+// pointId: 选中的传感器点 ID（如 P04），优先展示该点的历史值；
+//         若某帧无该点数据，fallback 到该帧全局 maxPressure
+async function loadTrend(pointId: string | undefined, baseVal: number) {
   const patientId = authStore.patientId
   if (!patientId) {
     trendData.value = []
+    console.warn('[T172] loadTrend: authStore.patientId 为空, trend 不加载')
     return
   }
   const today = new Date()
@@ -134,35 +145,48 @@ async function loadTrend(baseVal: number) {
   const mm = String(today.getMonth() + 1).padStart(2, '0')
   const dd = String(today.getDate()).padStart(2, '0')
   const dateStr = `${yyyy}-${mm}-${dd}`
+  const params = { period: segment.value, date: dateStr }
+  console.warn('[T172] loadTrend 请求:', { url: `/api/v1/patients/${patientId}/records`, params, pointId })
   try {
-    // 真实后端返回 HistoryPage{ list, total, page, pageSize }；
-    // 防御式同时兼容裸数组（旧 mock 或前端自造）
     const raw = await request<HistoryPage | PressureRecord[]>({
       url: `/api/v1/patients/${patientId}/records`,
       method: 'GET',
-      data: { period: segment.value, date: dateStr },
+      data: params,
     })
     const records: PressureRecord[] = Array.isArray(raw) ? raw : (raw?.list ?? [])
+    const total = Array.isArray(raw) ? raw.length : (raw?.total ?? 0)
+    console.warn('[T172] loadTrend 响应:', { total, listLen: records.length, rawType: Array.isArray(raw) ? 'array' : 'object', pointId })
     if (records.length > 0) {
       trendData.value = records
         .slice(0, 48)
         .map((r) => {
-          // 计算该帧 maxPressure（取 points 数组最大值）
-          let maxP = 0
-          for (const p of r.points || []) {
-            if (p.pressureValue > maxP) maxP = p.pressureValue
+          // 优先取选中点的值，找不到则 fallback 到该帧全局 maxPressure
+          let val = 0
+          const pts = r.points || []
+          if (pointId) {
+            const match = pts.find(p => p.pointId === pointId)
+            if (match) val = match.pressureValue
+          }
+          if (val <= 0) {
+            for (const p of pts) {
+              if (p.pressureValue > val) val = p.pressureValue
+            }
           }
           return {
             timestamp: r.timestamp,
-            value: parseFloat(maxP.toFixed(2)),
+            value: parseFloat(val.toFixed(2)),
           }
         })
         .filter(x => x.value > 0)
+      console.warn('[T172] loadTrend 趋势数据:', { pointId, 点数: trendData.value.length, 首条: trendData.value[0], 末条: trendData.value[trendData.value.length - 1] })
       return
     }
-    // 空记录：fallback 给当前 maxPressure 单点以避免图表空
+    // 空记录：fallback 给当前压力单点以避免图表空
+    console.warn('[T172] loadTrend: records 为空, 走 fallback baseVal=', baseVal)
     trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
-  } catch {
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.warn('[T172] loadTrend catch:', { msg, pointId, patientId, params })
     trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
   }
 }
@@ -194,7 +218,8 @@ async function loadData() {
     }
     activeIndex.value = maxIdx >= 0 ? maxIdx : -1
     const base = maxIdx >= 0 ? points[maxIdx].pressureValue : snap?.maxPressure ?? 0
-    void loadTrend(base)
+    const pointId = maxIdx >= 0 ? points[maxIdx].pointId : undefined
+    void loadTrend(pointId, base)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : '加载实时数据失败'
     uni.showToast({ title: msg, icon: 'none' })
@@ -212,15 +237,14 @@ function onRefresh() {
 
 function onSelectPoint(index: number) {
   activeIndex.value = index
-  const base = sensorPoints.value[index]?.pressureValue ?? 0
-  void loadTrend(base)
+  const p = sensorPoints.value[index]
+  void loadTrend(p?.pointId, p?.pressureValue ?? 0)
 }
 
 function switchSegment(seg: 'day' | 'week' | 'month') {
   if (segment.value === seg) return
   segment.value = seg
-  const base = activePoint.value?.pressureValue ?? 0
-  void loadTrend(base)
+  void loadTrend(activePoint.value?.pointId, activePoint.value?.pressureValue ?? 0)
 }
 
 // T019B: 导航至异常事件页
