@@ -171,9 +171,15 @@ function attachConsole(mp, result) {
   })
 }
 
+function formatActual(actual) {
+  if (actual == null) return ''
+  return typeof actual === 'string' ? actual : JSON.stringify(actual)
+}
+
 function logStep(result, step, pass, actual) {
-  result.steps.push({ step, result: pass ? 'PASS' : 'FAIL', actual: actual == null ? '' : String(actual) })
-  console.log(`  [${step}] ${pass ? 'PASS' : 'FAIL'}${actual == null ? '' : ' · ' + JSON.stringify(actual)}`)
+  const shown = formatActual(actual)
+  result.steps.push({ step, result: pass ? 'PASS' : 'FAIL', actual: shown })
+  console.log(`  [${step}] ${pass ? 'PASS' : 'FAIL'}${shown ? ' · ' + shown : ''}`)
   return pass
 }
 
@@ -233,12 +239,15 @@ async function runSpec(cfg, opts) {
 
 function finish(cfg, opts, result, pass) {
   result.finishedAt = new Date().toISOString()
-  result.pass = pass && result.errors.length === 0
-  // 不把 Console 里的异步 error 当失败（很多是业务告警/竞态），仅统计异常
+  // fail-closed：步骤台账里有 FAIL 即整例失败（不依赖 body 是否把每步都回传到结论）
+  const failedSteps = result.steps.filter((s) => s.result === 'FAIL').map((s) => s.step)
+  result.pass = pass && failedSteps.length === 0 && result.errors.length === 0
+  // errors 含 Exception + attachConsole 抓到的 Console error，任一非空即失败
   const filePath = path.join(cfg.resultsDir, `${opts.name}.json`)
   fs.writeFileSync(filePath, JSON.stringify(result, null, 2), 'utf8')
   console.log('\n===== [%s] 结果 =====', opts.name)
   console.log('步骤:', JSON.stringify(result.steps, null, 2))
+  console.log('失败步骤:', failedSteps.length === 0 ? '无' : failedSteps.join(', '))
   console.log('错误:', result.errors.length === 0 ? '无' : result.errors.join('\n'))
   console.log('总结:', result.pass ? 'PASS' : 'FAIL')
   process.exitCode = result.pass ? 0 : 1
