@@ -1172,8 +1172,25 @@ func toFeelingDTO(r repo.FeelingLogRow) model.FeelingLogDTO {
 }
 
 // listFeelingLogs GET /api/v1/patients/:patientId/feeling-logs
+// 水平鉴权（T184）：ROLE_ADMIN 可查任意患者；其他角色仅 X-User-Id == patientId 可查。
 func (h *Handler) listFeelingLogs(c *gin.Context) {
-	rows, err := h.store.ListFeelingLogs(c.Request.Context(), c.Param("patientId"))
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+
+	// 水平鉴权（fail-closed：缺失头视为无权限）
+	role := c.GetHeader(headerRole)
+	userID := c.GetHeader(headerUserID)
+	if role != roleAdmin {
+		if userID == "" || userID != patientID {
+			fail(c, model.ErrForbidden("may only query your own feeling logs"))
+			return
+		}
+	}
+
+	rows, err := h.store.ListFeelingLogs(c.Request.Context(), patientID)
 	if err != nil {
 		fail(c, model.ErrInternal("list feeling logs failed"))
 		return
