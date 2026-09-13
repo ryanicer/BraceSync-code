@@ -18,8 +18,8 @@ const TOKEN_KEY = cfg.storage.tech.token
 const TECH_ID_KEY = cfg.storage.tech.techId
 
 async function uiLoginTech(ctx) {
-  // 最佳努力：扫描登录页 input 事件方法（编译名 e\d+_[0-9a-f]{2}），按模板顺序填手机号/密码，
-  // 勾协议，点登录。编译名随构建可能漂移，失败不抛，由调用方回退 API 登录。
+  // 最佳努力：填手机号/密码 → setData 勾协议 → 调用 doLogin（走真实登录流程，让 pinia store 正确更新）。
+  // 编译名随构建漂移，失败不抛，由调用方回退 API 登录 + 种 token。
   const { mp } = ctx
   const r = await helpers.withTimeout(mp.evaluate(function (phone, pwd) {
     const ps = getCurrentPages()
@@ -29,26 +29,28 @@ async function uiLoginTech(ctx) {
     const keys = Object.keys(page)
     const inputFns = keys.filter((k) => /^e\d+_[0-9a-f]{2}$/.test(k))
     if (inputFns.length < 2) return { ok: false, reason: 'no_compiled_inputs', keys: inputFns }
-    // 手机号(number)在前、密码(password)在后（模板顺序）
+    // 手机号在前、密码在后（模板顺序）
     if (typeof page[inputFns[0]] !== 'function') return { ok: false, reason: 'not_fn' }
     page[inputFns[0]]({ detail: { value: phone }, currentTarget: { dataset: {} } })
     page[inputFns[1]]({ detail: { value: pwd }, currentTarget: { dataset: {} } })
-    // 勾协议
-    const agreeFn = keys.find((k) => /^e\d+_[0-9a-f]{2}$/.test(k) && k !== inputFns[0] && k !== inputFns[1] && typeof page[k] === 'function' && page[k].name !== 'doLogin')
-    page[agreeFn]({})
-    page[agreeFn]({})
-    // 登录：扫描绑定 doLogin / loginWithPassword 的 handler
-    const loginFn = keys.find((k) => /^e\d+_[0-9a-f]{2}$/.test(k) && k !== inputFns[0] && k !== inputFns[1] && typeof page[k] === 'function')
+    // 勾协议：直接 setData，避免 toggle handler 识别不准
+    try { page.setData({ agreed: true }) } catch (e) { /* 兼容旧编译 */ }
+    // 登录：扫描方法体含 loginWithPassword 的 handler（即 doLogin）
+    const loginFn = keys.find((k) => {
+      if (typeof page[k] !== 'function') return false
+      const src = String(page[k].toString() || '')
+      return src.indexOf('loginWithPassword') >= 0
+    })
     if (!loginFn) return { ok: false, reason: 'no_login_fn' }
     page[loginFn]({})
-    return { ok: true, phone: inputFns[0], pwd: inputFns[1], agree: agreeFn, login: loginFn }
+    return { ok: true, login: loginFn }
   }, PHONE, PASSWORD), 10_000, 'uiLoginTech')
   if (!r || !r.ok) return { ok: false }
-  // 等待 storage 出现 token
+  // 等待 storage 出现 token（真实登录成功后 store 会写入）
   const deadline = Date.now() + 25_000
   while (Date.now() < deadline) {
     await new Promise((res) => setTimeout(res, 1500))
-    const tk = await helpers.withTimeout(mp.getStorageSync(TOKEN_KEY), 5000, 'getStorage token')
+    const tk = await helpers.withTimeout(helpers.getStorage(mp, TOKEN_KEY), 5000, 'getStorage token')
     if (tk) return { ok: true, via: 'ui', keys: r }
   }
   return { ok: false, via: 'ui-notoken' }
@@ -84,9 +86,16 @@ helpers.runSpec(cfg, {
     if (ui && ui.ok && ui.via === 'ui') {
       logStep(result, 'ui-login', true, ui.keys)
     } else {
-      console.log('[fallback] UI 登录未取到 token（编译控件名不可靠），回退 API 登录 + 种 storage')
-      await helpers.withTimeout(mp.setStorageSync(TOKEN_KEY, token), 10_000, 'seed token')
-      await helpers.withTimeout(mp.setStorageSync(TECH_ID_KEY, techId), 10_000, 'seed techId')
+      console.log('[fallback] UI 登录未取到 token（编译控件名不可靠），回退 API 登录 + 种 storage + 更新 pinia store')
+      await helpers.withTimeout(helpers.setStorage(mp, TOKEN_KEY, token), 10_000, 'seed token')
+      await helpers.withTimeout(helpers.setStorage(mp, TECH_ID_KEY, techId), 10_000, 'seed techId')
+      // 直接更新 pinia auth store（home 页守卫检查 isLoggedIn，仅种 storage 不够）
+      await helpers.withTimeout(mp.evaluate(function (t, tid) {
+        try {
+          const auth = getApp().$vm.$pinia._s.get('auth')
+          if (auth) { auth.token = t; auth.techId = tid; auth.isLoggedIn = true }
+        } catch (e) { /* store 结构变化时忽略，由后续断言兜底 */ }
+      }, token, techId), 10_000, 'update pinia store')
       logStep(result, 'ui-login', true, { via: 'api-seed-fallback' })
     }
 
@@ -98,7 +107,7 @@ helpers.runSpec(cfg, {
     await helpers.withTimeout(mp.reLaunch('/pages/home/index'), 15_000, 'reLaunch home')
     await new Promise((r) => setTimeout(r, 5000))
     const route = await pageRoute(mp)
-    const storedId = await helpers.withTimeout(mp.getStorageSync(TECH_ID_KEY), 5000, 'get techId')
+    const storedId = await helpers.withTimeout(helpers.getStorage(mp, TECH_ID_KEY), 5000, 'get techId')
     const f4 = route === 'pages/home/index' && String(storedId) === String(techId)
     logStep(result, 'home-render', f4, { route, techId, name })
 

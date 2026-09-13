@@ -96,6 +96,17 @@ async function shot(mp, dir, file) {
   }
 }
 
+/**
+ * 小程序 storage 读写（miniprogram-automator 不直接挂 getStorageSync/setStorageSync，
+ * 需通过 mp.evaluate 在小程序侧调用 wx.getStorageSync / wx.setStorageSync）。
+ */
+async function getStorage(mp, key) {
+  return await mp.evaluate(function (k) { return wx.getStorageSync(k) }, key)
+}
+async function setStorage(mp, key, value) {
+  await mp.evaluate(function (k, v) { wx.setStorageSync(k, v) }, key, value)
+}
+
 /** 造数据唯一命名：T054测试-<6位秒级后缀> */
 let _seq = 0
 function uniqueName(prefix = 'T054测试') {
@@ -256,6 +267,8 @@ module.exports = {
   connectMp,
   pageRoute,
   shot,
+  getStorage,
+  setStorage,
   uniqueName,
   apiCall,
   loginTech,
@@ -283,15 +296,15 @@ async function ensurePatientToken(ctx) {
   const envToken = process.env.PATIENT_TOKEN
   const envPid = process.env.PATIENT_ID
   if (envToken && envPid) {
-    await mp.setStorageSync(TOKEN_KEY, envToken)
-    await mp.setStorageSync(PID_KEY, envPid)
+    await setStorage(mp, TOKEN_KEY, envToken)
+    await setStorage(mp, PID_KEY, envPid)
     return { token: envToken, patientId: envPid, via: 'env' }
   }
 
   // 已种/已登录：直接读 storage
-  let token = await withTimeout(mp.getStorageSync(TOKEN_KEY), 5000, 'getStorage patient token')
+  let token = await withTimeout(getStorage(mp, TOKEN_KEY), 5000, 'getStorage patient token')
   if (token) {
-    const pid = await withTimeout(mp.getStorageSync(PID_KEY), 5000, 'getStorage patientId')
+    const pid = await withTimeout(getStorage(mp, PID_KEY), 5000, 'getStorage patientId')
     return { token, patientId: pid, via: pid ? 'prebound' : 'token-only' }
   }
 
@@ -321,9 +334,9 @@ async function ensurePatientToken(ctx) {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1500))
-    token = await withTimeout(mp.getStorageSync(TOKEN_KEY), 5000, 'getStorage patient token')
+    token = await withTimeout(getStorage(mp, TOKEN_KEY), 5000, 'getStorage patient token')
     if (token) {
-      const pid = await withTimeout(mp.getStorageSync(PID_KEY), 5000, 'getStorage patientId')
+      const pid = await withTimeout(getStorage(mp, PID_KEY), 5000, 'getStorage patientId')
       return { token, patientId: pid, via: 'ui' }
     }
     const route = await pageRoute(mp)

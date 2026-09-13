@@ -27,7 +27,7 @@ helpers.runSpec(cfg, {
     // [2] Node 侧 alerts 断言（容忍空 list）
     let alertsOk = false
     try {
-      const q = `patientId=${encodeURIComponent(auth.patientId)}&page=1&pageSize=200`
+      const q = `patientId=${encodeURIComponent(auth.patientId)}&page=1&pageSize=100`
       const r = await apiCall(cfg.staging, `/api/v1/alerts?${q}`, { token: auth.token })
       if (r.status === 200) {
         const list = (r.body && r.body.data && r.body.data.list) || []
