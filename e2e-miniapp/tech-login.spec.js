@@ -9,7 +9,7 @@
 // 用法：node e2e-miniapp/tech-login.spec.js   （需先启动 9420 automator / CONNECT_ONLY=1 + staging 构建）
 // 账号：TECH_PHONE / TECH_PASSWORD 环境变量（staging T0001 老陈 测试账号），缺省读 staging 联调常用值。
 const cfg = require('./real-miniapp.config')
-/* global getCurrentPages */
+/* global getCurrentPages, getApp */
 const helpers = require('./real-mp-helpers')
 
 const PHONE = process.env.TECH_PHONE || '13800138000'
