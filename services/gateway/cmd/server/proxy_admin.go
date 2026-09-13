@@ -134,6 +134,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/technicians/:techId/toggle"},
 	{http.MethodGet, "/feedbacks"},
 	{http.MethodPost, "/feedbacks/:feedbackId/process"}, // T030 #5 replyContent
+	{http.MethodGet, "/patient/profile"},                // T186 患者本人只读档案（self-scope）
 	{http.MethodGet, "/patients/:patientId/orthosis-plans"},
 	{http.MethodPost, "/patients/:patientId/orthosis-plans"},
 	{http.MethodGet, "/patients/:patientId/feeling-logs"},

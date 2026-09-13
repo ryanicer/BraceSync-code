@@ -191,6 +191,8 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/feedbacks", h.listFeedbacks)
 		v1.POST("/feedbacks/:feedbackId/process", h.processFeedback)
 
+		v1.GET("/patient/profile", h.getPatientProfile) // T186 患者本人只读档案（self-scope）
+
 		v1.GET("/patients/:patientId/orthosis-plans", h.listPlans)
 		v1.POST("/patients/:patientId/orthosis-plans", h.savePlan)
 		v1.GET("/patients/:patientId/feeling-logs", h.listFeelingLogs)
@@ -645,6 +647,27 @@ func (h *Handler) getPatient(c *gin.Context) {
 	}
 	if row == nil {
 		fail(c, model.ErrNotFound("patient not found: %s", c.Param("patientId")))
+		return
+	}
+	ok(c, toPatientDTO(*row))
+}
+
+// getPatientProfile GET /api/v1/patient/profile —— 患者本人只读档案（T186，C-PM-15 只读版）
+// self-scope：查询对象只取网关注入的 X-User-Id（患者 JWT 的 sub），路径不携带患者 ID，
+// 因此结构上无法请求他人档案；身份头缺失按 fail-closed 拒绝（403）。
+func (h *Handler) getPatientProfile(c *gin.Context) {
+	patientID := c.GetHeader(headerUserID)
+	if patientID == "" {
+		fail(c, model.ErrForbidden("patient identity required"))
+		return
+	}
+	row, err := h.store.GetPatient(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("get patient profile failed"))
+		return
+	}
+	if row == nil {
+		fail(c, model.ErrNotFound("patient not found: %s", patientID))
 		return
 	}
 	ok(c, toPatientDTO(*row))
