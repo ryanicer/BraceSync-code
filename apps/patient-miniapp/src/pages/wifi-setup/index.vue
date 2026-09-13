@@ -218,12 +218,19 @@ async function startWifiConfig() {
   statusHistory.length = 0
 
   try {
-    // 1. 初始化蓝牙 + BLE 连接（技师端 connectDevice 完整流程）
-    uni.showLoading({ title: '连接设备中...' })
-    await initBluetooth()
-    await connectDevice(bleMac)
-    deviceStore.setBleConnected(true)
-    uni.hideLoading()
+    // 1. 蓝牙初始化 + BLE 连接
+    //    H5 环境下跳过（BLE 不可用），直接走 mock 状态机
+    const IS_H5 = false
+    // #ifdef H5
+    IS_H5 = true
+    // #endif
+    if (!IS_H5) {
+      uni.showLoading({ title: '连接设备中...' })
+      await initBluetooth()
+      await connectDevice(bleMac)
+      deviceStore.setBleConnected(true)
+      uni.hideLoading()
+    }
 
     // 2. 申领 provision-key（内存缓存 + 60s 失效）
     const { provision_key_hex } = await getProvisionKey(deviceId)
@@ -232,7 +239,7 @@ async function startWifiConfig() {
     const seq = deviceStore.nextWifiSeq()
     const encrypted = encryptWifiPayload(ssid, wifiPassword.value, provision_key_hex, seq)
 
-    // 4. B511 分片写入加密配置
+    // 4. B511 分片写入加密配置（H5 mock 直接 return true）
     await writeWifiConfigV2(bleMac, encrypted)
 
     // 5. 监听 B512 配网状态（0→1→2→3→9 或 -1~-4）
