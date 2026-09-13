@@ -92,6 +92,7 @@ const (
 const (
 	CodeOK               = 0
 	CodeInvalidParam     = 50400 // 参数非法（未知告警类型 / 非法渠道 / Idempotency-Key 缺失）
+	CodeForbidden        = 50403 // 越权访问（水平越权：患者传他人 patientId / 非 admin 调权益写端点）
 	CodeNotFound         = 50404 // 消息域资源不存在（规则 / 通知记录）
 	CodeQuotaExhausted   = 54002 // 订阅额度耗尽（T017 review 定稿：落在消息域分段）
 	CodeInternal         = 90001 // 系统内部错误
@@ -114,6 +115,11 @@ func newAppError(code, httpStatus int, format string, args ...any) *AppError {
 // ErrInvalidParam 参数非法（400）
 func ErrInvalidParam(format string, args ...any) *AppError {
 	return newAppError(CodeInvalidParam, 400, format, args...)
+}
+
+// ErrForbidden 越权访问（403）：患者域端点的水平越权、权益写端点的角色不符
+func ErrForbidden(format string, args ...any) *AppError {
+	return newAppError(CodeForbidden, 403, format, args...)
 }
 
 // ErrNotFound 消息域资源不存在（404）

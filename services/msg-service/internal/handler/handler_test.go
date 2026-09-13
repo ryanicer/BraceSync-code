@@ -75,7 +75,7 @@ func TestGrantSubscriptionQuota_Success(t *testing.T) {
 	f := newHTTPFixture(t)
 
 	w, resp := f.do(t, http.MethodPost, "/api/v1/patients/P20260001/subscription-quota/grant", `{}`,
-		map[string]string{"Idempotency-Key": "uuid-abc-123"})
+		withHdr(hdrAdmin, map[string]string{"Idempotency-Key": "uuid-abc-123"}))
 
 	t.Log("upgraded: now delegates to real implementation — 200 OK with remaining>0 and isLow flag, honors Idempotency-Key (idempotent grant)")
 	require.Equal(t, http.StatusOK, w.Code)
@@ -89,7 +89,7 @@ func TestGrantSubscriptionQuota_Success(t *testing.T) {
 
 func TestGrantSubscriptionQuota_IdempotencyKey_DoubleCallNoReIncrement(t *testing.T) {
 	f := newHTTPFixture(t)
-	headers := map[string]string{"Idempotency-Key": "uuid-same-key"}
+	headers := withHdr(hdrAdmin, map[string]string{"Idempotency-Key": "uuid-same-key"})
 
 	// 同一次授权（同 Idempotency-Key）重复回报
 	_, resp1 := f.do(t, http.MethodPost, "/api/v1/patients/P20260001/subscription-quota/grant", `{}`, headers)
@@ -112,7 +112,7 @@ func TestGetSubscriptionQuota_Boundary_LowQuotaHint(t *testing.T) {
 	f := newHTTPFixture(t)
 	f.store.SeedQuota("P20260001", 1) // remaining=1 → isLow=true
 
-	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/subscription-quota", "", nil)
+	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/subscription-quota", "", hdrSelf)
 
 	t.Log("upgraded: now delegates to real implementation — when remaining<=1 → isLow=true (引导重新授权，架构 §2.5)")
 	require.Equal(t, http.StatusOK, w.Code)
@@ -129,7 +129,7 @@ func TestGetSubscriptionQuota_Boundary_LowQuotaHint(t *testing.T) {
 func TestGetWearReminder_Success(t *testing.T) {
 	f := newHTTPFixture(t)
 
-	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/wear-reminder", "", nil)
+	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/wear-reminder", "", hdrSelf)
 
 	t.Log("upgraded: now delegates to real implementation — 200 OK with reminderEnabled + reminderTime from patient_preferences")
 	require.Equal(t, http.StatusOK, w.Code)
@@ -142,7 +142,7 @@ func TestUpdateWearReminder_EnableReminder(t *testing.T) {
 	f := newHTTPFixture(t)
 
 	w, resp := f.do(t, http.MethodPut, "/api/v1/patients/P20260001/wear-reminder",
-		`{"reminderEnabled":true,"reminderTime":"20:00"}`, nil)
+		`{"reminderEnabled":true,"reminderTime":"20:00"}`, hdrSelf)
 
 	t.Log("upgraded: now delegates to real implementation — 200 OK, reminderEnabled=true persisted (写 patient_preferences, 一期偏离声明)")
 	require.Equal(t, http.StatusOK, w.Code)
@@ -160,7 +160,7 @@ func TestUpdateWearReminder_EnableReminder(t *testing.T) {
 func TestGetPatientNotifications_Paginated(t *testing.T) {
 	f := newHTTPFixture(t)
 
-	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/notifications?page=1&pageSize=20", "", nil)
+	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/notifications?page=1&pageSize=20", "", hdrSelf)
 
 	t.Log("upgraded: now delegates to real implementation — 200 OK, paginated records (list/total/page/pageSize), 按时间倒序")
 	require.Equal(t, http.StatusOK, w.Code)
