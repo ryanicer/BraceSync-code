@@ -120,6 +120,7 @@ func TestProvisionKey_T193_RebindRevokesPreviousOwner(t *testing.T) {
 	// 新患者先探一次：此刻设备仍属 OLD → 403（且不占用重发间隔）
 	status, resp := env.do(t, http.MethodPost, provPath("DEV-T193-REBIND"), nil, asPatient("P-T193-NEW"))
 	assert.Equal(t, http.StatusForbidden, status)
+	assert.Equal(t, model.CodeForbidden, resp.Code)
 
 	env.store.AddPatient("P-T193-NEW")
 	_, resp = env.do(t, http.MethodPost, "/api/v1/devices/DEV-T193-REBIND/rebind",
