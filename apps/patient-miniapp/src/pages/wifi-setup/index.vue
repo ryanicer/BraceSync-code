@@ -213,31 +213,16 @@ async function startWifiConfig() {
   statusHistory.length = 0
 
   try {
-    // 1. 蓝牙初始化 + BLE 连接
-    //    H5 环境下跳过（BLE 不可用），直接走 mock 状态机
-    const IS_H5 = false
-    // #ifdef H5
-    IS_H5 = true
-    // #endif
-    if (!IS_H5) {
-      uni.showLoading({ title: '连接设备中...' })
-      await initBluetooth()
-      await connectDevice(bleMac)
-      deviceStore.setBleConnected(true)
-      uni.hideLoading()
-    }
-
-    // 2. 申领 provision-key（内存缓存 + 60s 失效）
+    // === 完全对齐技师端 wifi-config/index.vue startWifiConfig ===
+    // H5 下各层函数内部 isH5() 自动处理：
+    //   writeWifiConfigV2 → return true
+    //   onWifiStatus → 存 callback 后 return
+    //   startMockWifiStatusSequence → 启动 0→1→2→3→9 定时器
     const { provision_key_hex } = await getProvisionKey(deviceId)
-
-    // 3. AES-128-CTR 加密 WiFi 凭据
     const seq = deviceStore.nextWifiSeq()
     const encrypted = encryptWifiPayload(ssid, wifiPassword.value, provision_key_hex, seq)
-
-    // 4. B511 分片写入加密配置（H5 mock 直接 return true）
     await writeWifiConfigV2(bleMac, encrypted)
 
-    // 5. 监听 B512 配网状态（0→1→2→3→9 或 -1~-4）
     onWifiStatus((code: number) => {
       wifiStatusCode.value = code
       statusHistory.push(code)
@@ -246,14 +231,11 @@ async function startWifiConfig() {
       else if (code < 0) handleError(code)
     }, bleMac)
 
-    // 6. H5 mock：真机由硬件 B512 Notify 驱动
     startMockWifiStatusSequence()
 
-    // 7. 15s 超时兜底（固件解密失败不 Notify，无响应时提示重试）
+    // 15s 超时兜底
     timeoutTimer.value = setTimeout(() => {
-      if (wifiStatusCode.value !== 9) {
-        handleTimeout()
-      }
+      if (wifiStatusCode.value !== 9) handleTimeout()
     }, 15000)
   } catch (e) {
     uni.hideLoading()
