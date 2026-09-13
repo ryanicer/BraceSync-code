@@ -163,7 +163,7 @@
               <text class="status-ok-icon">✓</text>
               <view>
                 <text class="status-ok-title">数据可达性验证通过</text>
-                <text class="status-ok-sub">{{ reachabilityLabel }}</text>
+                <text class="status-ok-sub">{{ networkStatusLabel }}</text>
               </view>
             </view>
           </view>
@@ -184,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
@@ -343,19 +343,9 @@ function goPhase3() {
 // ===== 阶段三 配网 =====
 const installNote = ref('')
 
-watch(
-  () => installStore.wifiStatus,
-  (v) => {
-    if (v === 'connected' && installStore.reachabilityStatus !== 'verified') {
-      installStore.setReachabilityVerified('verified')
-    }
-  }
-)
-
-const reachabilityLabel = computed(() => {
-  const r = installStore.reachabilityStatus
-  if (r === 'verified') return '设备云端通信链路已通'
-  if (r === 'skipped') return '已标记跳过'
+const networkStatusLabel = computed(() => {
+  if (installStore.networkSkipped) return '已标记跳过'
+  if (installStore.wifiStatus === 'connected') return '设备云端通信链路已通'
   return '待验证'
 })
 
@@ -372,7 +362,6 @@ async function completeInstall() {
   try {
     installStore.setInstallNote(installNote.value)
     await updateInstallMeta(installStore.installId, {
-      reachabilityStatus: installStore.reachabilityStatus,
       wifiStatus: installStore.wifiStatus,
       baselineId: installStore.baselineId,
       notes: installNote.value,

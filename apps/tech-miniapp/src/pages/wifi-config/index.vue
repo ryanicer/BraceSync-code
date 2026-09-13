@@ -37,7 +37,7 @@
         <view class="btn-outline" @click="retryWifi"><text>重新配网</text></view>
         <view v-if="errorCode === -4" class="skip-hint">
           <text class="skip-text">WiFi 已连接，但暂时无法连接云端。</text>
-          <view class="btn-outline-sm" @click="skipReachability"><text>先完成安装</text></view>
+          <view class="btn-outline-sm" @click="skipNetworkSetup"><text>先完成安装</text></view>
         </view>
       </view>
     </view>
@@ -236,7 +236,6 @@ async function handleSuccess(ssid: string) {
 
   installStore.setWifiStatus('connected')
   installStore.updateWifiStatusCode(9)
-  installStore.setReachabilityVerified('verified')
 
   // 3 秒后自动返回 install
   autoReturnTimer.value = setTimeout(() => {
@@ -264,10 +263,10 @@ function retryWifi() {
   password.value = ''
 }
 
-function skipReachability() {
-  // -4 状态：标记可达性 skipped，返回 install
+function skipNetworkSetup() {
+  // -4 状态：本地标记「已跳过」，返回 install（不落库）
   installStore.setWifiStatus('connected')
-  installStore.setReachabilityVerified('skipped')
+  installStore.setNetworkSkipped(true)
   uni.navigateBack()
 }
 
