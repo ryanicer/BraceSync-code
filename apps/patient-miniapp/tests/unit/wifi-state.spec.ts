@@ -22,10 +22,12 @@ import {
   broadcastNameOf,
   signalLabel,
   normalizeWifiName,
+  normalizeWifiCreds,
   pickReconnectTarget,
   type ScanDevice,
   type ProvisionStep,
 } from '../../src/utils/wifi-state'
+import { encryptWifiPayload } from '../../src/utils/aes-ctr'
 import { SIGNAL_GOOD, SIGNAL_WEAK } from '../../src/utils/wifi-copy'
 
 describe('WiFi 配网 — 扫描过滤（PRD §7A.9）', () => {
@@ -176,6 +178,41 @@ describe('T192 — 患者端信号与生活化文案', () => {
   it('网络名前后空格自动清理（§7A.9.1 ③-2）', () => {
     expect(normalizeWifiName('  Home_WiFi_2.4G ')).toBe('Home_WiFi_2.4G')
     expect(normalizeWifiName('')).toBe('')
+  })
+})
+
+describe('T192 — 03 表单清洗 normalizeWifiCreds', () => {
+  const KEY = '2b7e151628aed2a6abf7158809cf4f3c'
+
+  it('网络名与密码两端空格都去掉，并回报发生过清洗', () => {
+    expect(normalizeWifiCreds('  Home_WiFi', 'abc123 ')).toEqual({
+      ssid: 'Home_WiFi',
+      pwd: 'abc123',
+      hadWhitespace: true,
+    })
+  })
+
+  it('本来干净时不误报清洗', () => {
+    expect(normalizeWifiCreds('Home_WiFi', 'abc123')).toEqual({
+      ssid: 'Home_WiFi',
+      pwd: 'abc123',
+      hadWhitespace: false,
+    })
+  })
+
+  it('纯空格密码清洗后为空串（页面据此走"密码为空"拦截，而不是下发一个空格）', () => {
+    expect(normalizeWifiCreds('Home_WiFi', '   ')).toEqual({
+      ssid: 'Home_WiFi',
+      pwd: '',
+      hadWhitespace: true,
+    })
+  })
+
+  it('清洗后的凭据比带尾随空格的少 1 字节 —— 对应真机 48B→47B', () => {
+    const { pwd } = normalizeWifiCreds('Home_WiFi', 'abc123 ')
+    const dirty = encryptWifiPayload('Home_WiFi', 'abc123 ', KEY, 1).length / 2
+    const clean = encryptWifiPayload('Home_WiFi', pwd, KEY, 1).length / 2
+    expect(clean).toBe(dirty - 1)
   })
 })
 

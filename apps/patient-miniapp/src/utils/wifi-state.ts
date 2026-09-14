@@ -110,6 +110,22 @@ export function normalizeWifiName(raw: string): string {
 }
 
 /**
+ * 03 表单两个字段进 B511 载荷前的统一清洗，并回报是否去过空格。
+ * 网络名 trim ＝ PRD §7A.9.1 ③-2 明文要求；**密码 trim 是该条的口径外扩，待 PM/Peter 回写 PRD**：
+ * 真机 09-14 实证「密码末尾多一个空格 → 设备拿到的是错密码 → 合法回 -1」，
+ * 而 PRD 同一条自己就写着"-1 是最主要失败原因"。风险：PSK 以真空格结尾者将不再可用（WPA2 PSK 实际不出现）。
+ */
+export function normalizeWifiCreds(rawSsid: string, rawPwd: string): {
+  ssid: string
+  pwd: string
+  hadWhitespace: boolean
+} {
+  const ssid = normalizeWifiName(rawSsid)
+  const pwd = (rawPwd || '').trim()
+  return { ssid, pwd, hadWhitespace: ssid !== (rawSsid || '') || pwd !== (rawPwd || '') }
+}
+
+/**
  * 03 原地重连时从重扫结果里挑目标：优先当初连接的那台（广播名相同），
  * 其次窗口内任一 BSYNC 广播（设备可能只在 localName 里带名字），都没有返回 null。
  * name 匹配只做优先、不做硬条件——真机断连后重扫到的顺序并不稳定。
