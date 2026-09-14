@@ -106,7 +106,7 @@ import {
   PROVISION_TIMEOUT_MS,
   broadcastNameOf,
   isBsyncDevice,
-  normalizeWifiName,
+  normalizeWifiCreds,
   pickReconnectTarget,
 } from '../../utils/wifi-state'
 import {
@@ -415,19 +415,28 @@ async function onStartProvision() {
   }
 
   const creds = connectRef.value?.getCredentials() ?? { ssid: '', pwd: '' }
-  const ssid = normalizeWifiName(creds.ssid)
+  const { ssid, pwd, hadWhitespace } = normalizeWifiCreds(creds.ssid, creds.pwd)
+  if (hadWhitespace) {
+    // 真机踩过：手机输入法在密码末尾补一个空格 → 设备拿到的是"错密码"，回 -1，用户看到的是"密码不正确"
+    logger.warn('[T192] 03 输入含首尾空格，已去除后下发', {
+      rawSsidLen: (creds.ssid || '').length,
+      rawPwdLen: (creds.pwd || '').length,
+      ssidLen: ssid.length,
+      pwdLen: pwd.length,
+    })
+  }
   if (!ssid) {
     logger.info('[T192] 03 ssid 为空，拦截')
     uni.showToast({ title: CONNECT.ssidRequiredToast, icon: 'none' })
     return
   }
-  if (!creds.pwd) {
+  if (!pwd) {
     logger.info('[T192] 03 密码为空，拦截', { ssid })
     uni.showToast({ title: CONNECT.pwdRequiredToast, icon: 'none' })
     return
   }
   enteredSsid.value = ssid
-  enteredPwd.value = creds.pwd
+  enteredPwd.value = pwd
   lastAttemptAt = now
   await runProvision()
 }
@@ -538,6 +547,9 @@ async function runProvision() {
       payloadBytes: payload.length / 2,
       seq,
       seqInFirmwareWindow: seq >= 1 && seq <= 3,
+      // 明文 = {"ssid":"","pwd":"","seq":N}，固定开销 27B + seq 位数 ⇒ 两个长度可反推字节数是否含意外字符
+      ssidLen: enteredSsid.value.length,
+      pwdLen: enteredPwd.value.length,
     })
     armTimeout()
     // #ifdef H5
