@@ -30,6 +30,8 @@
       :phase="connectPhase"
       :device-name="deviceLabel"
       :connected="bleLinkUp"
+      :initial-ssid="enteredSsid"
+      :initial-pwd="enteredPwd"
       @next="connectPhase = 'form'"
       @start="onStartProvision"
     />
@@ -92,6 +94,7 @@ import {
   isLocationAuthed,
   onWifiStatus,
   registerBleStateListener,
+  rescanOnce,
   startBleScan,
   startMockWifiStatusSequence,
   stopBleScan,
@@ -104,6 +107,7 @@ import {
   broadcastNameOf,
   isBsyncDevice,
   normalizeWifiName,
+  pickReconnectTarget,
 } from '../../utils/wifi-state'
 import {
   BLE_DISCONNECTED_TOAST,
@@ -142,6 +146,8 @@ const NAV_TITLES: Record<View, string> = {
 
 /** BLE 扫描时长：设计稿 02 为持续搜索，6s 后收敛到结果/空态 */
 const SCAN_DURATION_MS = 6000
+/** 03 原地重连的一次性重扫窗口：实测设备断开后 ≥6s 不广播，故比 02 长 */
+const RECONNECT_SCAN_MS = 15000
 /** T119 防重入节流窗口 */
 const MIN_PROVISION_INTERVAL = 3000
 
@@ -171,7 +177,10 @@ const cloudDeviceId = ref('')
 const bleDeviceId = ref('')
 const scannedName = ref('')
 
-let enteredPwd = ''
+/** 凭据提到页面态：03 子组件会被卸载重建，页面不持有就等于每次重进都要重打 */
+const enteredPwd = ref('')
+/** 最近一次建连成功时刻（ms）：断开/重连时上报"距建连秒数"，用来量化固件空闲保活窗口 */
+let connectedAtMs = 0
 let successHandled = false
 let timeoutTimer: ReturnType<typeof setTimeout> | null = null
 let lastAttemptAt = 0
@@ -209,7 +218,12 @@ onLoad(async (options) => {
   }
   // #endif
   registerBleStateListener((deviceId, connected) => {
-    logger.info('[T192] BLE 连接态变化', { deviceId, connected, view: view.value })
+    logger.info('[T192] BLE 连接态变化', {
+      deviceId,
+      connected,
+      view: view.value,
+      secsSinceLinkUp: secsSinceLinkUp(),
+    })
     deviceStore.setBleConnected(connected)
     if (connected) bleLinkUp.value = true
     else bleLinkUp.value = false
@@ -387,6 +401,7 @@ async function onSelectDevice(dev: ScannedDevice) {
   }
   deviceStore.setBleConnected(true)
   bleLinkUp.value = true
+  connectedAtMs = Date.now()
 }
 
 /* ===== 03-connect ===== */
@@ -412,9 +427,72 @@ async function onStartProvision() {
     return
   }
   enteredSsid.value = ssid
-  enteredPwd = creds.pwd
+  enteredPwd.value = creds.pwd
   lastAttemptAt = now
   await runProvision()
+}
+
+/* ===== 链路保障：03 原地重连 ===== */
+
+/** 距上次建连成功的秒数（从未建连返回 -1）：用于量化固件空闲保活窗口 */
+function secsSinceLinkUp(): number {
+  return connectedAtMs ? Math.round((Date.now() - connectedAtMs) / 1000) : -1
+}
+
+async function tryLink(deviceId: string): Promise<boolean> {
+  try {
+    const ok = await connectDevice(deviceId)
+    if (ok) {
+      deviceStore.setBleConnected(true)
+      bleLinkUp.value = true
+      connectedAtMs = Date.now()
+    }
+    logger.info('[T192] 原地重连结果', { deviceId, ok })
+    return ok
+  } catch (e) {
+    logger.warn('[T192] 原地重连异常', { deviceId, msg: (e as Error)?.message ?? String(e) })
+    return false
+  }
+}
+
+/**
+ * 下发前确保链路可用。真机实测：03 停留期间设备会在建连后 27–40s 自行断开，
+ * 而原实现把断开当"前置校验失败"弹回 02 —— 弹回会重建表单清空已输凭据，
+ * 且断开的设备短时间内不再广播（实测 6s 窗口 found:0），用户必然死循环。
+ * 改为原地重连：先拿已存 MAC 直连，直连不成再一次性重扫等设备回来再连。
+ */
+async function ensureLinkForProvision(): Promise<boolean> {
+  if (deviceStore.bleConnected && bleDeviceId.value) return true
+  if (!bleDeviceId.value) {
+    logger.warn('[T192] 无 BLE 标识可重连，只能回 02 重新发现', { secsSinceLinkUp: secsSinceLinkUp() })
+    return false
+  }
+  logger.warn('[T192] 下发前链路已断，尝试原地重连', {
+    bleDeviceId: bleDeviceId.value,
+    secsSinceLinkUp: secsSinceLinkUp(),
+  })
+  uni.showLoading({ title: CONNECT.reconnectingToast, mask: true })
+  try {
+    if (await tryLink(bleDeviceId.value)) return true
+
+    const found = await rescanOnce(RECONNECT_SCAN_MS)
+    const target = pickReconnectTarget(found, scannedName.value)
+    if (!target) {
+      logger.warn('[T192] 原地重连失败：重扫窗口内无可用广播', {
+        scannedName: scannedName.value,
+        found: found.length,
+        windowMs: RECONNECT_SCAN_MS,
+      })
+      return false
+    }
+    bleDeviceId.value = target.deviceId
+    scannedName.value = target.name
+    deviceStore.bleDeviceId = target.deviceId
+    deviceStore.bleName = target.name
+    return await tryLink(target.deviceId)
+  } finally {
+    uni.hideLoading()
+  }
 }
 
 /* ===== 04-progress ===== */
@@ -426,13 +504,14 @@ async function runProvision() {
     bleConnected: deviceStore.bleConnected,
     ssid: enteredSsid.value,
   })
-  if (!bleDeviceId.value || !deviceStore.bleConnected) {
-    logger.warn('[T192] 前置校验失败：BLE 未连', {
+  if (!(await ensureLinkForProvision())) {
+    // 留在 03、不回 02，也不落 06：06 的处置建议是给"已下发但设备报错"用的，
+    // 链路根本没建立时套它会误导用户。此处凭据已存页面态，挪近设备再点一次即可。
+    logger.warn('[T192] 链路不可用且原地重连失败，留在 03', {
       bleDeviceId: bleDeviceId.value,
-      bleConnected: deviceStore.bleConnected,
+      secsSinceLinkUp: secsSinceLinkUp(),
     })
-    uni.showToast({ title: CONNECT.connectFailedToast, icon: 'none' })
-    goScan()
+    uni.showToast({ title: BLE_DISCONNECTED_TOAST, icon: 'none' })
     return
   }
 
@@ -451,7 +530,7 @@ async function runProvision() {
     // 先订阅 B512 Notify，再写 B511，否则首帧状态（0/1）会丢
     onWifiStatus(handleStatus, bleDeviceId.value)
 
-    const payload = encryptWifiPayload(enteredSsid.value, enteredPwd, provision_key_hex, deviceStore.nextWifiSeq())
+    const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, deviceStore.nextWifiSeq())
     await writeWifiConfigV2(bleDeviceId.value, payload)
     logger.info('[T192] B511 写入完成，等待设备推送', { payloadBytes: payload.length / 2 })
     armTimeout()
@@ -463,6 +542,9 @@ async function runProvision() {
     stopMockWifiStatusSequence()
     stopProvisionTimer()
     logger.error('[T192] 配网下发失败', { msg: (e as Error)?.message ?? String(e), ssid: enteredSsid.value })
+    // 主动判死：写 B511 失败多半就是链路又断了。若仍标着已连，下一次点击会跳过重连、原地再失败一次
+    deviceStore.setBleConnected(false)
+    bleLinkUp.value = false
     uni.showToast({ title: CONNECT.keyFailToast, icon: 'none' })
     connectPhase.value = 'form'
     view.value = 'connect'
@@ -553,6 +635,9 @@ async function onFailurePrimary() {
   const to = FAILURES[failureType.value].primaryTo
   logger.info('[T192] 06 主按钮', { failureType: failureType.value, to })
   if (to === 'connect') {
+    // 回 03 会回填已输凭据（避免重打）；但 06a 的按钮就是"重新输入密码"，
+    // 留着那个已知错的密码原样回填会让人以为没改、再发一次
+    if (failureType.value === 'pwd') enteredPwd.value = ''
     connectPhase.value = 'form'
     view.value = 'connect'
     return
@@ -569,9 +654,9 @@ function onFailureSecondary() {
   void retryProvision()
 }
 
-/** 「重试配网」= 回到 04 并重跑下发；BLE 已断则先回 02 重新连接 */
+/** 「重试配网」= 回到 04 并重跑下发；BLE 已断由 runProvision 原地重连，不再弹回 02 */
 async function retryProvision() {
-  if (!enteredSsid.value || !enteredPwd) {
+  if (!enteredSsid.value || !enteredPwd.value) {
     logger.info('[T192] 重试缺凭据，回 03 表单')
     connectPhase.value = 'form'
     view.value = 'connect'

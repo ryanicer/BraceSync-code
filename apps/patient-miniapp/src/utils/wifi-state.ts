@@ -108,3 +108,17 @@ export function signalLabel(rssi: number, good = '信号良好', weak = '信号�
 export function normalizeWifiName(raw: string): string {
   return (raw || '').trim()
 }
+
+/**
+ * 03 原地重连时从重扫结果里挑目标：优先当初连接的那台（广播名相同），
+ * 其次窗口内任一 BSYNC 广播（设备可能只在 localName 里带名字），都没有返回 null。
+ * name 匹配只做优先、不做硬条件——真机断连后重扫到的顺序并不稳定。
+ */
+export function pickReconnectTarget<T extends { name: string }>(found: T[], expectedName: string): T | null {
+  const list = found || []
+  if (expectedName) {
+    const same = list.find((d) => (d.name || '') === expectedName)
+    if (same) return same
+  }
+  return list.find((d) => isBsyncDevice(d.name)) ?? null
+}

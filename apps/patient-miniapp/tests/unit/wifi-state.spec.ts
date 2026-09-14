@@ -22,6 +22,7 @@ import {
   broadcastNameOf,
   signalLabel,
   normalizeWifiName,
+  pickReconnectTarget,
   type ScanDevice,
   type ProvisionStep,
 } from '../../src/utils/wifi-state'
@@ -175,5 +176,32 @@ describe('T192 — 患者端信号与生活化文案', () => {
   it('网络名前后空格自动清理（§7A.9.1 ③-2）', () => {
     expect(normalizeWifiName('  Home_WiFi_2.4G ')).toBe('Home_WiFi_2.4G')
     expect(normalizeWifiName('')).toBe('')
+  })
+})
+
+describe('T192 — 03 原地重连的目标挑选', () => {
+  it('优先挑当初连接的那台（广播名相同）', () => {
+    const found = [
+      { deviceId: 'AA', name: 'BSYNC-701002' },
+      { deviceId: 'BB', name: 'BSYNC-701001' },
+    ]
+    expect(pickReconnectTarget(found, 'BSYNC-701001')?.deviceId).toBe('BB')
+  })
+
+  it('同名设备不在结果里时，退而挑窗口内任一 BSYNC 广播', () => {
+    const found = [
+      { deviceId: 'CC', name: 'MyPhone_A123' },
+      { deviceId: 'DD', name: 'BSYNC-701009' },
+    ]
+    expect(pickReconnectTarget(found, 'BSYNC-701001')?.deviceId).toBe('DD')
+  })
+
+  it('非 BSYNC 广播一律不选，重扫无果返回 null（页面留在 03，不弹回 02）', () => {
+    expect(pickReconnectTarget([{ deviceId: 'EE', name: 'MyPhone_A123' }], 'BSYNC-701001')).toBeNull()
+    expect(pickReconnectTarget([], 'BSYNC-701001')).toBeNull()
+  })
+
+  it('无期望名（异常路径）时仍能挑出 BSYNC 设备', () => {
+    expect(pickReconnectTarget([{ deviceId: 'FF', name: 'BSYNC-701001' }], '')?.deviceId).toBe('FF')
   })
 })

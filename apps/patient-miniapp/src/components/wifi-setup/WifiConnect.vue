@@ -28,7 +28,9 @@
           <view class="device-ic"><text class="glyph">DEV</text></view>
           <view>
             <text class="device-name">{{ deviceName }}</text>
-            <text class="device-tag connected">{{ CONNECT.tagConnected }}</text>
+            <text :class="['device-tag', connected ? 'connected' : 'dropped']">
+              {{ connected ? CONNECT.tagConnected : CONNECT.tagDisconnected }}
+            </text>
           </view>
         </view>
       </view>
@@ -88,19 +90,25 @@ import { ref } from 'vue'
 import { CONNECT } from '../../utils/wifi-copy'
 import { logger } from '../../utils/logger'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   phase: 'connecting' | 'form'
   deviceName: string
   connected: boolean
-}>()
+  initialSsid?: string
+  initialPwd?: string
+}>(), {
+  initialSsid: '',
+  initialPwd: '',
+})
 
 const emit = defineEmits<{
   (e: 'next'): void
   (e: 'start'): void
 }>()
 
-const ssid = ref('')
-const pwd = ref('')
+/** 凭据由页面级持有并回填：本组件会被 v-else-if 卸载重建，不回填就等于让用户重打一遍 */
+const ssid = ref(props.initialSsid)
+const pwd = ref(props.initialPwd)
 const showPwd = ref(false)
 const findModalVisible = ref(false)
 
@@ -146,6 +154,7 @@ defineExpose({ getCredentials })
 .device-name { font-size: 28rpx; font-weight: 500; color: #1e293b; display: block; }
 .device-tag { font-size: 20rpx; color: #64748b; background: #f1f5f9; padding: 2rpx 12rpx; border-radius: 12rpx; display: inline-block; margin-top: 6rpx; }
 .device-tag.connected { color: #10ac84; background: #e8f5e9; }
+.device-tag.dropped { color: #b45309; background: #fff7ed; }
 
 .form-section { padding: 0 40rpx; margin-top: 48rpx; }
 .form-label { font-size: 26rpx; font-weight: 500; color: #475569; margin-bottom: 16rpx; display: block; }
