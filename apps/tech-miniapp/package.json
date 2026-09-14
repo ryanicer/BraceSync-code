@@ -12,6 +12,7 @@
     "test:contract-gate": "vitest run test/contract-drift-gate.spec.ts"
   },
   "dependencies": {
+    "@bracesync/constants": "*",
     "@bracesync/ui-components": "*",
     "@bracesync/shared-types": "*",
     "@bracesync/shared-utils": "*",

@@ -44,7 +44,11 @@ export async function request<T>(options: RequestOptions): Promise<T> {
           uni.reLaunch({ url: '/pages/login/index' })
           reject(new Error(data.message || '登录已过期，请重新登录'))
         } else {
-          reject(new Error(data.message || '请求失败'))
+          // T173：透传业务码/HTTP 状态，供调用方区分语义（如基线 409 = 20409）
+          const err = new Error(data.message || '请求失败') as Error & { code?: number; httpStatus?: number }
+          err.code = data.code
+          err.httpStatus = res.statusCode
+          reject(err)
         }
       },
       fail: (err) => {

@@ -5,6 +5,7 @@
 // 实时推送 & 配网状态机在 H5 下使用模拟数据（mock），真机联调以硬件为准。
 
 import { bleLog } from './ble-log'
+import { MN_PER_N } from '@bracesync/constants'
 
 // 检查是否在 H5 环境（BLE 不可用）
 function isH5(): boolean {
@@ -569,8 +570,8 @@ let realtimeBuffer: number[] = []
 
 /**
  * 启动 BLE 实时压力推送
- * 协议：向 B513 特征 Write 0x01 启动 Notify，固件以 1Hz 推送 20×uint16 小端（值 = N×100）。
- * 解析：raw / 100 → number[20]（单位 N）。
+ * 协议：向 B513 特征 Write 0x01 启动 Notify，固件以 1Hz 推送 20×int16 小端（有符号，值 = mN，T173 权威口径）。
+ * 解析：raw（mN）/ 1000 → number[20]（单位 N）。
  */
 export async function startRealtimePressure(deviceId: string): Promise<void> {
   if (isH5()) {
@@ -611,12 +612,16 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
         while (realtimeBuffer.length >= 40) {
           const frameBytes = realtimeBuffer.splice(0, 40)
           const frame: number[] = []
+          const rawSigned: number[] = []
           for (let i = 0; i < 20; i++) {
             const raw = frameBytes[i * 2] | (frameBytes[i * 2 + 1] << 8)
             const signed = raw > 32767 ? raw - 65536 : raw
-            frame.push(signed / 100)
+            rawSigned.push(signed)
+            frame.push(signed / MN_PER_N)
           }
-          bleLog.info(`B513 解析一帧 P01..P05=${frame.slice(0, 5).map((v) => v.toFixed(2)).join(',')}N`)
+          // T173-dbg：原始 int16（mN）观测日志——供核对设备上报口径，勿删
+          bleLog.info(`B513 raw mN P01..P05=[${rawSigned.slice(0, 5).join(',')}] rawAll=[${rawSigned.join(',')}]`)
+          bleLog.info(`B513 解析一帧 P01..P05=${frame.slice(0, 5).map((v) => v.toFixed(3)).join(',')}N`)
           realtimeCallback?.(frame)
         }
       } catch (e) {

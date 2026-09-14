@@ -24,15 +24,16 @@ func TestPointIDAndLabel(t *testing.T) {
 }
 
 func TestPointStatus(t *testing.T) {
-	assert.Equal(t, "normal", PointStatus(10))
-	assert.Equal(t, "warning", PointStatus(40))
-	assert.Equal(t, "critical", PointStatus(46))
+	th := DefaultPressureThresholds()
+	assert.Equal(t, "normal", PointStatus(10, th))
+	assert.Equal(t, "warning", PointStatus(40, th))
+	assert.Equal(t, "critical", PointStatus(46, th))
 }
 
 func TestBuildSensorPoints(t *testing.T) {
 	var points [PointCount]float32
 	points[5] = 50 // P06 critical
-	pts := BuildSensorPoints(points)
+	pts := BuildSensorPoints(points, DefaultPressureThresholds())
 	require.Len(t, pts, PointCount)
 	assert.Equal(t, "P06", pts[5].PointID)
 	assert.Equal(t, "critical", pts[5].Status)
@@ -53,13 +54,14 @@ func TestPressureRecord_MaxPointAndDTO(t *testing.T) {
 
 	assert.Equal(t, "P03", rec.MaxPoint())
 
-	dto := rec.ToDTO()
+	dto := rec.ToDTO(DefaultPressureThresholds())
 	assert.Equal(t, "123", dto.RecordID)
 	assert.Equal(t, "DEV1", dto.DeviceID)
 	assert.Equal(t, "P1", dto.PatientID)
 	assert.Equal(t, "2026-01-01T00:00:00Z", dto.Timestamp)
 	assert.Equal(t, "2026-01-01T00:00:00Z", dto.UploadTime)
 	require.Len(t, dto.Points, PointCount)
+	assert.False(t, dto.Calibrated) // T173：DTO 构造默认未校准，读取侧按校准结果回填
 }
 
 func TestAppError_Constructors(t *testing.T) {

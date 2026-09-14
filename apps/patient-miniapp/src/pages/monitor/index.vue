@@ -29,7 +29,12 @@
     </view>
 
     <view class="section" style="margin-top: 16rpx;">
-      <text class="section-title">压力分布热力图</text>
+      <view class="section-title-row">
+        <text class="section-title">压力分布热力图</text>
+        <view v-if="calibratedFlag !== null" :class="['calib-badge', calibratedFlag ? 'calib-on' : 'calib-off']">
+          <text>{{ calibratedFlag ? '已校准' : '未校准' }}</text>
+        </view>
+      </view>
       <view class="card">
         <PressureHeatmap
           v-if="sensorPoints.length > 0"
@@ -63,6 +68,7 @@ import { onPullDownRefresh } from '@dcloudio/uni-app'
 import PressureHeatmap from '../../components/PressureHeatmap.vue'
 import PressureCurve from '../../components/PressureCurve.vue'
 import type { PressureRecord, SensorPoint } from '@bracesync/shared-types'
+import { TREND_CURVE_MAX_N } from '@bracesync/constants'
 import { request } from '../../utils/request'
 import { logger } from '../../utils/logger'
 import { useAuthStore } from '../../stores/auth'
@@ -92,6 +98,8 @@ const authStore = useAuthStore()
 
 const sensorPoints = ref<SensorPoint[]>([])
 const activeIndex = ref(-1)
+// T173：最新帧是否已应用基线校准（null = 暂无数据，不展示角标）
+const calibratedFlag = ref<boolean | null>(null)
 const segment = ref<'day' | 'week' | 'month'>('day')
 const loading = ref(false)
 const battery = ref(0)
@@ -114,12 +122,12 @@ const trendLabels = computed(() => {
   return ['1日', '8日', '15日', '22日', '30日']
 })
 
-// 趋势图 Y 轴 max：有数据时向上取整到 15N 刻度，确保曲线不贴顶
+// 趋势图 Y 轴 max：有数据时向上取整到 15N 刻度，确保曲线不贴顶（75 = TREND_CURVE_MAX_N 占位）
 const trendMaxValue = computed(() => {
   const values = trendData.value.map(p => p.value).filter(v => v > 0)
-  if (values.length === 0) return 75
+  if (values.length === 0) return TREND_CURVE_MAX_N
   const max = Math.max(...values)
-  return Math.max(75, Math.ceil(max / 15) * 15)
+  return Math.max(TREND_CURVE_MAX_N, Math.ceil(max / 15) * 15)
 })
 
 // 趋势图时间范围（毫秒），用于 PressureCurve 按真实时间定位 X 坐标
@@ -253,6 +261,7 @@ async function loadData() {
     battery.value = snap?.battery ?? 0
     const points: SensorPoint[] = recs.length && recs[0].points ? recs[0].points : []
     sensorPoints.value = points
+    calibratedFlag.value = recs.length ? recs[0].calibrated === true : null
     let maxIdx = -1
     if (points.length > 0) {
       maxIdx = 0
@@ -317,6 +326,11 @@ onPullDownRefresh(() => {
 .refresh-btn.loading { opacity: 0.6; pointer-events: none; }
 .section { padding: 0 40rpx; margin-top: 24rpx; }
 .section-title { font-size: 28rpx; font-weight: 500; color: #1e293b; margin-bottom: 20rpx; display: block; letter-spacing: 0.6rpx; }
+.section-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20rpx; }
+.section-title-row .section-title { margin-bottom: 0; }
+.calib-badge { padding: 4rpx 16rpx; border-radius: 18rpx; font-size: 20rpx; }
+.calib-badge.calib-on { background: #dcfce7; color: #15803d; }
+.calib-badge.calib-off { background: #fef3c7; color: #b45309; }
 .segmented { display: flex; background: #f1f5f9; border-radius: 20rpx; padding: 6rpx; gap: 4rpx; }
 .seg-btn { flex: 1; text-align: center; padding: 14rpx 0; font-size: 26rpx; font-weight: 500; color: #64748b; border-radius: 16rpx; transition: all 0.2s; }
 .seg-active { background: #fff; color: #2563EB; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.08); }
