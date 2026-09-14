@@ -90,6 +90,35 @@ export function isBsyncDevice(name: string): boolean {
   return (name || '').startsWith(BSYNC_PREFIX)
 }
 
+/**
+ * 广播包里是否带配网服务号 B510。
+ * 固件把设备名放在 SCAN_RSP（`ble_provision.h:408` `setScanResponse(true)`），主广播包只剩
+ * serviceUUID ⇒ Android 首帧经常"是我们的设备但这一帧没带名字"。本函数只用于诊断日志，
+ * 不参与 02 列表过滤（列表仍按广播名，PRD §7A.9）。
+ */
+export function advertisesB510(uuids?: string[]): boolean {
+  return (uuids || []).some((u) => {
+    const norm = (u || '').toUpperCase().replace(/[^0-9A-F]/g, '')
+    return norm === 'B510' || norm.startsWith('0000B510')
+  })
+}
+
+/**
+ * 扫描结果去重器：设备名只在 SCAN_RSP 里，且同一设备每轮广播都会再上报一次
+ * （见 ble.ts `allowDuplicatesKey: true`）⇒ 一个设备只能进 02 列表一次，
+ * 以"第一帧带 BSYNC- 名字"为准，无名帧一律忽略（交给 advertisesB510 打诊断日志）。
+ * @returns 该帧应入列表时返回清洗后的广播名，否则 null
+ */
+export function createScanDeduper(): (deviceId: string, rawName?: string) => string | null {
+  const listed = new Set<string>()
+  return (deviceId, rawName) => {
+    const name = (rawName || '').trim()
+    if (!isBsyncDevice(name) || listed.has(deviceId)) return null
+    listed.add(deviceId)
+    return name
+  }
+}
+
 /** 由云端 device_id 推导期望广播名；不足 6 位则原样拼接 */
 export function broadcastNameOf(deviceId: string): string {
   const id = deviceId || ''

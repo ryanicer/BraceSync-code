@@ -10,6 +10,7 @@
 // R5: onWifiStatus() 订阅 B512 Notify + mock 状态机
 
 import { bleLog } from './ble-log'
+import { advertisesB510, createScanDeduper } from './wifi-state'
 
 function _log(level: 'info' | 'warn' | 'error', msg: string, ctx?: unknown) {
   bleLog(level, msg, ctx as Record<string, unknown>)
@@ -442,6 +443,18 @@ export interface ScannedDevice {
 
 let scanActive = false
 
+/** 每起/停一次扫描 +1：getBluetoothDevices 是收尾异步回调，迟到的旧窗口回调不得翻掉新扫描的 UI */
+let scanEpoch = 0
+
+/** 微信回传的原始广播条目（实时帧与系统缓存同形；advertisServiceUUIDs 仅诊断用） */
+interface RawAdvert {
+  deviceId: string
+  name?: string
+  localName?: string
+  RSSI: number
+  advertisServiceUUIDs?: string[]
+}
+
 /**
  * 开始扫描并过滤 BSYNC- 前缀设备。
  * @param onDevice 每发现一台新设备回调一次（列表边扫边出）
@@ -471,32 +484,87 @@ export function startBleScan(
 
   _log('info', 'startBleScan 入口')
   scanActive = true
-  const seen = new Set<string>()
+  const epoch = ++scanEpoch
+  const dedup = createScanDeduper()
+  const rawIds = new Set<string>()
+  const uuidOnlySample: string[] = []
+  let rawHits = 0
+  let listed = 0
+  let cacheTotal = 0
+  let cacheHits = 0
+
+  /** 一帧广播 → 02 列表：过同一套去重规则，返回是否新入列 */
+  const accept = (deviceId: string, rawName: string, rssi: number): boolean => {
+    const name = dedup(deviceId, rawName)
+    if (!name) return false
+    listed += 1
+    _log('info', `发现设备 ${name} RSSI=${rssi}`)
+    onDevice({ deviceId, name, RSSI: rssi })
+    return true
+  }
+
+  const report = () => {
+    // found=0 时这条是唯一能分辨"设备真没广播"与"广播了但被名字过滤吃掉"的证据；
+    // cacheHits>0 说明这台设备只能靠系统缓存拿到，实时帧一律无名
+    _log(
+      'info',
+      `扫描明细 rawHits=${rawHits} rawDistinct=${rawIds.size} bsync=${listed}`
+        + ` cacheTotal=${cacheTotal} cacheHits=${cacheHits}`
+        + (uuidOnlySample.length ? ` uuidNoName=[${uuidOnlySample.join(',')}]` : '')
+    )
+    onDone(listed)
+  }
 
   const finish = () => {
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null }
     uni.stopBluetoothDevicesDiscovery({ fail: () => {} })
     uni.offBluetoothDeviceFound()
-    if (scanActive) {
-      scanActive = false
-      onDone(seen.size)
-    }
+    if (!scanActive) return
+    scanActive = false
+    // 承技师端 T101（`tech-miniapp/src/utils/ble.ts:318-341`，该分支真机已跑通）：扫描窗口常在
+    // 设备名到达前就结束 ⇒ 收尾再读一次系统缓存（微信缓存的名字比广播帧全）把漏掉的补回来
+    uni.getBluetoothDevices({
+      success: (res) => {
+        if (epoch !== scanEpoch) {
+          _log('warn', `旧扫描窗口的缓存回调迟到（epoch ${epoch}≠${scanEpoch}），丢弃`)
+          return
+        }
+        const cached = (res.devices || []) as unknown as RawAdvert[]
+        cacheTotal = cached.length
+        for (const dev of cached) {
+          const cachedName = (dev.name || dev.localName || '').trim()
+          if (!cachedName) continue
+          if (accept(dev.deviceId, cachedName, dev.RSSI)) cacheHits += 1
+        }
+        report()
+      },
+      fail: (err) => {
+        if (epoch !== scanEpoch) return
+        _log('warn', `getBluetoothDevices 失败，仅用实时帧结果 errMsg=${err?.errMsg}`)
+        report()
+      },
+    })
   }
 
   uni.startBluetoothDevicesDiscovery({
-    allowDuplicatesKey: false,
+    // 固件把设备名放在 SCAN_RSP（ble_provision.h:408 setScanResponse(true)），广播主包里只有
+    // serviceUUID ⇒ Android 首帧经常不带名字。allowDuplicatesKey:false 时同一设备每轮只上报一次，
+    // 首帧无名就被永久丢掉 —— 表现为"手机系统蓝牙看得见、小程序 found:0"。改 true 后自行去重。
+    allowDuplicatesKey: true,
     success: () => {
       _log('info', 'startBluetoothDevicesDiscovery 成功，开始收 BSYNC- 广播')
       uni.onBluetoothDeviceFound((res) => {
-        const devs = res.devices as unknown as {
-          deviceId: string; name: string; localName?: string; RSSI: number
-        }[]
+        const devs = res.devices as unknown as RawAdvert[]
+        rawHits += devs.length
         for (const dev of devs) {
-          const devName = dev.name || dev.localName || ''
-          if (!devName.startsWith('BSYNC-') || seen.has(dev.deviceId)) continue
-          seen.add(dev.deviceId)
-          _log('info', `发现设备 ${devName} RSSI=${dev.RSSI}`)
-          onDevice({ deviceId: dev.deviceId, name: devName, RSSI: dev.RSSI })
+          const firstSight = !rawIds.has(dev.deviceId)
+          rawIds.add(dev.deviceId)
+          const rawName = (dev.name || dev.localName || '').trim()
+          if (!accept(dev.deviceId, rawName, dev.RSSI)
+            && firstSight && !rawName && advertisesB510(dev.advertisServiceUUIDs)
+            && uuidOnlySample.length < 3) {
+            uuidOnlySample.push(`${dev.deviceId} rssi=${dev.RSSI}`)
+          }
         }
       })
       discoveryTimer = setTimeout(finish, duration)
@@ -512,6 +580,8 @@ export function startBleScan(
 export function stopBleScan(): void {
   if (!scanActive) return
   scanActive = false
+  // 收尾回调可能已在飞行中：不翻 epoch 就会在用户已选设备/已离开本页后把旧设备插回列表
+  scanEpoch++
   if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null }
   if (isH5()) return
   uni.stopBluetoothDevicesDiscovery({ fail: () => {} })
