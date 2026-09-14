@@ -41,6 +41,7 @@
             :placeholder="CONNECT.ssidPlaceholder"
             placeholder-class="ph"
             :value="ssid"
+            @focus="onFocus('ssid')"
             @input="onSsidInput"
           />
         </view>
@@ -49,11 +50,12 @@
         <text class="form-label">{{ CONNECT.pwdLabel }}</text>
         <view class="input-row">
           <input
-            class="input-field"
+            class="input-field input-pwd"
             :password="!showPwd"
             :placeholder="CONNECT.pwdPlaceholder"
             placeholder-class="ph"
             :value="pwd"
+            @focus="onFocus('pwd')"
             @input="onPwdInput"
           />
           <text class="pwd-toggle" @click="showPwd = !showPwd">{{ showPwd ? '隐藏' : '显示' }}</text>
@@ -84,6 +86,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { CONNECT } from '../../utils/wifi-copy'
+import { logger } from '../../utils/logger'
 
 const props = defineProps<{
   phase: 'connecting' | 'form'
@@ -105,6 +108,10 @@ const findModalVisible = ref(false)
 function onNext() {
   if (!props.connected) return
   emit('next')
+}
+
+function onFocus(field: 'ssid' | 'pwd') {
+  logger.info('[T192] 03 输入框获得焦点', { field })
 }
 
 function onSsidInput(e: Event) {
@@ -142,10 +149,12 @@ defineExpose({ getCredentials })
 
 .form-section { padding: 0 40rpx; margin-top: 48rpx; }
 .form-label { font-size: 26rpx; font-weight: 500; color: #475569; margin-bottom: 16rpx; display: block; }
-.input-row { display: flex; align-items: center; background: #fff; border: 2rpx solid #e2e8f0; border-radius: 24rpx; padding: 0 28rpx; margin-bottom: 28rpx; }
-.input-field { flex: 1; padding: 28rpx 0; font-size: 30rpx; color: #1e293b; }
+/* 微信原生 input 无固有宽度，靠 flex 撑会被压成 0 宽（placeholder 不渲染、点不出键盘）——必须给显式宽高 */
+.input-row { position: relative; background: #fff; border: 2rpx solid #e2e8f0; border-radius: 24rpx; padding: 0 28rpx; margin-bottom: 28rpx; }
+.input-field { width: 100%; box-sizing: border-box; height: 88rpx; font-size: 30rpx; color: #1e293b; }
+.input-pwd { padding-right: 96rpx; }
 .ph { color: #cbd5e1; }
-.pwd-toggle { color: #94a3b8; font-size: 24rpx; padding: 8rpx; }
+.pwd-toggle { position: absolute; right: 28rpx; top: 0; height: 88rpx; line-height: 88rpx; padding: 0 8rpx; color: #94a3b8; font-size: 24rpx; }
 .find-link { font-size: 24rpx; color: #2563EB; text-align: right; display: block; margin: -16rpx 0 32rpx; }
 
 .tips { margin-top: 32rpx; background: #eff6ff; border: 2rpx solid #bfdbfe; border-radius: 20rpx; padding: 24rpx; }
