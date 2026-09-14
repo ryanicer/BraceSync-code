@@ -3,8 +3,8 @@
  *
  * 不依赖 crypto.subtle / TextEncoder（微信小程序真机与 CI Node 18 均可能缺失）。
  * 密钥：provision_key_hex（16B → 32hex）
- * IV：低 4B = seq（小端），高 12B 补 0
- * 明文：JSON { ssid, pwd, seq }
+ * IV：前 4B = seq（**大端**），[4..15] 补 0（协议 §3 定稿）
+ * 明文：JSON { ssid, pwd, seq }；🔴 固件不持久 seq，解密只尝试 seq=1/2/3
  */
 
 // ===== AES-128 S-box =====
@@ -145,11 +145,16 @@ function encodeUtf8(str: string): Uint8Array {
   return new Uint8Array(bytes)
 }
 
-/** IV 构造：低 4B = seq（小端），高 12B 补 0 */
+/**
+ * IV 构造：seq 按 **大端** 写入前 4 字节，[4..15] 固定 0x00。
+ * 协议定稿 `docs/design/hardware/BLE配网协议确认-小顾-2026-09-05.md` §3：
+ * `seq>>24 seq>>16 seq>>8 seq&0xFF` + 12×0x00；seq=1 → `00000001 00000000 00000000 00000000`。
+ * 写成小端会让固件的候选 IV 全部对不上、解不出明文（真机实测表现为回 -1"密码错误"）。
+ */
 function buildIv(seq: number): Uint8Array {
   const iv = new Uint8Array(16)
   const dv = new DataView(iv.buffer)
-  dv.setUint32(0, seq >>> 0, true)
+  dv.setUint32(0, seq >>> 0, false)
   return iv
 }
 
@@ -182,12 +187,10 @@ export function encryptWifiPayload(
     for (let i = 0; i < blockLen; i++) {
       cipher[offset + i] = plainBytes[offset + i] ^ keystream[i]
     }
-    // 计数器自增（小端）
-    let carry = 1
-    for (let i = 0; i < 16 && carry; i++) {
-      const v = counter[i] + carry
-      counter[i] = v & 0xff
-      carry = v >> 8
+    // counter block = 128 位**大端**整数自增（与 WebCrypto AES-CTR、固件实现一致）
+    for (let i = 15; i >= 0; i--) {
+      counter[i] = (counter[i] + 1) & 0xff
+      if (counter[i] !== 0) break
     }
   }
 
