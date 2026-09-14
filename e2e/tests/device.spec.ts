@@ -35,7 +35,9 @@ test('WiFi 网络信息输入', async ({ page }) => {
 test('配网步骤入口跳转 wifi-setup', async ({ page }) => {
   await page.locator('.action-btn', { hasText: '开始添加设备' }).click()
   await page.waitForURL('**/pages/wifi-setup/**', { timeout: 10_000 })
-  await expect(page.getByText('WiFi 配网')).toBeVisible()
+  // T192：落地到设计稿 01-entry（前置检查页），不再是旧的「WiFi 配网」单页
+  await expect(page.getByText('配置前准备')).toBeVisible()
+  await expect(page.getByText('开始配置家庭 WiFi')).toBeVisible()
 })
 
 test('解绑确认弹窗：取消保留设备', async ({ page }) => {

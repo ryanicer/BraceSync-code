@@ -1,76 +1,78 @@
 /**
- * 配网密钥管理（T094b）
+ * 配网密钥管理（T182 对齐技师端）
  *
  * POST /api/v1/devices/:deviceId/provision-key
- * - 技师/管理员可签发；患者 JWT 会被 403（后端 RBAC）
- * - 60s 内存缓存 + 节流（T119）
+ * - 技师/管理员可签发；患者 JWT 会被 403 → 真机实测确认，撞缺口上报 Winner
+ * - 内存缓存 + 按 expires_in_sec 失效（T119）
+ *
+ * 返回值字段名对齐技师端：{ provision_key_hex, expires_in_sec }
  */
 
-import { request } from '../utils/request'
+import { request, USE_MOCK } from '../utils/request'
 
 interface ProvisionKeyResp {
   provision_key_hex: string
-  expires_in: number
-  seq: number
+  expires_in_sec: number
 }
 
 interface CachedEntry {
-  key: string
+  provision_key_hex: string
   expiresAt: number
 }
 
-// 内存缓存：deviceId → { key, expiresAt }
+// 内存缓存：deviceId → { provision_key_hex, expiresAt }
 const cache = new Map<string, CachedEntry>()
-// 节流：最近一次请求时间戳
-const lastRequestAt = new Map<string, number>()
-const THROTTLE_MS = 3000 // 3s 最小间隔
-const CACHE_TTL_MS = 60_000 // 60s 缓存
-
-function nowMs(): number {
-  return Date.now()
-}
 
 /**
  * 获取配网密钥。
- * 优先 60s 内存缓存；缓存未命中时请求后端，且 3s 内不重复请求。
+ * 优先内存缓存；缓存未命中时请求后端。
+ * USE_MOCK=true 时（H5 开发 / E2E）直接返回假 key，绕过 request() throw。
  */
-export async function getProvisionKey(deviceId: string): Promise<{ key: string; seq: number }> {
-  // 1. 命中缓存
+export async function getProvisionKey(deviceId: string): Promise<ProvisionKeyResp> {
+  // 命中缓存
   const cached = cache.get(deviceId)
-  if (cached && cached.expiresAt > nowMs()) {
-    return { key: cached.key, seq: 0 }
+  if (cached && cached.expiresAt > Date.now()) {
+    const remainingSec = Math.max(1, Math.ceil((cached.expiresAt - Date.now()) / 1000))
+    return { provision_key_hex: cached.provision_key_hex, expires_in_sec: remainingSec }
   }
 
-  // 2. 节流检查
-  const lastReq = lastRequestAt.get(deviceId) || 0
-  if (nowMs() - lastReq < THROTTLE_MS) {
-    // 仍返回缓存（即使过期也复用，避免 429）
-    if (cached) return { key: cached.key, seq: 0 }
+  let result: ProvisionKeyResp
+
+  // H5 环境（dev/E2E）强制 mock：患者端 vite 默认 USE_MOCK=false 与技师端相反，
+  // 条件编译确保 H5 不打真 request（dev 无登录态会 401 炸整条链路）。
+  // #ifdef H5
+  {
+    await new Promise((r) => setTimeout(r, 250))
+    const key = 'a'.repeat(24) + Math.random().toString(16).slice(2, 10)
+    result = { provision_key_hex: key, expires_in_sec: 300 }
   }
+  // #endif
+  // #ifndef H5
+  if (USE_MOCK) {
+    await new Promise((r) => setTimeout(r, 250))
+    const key = 'a'.repeat(24) + Math.random().toString(16).slice(2, 10)
+    result = { provision_key_hex: key, expires_in_sec: 300 }
+  } else {
+    result = await request<ProvisionKeyResp>({
+      url: `/api/v1/devices/${deviceId}/provision-key`,
+      method: 'POST',
+    })
+  }
+  // #endif
 
-  lastRequestAt.set(deviceId, nowMs())
-
-  const resp = await request<ProvisionKeyResp>({
-    url: `/api/v1/devices/${deviceId}/provision-key`,
-    method: 'POST',
+  cache.set(deviceId, {
+    provision_key_hex: result.provision_key_hex,
+    expiresAt: Date.now() + result.expires_in_sec * 1000,
   })
 
-  const entry: CachedEntry = {
-    key: resp.provision_key_hex,
-    expiresAt: nowMs() + Math.min(resp.expires_in * 1000, CACHE_TTL_MS),
-  }
-  cache.set(deviceId, entry)
-
-  return { key: resp.provision_key_hex, seq: resp.seq || 0 }
+  return result
 }
 
 /** 清除缓存（配网失败时可调用） */
-export function clearProvisionCache(deviceId?: string) {
+export function clearProvisionKeyCache(deviceId?: string) {
   if (deviceId) {
     cache.delete(deviceId)
-    lastRequestAt.delete(deviceId)
   } else {
     cache.clear()
-    lastRequestAt.clear()
   }
 }

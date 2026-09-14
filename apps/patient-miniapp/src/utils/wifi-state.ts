@@ -79,3 +79,32 @@ export function resolveProvisionStatus(code: number): ProvisionStatus {
 export function isProvisionTimeout(elapsedMs: number): boolean {
   return elapsedMs > PROVISION_TIMEOUT_MS
 }
+
+// ===== T192：BLE 设备识别与患者端生活化文案（PRD §7A.9 患技差异表） =====
+
+/** 广播名前缀（协议定稿 §1：广播名 = BSYNC-{device_id 后 6 位}） */
+export const BSYNC_PREFIX = 'BSYNC-'
+
+/** 是否为本网关设备的广播名（02-scan 列表唯一过滤条件，不涉频段） */
+export function isBsyncDevice(name: string): boolean {
+  return (name || '').startsWith(BSYNC_PREFIX)
+}
+
+/** 由云端 device_id 推导期望广播名；不足 6 位则原样拼接 */
+export function broadcastNameOf(deviceId: string): string {
+  const id = deviceId || ''
+  return BSYNC_PREFIX + id.slice(-6)
+}
+
+/**
+ * RSSI → 生活化信号描述。患者端不出现数值（PRD §7A.9 约束）。
+ * 阈值 -60dBm：室内 BLE 近场（设计稿要求 1 米以内）通常优于该值。
+ */
+export function signalLabel(rssi: number, good = '信号良好', weak = '信号弱'): string {
+  return typeof rssi === 'number' && rssi >= -60 ? good : weak
+}
+
+/** 网络名输入容错：前后空格自动清理（PRD §7A.9.1 ③-2） */
+export function normalizeWifiName(raw: string): string {
+  return (raw || '').trim()
+}

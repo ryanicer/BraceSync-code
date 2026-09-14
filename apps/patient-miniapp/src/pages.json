@@ -21,7 +21,7 @@
       "style": { "navigationBarTitleText": "绑定冲突", "navigationStyle": "custom" }
     },
     {
-      "path": "pages/login/profile",
+      "path": "pages/profile/index",
       "style": { "navigationBarTitleText": "我的" }
     },
     {
@@ -38,7 +38,7 @@
     },
     {
       "path": "pages/wifi-setup/index",
-      "style": { "navigationBarTitleText": "WiFi配网" }
+      "style": { "navigationBarTitleText": "配置家庭 WiFi" }
     },
     {
       "path": "pages/anomaly/index",
@@ -58,7 +58,8 @@
       { "pagePath": "pages/monitor/index", "text": "实时监测" },
       { "pagePath": "pages/history/index", "text": "异常监测" },
       { "pagePath": "pages/report/index", "text": "复查管理" },
-      { "pagePath": "pages/device/index", "text": "设备管理" }
+      { "pagePath": "pages/device/index", "text": "设备管理" },
+      { "pagePath": "pages/profile/index", "text": "我的" }
     ]
   }
 }

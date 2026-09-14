@@ -146,13 +146,13 @@ func TestRBAC_DeleteTechnician_BypassClosed(t *testing.T) {
 
 // TestRBAC_TechAdminOnlyPatterns T122：PUT /install-records/:id 收紧为 tech+admin
 // 覆盖：technician / ROLE_ADMIN → 放行；ROLE_DOCTOR / ROLE_CS → 403 不触达后端
+// （provision-key 原属本矩阵，T193 迁出，见 TestRBAC_T193_ProvisionKeyRoles）
 func TestRBAC_TechAdminOnlyPatterns(t *testing.T) {
 	backend, received := captureBackend(t)
 	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
 
 	techAdmin := []struct{ method, path string }{
-		{http.MethodPost, "/api/v1/devices/D001/provision-key"}, // T091 既有
-		{http.MethodPut, "/api/v1/install-records/17"},          // T122 新增
+		{http.MethodPut, "/api/v1/install-records/17"}, // T122 新增
 	}
 
 	// doctor / cs → 403
@@ -173,6 +173,34 @@ func TestRBAC_TechAdminOnlyPatterns(t *testing.T) {
 		}
 	}
 	assert.Len(t, *received, len(techAdmin)*2, "technician + ROLE_ADMIN 请求全部转发后端")
+}
+
+// TestRBAC_T193_ProvisionKeyRoles T193：配网密钥领卡端点角色白名单 = patient + technician +
+// ROLE_ADMIN（Boss 裁决 D4 放开患者，支撑 PRD §7A.9 患者自助配网）。
+// 医生/客服维持 T091 的 403 口径；本层不校验设备归属（gateway 无 device→patient 视图），
+// 患者「只能领自己已绑定设备」由 device-service 强制。
+func TestRBAC_T193_ProvisionKeyRoles(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	path := "/api/v1/devices/D001/provision-key"
+
+	for _, role := range []string{"ROLE_CS", "ROLE_DOCTOR"} {
+		code, body := httpDoFull(t, http.MethodPost, gw.URL+path, `{}`, rbacToken(t, role))
+		assert.Equal(t, http.StatusForbidden, code, "role=%s 领配网密钥应 403", role)
+		assert.Contains(t, body, `"code":403`)
+	}
+	assert.Empty(t, *received, "医生/客服领卡请求不得触达后端")
+
+	for _, role := range []string{"patient", "technician", "ROLE_ADMIN"} {
+		code, _ := httpDoFull(t, http.MethodPost, gw.URL+path, `{}`, rbacToken(t, role))
+		assert.Equal(t, http.StatusOK, code, "role=%s 领配网密钥应放行", role)
+	}
+	assert.Len(t, *received, 3, "patient + technician + ROLE_ADMIN 全部转发后端")
+
+	// 矩阵迁移自检：provision-key 不再落在 tech+admin 专属矩阵（否则 patient 会被上层拦掉）
+	assert.False(t, matchTechAdminPattern(http.MethodPost, path), "provision-key 不得再属 tech+admin 矩阵")
+	assert.True(t, matchProvisionKeyPattern(http.MethodPost, path), "provision-key 须命中新矩阵")
 }
 
 // TestRBAC_T130_DoctorAdminOnly T130：复查记录创建端点仅 doctor/admin 可访问

@@ -18,9 +18,14 @@ import {
   resolveProvisionStatus,
   isProvisionTimeout,
   PROVISION_TIMEOUT_MS,
+  isBsyncDevice,
+  broadcastNameOf,
+  signalLabel,
+  normalizeWifiName,
   type ScanDevice,
   type ProvisionStep,
 } from '../../src/utils/wifi-state'
+import { SIGNAL_GOOD, SIGNAL_WEAK } from '../../src/pages/wifi-setup/copy'
 
 describe('WiFi 配网 — 扫描过滤（PRD §7A.9）', () => {
   const devices: ScanDevice[] = [
@@ -135,5 +140,40 @@ describe('WiFi 配网 — 15s 超时（PRD §7A.9）', () => {
   })
   it('耗时 30000ms → 超时', () => {
     expect(isProvisionTimeout(30000)).toBe(true)
+  })
+})
+
+/**
+ * T192：BLE 设备识别与患者端生活化口径（PRD §7A.9 患技差异表 / §7A.9.1 ③-2）
+ */
+describe('T192 — 广播名识别（协议定稿：BSYNC-{device_id 后 6 位}）', () => {
+  it('仅 BSYNC- 前缀视为本网关设备', () => {
+    expect(isBsyncDevice('BSYNC-701001')).toBe(true)
+    expect(isBsyncDevice('MyPhone_A123')).toBe(false)
+    expect(isBsyncDevice('')).toBe(false)
+  })
+
+  it('由云端 device_id 推导期望广播名', () => {
+    expect(broadcastNameOf('PRS-ML05-RC-20260701001')).toBe('BSYNC-701001')
+  })
+
+  it('device_id 不足 6 位时原样拼接，不截出错误名称', () => {
+    expect(broadcastNameOf('701')).toBe('BSYNC-701')
+    expect(broadcastNameOf('')).toBe('BSYNC-')
+  })
+})
+
+describe('T192 — 患者端信号与生活化文案', () => {
+  it('近场信号给「信号良好」，不出现 RSSI 数值', () => {
+    expect(signalLabel(-50, SIGNAL_GOOD, SIGNAL_WEAK)).toBe('信号良好')
+    expect(signalLabel(-60, SIGNAL_GOOD, SIGNAL_WEAK)).toBe('信号良好')
+  })
+  it('远端信号给「信号弱」', () => {
+    expect(signalLabel(-75, SIGNAL_GOOD, SIGNAL_WEAK)).toBe('信号弱')
+  })
+
+  it('网络名前后空格自动清理（§7A.9.1 ③-2）', () => {
+    expect(normalizeWifiName('  Home_WiFi_2.4G ')).toBe('Home_WiFi_2.4G')
+    expect(normalizeWifiName('')).toBe('')
   })
 })
