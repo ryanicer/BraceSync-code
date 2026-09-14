@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { SUCCESS } from '../../pages/wifi-setup/copy'
+import { SUCCESS } from '../../utils/wifi-copy'
 
 /**
  * deviceLabel 由页面传入广播名（BSYNC- + device_id 后 6 位）。

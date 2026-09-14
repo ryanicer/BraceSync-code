@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { SCAN, SIGNAL_GOOD, SIGNAL_WEAK } from '../../pages/wifi-setup/copy'
+import { SCAN, SIGNAL_GOOD, SIGNAL_WEAK } from '../../utils/wifi-copy'
 import { signalLabel } from '../../utils/wifi-state'
 import type { ScannedDevice } from '../../utils/ble'
 

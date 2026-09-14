@@ -15,7 +15,7 @@ import {
   SCAN,
   SUCCESS,
   type FailureKey,
-} from '../../src/pages/wifi-setup/copy'
+} from '../../src/utils/wifi-copy'
 
 const ALL_COPY: string[] = []
 

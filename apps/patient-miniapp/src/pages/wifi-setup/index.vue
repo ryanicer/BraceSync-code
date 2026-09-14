@@ -117,7 +117,7 @@ import {
   SUCCESS,
   type ContactIssue,
   type FailureKey,
-} from './copy'
+} from '../../utils/wifi-copy'
 import WifiEntry from '../../components/wifi-setup/WifiEntry.vue'
 import WifiScan from '../../components/wifi-setup/WifiScan.vue'
 import WifiConnect from '../../components/wifi-setup/WifiConnect.vue'

@@ -25,7 +25,7 @@ import {
   type ScanDevice,
   type ProvisionStep,
 } from '../../src/utils/wifi-state'
-import { SIGNAL_GOOD, SIGNAL_WEAK } from '../../src/pages/wifi-setup/copy'
+import { SIGNAL_GOOD, SIGNAL_WEAK } from '../../src/utils/wifi-copy'
 
 describe('WiFi 配网 — 扫描过滤（PRD §7A.9）', () => {
   const devices: ScanDevice[] = [
