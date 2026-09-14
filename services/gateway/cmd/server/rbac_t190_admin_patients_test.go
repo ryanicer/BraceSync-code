@@ -156,13 +156,19 @@ func TestRBAC_T190_UnknownRoleFailsClosed(t *testing.T) {
 // TestRBAC_T190_AllAdminRoutesAreGated 防回归（不读本文件的用例表，避免自指恒绿）：
 // 遍历 gateway 真实注册表里所有 /admin/ 前缀路由，逐条断言被某个 RBAC 矩阵覆盖。
 // roleAuthz 是「默认放行」，漏登记 = 患者 token 可直接打（T184 表 B 的成因）。
+//
+// 覆盖 proxy_admin.go 的 5 张表 + proxy_services.go 的 deviceManage/deviceReport 两张
+// （/admin/ 路由目前只出现在前者，但登记位置可变，故全表扫）。唯 alerts 两条由 proxy.go
+// 的 registerAlertsProxyOn 内联注册、不走 proxyRoute 表，本测试扫不到。
 func TestRBAC_T190_AllAdminRoutesAreGated(t *testing.T) {
 	tables := map[string][]proxyRoute{
-		"user":   userServiceRoutes,
-		"data":   dataServiceRoutes,
-		"device": deviceServiceRoutes,
-		"msg":    msgServiceRoutes,
-		"file":   fileServiceRoutes,
+		"user":         userServiceRoutes,
+		"data":         dataServiceRoutes,
+		"device":       deviceServiceRoutes,
+		"deviceManage": deviceManageRoutes,
+		"deviceReport": deviceReportRoutes,
+		"msg":          msgServiceRoutes,
+		"file":         fileServiceRoutes,
 	}
 
 	var total, ungated int
