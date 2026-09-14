@@ -518,6 +518,26 @@ export function stopBleScan(): void {
   uni.offBluetoothDeviceFound()
 }
 
+/**
+ * 一次性重扫：供 03「原地重连」使用——不切回 02、不清空用户已输凭据，
+ * 只在窗口内等设备重新广播，收完直接 resolve（不像 startBleScan 那样维护列表 UI）。
+ */
+export function rescanOnce(duration = 15000): Promise<ScannedDevice[]> {
+  stopBleScan()
+  return new Promise((resolve) => {
+    const out: ScannedDevice[] = []
+    _log('info', `rescanOnce 开始 duration=${duration}`)
+    startBleScan(
+      (dev) => out.push(dev),
+      (found) => {
+        _log('info', `rescanOnce 结束 found=${found}`)
+        resolve(out)
+      },
+      duration
+    )
+  })
+}
+
 // ===== BLE 连接状态监听 =====
 
 export function registerBleStateListener(
