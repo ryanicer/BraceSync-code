@@ -19,6 +19,8 @@ import {
   isProvisionTimeout,
   PROVISION_TIMEOUT_MS,
   isBsyncDevice,
+  advertisesB510,
+  createScanDeduper,
   broadcastNameOf,
   signalLabel,
   normalizeWifiName,
@@ -161,6 +163,68 @@ describe('T192 — 广播名识别（协议定稿：BSYNC-{device_id 后 6 位}�
   it('device_id 不足 6 位时原样拼接，不截出错误名称', () => {
     expect(broadcastNameOf('701')).toBe('BSYNC-701')
     expect(broadcastNameOf('')).toBe('BSYNC-')
+  })
+})
+
+describe('T192 — 无名字广播帧的 B510 识别（仅用于扫描诊断日志）', () => {
+  it('微信小程序回传的 128 位形式命中', () => {
+    expect(advertisesB510(['0000B510-0000-1000-8000-00805F9B34FB'])).toBe(true)
+  })
+
+  it('16 位短形式、小写、带横杠均命中', () => {
+    expect(advertisesB510(['B510'])).toBe(true)
+    expect(advertisesB510(['b510'])).toBe(true)
+    expect(advertisesB510(['0000-b510'])).toBe(true)
+  })
+
+  it('别人的服务号 / 空 / undefined 不命中', () => {
+    expect(advertisesB510(['0000180A-0000-1000-8000-00805F9B34FB'])).toBe(false)
+    expect(advertisesB510(['0000B5110-0000-1000-8000-00805F9B34FB'])).toBe(false)
+    expect(advertisesB510([])).toBe(false)
+    expect(advertisesB510(undefined)).toBe(false)
+  })
+
+  it('混合列表里只要有一项是 B510 就算命中（特征号 B512 不算）', () => {
+    expect(advertisesB510(['00001800-0000-1000-8000-00805F9B34FB', 'b510'])).toBe(true)
+    expect(advertisesB510(['00001800-0000-1000-8000-00805F9B34FB', 'B512'])).toBe(false)
+  })
+})
+
+describe('T192 — 扫描去重：名字在后续 SCAN_RSP 帧才到', () => {
+  it('首帧无名、后帧有名 ⇒ 进列表且只进一次', () => {
+    const dedup = createScanDeduper()
+    expect(dedup('CC:11', '')).toBeNull()
+    expect(dedup('CC:11', 'BSYNC-701001')).toBe('BSYNC-701001')
+    expect(dedup('CC:11', 'BSYNC-701001')).toBeNull()
+  })
+
+  it('重复帧不会把同一设备灌成两台', () => {
+    const dedup = createScanDeduper()
+    const hits = ['BSYNC-701001', 'BSYNC-701001', 'BSYNC-701001']
+      .map((n) => dedup('CC:11', n))
+      .filter((n): n is string => n !== null)
+    expect(hits).toEqual(['BSYNC-701001'])
+  })
+
+  it('不同设备各自进列表', () => {
+    const dedup = createScanDeduper()
+    expect(dedup('CC:11', 'BSYNC-701001')).toBe('BSYNC-701001')
+    expect(dedup('CC:22', 'BSYNC-701002')).toBe('BSYNC-701002')
+    expect(dedup('CC:11', 'BSYNC-701001')).toBeNull()
+  })
+
+  it('非本网关设备的名字不进列表；广播名首尾空格被清掉', () => {
+    const dedup = createScanDeduper()
+    expect(dedup('CC:33', 'Mi-Band')).toBeNull()
+    expect(dedup('CC:44', '  BSYNC-701001  ')).toBe('BSYNC-701001')
+    expect(dedup('CC:44', 'BSYNC-701001')).toBeNull()
+  })
+
+  it('每次扫描窗口用新的去重器，上一轮不影响本轮', () => {
+    const first = createScanDeduper()
+    expect(first('CC:11', 'BSYNC-701001')).toBe('BSYNC-701001')
+    const again = createScanDeduper()
+    expect(again('CC:11', 'BSYNC-701001')).toBe('BSYNC-701001')
   })
 })
 

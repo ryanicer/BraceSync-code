@@ -10,6 +10,7 @@
 // R5: onWifiStatus() 订阅 B512 Notify + mock 状态机
 
 import { bleLog } from './ble-log'
+import { advertisesB510, createScanDeduper } from './wifi-state'
 
 function _log(level: 'info' | 'warn' | 'error', msg: string, ctx?: unknown) {
   bleLog(level, msg, ctx as Record<string, unknown>)
@@ -471,7 +472,11 @@ export function startBleScan(
 
   _log('info', 'startBleScan 入口')
   scanActive = true
-  const seen = new Set<string>()
+  const dedup = createScanDeduper()
+  const rawIds = new Set<string>()
+  const uuidOnlySample: string[] = []
+  let rawHits = 0
+  let listed = 0
 
   const finish = () => {
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null }
@@ -479,24 +484,46 @@ export function startBleScan(
     uni.offBluetoothDeviceFound()
     if (scanActive) {
       scanActive = false
-      onDone(seen.size)
+      // found=0 时这条是唯一能分辨"设备真没广播"与"广播了但被名字过滤吃掉"的证据
+      _log(
+        'info',
+        `扫描明细 rawHits=${rawHits} rawDistinct=${rawIds.size} bsync=${listed}`
+          + (uuidOnlySample.length ? ` uuidNoName=[${uuidOnlySample.join(',')}]` : '')
+      )
+      onDone(listed)
     }
   }
 
   uni.startBluetoothDevicesDiscovery({
-    allowDuplicatesKey: false,
+    // 固件把设备名放在 SCAN_RSP（ble_provision.h:408 setScanResponse(true)），广播主包里只有
+    // serviceUUID ⇒ Android 首帧经常不带名字。allowDuplicatesKey:false 时同一设备每轮只上报一次，
+    // 首帧无名就被永久丢掉 —— 表现为"手机系统蓝牙看得见、小程序 found:0"。改 true 后自行去重。
+    allowDuplicatesKey: true,
     success: () => {
       _log('info', 'startBluetoothDevicesDiscovery 成功，开始收 BSYNC- 广播')
       uni.onBluetoothDeviceFound((res) => {
         const devs = res.devices as unknown as {
           deviceId: string; name: string; localName?: string; RSSI: number
+          advertisServiceUUIDs?: string[]
         }[]
+        rawHits += devs.length
         for (const dev of devs) {
-          const devName = dev.name || dev.localName || ''
-          if (!devName.startsWith('BSYNC-') || seen.has(dev.deviceId)) continue
-          seen.add(dev.deviceId)
-          _log('info', `发现设备 ${devName} RSSI=${dev.RSSI}`)
-          onDevice({ deviceId: dev.deviceId, name: devName, RSSI: dev.RSSI })
+          const firstSight = !rawIds.has(dev.deviceId)
+          rawIds.add(dev.deviceId)
+          const rawName = (dev.name || dev.localName || '').trim()
+          const name = dedup(dev.deviceId, rawName)
+          if (name) {
+            listed += 1
+            _log('info', `发现设备 ${name} RSSI=${dev.RSSI}`)
+            onDevice({ deviceId: dev.deviceId, name, RSSI: dev.RSSI })
+          } else if (
+            firstSight
+            && !rawName
+            && advertisesB510(dev.advertisServiceUUIDs)
+            && uuidOnlySample.length < 3
+          ) {
+            uuidOnlySample.push(`${dev.deviceId} rssi=${dev.RSSI}`)
+          }
         }
       })
       discoveryTimer = setTimeout(finish, duration)

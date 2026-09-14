@@ -184,6 +184,9 @@ let connectedAtMs = 0
 let successHandled = false
 let timeoutTimer: ReturnType<typeof setTimeout> | null = null
 let lastAttemptAt = 0
+// B512 帧时序：lastCodeAt 初值＝本次 B511 写入时刻，之后每收一帧前移 ⇒ gapMs 即"上一事件距今"
+let lastCodeAt = 0
+let prevCode: number | null = null
 let resumePending: 'bluetooth' | 'location' | '' = ''
 let deviceReady = false
 // #ifdef H5
@@ -518,6 +521,8 @@ async function runProvision() {
   view.value = 'progress'
   provisionCode.value = null
   successHandled = false
+  lastCodeAt = 0
+  prevCode = null
   deviceStore.setWifiStatus('configuring')
 
   try {
@@ -539,6 +544,8 @@ async function runProvision() {
       seq,
       seqInFirmwareWindow: seq >= 1 && seq <= 3,
     })
+    // 首帧的 gapMs 由此刻起算：<1s ＝ 载荷没解出来，数秒后 ＝ 已进 WiFi 关联阶段
+    lastCodeAt = Date.now()
     armTimeout()
     // #ifdef H5
     startMockWifiStatusSequence(mockSequence)
@@ -558,7 +565,9 @@ async function runProvision() {
 }
 
 function handleStatus(code: number) {
-  logger.info('[T192] 收到 B512 状态推送', { code })
+  const gapMs = lastCodeAt ? Date.now() - lastCodeAt : 0
+  lastCodeAt = Date.now()
+  logger.info('[T192] 收到 B512 状态推送', { code, gapMs })
   provisionCode.value = code
   deviceStore.updateWifiStatusCode(code)
 
@@ -570,11 +579,19 @@ function handleStatus(code: number) {
     stopProvisionTimer()
     stopMockWifiStatusSequence()
     failureType.value = FAILURE_KEY_BY_CODE[code] ?? 'timeout'
-    logger.warn('[T192] 设备回失败码', { code, failureType: failureType.value })
+    // 固件把"连 WiFi 超时"和"密码错"都映射成 -1（provision ble_provision.h:178 mapWifiFail），
+    // 前端无法据此区分；把帧间隔带上：紧跟 0 之后 <1s ＝ 载荷没解出，1 之后 ~15s ＝ 连不上而非密码错
+    logger.warn('[T192] 设备回失败码', {
+      code,
+      failureType: failureType.value,
+      prevCode,
+      gapMs,
+    })
     deviceStore.setWifiStatus('failed')
     view.value = 'failure'
     return
   }
+  prevCode = code
   if (code === 3) uni.showToast({ title: PROGRESS.nearlyDoneToast, icon: 'none' })
   armTimeout() // PRD §7A.9：15s「无推送」超时，每收一帧重新计时
 }
