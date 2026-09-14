@@ -26,7 +26,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { FAILURES, FAILURE_COMMON, type FailureKey } from '../../pages/wifi-setup/copy'
+import { FAILURES, FAILURE_COMMON, type FailureKey } from '../../utils/wifi-copy'
 
 /**
  * 06a–06e 五类失败态共用一套版式（设计稿仅图标色与按钮组不同），

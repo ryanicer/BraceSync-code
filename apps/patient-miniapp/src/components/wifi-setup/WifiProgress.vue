@@ -34,7 +34,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { PROGRESS } from '../../pages/wifi-setup/copy'
+import { PROGRESS } from '../../utils/wifi-copy'
 
 const props = defineProps<{
   /** 设备推送状态 0/1/2/3；null = 尚未收到推送 */

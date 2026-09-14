@@ -83,6 +83,7 @@ import { getProvisionKey } from '../../api/provision'
 import { reportDeviceWifi } from '../../api/device'
 import { submitWifiFailureFeedback, buildFailureContent, formatFeedbackTime } from '../../api/feedback'
 import { encryptWifiPayload } from '../../utils/aes-ctr'
+import { logger } from '../../utils/logger'
 import {
   closeBLEConnection,
   connectDevice,
@@ -117,7 +118,7 @@ import {
   SUCCESS,
   type ContactIssue,
   type FailureKey,
-} from './copy'
+} from '../../utils/wifi-copy'
 import WifiEntry from '../../components/wifi-setup/WifiEntry.vue'
 import WifiScan from '../../components/wifi-setup/WifiScan.vue'
 import WifiConnect from '../../components/wifi-setup/WifiConnect.vue'
@@ -191,11 +192,15 @@ const networkText = computed(() => {
 
 watch(
   view,
-  (v) => uni.setNavigationBarTitle({ title: NAV_TITLES[v] }),
+  (v) => {
+    logger.info('[T192] view →', { view: v })
+    uni.setNavigationBarTitle({ title: NAV_TITLES[v] })
+  },
   { immediate: true }
 )
 
 onLoad(async (options) => {
+  logger.info('[T192] onLoad', { options: options ?? {} })
   // #ifdef H5
   const raw = (options as { mock?: string } | undefined)?.mock
   if (raw) {
@@ -203,7 +208,8 @@ onLoad(async (options) => {
     if (parsed.length) mockSequence = parsed
   }
   // #endif
-  registerBleStateListener((_deviceId, connected) => {
+  registerBleStateListener((deviceId, connected) => {
+    logger.info('[T192] BLE 连接态变化', { deviceId, connected, view: view.value })
     deviceStore.setBleConnected(connected)
     if (connected) bleLinkUp.value = true
     else bleLinkUp.value = false
@@ -223,10 +229,18 @@ onShow(async () => {
   const [bt, loc] = await Promise.all([isBluetoothReady(), isLocationAuthed()])
   bluetoothOn.value = bt
   locationOn.value = loc
+  logger.info('[T192] onShow 前置态', {
+    bluetoothOn: bt,
+    locationOn: loc,
+    view: view.value,
+    resumePending,
+    deviceReady,
+  })
   if (view.value !== 'entry' || !resumePending) return
   if ((resumePending === 'bluetooth' && bt) || (resumePending === 'location' && loc)) {
     const which = resumePending
     resumePending = ''
+    logger.info('[T192] 授权回来，自动续跑扫描', { which })
     uni.showToast({ title: which === 'bluetooth' ? ENTRY.btReadyToast : ENTRY.locReadyToast, icon: 'none' })
     await nextTick()
     goScan()
@@ -236,7 +250,10 @@ onShow(async () => {
 /** 云端 device_id：优先设备页已加载的绑定设备，否则按快照补一次（不写占位值） */
 async function ensureCloudDevice(): Promise<boolean> {
   cloudDeviceId.value = deviceStore.currentDevice?.deviceId || ''
-  if (cloudDeviceId.value) return true
+  if (cloudDeviceId.value) {
+    logger.info('[T192] 云端 device_id 来自 store', { deviceId: cloudDeviceId.value })
+    return true
+  }
 
   const patientId = authStore.patientId
   if (patientId) {
@@ -246,11 +263,13 @@ async function ensureCloudDevice(): Promise<boolean> {
         method: 'GET',
       })
       cloudDeviceId.value = snap?.deviceId || ''
+      logger.info('[T192] 云端 device_id 来自快照', { patientId, deviceId: cloudDeviceId.value })
     } catch (e) {
-      console.warn('[wifi-setup] 设备快照加载失败', e)
+      logger.error('[T192] 设备快照加载失败', { patientId, msg: (e as Error)?.message })
     }
   }
   if (!cloudDeviceId.value) {
+    logger.warn('[T192] 无云端设备，退回设备页', { patientId: patientId || '(空)' })
     uni.showToast({ title: ENTRY.noDeviceToast, icon: 'none' })
     setTimeout(() => uni.switchTab({ url: '/pages/device/index', fail: () => uni.navigateBack() }), 800)
   }
@@ -260,6 +279,11 @@ async function ensureCloudDevice(): Promise<boolean> {
 /* ===== 01-entry ===== */
 
 function onEntryStart() {
+  logger.info('[T192] 01 开始配网点击', {
+    deviceReady,
+    bluetoothOn: bluetoothOn.value,
+    locationOn: locationOn.value,
+  })
   if (!deviceReady) {
     uni.showToast({ title: ENTRY.noDeviceToast, icon: 'none' })
     return
@@ -280,11 +304,21 @@ function onEntryStart() {
 function onEnableBluetooth() {
   resumePending = 'bluetooth'
   // #ifdef MP-WEIXIN
-  const sysBt = (uni as unknown as { openSystemBluetoothSetting?: (o: { fail?: () => void }) => void })
+  const sysBt = (uni as unknown as { openSystemBluetoothSetting?: (o: { fail?: (e?: unknown) => void }) => void })
     .openSystemBluetoothSetting
+  logger.info('[T192] 01 去开蓝牙', { apiAvailable: typeof sysBt === 'function' })
   if (sysBt) {
-    sysBt({ fail: () => uni.showToast({ title: ENTRY.btSettingsToast, icon: 'none' }) })
-    return
+    try {
+      sysBt({
+        fail: (err) => {
+          logger.error('[T192] openSystemBluetoothSetting fail', { err: (err as Error)?.message ?? err })
+          uni.showToast({ title: ENTRY.btSettingsToast, icon: 'none' })
+        },
+      })
+      return
+    } catch (e) {
+      logger.error('[T192] openSystemBluetoothSetting 抛出', { msg: (e as Error)?.message })
+    }
   }
   // #endif
   uni.showToast({ title: ENTRY.btSettingsToast, icon: 'none' })
@@ -293,11 +327,13 @@ function onEnableBluetooth() {
 async function onGrantLocation() {
   resumePending = 'location'
   locationOn.value = await ensureLocationPermission()
+  logger.info('[T192] 01 位置授权返回', { granted: locationOn.value })
 }
 
 /* ===== 02-scan ===== */
 
 function goScan() {
+  logger.info('[T192] → 02 扫描')
   view.value = 'scan'
   startScan()
 }
@@ -306,20 +342,24 @@ function startScan() {
   stopBleScan()
   devices.value = []
   scanning.value = true
+  logger.info('[T192] startBleScan', { durationMs: SCAN_DURATION_MS })
   startBleScan(
     (dev) => {
       if (!isBsyncDevice(dev.name)) return
       if (devices.value.some((d) => d.deviceId === dev.deviceId)) return
+      logger.info('[T192] 扫描到设备', { name: dev.name, deviceId: dev.deviceId, rssi: dev.RSSI })
       devices.value.push(dev)
     },
-    () => {
+    (found) => {
       scanning.value = false
+      logger.info('[T192] 扫描窗口结束', { found })
     },
     SCAN_DURATION_MS
   )
 }
 
 async function onSelectDevice(dev: ScannedDevice) {
+  logger.info('[T192] 02 选中设备，建 BLE 连接', { name: dev.name, deviceId: dev.deviceId })
   stopBleScan()
   scanning.value = false
   scannedName.value = dev.name
@@ -331,7 +371,15 @@ async function onSelectDevice(dev: ScannedDevice) {
   connectPhase.value = 'connecting'
 
   // 发现设备 → 建立 BLE 连接 → 才允许进入凭据输入（T182 缺失的前置）
-  const connected = await connectDevice(dev.deviceId)
+  // connectDevice 会以 reject 表达超时/连接失败/服务与特征发现失败，必须在此兜住，
+  // 否则安卓上未处理的 rejection 既无提示也不上报（wx.onUnhandledRejection 安卓不支持）
+  let connected = false
+  try {
+    connected = await connectDevice(dev.deviceId)
+  } catch (e) {
+    logger.error('[T192] BLE 建连失败', { name: dev.name, deviceId: dev.deviceId, msg: (e as Error)?.message ?? String(e) })
+  }
+  logger.info('[T192] BLE 建连结果', { deviceId: dev.deviceId, connected })
   if (!connected) {
     uni.showToast({ title: CONNECT.connectFailedToast, icon: 'none' })
     goScan()
@@ -346,6 +394,7 @@ async function onSelectDevice(dev: ScannedDevice) {
 async function onStartProvision() {
   const now = Date.now()
   if (now - lastAttemptAt < MIN_PROVISION_INTERVAL) {
+    logger.info('[T192] 03 节流拦截', { sinceLastMs: now - lastAttemptAt })
     uni.showToast({ title: CONNECT.throttleToast, icon: 'none' })
     return
   }
@@ -353,10 +402,12 @@ async function onStartProvision() {
   const creds = connectRef.value?.getCredentials() ?? { ssid: '', pwd: '' }
   const ssid = normalizeWifiName(creds.ssid)
   if (!ssid) {
+    logger.info('[T192] 03 ssid 为空，拦截')
     uni.showToast({ title: CONNECT.ssidRequiredToast, icon: 'none' })
     return
   }
   if (!creds.pwd) {
+    logger.info('[T192] 03 密码为空，拦截', { ssid })
     uni.showToast({ title: CONNECT.pwdRequiredToast, icon: 'none' })
     return
   }
@@ -369,7 +420,17 @@ async function onStartProvision() {
 /* ===== 04-progress ===== */
 
 async function runProvision() {
+  logger.info('[T192] runProvision 入口', {
+    bleDeviceId: bleDeviceId.value,
+    cloudDeviceId: cloudDeviceId.value,
+    bleConnected: deviceStore.bleConnected,
+    ssid: enteredSsid.value,
+  })
   if (!bleDeviceId.value || !deviceStore.bleConnected) {
+    logger.warn('[T192] 前置校验失败：BLE 未连', {
+      bleDeviceId: bleDeviceId.value,
+      bleConnected: deviceStore.bleConnected,
+    })
     uni.showToast({ title: CONNECT.connectFailedToast, icon: 'none' })
     goScan()
     return
@@ -382,14 +443,17 @@ async function runProvision() {
 
   try {
     uni.showLoading({ title: CONNECT.sendingToast, mask: true })
+    // provision_key 原文不入日志（实时日志后台可见）
     const { provision_key_hex } = await getProvisionKey(cloudDeviceId.value)
     uni.hideLoading()
+    logger.info('[T192] provision-key 就绪', { keyBytes: provision_key_hex.length / 2 })
 
     // 先订阅 B512 Notify，再写 B511，否则首帧状态（0/1）会丢
     onWifiStatus(handleStatus, bleDeviceId.value)
 
     const payload = encryptWifiPayload(enteredSsid.value, enteredPwd, provision_key_hex, deviceStore.nextWifiSeq())
     await writeWifiConfigV2(bleDeviceId.value, payload)
+    logger.info('[T192] B511 写入完成，等待设备推送', { payloadBytes: payload.length / 2 })
     armTimeout()
     // #ifdef H5
     startMockWifiStatusSequence(mockSequence)
@@ -398,7 +462,7 @@ async function runProvision() {
     uni.hideLoading()
     stopMockWifiStatusSequence()
     stopProvisionTimer()
-    console.warn('[wifi-setup] 配网下发失败', e)
+    logger.error('[T192] 配网下发失败', { msg: (e as Error)?.message ?? String(e), ssid: enteredSsid.value })
     uni.showToast({ title: CONNECT.keyFailToast, icon: 'none' })
     connectPhase.value = 'form'
     view.value = 'connect'
@@ -406,6 +470,7 @@ async function runProvision() {
 }
 
 function handleStatus(code: number) {
+  logger.info('[T192] 收到 B512 状态推送', { code })
   provisionCode.value = code
   deviceStore.updateWifiStatusCode(code)
 
@@ -417,6 +482,7 @@ function handleStatus(code: number) {
     stopProvisionTimer()
     stopMockWifiStatusSequence()
     failureType.value = FAILURE_KEY_BY_CODE[code] ?? 'timeout'
+    logger.warn('[T192] 设备回失败码', { code, failureType: failureType.value })
     deviceStore.setWifiStatus('failed')
     view.value = 'failure'
     return
@@ -429,6 +495,7 @@ function armTimeout() {
   stopProvisionTimer()
   timeoutTimer = setTimeout(() => {
     if (successHandled) return
+    logger.warn('[T192] 15s 无推送超时', { lastCode: provisionCode.value })
     stopMockWifiStatusSequence()
     failureType.value = 'timeout'
     deviceStore.setWifiStatus('failed')
@@ -450,12 +517,13 @@ async function onProvisionSuccess() {
   stopMockWifiStatusSequence()
   deviceStore.setWifiStatus('connected')
   await teardownBle()
+  logger.info('[T192] 配网成功 → 05', { deviceId: cloudDeviceId.value, ssid: enteredSsid.value })
   view.value = 'success'
 
   try {
     if (cloudDeviceId.value) await reportDeviceWifi(cloudDeviceId.value, enteredSsid.value)
   } catch (e) {
-    console.warn('[wifi-setup] WiFi 状态回写失败', e)
+    logger.warn('[T192] WiFi 状态回写失败', { msg: (e as Error)?.message ?? String(e) })
     uni.showToast({ title: SUCCESS.syncFailToast, icon: 'none' })
   }
 }
@@ -483,6 +551,7 @@ function goDevicePage() {
 
 async function onFailurePrimary() {
   const to = FAILURES[failureType.value].primaryTo
+  logger.info('[T192] 06 主按钮', { failureType: failureType.value, to })
   if (to === 'connect') {
     connectPhase.value = 'form'
     view.value = 'connect'
@@ -503,6 +572,7 @@ function onFailureSecondary() {
 /** 「重试配网」= 回到 04 并重跑下发；BLE 已断则先回 02 重新连接 */
 async function retryProvision() {
   if (!enteredSsid.value || !enteredPwd) {
+    logger.info('[T192] 重试缺凭据，回 03 表单')
     connectPhase.value = 'form'
     view.value = 'connect'
     return
@@ -517,6 +587,7 @@ function goContact(issue: ContactIssue, from: View) {
   contactBack.value = from
   const at = new Date()
   occurredAt.value = formatFeedbackTime(at)
+  logger.info('[T192] → 07 联系客服', { issue, from })
   view.value = 'contact'
   void submitFeedback(issue, at)
 }
@@ -529,8 +600,9 @@ async function submitFeedback(issue: ContactIssue, at: Date) {
       content: buildFailureContent(CONTACT.typeMap[issue], deviceLabel.value, at),
     })
     feedbackState.value = 'ok'
+    logger.info('[T192] 反馈提交成功', { issue })
   } catch (e) {
-    console.warn('[wifi-setup] 配网反馈提交失败', e)
+    logger.error('[T192] 配网反馈提交失败', { msg: (e as Error)?.message ?? String(e), issue })
     feedbackState.value = 'failed'
     uni.showToast({ title: CONTACT.submitFailToast, icon: 'none' })
   }
@@ -551,14 +623,15 @@ async function teardownBle() {
   if (!bleDeviceId.value) return
   try {
     await closeBLEConnection(bleDeviceId.value)
-  } catch {
-    /* 关闭失败不影响页面收尾 */
+  } catch (e) {
+    logger.warn('[T192] 关闭 BLE 失败（不阻断收尾）', { msg: (e as Error)?.message ?? String(e) })
   }
   deviceStore.setBleConnected(false)
   bleLinkUp.value = false
 }
 
 onUnmounted(() => {
+  logger.info('[T192] 页面卸载，收尾', { view: view.value, bleDeviceId: bleDeviceId.value })
   stopProvisionTimer()
   stopBleScan()
   stopMockWifiStatusSequence()

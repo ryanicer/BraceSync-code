@@ -77,7 +77,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ENTRY } from '../../pages/wifi-setup/copy'
+import { ENTRY } from '../../utils/wifi-copy'
 
 defineProps<{
   deviceName: string

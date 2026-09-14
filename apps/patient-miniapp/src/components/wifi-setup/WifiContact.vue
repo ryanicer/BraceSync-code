@@ -57,7 +57,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CONTACT, type ContactIssue } from '../../pages/wifi-setup/copy'
+import { CONTACT, type ContactIssue } from '../../utils/wifi-copy'
 
 /**
  * submitState 反映 POST /api/v1/feedbacks 的真实结果：
