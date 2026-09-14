@@ -16,11 +16,13 @@ export const useDeviceStore = defineStore('device', () => {
   const wifiStatus = ref<'unconfigured' | 'configuring' | 'connected' | 'failed'>('unconfigured')
   const wifiStatusCode = ref<number | null>(null)
 
-  // T182: 配网序列号（防重放，每次配网递增）
-  let _wifiSeq = Math.floor(Date.now() / 1000)
+  // T182: 配网序列号（防重放，同一会话内递增）。
+  // 🔴 起点必须是 1：固件不持久 seq，解密时只尝试 seq=1/2/3（协议 §3 定稿）。
+  // 旧实现取 Date.now()/1000（≈17.9 亿）当起点 ⇒ 固件永远解不出明文，真机表现为 -1"密码错误"。
+  let _wifiSeq = 0
 
   function nextWifiSeq(): number {
-    _wifiSeq++
+    _wifiSeq += 1
     return _wifiSeq
   }
 

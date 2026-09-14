@@ -530,9 +530,15 @@ async function runProvision() {
     // 先订阅 B512 Notify，再写 B511，否则首帧状态（0/1）会丢
     onWifiStatus(handleStatus, bleDeviceId.value)
 
-    const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, deviceStore.nextWifiSeq())
+    const seq = deviceStore.nextWifiSeq()
+    const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, seq)
     await writeWifiConfigV2(bleDeviceId.value, payload)
-    logger.info('[T192] B511 写入完成，等待设备推送', { payloadBytes: payload.length / 2 })
+    // seq 不在固件候选窗口 1/2/3 内时，设备必然解不出明文 → 会回 -1（并非真的密码错）
+    logger.info('[T192] B511 写入完成，等待设备推送', {
+      payloadBytes: payload.length / 2,
+      seq,
+      seqInFirmwareWindow: seq >= 1 && seq <= 3,
+    })
     armTimeout()
     // #ifdef H5
     startMockWifiStatusSequence(mockSequence)
