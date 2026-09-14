@@ -140,22 +140,34 @@ func TestStartupSurvivesImmediateScan(t *testing.T) {
 	srv.Stderr = &logs
 	require.NoError(t, srv.Start(), "启动 alert-service 进程")
 
-	exited := make(chan error, 1)
-	go func() { exited <- srv.Wait() }()
+	var waitErr error
+	waitDone := make(chan struct{})
+	go func() { waitErr = srv.Wait(); close(waitDone) }()
 
 	t.Cleanup(func() {
 		_ = srv.Process.Kill()
-		<-exited
+		select {
+		case <-waitDone:
+		case <-time.After(10 * time.Second):
+			t.Errorf("alert-service 子进程未在 10s 内退出")
+		}
 	})
+
+	crashed := func() bool {
+		select {
+		case <-waitDone:
+			return true
+		default:
+			return false
+		}
+	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
 	deadline := time.Now().Add(20 * time.Second)
 	var code int
 	for time.Now().Before(deadline) {
-		select {
-		case err := <-exited:
-			t.Fatalf("alert-service 启动即退出（%v），从未提供 /healthz\n输出:\n%s", err, logs.String())
-		default:
+		if crashed() {
+			t.Fatalf("alert-service 启动即退出（%v），从未提供 /healthz\n输出:\n%s", waitErr, logs.String())
 		}
 		resp, err := http.Get(url) //nolint:noctx // 冒烟探针
 		if err == nil {
@@ -170,12 +182,15 @@ func TestStartupSurvivesImmediateScan(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, code, "/healthz 应返回 200，输出:\n%s", logs.String())
 
+	// 断言走到过阈值注入分支：sys_configs 读失败时该分支被跳过，panic 也不会发生，
+	// 只断言 /healthz 会在 seed/migration 变化后退化成假绿。
+	require.Contains(t, logs.String(), "wearing threshold injected into pending consumer",
+		"启动补跑轮未执行佩戴阈值注入，测试未覆盖缺陷路径，输出:\n%s", logs.String())
+
 	// 补跑轮之后的持续存活：崩溃（panic 后进程退出）在这里被抓
 	select {
-	case err := <-exited:
-		t.Fatalf("alert-service 在 /healthz 通过后退出（%v），输出:\n%s", err, logs.String())
+	case <-waitDone:
+		t.Fatalf("alert-service 在 /healthz 通过后退出（%v），输出:\n%s", waitErr, logs.String())
 	case <-time.After(3 * time.Second):
 	}
-
-	t.Log("startup smoke ok:", strings.Contains(logs.String(), "alert-service running"))
 }
