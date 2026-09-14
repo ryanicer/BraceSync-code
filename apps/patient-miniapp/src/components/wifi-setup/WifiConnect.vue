@@ -83,7 +83,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { CONNECT } from '../../pages/wifi-setup/copy'
+import { CONNECT } from '../../utils/wifi-copy'
 
 const props = defineProps<{
   phase: 'connecting' | 'form'
