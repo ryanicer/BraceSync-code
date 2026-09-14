@@ -874,6 +874,7 @@ func TestGetRealtime_FullSnapshot(t *testing.T) {
 	assert.Equal(t, testDevice, snap.PressureRecords[0].DeviceID)
 	assert.Len(t, snap.PressureRecords[0].Points, model.PointCount)
 	assert.NotNil(t, snap.Alerts)
+	assert.Equal(t, testDevice, snap.DeviceID, "T200：Redis 回退路径同样须透出 deviceId")
 }
 
 func TestGetRealtime_NoDevice(t *testing.T) {
@@ -882,6 +883,7 @@ func TestGetRealtime_NoDevice(t *testing.T) {
 	require.Nil(t, appErr)
 	assert.Equal(t, "offline", snap.Status)
 	assert.Empty(t, snap.PressureRecords)
+	assert.Empty(t, snap.DeviceID, "T200：未绑定患者 deviceId 为空且不报错")
 }
 
 func TestGetRealtime_StatusVariants(t *testing.T) {

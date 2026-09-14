@@ -363,6 +363,17 @@ func TestIT_HistoryAndRealtime(t *testing.T) {
 	assert.Equal(t, "P03", snap.MaxPoint)
 	require.Len(t, snap.PressureRecords, 1)
 	assert.Equal(t, itDevice, snap.PressureRecords[0].DeviceID)
+
+	// T200：快照顶层 deviceId 来自 devices 表真实反查（患者端配网入口的唯一取数路径）
+	t.Logf("[T200-it] patient=%s snapshot.deviceId=%q", itPatient, snap.DeviceID)
+	assert.Equal(t, itDevice, snap.DeviceID, "已绑定患者 realtime 必须返回其当前绑定设备号")
+
+	// T200 验收 2：未绑定患者 → deviceId 空串、不报错、状态 offline
+	unbound, appErr := svc.GetRealtime(ctx, "P-IT-NO-DEVICE")
+	require.Nil(t, appErr, "未绑定患者不得报错")
+	assert.Empty(t, unbound.DeviceID)
+	assert.Equal(t, "offline", unbound.Status)
+	t.Logf("[T200-it] patient=P-IT-NO-DEVICE snapshot.deviceId=%q status=%s", unbound.DeviceID, unbound.Status)
 }
 
 // ─────────────────────────────────────────────────────────────

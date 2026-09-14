@@ -446,7 +446,8 @@ type ArchiveStatus struct {
 
 // RealtimeSnapshot 对齐 api-contracts.ts getPatientRealtime 返回结构
 type RealtimeSnapshot struct {
-	Status          string              `json:"status"` // online / offline / abnormal
+	DeviceID        string              `json:"deviceId"` // 当前绑定设备号（devices.patient_id 反查）；未绑定为空串
+	Status          string              `json:"status"`   // online / offline / abnormal
 	TodayHours      float64             `json:"todayHours"`
 	MaxPressure     float64             `json:"maxPressure"`
 	MaxPoint        string              `json:"maxPoint"`
