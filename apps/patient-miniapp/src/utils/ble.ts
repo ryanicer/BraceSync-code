@@ -325,8 +325,11 @@ export async function connectDevice(deviceId: string): Promise<boolean> {
         uni.setBLEMTU({
           deviceId,
           mtu: 247,
-          success: (res: any) => resolve(),
-          fail: () => resolve(), // 失败不阻断
+          success: (res: any) => { _log('info', `setBLEMTU 成功 mtu=${res?.mtu ?? 247}`); resolve() },
+          fail: (err) => {
+            _log('warn', `setBLEMTU 失败（不阻断，但 180B 分片可能写不进）: ${err?.errMsg}`)
+            resolve()
+          },
         })
       })
     } catch { /* 忽略 */ }
@@ -483,6 +486,7 @@ export function startBleScan(
   uni.startBluetoothDevicesDiscovery({
     allowDuplicatesKey: false,
     success: () => {
+      _log('info', 'startBluetoothDevicesDiscovery 成功，开始收 BSYNC- 广播')
       uni.onBluetoothDeviceFound((res) => {
         const devs = res.devices as unknown as {
           deviceId: string; name: string; localName?: string; RSSI: number

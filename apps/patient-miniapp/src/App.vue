@@ -1,5 +1,11 @@
 <script setup lang="ts">
 // App 入口（uni-app 约定：App.vue 无 template，页面由 pages.json 路由渲染）
+import { onError, onUnhandledRejection } from '@dcloudio/uni-app'
+import { logger } from './utils/logger'
+
+// 兜底：漏网的异常也要能在后台反查到，不依赖测试者口述屏幕报错
+onError((error) => logger.error(`[APP] onError ${error}`))
+onUnhandledRejection((res) => logger.error(`[APP] unhandledRejection ${res?.reason ?? ''}`))
 </script>
 
 <style>
