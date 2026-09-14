@@ -140,8 +140,8 @@ func ErrInternal(format string, args ...any) *AppError {
 type SingleFrameRequest struct {
 	// DeviceID 仅为 gateway 身份头未就绪时的联调回退；
 	// 生产以 gateway 注入的 X-Device-Id 为准（验签归 gateway，本服务不越权）。
-	DeviceID  string    `json:"device_id,omitempty"`
-	Timestamp int64     `json:"timestamp"` // 采集时刻，Unix 秒
+	DeviceID  string `json:"device_id,omitempty"`
+	Timestamp int64  `json:"timestamp"` // 采集时刻，Unix 秒
 	// Points 20 点压力值（P01–P20 顺序）。
 	// 🔴 单位 = mN（毫牛，PRD §7A.2 数据单位口径，T173 D1 权威裁定：设备上报 mN）；
 	// 入口统一 ÷1000 归一为 N 后落库/判定（toPendingFrame）。⚠️ docs/api/device-protocol.md
