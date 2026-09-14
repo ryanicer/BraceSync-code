@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"github.com/bracesync/bracesync/services/data-service/internal/calibration"
 	"github.com/bracesync/bracesync/services/data-service/internal/handler"
 	"github.com/bracesync/bracesync/services/data-service/internal/repo"
 	"github.com/bracesync/bracesync/services/data-service/internal/service"
@@ -96,6 +97,8 @@ func main() {
 		evaluator,
 		service.NewDefaultRateLimiter(),
 	)
+	// T173 基线校准读侧装配：baselines 表只读（写归 device-service，D3）
+	svc.SetCalibrator(calibration.NewCalibrator(repo.NewBaselineRepo(pool)))
 	h := handler.New(svc)
 
 	// device-service 上报状态回写（devices.last_report_at 单调推进；devices 表写归 device-service）

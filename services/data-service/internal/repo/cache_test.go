@@ -9,6 +9,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bracesync/bracesync/services/data-service/internal/model"
 )
 
 // startMiniRedis 启动内存 Redis（支持 Lua），返回 RedisCache 与控制器
@@ -158,16 +160,29 @@ func TestBuildBatchInsertSQL(t *testing.T) {
 }
 
 func TestApplyConfigValue(t *testing.T) {
-	interval, version := 30, 1
-	applyConfigValue("collect_interval_minutes", "45", &interval, &version)
-	assert.Equal(t, 45, interval)
-	applyConfigValue("device_config_version", "3", &interval, &version)
-	assert.Equal(t, 3, version)
+	snap := configSnapshot{interval: 30, version: 1, th: model.DefaultPressureThresholds()}
+	applyConfigValue("collect_interval_minutes", "45", &snap)
+	assert.Equal(t, 45, snap.interval)
+	applyConfigValue("device_config_version", "3", &snap)
+	assert.Equal(t, 3, snap.version)
+
+	// T173 阈值键（占位值重定前的配置化入口）
+	applyConfigValue("wearing_pressure_threshold", "0.6", &snap)
+	assert.InDelta(t, 0.6, snap.th.WearingN, 0.0001)
+	applyConfigValue("heatmap_max_n", "80", &snap)
+	assert.InDelta(t, 80.0, snap.th.HeatmapMaxN, 0.0001)
+	applyConfigValue("threshold_pressure_high", "50", &snap)
+	assert.InDelta(t, 50.0, snap.th.PressureHighN, 0.0001)
 
 	// 非法/非正值/未知 key 不覆盖
-	applyConfigValue("collect_interval_minutes", "abc", &interval, &version)
-	applyConfigValue("collect_interval_minutes", "0", &interval, &version)
-	applyConfigValue("unknown_key", "99", &interval, &version)
-	assert.Equal(t, 45, interval)
-	assert.Equal(t, 3, version)
+	applyConfigValue("collect_interval_minutes", "abc", &snap)
+	applyConfigValue("collect_interval_minutes", "0", &snap)
+	applyConfigValue("wearing_pressure_threshold", "-1", &snap)
+	applyConfigValue("heatmap_max_n", "xyz", &snap)
+	applyConfigValue("unknown_key", "99", &snap)
+	assert.Equal(t, 45, snap.interval)
+	assert.Equal(t, 3, snap.version)
+	assert.InDelta(t, 0.6, snap.th.WearingN, 0.0001)
+	assert.InDelta(t, 80.0, snap.th.HeatmapMaxN, 0.0001)
+	assert.InDelta(t, 50.0, snap.th.PressureHighN, 0.0001)
 }

@@ -184,9 +184,11 @@ func newITSvc(t *testing.T, alerts AlertEvaluator) *RecordService {
 	return svc
 }
 
+// itPoints 生成 20 点上报帧：P03 为最大点。参数按 N 语义书写，
+// T173：上报载荷单位为 mN（PRD §7A.2），此处 ×1000 转换。
 func itPoints(v float64) []float64 {
 	out := make([]float64, model.PointCount)
-	out[2] = v // P03 为最大点
+	out[2] = v * model.MnPerN // P03 为最大点
 	return out
 }
 

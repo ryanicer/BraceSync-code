@@ -40,9 +40,11 @@ const (
 // PointCount 压力帧点数（与 data-service model.PointCount 契约一致）
 const PointCount = 20
 
-// wearingThresholdN 佩戴判定阈值（PRD §8.1：帧 max_pressure > 0.5N 视为佩戴帧）。
-// 与 data-service model.WearingThresholdN 保持同值；跨服务不引包，契约见架构 §4.7。
-const wearingThresholdN = 0.5
+// DefaultWearingThresholdN 佩戴判定阈值默认值（PRD §8.1：帧 max_pressure > 0.5N 视为佩戴帧）。
+// 🔴 T173：占位值——生产生效值走 sys_configs `wearing_pressure_threshold`（config.Thresholds.WearingN，
+// SetWearingThreshold 注入），本常量仅作配置缺失兜底。注意：T173 起 data-service 传入的帧已是
+// 「减偏移后」值，佩戴判定自动基于校准后口径（PRD §7A.2）。
+const DefaultWearingThresholdN = 0.5
 
 // FrameRef 帧引用（跨服务契约：与 data-service AlertEvalRequest / 队列负载 frame 字段一致）。
 // 体积小：device_id + timestamp + 20 点值，不含全量记录。
@@ -61,8 +63,13 @@ type PendingItem struct {
 	Frame    FrameRef  `json:"frame"`
 }
 
-// ToPressureFrame 帧引用 → 引擎输入。Wearing 按 PRD §8.1 由最大压力推导。
+// ToPressureFrame 帧引用 → 引擎输入。Wearing 按 PRD §8.1 由最大压力推导（默认占位阈值）。
 func (f FrameRef) ToPressureFrame() (engine.PressureFrame, error) {
+	return f.toPressureFrame(DefaultWearingThresholdN)
+}
+
+// toPressureFrame 佩戴阈值可注入的内部实现（T173 可配置化）
+func (f FrameRef) toPressureFrame(wearingThresholdN float64) (engine.PressureFrame, error) {
 	frame := engine.PressureFrame{
 		DeviceID:   f.DeviceID,
 		PatientID:  f.PatientID,
@@ -119,15 +126,16 @@ func (NoopNotifier) Notify(context.Context, scanner.NewAlert) {}
 
 // Consumer alert:pending 常驻消费者
 type Consumer struct {
-	queue          Queue
-	dedup          EvalDeduper
-	alerts         AlertCreator
-	eval           *engine.RuleEvaluator
-	notifier       Notifier
-	staleThreshold time.Duration
-	maxBatch       int
-	now            func() time.Time
-	log            zerolog.Logger
+	queue             Queue
+	dedup             EvalDeduper
+	alerts            AlertCreator
+	eval              *engine.RuleEvaluator
+	notifier          Notifier
+	staleThreshold    time.Duration
+	maxBatch          int
+	now               func() time.Time
+	log               zerolog.Logger
+	wearingThresholdN float64
 }
 
 // New 组装消费者；staleThreshold/maxBatch 传零值使用默认（1h / 200）
@@ -136,15 +144,16 @@ func New(queue Queue, dedup EvalDeduper, alerts AlertCreator, eval *engine.RuleE
 		notifier = NoopNotifier{}
 	}
 	return &Consumer{
-		queue:          queue,
-		dedup:          dedup,
-		alerts:         alerts,
-		eval:           eval,
-		notifier:       notifier,
-		staleThreshold: DefaultStaleThreshold,
-		maxBatch:       DefaultMaxBatch,
-		now:            time.Now,
-		log:            zerolog.Nop(),
+		queue:             queue,
+		dedup:             dedup,
+		alerts:            alerts,
+		eval:              eval,
+		notifier:          notifier,
+		staleThreshold:    DefaultStaleThreshold,
+		maxBatch:          DefaultMaxBatch,
+		now:               time.Now,
+		log:               zerolog.Nop(),
+		wearingThresholdN: DefaultWearingThresholdN,
 	}
 }
 
@@ -156,6 +165,9 @@ func (c *Consumer) SetStaleThreshold(d time.Duration) { c.staleThreshold = d }
 
 // SetNow 注入时钟（测试用）
 func (c *Consumer) SetNow(now func() time.Time) { c.now = now }
+
+// SetWearingThreshold 注入 sys_configs 热更新后的佩戴阈值（占位 0.5N，见 DefaultWearingThresholdN）
+func (c *Consumer) SetWearingThreshold(n float64) { c.wearingThresholdN = n }
 
 // Run 常驻轮询直至 ctx 取消（服务可用即排空积压，不依赖重启）
 func (c *Consumer) Run(ctx context.Context, interval time.Duration) {
@@ -222,7 +234,7 @@ func (c *Consumer) processItem(ctx context.Context, payload string) {
 		return
 	}
 
-	frame, err := item.Frame.ToPressureFrame()
+	frame, err := item.Frame.toPressureFrame(c.wearingThresholdN)
 	if err != nil {
 		metrics.PendingProcessedTotal.WithLabelValues(metrics.OutcomeDropped).Inc()
 		c.log.Warn().Err(err).Str("device_id", item.Frame.DeviceID).Msg("invalid frame ref, dropped")

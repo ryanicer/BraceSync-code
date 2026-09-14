@@ -19,7 +19,7 @@
       <view class="legend-item"><view class="legend-swatch" style="background:#ef4444;"></view><text>高压</text></view>
     </view>
     <view v-if="showDetail" class="heatmap-detail">
-      <text>{{ activePoint?.pointId }} · {{ activePoint?.pressureValue }}N · 阈值上限 {{ thresholds.elevatedMax }}N</text>
+      <text>{{ activePoint?.pointId }} · {{ activePoint?.pressureValue.toFixed(2) }}N · 阈值上限 {{ thresholds.elevatedMax }}N</text>
     </view>
   </view>
 </template>
@@ -28,6 +28,7 @@
 import { computed } from 'vue'
 import SensorGrid from './SensorGrid.vue'
 import type { SensorPoint } from '@bracesync/shared-types'
+import { HEATMAP_TIERS } from '@bracesync/constants'
 
 const props = withDefaults(defineProps<{
   points: SensorPoint[]
@@ -36,7 +37,7 @@ const props = withDefaults(defineProps<{
   showLegend?: boolean
   showDetail?: boolean
 }>(), {
-  thresholds: () => ({ lowMax: 20, normalMax: 40, elevatedMax: 60 }),
+  thresholds: () => ({ lowMax: HEATMAP_TIERS.LOW_MAX, normalMax: HEATMAP_TIERS.NORMAL_MAX, elevatedMax: HEATMAP_TIERS.ELEVATED_MAX }),
   activeIndex: -1,
   showLegend: true,
   showDetail: true,

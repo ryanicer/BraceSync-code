@@ -176,6 +176,8 @@ SELECT 'PRS-ML05-RC-20260701001', 'P20260001', 'T0001', '2026-07-16 10:00:00+08'
        '安装顺利，各点偏差在阈值内', 'cos://signatures/P20260001-20260716.png', 'connected'
 WHERE NOT EXISTS (SELECT 1 FROM install_records WHERE install_id = 1);
 
+-- T173（D5）：offset_values 单位 = N（技师端 BLE 原始 mN ÷1000 后 5 帧均值，PRD §7A.2 数据单位口径）。
+-- 数值不动（碰生产数据须另批）；原「N×100 定点」量纲已作废（T173-decision D1 更正 2026-09-14）。
 INSERT INTO baselines (install_id, device_id, offset_values, calibrator_id)
 SELECT 1, 'PRS-ML05-RC-20260701001',
        ARRAY[0.1,0.2,0.1,0.0,0.3,0.2,0.1,0.0,0.2,0.1,0.1,0.2,0.3,0.1,0.2,0.0,0.1,0.2,0.1,0.0]::real[], 'T0001'
@@ -321,15 +323,19 @@ SELECT 'P20260004', 'sensitive_data', 'v1.0', '小琳爸爸', 'father', '203.0.1
 WHERE NOT EXISTS (SELECT 1 FROM consents WHERE patient_id='P20260004' AND consent_type='sensitive_data');
 
 -- ===== 全局配置默认值（PRD §7D.12）=====
+-- 🔴 T173 阈值口径（Boss 2026-09-14 明令）：压力量纲阈值均为「可配置参数」，配置驱动、不硬编码；
+-- 现值基于已作废的 N×100 量纲估算，仅作占位、待按 mN/÷1000 量级重定（重定输入：Boss+小顾真实物理范围）。
+-- 远期后台运营可调（alert-service config.Manager.Update 已预留写入口），调参不改代码。
 INSERT INTO sys_configs (config_key, config_value, description) VALUES
   ('collect_interval_minutes', '30', '采集间隔（分钟）'),
   ('wear_target_hours', '22', '每日佩戴目标时长（小时）'),
-  ('threshold_pressure_high', '45', '压力偏高阈值（N）'),
+  ('threshold_pressure_high', '45', '压力偏高阈值（N，占位值待重定 T173）'),
   ('threshold_pressure_fluctuation_pct', '30', '压力波动幅度阈值（%）'),
   ('threshold_wear_interrupt_minutes', '60', '佩戴中断判定时间（分钟，须≥2×采集间隔）'),
-  ('threshold_sensor_drift', '2.8', '传感器漂移告警阈值（N）'),
-  ('threshold_calibration_offset', '0.5', '空载校准偏差上限（N）'),
-  ('wearing_pressure_threshold', '0.5', 'wearing 佩戴判定压力阈值（N）'),
+  ('threshold_sensor_drift', '2.8', '传感器漂移告警阈值（N，占位值待重定 T173）'),
+  ('threshold_calibration_offset', '0.5', '空载校准偏差上限（N，占位值待重定 T173）'),
+  ('wearing_pressure_threshold', '0.5', 'wearing 佩戴判定压力阈值（N，占位值待重定 T173；判定统一用减偏移后值）'),
+  ('heatmap_max_n', '60', '热力图色阶上界（N，占位值待重定 T173；四档分界按比例法派生）'),
   ('device_config_version', '1', '设备配置版本（设备侧上报后比对，不一致则应用新配置）'),
   ('wifi_presets', '[{"ssid":"ClinicWiFi"},{"ssid":"HomeWiFi"}]', 'WiFi 预置列表（JSON 数组，技师端拉取辅助配网）')
 ON CONFLICT (config_key) DO NOTHING;

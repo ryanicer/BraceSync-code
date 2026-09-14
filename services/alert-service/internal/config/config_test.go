@@ -103,12 +103,14 @@ func TestParseThresholds(t *testing.T) {
 		KeyWearInterrupt:   "90",
 		KeySensorDrift:     "3",
 		KeyCollectInterval: "40",
+		KeyWearingN:        "0.8",
 	})
 	assert.Equal(t, 50.0, th.PressureHighN)
 	assert.Equal(t, 25.0, th.FluctuationPct)
 	assert.Equal(t, 90, th.WearInterruptMinutes)
 	assert.Equal(t, 3.0, th.SensorDriftN)
 	assert.Equal(t, 40, th.CollectIntervalMinutes)
+	assert.Equal(t, 0.8, th.WearingN)
 
 	// 非法值（非数值/非正）与缺失键均回退 PRD 默认
 	def := DefaultThresholds()
@@ -116,6 +118,7 @@ func TestParseThresholds(t *testing.T) {
 		KeyPressureHigh:  "abc",
 		KeyWearInterrupt: "-5",
 		KeySensorDrift:   "0",
+		KeyWearingN:      "0",
 	})
 	assert.Equal(t, def, got)
 }
