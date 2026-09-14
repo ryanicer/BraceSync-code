@@ -1538,6 +1538,10 @@ func (h *Handler) updateSettings(c *gin.Context) {
 
 // createPatient POST /api/v1/admin/patients —— 创建患者（手机号必填，phone_hash 查重）
 func (h *Handler) createPatient(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can create patient"))
+		return
+	}
 	var req model.CreatePatientRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
@@ -1602,6 +1606,10 @@ func (h *Handler) createPatient(c *gin.Context) {
 
 // assignPatientTeam PUT /api/v1/admin/patients/:patientId/team —— 分配/更改团队（幂等）
 func (h *Handler) assignPatientTeam(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can assign patient team"))
+		return
+	}
 	patientID := c.Param("patientId")
 	var req model.AssignTeamRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1630,6 +1638,10 @@ func (h *Handler) assignPatientTeam(c *gin.Context) {
 
 // batchBindPatients POST /api/v1/admin/patients/batch-bind —— 批量绑定（部分失败不回滚，HTTP 仍 200）
 func (h *Handler) batchBindPatients(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can batch bind patients"))
+		return
+	}
 	var req model.BatchBindRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))

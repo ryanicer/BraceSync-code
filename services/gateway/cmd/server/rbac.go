@@ -11,11 +11,22 @@
 //	/roles             → /api/v1/admin/roles · /admin/roles/:roleId/permissions
 //	/technicians       → /api/v1/technicians · /admin/technicians* · /technicians/:techId/toggle
 //	/teams             → /api/v1/teams · /teams/:teamId/members · /doctors
+//	/patients 写操作    → /api/v1/admin/patients(POST) · /admin/patients/batch-bind ·
+//	                      /admin/patients/:id/team · /admin/patients/:id/unbind-wechat ·
+//	                      /admin/patients/:id/phone（T190，账号接管风险面）
 //
-// 非 admin 专属页面（dashboard/monitor/patients/alerts/communication/orthosis-log 等）
-// 的端点保持全角色可用：数据范围收敛（医生仅本团队 / 客服仅沟通域）为后端 RBAC 细化
-// 职责（Phase 2，user-service/internal/rbac），本期仅关闭垂直越权面。
+// T190 另立 staffOnlyPatterns：/admin/patients 与 /admin/dashboard/* 的「读」端点医生/客服/
+// 技师确有调用方（doctor 的 monitor/orthosis-log/review-records 页、tech-miniapp 绑定步骤、
+// doctor 的 dashboard 页），故不归 admin 专属，但患者角色一律 403。
+//
+// 其余业务端点（alerts/feedbacks/患者域 /patients/:id/* 等）仍为多角色可用：
+// 数据范围收敛（医生仅本团队 / 客服仅沟通域）为后端 RBAC 细化职责（Phase 2，
+// user-service/internal/rbac），患者域水平鉴权在 handler 层 self-scope。
 // 前端 ROLE_PAGE_MATRIX 为 UX 层守卫，本网关矩阵是安全控制，两者须同步变更。
+//
+// ⚠️ roleAuthz 仍是「默认放行」：不在任一矩阵内的路径对所有已认证角色开放。
+// 新增 /admin/* 端点必须同时登记矩阵，否则等于零防护（T184 排查清单 P0-1 建议的
+// 默认拒绝尚未实施，会打断现存的 48 条未登记路径）。
 package main
 
 import (
@@ -30,8 +41,9 @@ import (
 const (
 	roleAdmin   = "ROLE_ADMIN"
 	roleDoctor  = "ROLE_DOCTOR"
+	roleCS      = "ROLE_CS"
 	roleTech    = "technician" // 技师登录签发 role="technician"（user-service handler.go techLogin）
-	rolePatient = "patient"    // 患者登录签发 role="patient"（user-service handler.go patientLogin SignWithTeam）
+	rolePatient = "patient"    // 患者登录签发 role="patient"（user-service patientLogin / wxLogin / bindPhone，均走 SignWithTeam）
 )
 
 // rbacPattern admin 专属端点（method + gin 风格路径模板，":param" 段匹配任意值）
@@ -68,6 +80,16 @@ var adminOnlyPatterns = []rbacPattern{
 	// notifications）不进本矩阵——患者需自查本人，水平越权由 msg-service handler 层
 	// requireSelfScope 拦截；唯 grant 若放行 self-scope 等于患者可自行加额，故收敛为 admin-only。
 	rbacOf(http.MethodPost, "/api/v1/patients/:patientId/subscription-quota/grant"),
+
+	// T190 表 B：后台患者管理写端点。患者 token 原先可 PUT /admin/patients/:id/phone
+	// 改他人手机号 → 用新号登录对方账号（账号接管）。逐条核实前端调用方后收口为 admin-only：
+	//   创建/批量绑定/改团队 = admin 专属 /patients 页；解绑微信/改手机号 = 全仓零前端调用。
+	// 同 5 个 handler 内部另有角色判定（user-service admin_patient.go / handler.go），双层防御。
+	rbacOf(http.MethodPost, "/api/v1/admin/patients"),
+	rbacOf(http.MethodPost, "/api/v1/admin/patients/batch-bind"),
+	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId/team"),
+	rbacOf(http.MethodPost, "/api/v1/admin/patients/:patientId/unbind-wechat"),
+	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId/phone"),
 }
 
 // techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T122）：
@@ -114,6 +136,42 @@ var doctorAdminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/admin/review-templates/:groupId/replace"), // 版本替换
 	rbacOf(http.MethodGet, "/api/v1/admin/review-templates"),                   // 模板列表
 	rbacOf(http.MethodGet, "/api/v1/admin/review-templates/:groupId/download"), // 模板下载
+}
+
+// staffOnlyPatterns T190 表 B 剩余行：后台管理域「读」端点——仅限内部 staff 角色，
+// 患者 token 一律 403。不并入 adminOnlyPatterns 的理由是实测调用方（非推断）：
+//   - GET /admin/patients        → doctor 的 monitor / orthosis-log / review-records 页共用
+//   - GET /admin/patients/:id    → tech-miniapp 绑定步骤用 technician JWT 调用
+//   - GET /admin/dashboard/*     → /dashboard 页在 doctor 的角色矩阵内（permissions.ts）
+//
+// 用 staff allow-list 而非「deny patient」：X-Role 缺失或将来新增角色时默认 403（fail-closed）。
+var staffOnlyPatterns = []rbacPattern{
+	rbacOf(http.MethodGet, "/api/v1/admin/patients"),
+	rbacOf(http.MethodGet, "/api/v1/admin/patients/:patientId"),
+	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/kpi"),
+	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/wear-trend"),
+	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/wear-distribution"),
+	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/alert-trend"),
+	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/team-ranking"),
+	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/doctor-ranking"),
+}
+
+// staffRoles 内部 staff 角色集合（患者端 patient-miniapp 全仓零 /admin/* 调用，故不含 rolePatient）
+var staffRoles = []string{roleAdmin, roleDoctor, roleCS, roleTech}
+
+// matchStaffOnlyPattern 判断 method+path 是否命中「仅 staff 可读」端点矩阵
+func matchStaffOnlyPattern(method, path string) bool {
+	return matchPatterns(method, path, staffOnlyPatterns)
+}
+
+// isStaffRole 判断角色是否属于内部 staff（admin / doctor / cs / technician）
+func isStaffRole(role string) bool {
+	for _, r := range staffRoles {
+		if r == role {
+			return true
+		}
+	}
+	return false
 }
 
 // matchDoctorAdminPattern 判断 method+path 是否命中 doctor+admin 专属端点矩阵
@@ -195,6 +253,14 @@ func roleAuthz() gin.HandlerFunc {
 		if matchDoctorAdminPattern(c.Request.Method, c.Request.URL.Path) && role != roleDoctor {
 			log.Warn().Str("role", role).Str("method", c.Request.Method).
 				Str("path", c.Request.URL.Path).Msg("rbac denied: doctor-or-admin-only endpoint")
+			abortJSON(c, http.StatusForbidden, http.StatusForbidden,
+				"forbidden: role not allowed for this endpoint")
+			return
+		}
+		// T190：后台管理域读端点（患者档案/全院聚合）——患者及未知角色 403，staff 放行
+		if matchStaffOnlyPattern(c.Request.Method, c.Request.URL.Path) && !isStaffRole(role) {
+			log.Warn().Str("role", role).Str("method", c.Request.Method).
+				Str("path", c.Request.URL.Path).Msg("rbac denied: staff-only endpoint")
 			abortJSON(c, http.StatusForbidden, http.StatusForbidden,
 				"forbidden: role not allowed for this endpoint")
 			return
