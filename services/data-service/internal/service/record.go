@@ -465,6 +465,10 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 	if err != nil {
 		return nil, model.ErrInternal("lookup device: %v", err)
 	}
+	snapshot.DeviceID = deviceID // 未绑定时为空串，前端按「无设备」处理，不报错
+	// T200 真机取证点：配网入口「无设备」弹窗的唯一判据
+	log.Info().Str("patient_id", patientID).Str("device_id", deviceID).Bool("bound", exists).
+		Msg("realtime: snapshot device resolved (T200)")
 	if !exists {
 		snapshot.PressureHeatmap = model.SeedHeatmap(patientID, th.HeatmapMaxN)
 		return snapshot, nil // 未绑定设备
