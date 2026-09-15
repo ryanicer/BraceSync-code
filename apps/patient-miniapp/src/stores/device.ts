@@ -16,14 +16,21 @@ export const useDeviceStore = defineStore('device', () => {
   const wifiStatus = ref<'unconfigured' | 'configuring' | 'connected' | 'failed'>('unconfigured')
   const wifiStatusCode = ref<number | null>(null)
 
-  // T182: 配网序列号（防重放，同一会话内递增）。
+  // T182: 配网序列号（防重放）。
   // 🔴 起点必须是 1：固件不持久 seq，解密时只尝试 seq=1/2/3（协议 §3 定稿）。
   // 旧实现取 Date.now()/1000（≈17.9 亿）当起点 ⇒ 固件永远解不出明文，真机表现为 -1"密码错误"。
+  // T212: 但"同一会话一直 +1"同样会越窗——第 4 次「开始配网」起 seq=4，每次解不开都回 -1，
+  // 且只有冷启动小程序才恢复（09-15 夜真机实证）。故 seq 作用域收紧为单次配网尝试。
   let _wifiSeq = 0
 
   function nextWifiSeq(): number {
     _wifiSeq += 1
     return _wifiSeq
+  }
+
+  /** T212: 每轮「开始配网」前复位，使本轮首个 seq 回到 1（留在固件候选窗 1/2/3 内） */
+  function resetWifiSeq(): void {
+    _wifiSeq = 0
   }
 
   function setDevice(device: Device) {
@@ -61,6 +68,7 @@ export const useDeviceStore = defineStore('device', () => {
     bleDeviceId, bleName, bleConnected,
     wifiStatus, wifiStatusCode,
     nextWifiSeq,
+    resetWifiSeq,
     setDevice, clearDevice,
     setBleConnected, setWifiStatus, updateWifiStatusCode,
   }

@@ -544,6 +544,9 @@ async function runProvision() {
     // 先订阅 B512 Notify，再写 B511，否则首帧状态（0/1）会丢
     onWifiStatus(handleStatus, bleDeviceId.value)
 
+    // T212: 每轮下发前复位 ⇒ 本轮 seq 恒为 1。复位必须在领取之前，
+    // 否则同会话第 4 次起 seq 越出固件候选窗 1/2/3，设备必然解不开（真回 -1）。
+    deviceStore.resetWifiSeq()
     const seq = deviceStore.nextWifiSeq()
     const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, seq)
     await writeWifiConfigV2(bleDeviceId.value, payload)
@@ -605,14 +608,14 @@ function handleStatus(code: number) {
   }
   prevCode = code
   if (code === 3) uni.showToast({ title: PROGRESS.nearlyDoneToast, icon: 'none' })
-  armTimeout() // PRD §7A.9：20s「无推送」超时，每收一帧重新计时
+  armTimeout() // PRD §7A.9：60s「无推送」超时，每收一帧重新计时
 }
 
 function armTimeout() {
   stopProvisionTimer()
   timeoutTimer = setTimeout(() => {
     if (successHandled) return
-    logger.warn('[T192] 20s 无推送超时', { lastCode: provisionCode.value })
+    logger.warn(`[T192] ${PROVISION_TIMEOUT_MS / 1000}s 无推送超时`, { lastCode: provisionCode.value })
     stopMockWifiStatusSequence()
     failureType.value = 'timeout'
     deviceStore.setWifiStatus('failed')
