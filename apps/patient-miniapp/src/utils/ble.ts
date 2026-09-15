@@ -446,6 +446,9 @@ let scanActive = false
 /** 每起/停一次扫描 +1：getBluetoothDevices 是收尾异步回调，迟到的旧窗口回调不得翻掉新扫描的 UI */
 let scanEpoch = 0
 
+/** 当前扫描窗口的明细日志打印器；提前中止（用户已点中设备）时也要落一条，否则 found:0 无从考证 */
+let flushScanSummary: (() => void) | null = null
+
 /** 微信回传的原始广播条目（实时帧与系统缓存同形；advertisServiceUUIDs 仅诊断用） */
 interface RawAdvert {
   deviceId: string
@@ -503,17 +506,19 @@ export function startBleScan(
     return true
   }
 
-  const report = () => {
-    // found=0 时这条是唯一能分辨"设备真没广播"与"广播了但被名字过滤吃掉"的证据；
-    // cacheHits>0 说明这台设备只能靠系统缓存拿到，实时帧一律无名
+  const report = () => onDone(listed)
+
+  // 明细拆两行：实时帧这行**同步**落，缓存那行只有异步回调拿得到。
+  // 合成一行会被缓存回调绑住 ⇒ 用户提前点中设备（stopBleScan 翻 epoch）或回调迟到被丢时，
+  // "到底扫没扫到"这条唯一判据就整条消失（09-14 22:15 真机三连扫即如此）。
+  const logRawSummary = () => {
     _log(
       'info',
       `扫描明细 rawHits=${rawHits} rawDistinct=${rawIds.size} bsync=${listed}`
-        + ` cacheTotal=${cacheTotal} cacheHits=${cacheHits}`
         + (uuidOnlySample.length ? ` uuidNoName=[${uuidOnlySample.join(',')}]` : '')
     )
-    onDone(listed)
   }
+  flushScanSummary = logRawSummary
 
   const finish = () => {
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null }
@@ -521,6 +526,7 @@ export function startBleScan(
     uni.offBluetoothDeviceFound()
     if (!scanActive) return
     scanActive = false
+    if (flushScanSummary) { flushScanSummary(); flushScanSummary = null }
     // 承技师端 T101（`tech-miniapp/src/utils/ble.ts:318-341`，该分支真机已跑通）：扫描窗口常在
     // 设备名到达前就结束 ⇒ 收尾再读一次系统缓存（微信缓存的名字比广播帧全）把漏掉的补回来
     uni.getBluetoothDevices({
@@ -536,6 +542,7 @@ export function startBleScan(
           if (!cachedName) continue
           if (accept(dev.deviceId, cachedName, dev.RSSI)) cacheHits += 1
         }
+        _log('info', `缓存补扫 cacheTotal=${cacheTotal} cacheHits=${cacheHits}`)
         report()
       },
       fail: (err) => {
@@ -580,6 +587,8 @@ export function startBleScan(
 export function stopBleScan(): void {
   if (!scanActive) return
   scanActive = false
+  // 提前中止（用户在窗口内就点中设备）也要留一行明细：否则"扫到几台、谁没名字"永久无从考证
+  if (flushScanSummary) { flushScanSummary(); flushScanSummary = null }
   // 收尾回调可能已在飞行中：不翻 epoch 就会在用户已选设备/已离开本页后把旧设备插回列表
   scanEpoch++
   if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null }
