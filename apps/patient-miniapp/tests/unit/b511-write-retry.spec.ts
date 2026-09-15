@@ -64,8 +64,23 @@ describe('T216③ — 受控重试的接线', () => {
   })
 
   it('重连不回 或 次数用尽 ⇒ 一定把原始错误抛出，交既有失败路径（回 03）', () => {
-    expect(body).toMatch(/if \(attempt === WRITE_MAX_ATTEMPTS \|\| !\(await ensureLinkForProvision\(\)\)\) break/)
+    expect(body).toMatch(/if \(attempt === WRITE_MAX_ATTEMPTS\) break/)
+    expect(body).toMatch(/if \(!\(await ensureLinkForProvision\(\)\)\) break/)
     expect(body).toContain('if (writeErr) throw writeErr')
+  })
+
+  it('重试续上链路后必须把页面扳回 progress：断开回调会抢先把 view 打到 06', () => {
+    // 真机 00:18:22：链路一断，回调立刻 failureType='timeout' + view='failure'。
+    // 若第 2 次写成功却不扳回来 —— 设备一路推到 9，用户看到的还是"失败页 + 处置建议"。
+    const atLink = body.indexOf('if (!(await ensureLinkForProvision())) break')
+    const atRestore = body.indexOf("view.value = 'progress'", atLink)
+    const atThrow = body.indexOf('if (writeErr) throw writeErr')
+
+    expect(atLink).toBeGreaterThan(-1)
+    expect(atRestore).toBeGreaterThan(atLink)
+    expect(body.slice(atLink, atRestore)).toContain("setWifiStatus('configuring')")
+    // 落在循环内 ⇒ 恢复发生在第二次写入之前；排到循环外就等于永远不扳
+    expect(atRestore, '恢复进度态没落在重试循环内').toBeLessThan(atThrow)
   })
 
   it('超时兜底仍只在写成功后挂上（失败路径不该再等 60s）', () => {

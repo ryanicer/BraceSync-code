@@ -582,7 +582,13 @@ async function runProvision() {
         // 主动判死：写 fail 多半就是链路已断。仍标着已连 ⇒ 下一次 ensureLink 会跳过重连、原地再失败一次
         deviceStore.setBleConnected(false)
         bleLinkUp.value = false
-        if (attempt === WRITE_MAX_ATTEMPTS || !(await ensureLinkForProvision())) break
+        if (attempt === WRITE_MAX_ATTEMPTS) break
+        if (!(await ensureLinkForProvision())) break
+        // 断开回调已把页面打到 06（它不知道我们还要重试）。重试续上链路后必须扳回进度态，
+        // 否则第 2 次写成功、设备一路推到 9，用户却还停在"失败页"看处置建议。
+        logger.warn('[T216] 重试已续上链路，回到配网进度', { attempt: attempt + 1 })
+        deviceStore.setWifiStatus('configuring')
+        view.value = 'progress'
       }
     }
     if (writeErr) throw writeErr
