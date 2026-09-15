@@ -207,12 +207,12 @@ async function startWifiConfig() {
     // T089-MOCK: 真机由硬件 WiFi Status Notify 驱动
     startMockWifiStatusSequence()
 
-    // 协议 §2 补充：固件解密失败不 Notify，15s 超时兜底
+    // 协议 §2 补充：固件解密失败不 Notify，20s 超时兜底（T210：与患者端 PROVISION_TIMEOUT_MS 一致）
     timeoutTimer.value = setTimeout(() => {
       if (wifiStatusCode.value !== 9) {
         handleTimeout()
       }
-    }, 15000)
+    }, 20000)
   } catch (e) {
     uni.showToast({ title: e instanceof Error ? e.message : '配网失败', icon: 'none' })
     provisioning.value = false
