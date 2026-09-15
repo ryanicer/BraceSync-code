@@ -65,6 +65,10 @@ let adapterStateRegistered = false
 let bleStateRegistered = false
 let bleStateCallback: ((deviceId: string, connected: boolean) => void) | null = null
 
+// T216: BLE 链路代次。notifyBLECharacteristicValueChange 的订阅只活在「当前这条链路」上，
+// 断开即失效 ⇒ 用它区分「同一链路重复调用（跳过）」与「重连后必须重订阅」。
+let linkGeneration = 0
+
 function isAuthDeny(errMsg: string): boolean {
   const m = (errMsg || '').toLowerCase()
   return m.includes('auth') || m.includes('deny') || m.includes('permission')
@@ -381,7 +385,9 @@ export async function createBLEConnection(deviceId: string): Promise<boolean> {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        bleLog.info(`连接成功 deviceId=${deviceId}`)
+        // T216: 新链路 ⇒ 旧链路上的 B512 订阅已作废
+        linkGeneration += 1
+        bleLog.info(`连接成功 deviceId=${deviceId} linkGeneration=${linkGeneration}`)
         resolve(true)
       },
       fail: (err) => {
@@ -392,7 +398,9 @@ export async function createBLEConnection(deviceId: string): Promise<boolean> {
         // T109: "already connect" 表示设备已处于连接状态，视为连接成功
         //       （常见于小程序未关闭干净重进、或 selectDevice 后 bindManual 重复连接）
         if (errMsg.includes('already connect')) {
-          bleLog.info(`设备已连接（already connect），视为连接成功 deviceId=${deviceId}`)
+          // T216: 微信报"已连接"时 CCCD 状态不可知（可能是上次残留），同样按新链路处理
+          linkGeneration += 1
+          bleLog.info(`设备已连接（already connect），视为连接成功 deviceId=${deviceId} linkGeneration=${linkGeneration}`)
           resolve(true)
           return
         }
@@ -517,6 +525,8 @@ export function registerBleStateListener(
     bleLog.info(
       `onBLEConnectionStateChange: deviceId=${res.deviceId}, connected=${res.connected}`
     )
+    // T216: 链路一断，B512 订阅随之失效 ⇒ 复位标记，重连后必然重订阅
+    if (!res.connected) invalidateB512Subscription(`链路断开 deviceId=${res.deviceId}`)
     bleStateCallback?.(res.deviceId, res.connected)
   })
 }
@@ -525,6 +535,7 @@ export async function closeBLEConnection(deviceId: string): Promise<void> {
   if (isH5()) {
     return
   }
+  invalidateB512Subscription(`主动关闭连接 deviceId=${deviceId}`)
   return new Promise((resolve) => {
     uni.closeBLEConnection({
       deviceId,
@@ -684,7 +695,21 @@ export function onRealtimeFrame(cb: (frame: number[]) => void): void {
 
 let wifiStatusTimer: ReturnType<typeof setInterval> | null = null
 let wifiStatusCallback: ((code: number) => void) | null = null
-let b512NotifyRegistered = false
+let b512ListenerRegistered = false
+let b512SubscribedKey = ''
+let b512SubscribeRounds = 0
+let b512FramesReceived = 0
+
+/**
+ * T216: 作废「当前订阅仍然生效」的标记。
+ * notifyBLECharacteristicValueChange 是按 deviceId + 当前链路生效的，链路一走订阅就没了；
+ * 标记不复位 ⇒ 本会话第二次连接起不再订阅 ⇒ 设备回了状态帧而 App 一帧收不到（报"响应超时"）。
+ */
+function invalidateB512Subscription(reason: string): void {
+  if (!b512SubscribedKey) return
+  b512SubscribedKey = ''
+  bleLog.warn(`B512 订阅标记复位（${reason}）`)
+}
 
 /**
  * 写入加密后的 WiFi 配置（AES-128-CTR，由 aes-ctr.ts 加密后传入密文 hex）
@@ -747,27 +772,55 @@ export function onWifiStatus(cb: (code: number) => void, deviceId?: string): voi
   if (isH5()) return
   // T109: 调用方传入 deviceId（BLE MAC），赋值后再订阅 B512 Notify
   if (deviceId) wifiStatusDeviceId = deviceId
-  if (b512NotifyRegistered) return
   if (!wifiStatusDeviceId) return
-  b512NotifyRegistered = true
+  subscribeB512Notify(wifiStatusDeviceId)
+}
+
+/**
+ * T216: 订阅 B512 Notify。
+ * 旧实现用一次性布尔把「订阅动作」也短路了 ⇒ 同一会话第二次连接起不再订阅、零收帧。
+ * 现在：全局特征监听仍只注册一次，订阅动作按「deviceId + 链路代次」判定，重连/换设备必重发。
+ */
+function subscribeB512Notify(deviceId: string): void {
+  if (!b512ListenerRegistered) {
+    // 全局监听只注册一次：重复注册会让同一帧回调多遍，状态机跳码
+    b512ListenerRegistered = true
+    uni.onBLECharacteristicValueChange((res) => {
+      if (res.characteristicId?.toLowerCase() !== CHAR_WIFI_STATUS.toLowerCase()) return
+      try {
+        const code = new Int8Array(res.value)[0]
+        b512FramesReceived += 1
+        bleLog.info(
+          `B512 状态原始值=${code} 第${b512FramesReceived}帧 订阅轮次=${b512SubscribeRounds}`
+        )
+        wifiStatusCallback?.(code)
+      } catch (e) {
+        bleLog.error('B512 状态解析失败', e instanceof Error ? e.message : String(e))
+      }
+    })
+  }
+
+  const key = `${deviceId}#${linkGeneration}`
+  if (b512SubscribedKey === key) {
+    bleLog.info(`B512 当前链路已订阅，跳过重复 notify deviceId=${deviceId} linkGeneration=${linkGeneration}`)
+    return
+  }
+  b512SubscribedKey = key
+  b512SubscribeRounds += 1
+  const round = b512SubscribeRounds
+  bleLog.info(`B512 发起订阅 第${round}次 deviceId=${deviceId} linkGeneration=${linkGeneration}`)
   // 开启 B512 通知
   uni.notifyBLECharacteristicValueChange({
-    deviceId: wifiStatusDeviceId,
+    deviceId,
     serviceId: SERVICE_UUID,
     characteristicId: CHAR_WIFI_STATUS,
     state: true,
-    success: () => bleLog.info('B512 Notify 订阅成功'),
-    fail: (err) => bleLog.error('B512 Notify 订阅失败', err?.errMsg),
-  })
-  uni.onBLECharacteristicValueChange((res) => {
-    if (res.characteristicId?.toLowerCase() !== CHAR_WIFI_STATUS.toLowerCase()) return
-    try {
-      const code = new Int8Array(res.value)[0]
-      bleLog.info(`B512 状态原始值=${code}`)
-      wifiStatusCallback?.(code)
-    } catch (e) {
-      bleLog.error('B512 状态解析失败', e instanceof Error ? e.message : String(e))
-    }
+    success: () => bleLog.info(`B512 Notify 订阅成功 第${round}次 deviceId=${deviceId}`),
+    fail: (err) => {
+      // 不占坑：订阅失败必须让下一轮重试
+      if (b512SubscribedKey === key) b512SubscribedKey = ''
+      bleLog.error(`B512 Notify 订阅失败 第${round}次 deviceId=${deviceId}`, err?.errMsg)
+    },
   })
 }
 
