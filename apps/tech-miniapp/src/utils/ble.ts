@@ -697,6 +697,8 @@ let wifiStatusTimer: ReturnType<typeof setInterval> | null = null
 let wifiStatusCallback: ((code: number) => void) | null = null
 let b512ListenerRegistered = false
 let b512SubscribedKey = ''
+/** 已发出、正等回执的订阅；只在 success/fail 回执里清空——b512SubscribedKey 必须由 success 授予 */
+let b512InFlightKey = ''
 let b512SubscribeRounds = 0
 let b512FramesReceived = 0
 
@@ -706,8 +708,9 @@ let b512FramesReceived = 0
  * 标记不复位 ⇒ 本会话第二次连接起不再订阅 ⇒ 设备回了状态帧而 App 一帧收不到（报"响应超时"）。
  */
 function invalidateB512Subscription(reason: string): void {
-  if (!b512SubscribedKey) return
+  if (!b512SubscribedKey && !b512InFlightKey) return
   b512SubscribedKey = ''
+  b512InFlightKey = ''
   bleLog.warn(`B512 订阅标记复位（${reason}）`)
 }
 
@@ -747,7 +750,13 @@ export async function writeWifiConfigV2(
           characteristicId: CHAR_WIFI_CONFIG,
           value: chunk.buffer,
           success: () => resolve(),
-          fail: (err) => reject(new Error(`B511 写入失败: ${err.errMsg}`)),
+          // 前缀 "B511 写入失败: " 是日志判据的 grep 串；errCode/errno 一并带上，便于区分 timeout / Inner error
+          fail: (err: any) => {
+            const codes = [err?.errCode, err?.errno]
+              .filter((c) => c !== undefined && c !== null)
+              .join('/')
+            reject(new Error(`B511 写入失败: ${err?.errMsg}${codes ? ` [code=${codes}]` : ''}`))
+          },
         })
       })
       bleLog.info(`B511 分片 ${idx + 1}/${totalChunks} 写入成功 len=${chunk.length}`)
@@ -801,11 +810,11 @@ function subscribeB512Notify(deviceId: string): void {
   }
 
   const key = `${deviceId}#${linkGeneration}`
-  if (b512SubscribedKey === key) {
+  if (b512SubscribedKey === key || b512InFlightKey === key) {
     bleLog.info(`B512 当前链路已订阅，跳过重复 notify deviceId=${deviceId} linkGeneration=${linkGeneration}`)
     return
   }
-  b512SubscribedKey = key
+  b512InFlightKey = key
   b512SubscribeRounds += 1
   const round = b512SubscribeRounds
   bleLog.info(`B512 发起订阅 第${round}次 deviceId=${deviceId} linkGeneration=${linkGeneration}`)
@@ -815,10 +824,16 @@ function subscribeB512Notify(deviceId: string): void {
     serviceId: SERVICE_UUID,
     characteristicId: CHAR_WIFI_STATUS,
     state: true,
-    success: () => bleLog.info(`B512 Notify 订阅成功 第${round}次 deviceId=${deviceId}`),
+    success: () => {
+      // 🔴 标记只在 success 回执里授予（旧写法在发起前置真 ⇒ 订阅 fail 也不复位，本会话永久不再重试）
+      if (b512InFlightKey !== key) return
+      b512InFlightKey = ''
+      b512SubscribedKey = key
+      bleLog.info(`B512 Notify 订阅成功 第${round}次 deviceId=${deviceId}`)
+    },
     fail: (err) => {
-      // 不占坑：订阅失败必须让下一轮重试
-      if (b512SubscribedKey === key) b512SubscribedKey = ''
+      // 只清 in-flight，不置 subscribedKey ⇒ 下一轮（含同一链路）可重试
+      if (b512InFlightKey === key) b512InFlightKey = ''
       bleLog.error(`B512 Notify 订阅失败 第${round}次 deviceId=${deviceId}`, err?.errMsg)
     },
   })

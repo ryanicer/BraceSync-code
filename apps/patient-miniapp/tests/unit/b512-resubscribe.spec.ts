@@ -18,6 +18,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const FILE = fileURLToPath(new URL('../../src/utils/ble.ts', import.meta.url))
+const PAGE = fileURLToPath(new URL('../../src/pages/wifi-setup/index.vue', import.meta.url))
 const src = fs.readFileSync(FILE, 'utf8')
 
 /** 取顶层（含 export）函数体：以下一个顶格 function 声明为界 */
@@ -64,11 +65,26 @@ describe('T216① — 订阅动作与全局监听解耦', () => {
     expect(body.slice(atNotify, atNotify + 200)).toContain('deviceId,')
   })
 
-  it('订阅失败要把标记放回空值，否则下一轮仍被短路', () => {
+  it('③-4 订阅标记只在 success 回执里授予（发起前置真＝fail 后本会话永久不再重试）', () => {
     const body = fnBody('subscribeB512Notify')
+    const atNotify = body.indexOf('uni.notifyBLECharacteristicValueChange(')
     const atFail = body.indexOf('fail: (err)')
-    expect(atFail).toBeGreaterThan(-1)
-    expect(body.slice(atFail)).toContain("b512SubscribedKey = ''")
+    const atSuccess = body.indexOf('success: ()')
+    expect(atNotify).toBeGreaterThan(-1)
+    expect(atSuccess).toBeGreaterThan(atNotify)
+    expect(atFail).toBeGreaterThan(atNotify)
+
+    // 授予动作必须落在 success 分支里
+    expect(body.slice(atSuccess, atFail)).toContain('b512SubscribedKey = key')
+    // 发起之前不得预先占坑；fail 分支也不得授予
+    expect(body.slice(0, atNotify), '发起前就写 b512SubscribedKey = key ⇒ 订阅 fail 后永不重试').not.toContain('b512SubscribedKey = key')
+    expect(body.slice(atFail)).not.toContain('b512SubscribedKey = key')
+  })
+
+  it('回执必须比对本次 key（旧链路迟到的 success/fail 不能污染新链路标记）', () => {
+    const body = fnBody('subscribeB512Notify')
+    expect(body).toMatch(/if \(b512InFlightKey !== key\) return/)
+    expect(body).toMatch(/if \(b512InFlightKey === key\) b512InFlightKey = ''/)
   })
 })
 
@@ -85,9 +101,39 @@ describe('T216① — 标记复位入口（链路生命周期）', () => {
     expect(listener).toMatch(/!res\.connected\)\s*invalidateB512Subscription/)
   })
 
-  it('复位函数在标记已空时不重复打日志（避免 connectDevice 前置 close 刷屏）', () => {
+  it('复位函数在两个标记都空时不重复打日志（避免 connectDevice 前置 close 刷屏），且 in-flight 一并作废', () => {
     const body = fnBody('invalidateB512Subscription')
-    expect(body).toMatch(/if \(!b512SubscribedKey\) return/)
+    expect(body).toMatch(/if \(!b512SubscribedKey && !b512InFlightKey\) return/)
+    expect(body).toContain("b512InFlightKey = ''")
+  })
+})
+
+describe('T216① — 掉线重连路径接线（卡片 ③-3：重连＝新连接、无订阅）', () => {
+  /** 取页面里某个顶层 function 的函数体（按下一个顶层 function 为界） */
+  function pageFnBody(name: string): string {
+    const page = fs.readFileSync(PAGE, 'utf8')
+    const start = page.indexOf(`async function ${name}(`)
+    expect(start, `页面里找不到 async function ${name}()`).toBeGreaterThan(-1)
+    const rest = page.slice(start + name.length + 1)
+    const next = rest.search(/\nasync function |\nfunction /)
+    return next === -1 ? rest : rest.slice(0, next)
+  }
+
+  it('runProvision 内「重连判定」早于「订阅」——原地重连出来的新链路必须被订阅到', () => {
+    const body = pageFnBody('runProvision')
+    const atLink = body.indexOf('ensureLinkForProvision()')
+    const atSub = body.indexOf('onWifiStatus(')
+
+    expect(atLink).toBeGreaterThan(-1)
+    expect(atSub).toBeGreaterThan(-1)
+    expect(atLink, '订阅排在重连判定之前 ⇒ 新链路无订阅，复刻 09-16 00:18 的零收帧').toBeLessThan(atSub)
+  })
+
+  it('断言确实读到了页面源码（防路径写错导致空内容假绿）', () => {
+    const page = fs.readFileSync(PAGE, 'utf8')
+    expect(path.basename(PAGE)).toBe('index.vue')
+    expect(page).toContain('writeWifiConfigV2')
+    expect(page.length).toBeGreaterThan(1000)
   })
 })
 

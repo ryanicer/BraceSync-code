@@ -150,6 +150,8 @@ const SCAN_DURATION_MS = 6000
 const RECONNECT_SCAN_MS = 15000
 /** T119 防重入节流窗口 */
 const MIN_PROVISION_INTERVAL = 3000
+/** T216③ 一轮下发的写入次数上限：首写落在 API 层失败时，判死链路→原地重连→重写一次，不再靠用户再点 */
+const WRITE_MAX_ATTEMPTS = 2
 
 const deviceStore = useDeviceStore()
 const authStore = useAuthStore()
@@ -543,22 +545,53 @@ async function runProvision() {
 
     // 先订阅 B512 Notify，再写 B511，否则首帧状态（0/1）会丢
     // T216: 订阅按「当前 deviceId + 链路代次」判定，原地重连/换设备后必然重发 notify
-    onWifiStatus(handleStatus, bleDeviceId.value)
+    // T216③: 整段可重试——真机（09-16 00:18:22）链路在写入途中自断，微信回的是 API 层 fail
+    // （writeBLECharacteristicValue:fail:system error:Inner error.），不是设备失败码。
+    let writeErr: Error | null = null
+    for (let attempt = 1; attempt <= WRITE_MAX_ATTEMPTS; attempt++) {
+      writeErr = null
+      try {
+        onWifiStatus(handleStatus, bleDeviceId.value)
 
-    // T216: seq 每轮自增，仅当将要超出固件候选窗上限（64）时回绕为 1。
-    // 不再复位——provision_key 不轮换，复位会让两轮用同一 (key, IV) 加密不同明文（CTR keystream 复用）。
-    const seq = deviceStore.nextWifiSeq()
-    const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, seq)
-    await writeWifiConfigV2(bleDeviceId.value, payload)
-    // seq 不在固件候选窗口内时，设备必然解不出明文 → 会回 -1（并非真的密码错）
-    logger.info('[T192] B511 写入完成，等待设备推送', {
-      payloadBytes: payload.length / 2,
-      seq,
-      seqInFirmwareWindow: seq >= 1 && seq <= WIFI_SEQ_CANDIDATE_MAX,
-      // 明文 = {"ssid":"","pwd":"","seq":N}，固定开销 27B + seq 位数 ⇒ 两个长度可反推字节数是否含意外字符
-      ssidLen: enteredSsid.value.length,
-      pwdLen: enteredPwd.value.length,
-    })
+        // T216: seq 每轮自增，仅当将要超出固件候选窗上限（64）时回绕为 1。
+        // 不再复位——provision_key 不轮换，复位会让两轮用同一 (key, IV) 加密不同明文（CTR keystream 复用）。
+        // ③：重试同样领新 seq（同一次配网内多次写入凭据 seq 须逐次递增）。
+        const seq = deviceStore.nextWifiSeq()
+        const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, seq)
+        await writeWifiConfigV2(bleDeviceId.value, payload)
+        // seq 不在固件候选窗口内时，设备必然解不出明文 → 会回 -1（并非真的密码错）
+        logger.info('[T192] B511 写入完成，等待设备推送', {
+          attempt,
+          payloadBytes: payload.length / 2,
+          seq,
+          seqInFirmwareWindow: seq >= 1 && seq <= WIFI_SEQ_CANDIDATE_MAX,
+          // 明文 = {"ssid":"","pwd":"","seq":N}，固定开销 27B + seq 位数 ⇒ 两个长度可反推字节数是否含意外字符
+          ssidLen: enteredSsid.value.length,
+          pwdLen: enteredPwd.value.length,
+        })
+        break
+      } catch (e) {
+        writeErr = e as Error
+        // 与"设备回失败码"区分开：这条只在 API 层写失败时出现，设备侧的 -1..-4 走 handleStatus
+        logger.error('[T216] B511 下发失败（API 层，非设备失败码）', {
+          attempt,
+          msg: writeErr.message,
+          bleConnected: deviceStore.bleConnected,
+          secsSinceLinkUp: secsSinceLinkUp(),
+        })
+        // 主动判死：写 fail 多半就是链路已断。仍标着已连 ⇒ 下一次 ensureLink 会跳过重连、原地再失败一次
+        deviceStore.setBleConnected(false)
+        bleLinkUp.value = false
+        if (attempt === WRITE_MAX_ATTEMPTS) break
+        if (!(await ensureLinkForProvision())) break
+        // 断开回调已把页面打到 06（它不知道我们还要重试）。重试续上链路后必须扳回进度态，
+        // 否则第 2 次写成功、设备一路推到 9，用户却还停在"失败页"看处置建议。
+        logger.warn('[T216] 重试已续上链路，回到配网进度', { attempt: attempt + 1 })
+        deviceStore.setWifiStatus('configuring')
+        view.value = 'progress'
+      }
+    }
+    if (writeErr) throw writeErr
     // 首帧的 gapMs 由此刻起算：<1s ＝ 载荷没解出来，数秒后 ＝ 已进 WiFi 关联阶段
     lastCodeAt = Date.now()
     armTimeout()
