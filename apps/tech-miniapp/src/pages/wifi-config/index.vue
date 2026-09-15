@@ -251,7 +251,7 @@ function handleError(code: number) {
 }
 
 function handleTimeout() {
-  bleLog.warn('15s 配网超时，状态历史', [...statusHistory])
+  bleLog.warn('20s 配网超时，状态历史', [...statusHistory])
   // P2-5: 迟到状态 9 回转——继续监听，不立即标失败
   // 这里给提示，但保留 statusListener（未移除），迟到状态 9 仍可触发 handleSuccess
   uni.showToast({ title: '设备无响应，请靠近设备后重试', icon: 'none' })

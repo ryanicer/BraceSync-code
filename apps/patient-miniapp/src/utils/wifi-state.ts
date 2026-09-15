@@ -73,7 +73,7 @@ export function resolveProvisionStatus(code: number): ProvisionStatus {
 
 /**
  * 判断配网是否超时。
- * PRD §7A.9：患者端 15s 响应超时。
+ * PRD §7A.9：患者端 20s 响应超时。
  * @param elapsedMs 已耗时（毫秒）
  */
 export function isProvisionTimeout(elapsedMs: number): boolean {

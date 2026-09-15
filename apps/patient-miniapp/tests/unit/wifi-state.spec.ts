@@ -9,7 +9,7 @@
  *   - 进度推进 0→1→2→3
  *   - 成功态 9
  *   - 失败态 -1/-2/-3/-4
- *   - 15s 超时
+ *   - 20s 超时
  */
 import { describe, it, expect } from 'vitest'
 import {
@@ -130,18 +130,18 @@ describe('WiFi 配网 — 状态码解析（PRD §7A.9）', () => {
   })
 })
 
-describe('WiFi 配网 — 15s 超时（PRD §7A.9）', () => {
-  it('超时阈值常量为 15000ms', () => {
-    expect(PROVISION_TIMEOUT_MS).toBe(15000)
+describe('WiFi 配网 — 20s 超时（PRD §7A.9）', () => {
+  it('超时阈值常量为 20000ms', () => {
+    expect(PROVISION_TIMEOUT_MS).toBe(20000)
   })
-  it('耗时 14999ms → 未超时', () => {
-    expect(isProvisionTimeout(14999)).toBe(false)
+  it('耗时 19999ms → 未超时', () => {
+    expect(isProvisionTimeout(19999)).toBe(false)
   })
-  it('耗时恰好 15000ms → 未超时（边界）', () => {
-    expect(isProvisionTimeout(15000)).toBe(false)
+  it('耗时恰好 20000ms → 未超时（边界）', () => {
+    expect(isProvisionTimeout(20000)).toBe(false)
   })
-  it('耗时 15001ms → 超时', () => {
-    expect(isProvisionTimeout(15001)).toBe(true)
+  it('耗时 20001ms → 超时', () => {
+    expect(isProvisionTimeout(20001)).toBe(true)
   })
   it('耗时 30000ms → 超时', () => {
     expect(isProvisionTimeout(30000)).toBe(true)

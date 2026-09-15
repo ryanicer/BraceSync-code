@@ -605,14 +605,14 @@ function handleStatus(code: number) {
   }
   prevCode = code
   if (code === 3) uni.showToast({ title: PROGRESS.nearlyDoneToast, icon: 'none' })
-  armTimeout() // PRD §7A.9：15s「无推送」超时，每收一帧重新计时
+  armTimeout() // PRD §7A.9：20s「无推送」超时，每收一帧重新计时
 }
 
 function armTimeout() {
   stopProvisionTimer()
   timeoutTimer = setTimeout(() => {
     if (successHandled) return
-    logger.warn('[T192] 15s 无推送超时', { lastCode: provisionCode.value })
+    logger.warn('[T192] 20s 无推送超时', { lastCode: provisionCode.value })
     stopMockWifiStatusSequence()
     failureType.value = 'timeout'
     deviceStore.setWifiStatus('failed')

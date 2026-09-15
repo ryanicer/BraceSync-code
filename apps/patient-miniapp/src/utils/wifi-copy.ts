@@ -245,7 +245,7 @@ export const FAILURE_COMMON = {
 
 /**
  * B512 状态码 → 失败页（PRD §7A.9 错误态表）。
- * 15s 无推送不走此表，由页面直接落 timeout（§7A.9 超时口径）。
+ * 20s 无推送不走此表，由页面直接落 timeout（§7A.9 超时口径）。
  */
 export const FAILURE_KEY_BY_CODE: Record<number, FailureKey> = {
   [-1]: 'pwd',
