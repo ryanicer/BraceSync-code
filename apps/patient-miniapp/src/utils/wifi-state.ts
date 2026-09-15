@@ -25,8 +25,8 @@ export type ProvisionStatus =
   | { kind: 'success' }
   | { kind: 'failure'; code: -1 | -2 | -3 | -4; message: string }
 
-/** 配网超时阈值（毫秒）。PRD §7A.9：患者端 15s。 */
-export const PROVISION_TIMEOUT_MS = 15000
+/** 配网超时阈值（毫秒）。PRD §7A.9：患者端 20s（T210：固件 association 相位 ≥16s，15s 会先于设备失败码超时）。 */
+export const PROVISION_TIMEOUT_MS = 20000
 
 /**
  * 过滤 BLE 扫描结果：仅保留 BSYNC- 前缀且为 2.4G 的设备。
@@ -73,7 +73,7 @@ export function resolveProvisionStatus(code: number): ProvisionStatus {
 
 /**
  * 判断配网是否超时。
- * PRD §7A.9：患者端 15s 响应超时。
+ * PRD §7A.9：患者端 20s 响应超时。
  * @param elapsedMs 已耗时（毫秒）
  */
 export function isProvisionTimeout(elapsedMs: number): boolean {
