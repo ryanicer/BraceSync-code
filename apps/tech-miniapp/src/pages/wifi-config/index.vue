@@ -114,6 +114,11 @@ const provisioning = ref(false)
 // 取 3s：BLE 写入+设备处理约 1~2s，3s 足以让上一次操作落定，
 // 同时用户改完密码后不会感到明显阻塞。
 const MIN_PROVISION_INTERVAL = 3000
+
+// T212: 配网超时兜底 60s（与患者端 PROVISION_TIMEOUT_MS 同值）。
+// 正常链路实测 7–8s，但出现过一次约 50s 的长尾 ⇒ 留足余量。
+// 技师端语义＝自下发起 N 秒内未收到 9 即提示（收到失败码会提前 clearTimeout）。
+const PROVISION_TIMEOUT_MS = 60000
 let lastProvisionAttempt = 0
 
 const wifiStatusCode = ref<number | null>(null)
@@ -187,6 +192,8 @@ async function startWifiConfig() {
     const { provision_key_hex } = await getProvisionKey(installStore.deviceId)
 
     // 2. AES-CTR 加密 WiFi 凭据
+    // T212: 每轮下发前复位 ⇒ 本轮 seq 恒为 1（固件只试 seq=1/2/3，第 4 次起必然解不开）
+    installStore.resetWifiSeq()
     const seq = installStore.nextWifiSeq()
     const encrypted = await encryptWifiPayload(ssid, password.value, provision_key_hex, seq)
 
@@ -207,12 +214,12 @@ async function startWifiConfig() {
     // T089-MOCK: 真机由硬件 WiFi Status Notify 驱动
     startMockWifiStatusSequence()
 
-    // 协议 §2 补充：固件解密失败不 Notify，20s 超时兜底（T210：与患者端 PROVISION_TIMEOUT_MS 一致）
+    // 协议 §2 补充：固件解密失败不 Notify，60s 超时兜底（T212：与患者端 PROVISION_TIMEOUT_MS 一致）
     timeoutTimer.value = setTimeout(() => {
       if (wifiStatusCode.value !== 9) {
         handleTimeout()
       }
-    }, 20000)
+    }, PROVISION_TIMEOUT_MS)
   } catch (e) {
     uni.showToast({ title: e instanceof Error ? e.message : '配网失败', icon: 'none' })
     provisioning.value = false
@@ -251,7 +258,7 @@ function handleError(code: number) {
 }
 
 function handleTimeout() {
-  bleLog.warn('20s 配网超时，状态历史', [...statusHistory])
+  bleLog.warn(`${PROVISION_TIMEOUT_MS / 1000}s 配网超时，状态历史`, [...statusHistory])
   // P2-5: 迟到状态 9 回转——继续监听，不立即标失败
   // 这里给提示，但保留 statusListener（未移除），迟到状态 9 仍可触发 handleSuccess
   uni.showToast({ title: '设备无响应，请靠近设备后重试', icon: 'none' })

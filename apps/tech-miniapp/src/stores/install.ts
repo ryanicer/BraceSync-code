@@ -54,7 +54,9 @@ export const useInstallStore = defineStore('install', () => {
   // 装机过程中「已跳过配网」本地标记（内存态、不落库；resetInstall 自动清零）
   const networkSkipped = ref(false)
 
-  // ===== 配网 seq 计数器（协议 §3：会话内递增，防 CTR 重用；跨会话/断电重置为 1） =====
+  // ===== 配网 seq 计数器（协议 §3：防 CTR 重用；固件解密只试 seq=1/2/3） =====
+  // T212: 作用域＝单次配网尝试（每轮下发前 resetWifiSeq 复位为 1）。
+  // 旧口径"整会话一直 +1"会让第 4 次起越窗 ⇒ 每次必回 -1，只有冷启动才恢复。
   const wifiSeq = ref(1)
 
   // ===== 计算属性 =====
@@ -135,11 +137,17 @@ export const useInstallStore = defineStore('install', () => {
     installNote.value = note
   }
 
-  /** 领取本次配网 seq（返回当前值并自增；首次配网 = 1，同一会话重写凭据必须 +1） */
+  /** 领取本次配网 seq（返回当前值并自增）。T212：每轮下发前先 resetWifiSeq ⇒ 常态恒为 1；
+   *  自增只在同一轮内多次写设备时生效（固件只尝试 seq=1/2/3，越窗即永远解不开） */
   function nextWifiSeq(): number {
     const cur = wifiSeq.value
     wifiSeq.value += 1
     return cur
+  }
+
+  /** T212: 每次「开始配网」前复位为 1，与患者端 device store 同口径 */
+  function resetWifiSeq(): void {
+    wifiSeq.value = 1
   }
 
   function resetInstall() {
@@ -209,6 +217,7 @@ export const useInstallStore = defineStore('install', () => {
     setNetworkSkipped,
     setInstallNote,
     nextWifiSeq,
+    resetWifiSeq,
     resetInstall,
   }
 })

@@ -251,13 +251,13 @@ test.describe('06a–06e：五类失败态各自独立页', () => {
     })
   }
 
-  test('06e：15s 无状态推送 → 设备响应超时', async ({ page }) => {
-    test.setTimeout(90_000)
-    // 只推第一帧后不再推送，触发 PRD §7A.9 的 15s 无响应超时
+  test('06e：60s 无状态推送 → 设备响应超时', async ({ page }) => {
+    // T212：阈值 20s→60s，这条必须真等满 60s（mock 只推首帧后不再推送）
+    test.setTimeout(150_000)
     await gotoConnectForm(page, '?mock=0')
     await startProvision(page)
 
-    await expect(body(page).getByText('设备响应超时')).toBeVisible({ timeout: 25_000 })
+    await expect(body(page).getByText('设备响应超时')).toBeVisible({ timeout: 90_000 })
     await expect(body(page).getByText('重新配网')).toBeVisible()
   })
 
