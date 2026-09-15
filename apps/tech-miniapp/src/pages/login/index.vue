@@ -61,6 +61,7 @@
 import { ref } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { USE_MOCK } from '../../utils/request'
+import { logger } from '../../utils/logger'
 
 const authStore = useAuthStore()
 const phone = ref('')
@@ -132,8 +133,13 @@ async function doLogin() {
     setTimeout(() => {
       uni.reLaunch({ url: '/pages/home/index' })
     }, 1500)
-  } catch (error) {
-    // 失败统一提示（对齐后端防枚举，不区分"用户不存在/密码错误"）
+  } catch (error: any) {
+    // T208: 记录错误详情便于排查
+    logger.error('[T208]', 'doLogin catch', {
+      message: error?.message,
+      code: error?.code,
+      httpStatus: error?.httpStatus,
+    })
     uni.showToast({
       title: '手机号或密码错误',
       icon: 'none',
