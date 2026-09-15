@@ -192,16 +192,14 @@ async function startWifiConfig() {
     const { provision_key_hex } = await getProvisionKey(installStore.deviceId)
 
     // 2. AES-CTR 加密 WiFi 凭据
-    // T212: 每轮下发前复位 ⇒ 本轮 seq 恒为 1（固件只试 seq=1/2/3，第 4 次起必然解不开）
-    installStore.resetWifiSeq()
+    // T216: seq 每轮自增，仅当将要超出固件候选窗上限（64）时回绕为 1 ⇒ 不越窗且不重用 (key, IV)
     const seq = installStore.nextWifiSeq()
     const encrypted = await encryptWifiPayload(ssid, password.value, provision_key_hex, seq)
 
-    // 3. BLE 写入加密配置（T109: 用 BLE MAC，非后端设备 ID）
+    // 3. 监听配网状态（T109: 传入 BLE MAC 以订阅 B512 Notify）
+    //    T216: 必须先订阅再写 B511 —— 设备在收到配置后立刻回 0/1，
+    //    订阅晚于写入就会把首帧丢掉（患者端 wifi-setup 一直是这个顺序）。
     const bleMac = installStore.bleDeviceId || installStore.deviceId
-    await writeWifiConfigV2(bleMac, encrypted)
-
-    // 4. 监听配网状态（T109: 传入 BLE MAC 以订阅 B512 Notify）
     statusListener = (code: number) => {
       wifiStatusCode.value = code
       statusHistory.push(code)
@@ -209,6 +207,9 @@ async function startWifiConfig() {
       else if (code < 0) handleError(code)
     }
     onWifiStatus(statusListener, bleMac)
+
+    // 4. BLE 写入加密配置（T109: 用 BLE MAC，非后端设备 ID）
+    await writeWifiConfigV2(bleMac, encrypted)
 
     // H5 mock：启动状态机序列
     // T089-MOCK: 真机由硬件 WiFi Status Notify 驱动

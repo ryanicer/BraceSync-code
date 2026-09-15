@@ -1,12 +1,16 @@
 /**
- * T212 — 技师端配网 seq 每轮从 1 起（与患者端同缺陷、同修法）
+ * T212 → T216 — 技师端配网 seq：每轮自增，超出固件候选窗上限（64）才回绕
  *
- * 固件解密只尝试 seq=1/2/3；旧实现整会话一直 +1 ⇒ 同一装机会话第 4 次配网起永远解不开（真回 -1）。
- * 页面挂载不了单测（utils/ble.ts → ble-log → logger 的条件编译链 vitest 读不动），
- * 故落点接线按源码断言。患者端同款断言见 apps/patient-miniapp/tests/unit/provision-seq.spec.ts。
+ * 与患者端同缺陷、同修法：T212「每轮复位为 1」解决了越窗，却因 provision_key 不轮换而重用
+ * (key, IV)；T216 改「自增 + 到 64 回绕」（窗 1..64 = T213 固件 kCandidateSeqMax）。
+ * 密码学侧（同 seq 同明文必同密文、不同 seq 密文不同）已由 test/aes-ctr.spec.ts 覆盖，此处不重复。
+ *
+ * 页面挂载不了单测（utils/ble.ts → ble-log → logger 的条件编译链 vitest 读不动），故落点接线按源码断言。
+ * 患者端同款断言见 apps/patient-miniapp/tests/unit/provision-seq.spec.ts。
  */
 import { describe, it, expect, vi } from 'vitest'
 import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('../src/utils/request', () => {
@@ -14,46 +18,56 @@ vi.mock('../src/utils/request', () => {
   return { request, USE_MOCK: false }
 })
 
-import { useInstallStore } from '../src/stores/install'
+import { useInstallStore, WIFI_SEQ_CANDIDATE_MAX } from '../src/stores/install'
 
-const PAGE = new URL('../src/pages/wifi-config/index.vue', import.meta.url)
+const PAGE = fileURLToPath(new URL('../src/pages/wifi-config/index.vue', import.meta.url))
 
-describe('T212 — install store seq 复位语义', () => {
-  it('复位后每轮首个 seq 恒为 1，同轮内再领取仍递增', () => {
+/** 复刻一轮「开始配网」：页面每轮只领取一次 seq */
+function provisionOnce(): number {
+  return useInstallStore().nextWifiSeq()
+}
+
+describe('T216 — install store seq 自增语义', () => {
+  it('连续 6 轮「开始配网」seq = [1,2,3,4,5,6]（不再是 T212 那版的 [1,1,1,1,1,1]）', () => {
+    setActivePinia(createPinia())
+    const seqs = Array.from({ length: 6 }, () => provisionOnce())
+
+    expect(seqs).toEqual([1, 2, 3, 4, 5, 6])
+  })
+
+  it('回绕：64 之后下一次回到 1，且全程不越固件候选窗 1..64', () => {
     setActivePinia(createPinia())
     const store = useInstallStore()
 
-    expect(store.nextWifiSeq()).toBe(1) // 首轮
-    expect(store.nextWifiSeq()).toBe(2) // 同一轮内重写设备
-    store.resetWifiSeq()
-    expect(store.nextWifiSeq()).toBe(1) // 次轮回到 1
-    store.resetWifiSeq()
+    expect(WIFI_SEQ_CANDIDATE_MAX, '窗上限必须与 T213 固件 kCandidateSeqMax 一致').toBe(64)
+    for (let i = 0; i < 63; i++) store.nextWifiSeq()
+    expect(store.nextWifiSeq()).toBe(64)
     expect(store.nextWifiSeq()).toBe(1)
+    expect(store.nextWifiSeq()).toBe(2)
+    expect(store.wifiSeq).toBe(3)
   })
 
-  it('连点 6 次「开始配网」不越固件候选窗 1/2/3', () => {
+  it('同一轮内重复领取仍递增（协议 §3：同轮多次写设备 seq 须逐次递增）', () => {
     setActivePinia(createPinia())
     const store = useInstallStore()
-    const seqs = Array.from({ length: 6 }, () => {
-      store.resetWifiSeq()
-      return store.nextWifiSeq()
-    })
 
-    expect(seqs).toEqual([1, 1, 1, 1, 1, 1])
+    expect(store.nextWifiSeq()).toBe(1)
+    expect(store.nextWifiSeq()).toBe(2)
   })
 
-  it('resetInstall 后仍为 1（换装机不误留旧 seq）', () => {
+  it('resetInstall 不复位 seq（换装机可能还是同一把不轮换的 provision_key）', () => {
     setActivePinia(createPinia())
     const store = useInstallStore()
     store.nextWifiSeq()
     store.nextWifiSeq()
 
     store.resetInstall()
-    expect(store.wifiSeq).toBe(1)
+    expect(store.wifiSeq).toBe(3)
+    expect(store.nextWifiSeq()).toBe(3)
   })
 })
 
-describe('T212 — 落点接线（技师端下发前必须复位）', () => {
+describe('T216 — 落点接线（技师端下发前不复位、订阅先于写入）', () => {
   const src = fs.readFileSync(PAGE, 'utf8')
 
   /** 取出某个顶层 function 的函数体（按下一个顶层 function 为界） */
@@ -67,17 +81,18 @@ describe('T212 — 落点接线（技师端下发前必须复位）', () => {
 
   const body = fnBody('startWifiConfig')
 
-  it('startWifiConfig 内确有 resetWifiSeq()，且在 nextWifiSeq() 之前', () => {
-    const atReset = body.indexOf('resetWifiSeq()')
-    const atNext = body.indexOf('nextWifiSeq()')
-
-    expect(atReset, '缺少复位调用 ⇒ 同会话第 4 次起必失败').toBeGreaterThan(-1)
-    expect(atNext).toBeGreaterThan(-1)
-    expect(atReset).toBeLessThan(atNext)
+  it('每轮只领取一次 seq，且不存在复位调用（复位＝重用 IV）', () => {
+    expect([...src.matchAll(/nextWifiSeq\(\)/g)]).toHaveLength(1)
+    expect(body).not.toContain('resetWifiSeq')
   })
 
-  it('整个页面只有 startWifiConfig 领取 seq（不存在绕过复位的下发口）', () => {
-    expect([...src.matchAll(/nextWifiSeq\(\)/g)]).toHaveLength(1)
+  it('B512 订阅先于 B511 下发（T216①：顺序倒了首帧 0/1 会丢）', () => {
+    const atSubscribe = body.indexOf('onWifiStatus(')
+    const atWrite = body.indexOf('writeWifiConfigV2(')
+
+    expect(atSubscribe, 'startWifiConfig 里没有 onWifiStatus 订阅调用').toBeGreaterThan(-1)
+    expect(atWrite).toBeGreaterThan(-1)
+    expect(atSubscribe).toBeLessThan(atWrite)
   })
 
   it('T212：超时兜底用 60s 常量，且不再是裸 20000', () => {

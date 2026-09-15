@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Device } from '@bracesync/shared-types'
 
+/** 固件解密候选窗上限（T213：provision_crypto.h kCandidateSeqMax）。seq 到该值后回绕为 1。 */
+export const WIFI_SEQ_CANDIDATE_MAX = 64
+
 export const useDeviceStore = defineStore('device', () => {
   const currentDevice = ref<Device | null>(null)
   const isBound = ref(false)
@@ -16,21 +19,18 @@ export const useDeviceStore = defineStore('device', () => {
   const wifiStatus = ref<'unconfigured' | 'configuring' | 'connected' | 'failed'>('unconfigured')
   const wifiStatusCode = ref<number | null>(null)
 
-  // T182: 配网序列号（防重放）。
-  // 🔴 起点必须是 1：固件不持久 seq，解密时只尝试 seq=1/2/3（协议 §3 定稿）。
+  // T182: 配网序列号（防重放 + 防 CTR keystream 复用）。
+  // 🔴 取值必须落在固件候选窗内：固件不持久 seq，解密时只在 1..kCandidateSeqMax 里试。
+  //   T213 起固件窗上限 = 64（旧固件仍是 1..3，未重烧的设备升到 4 即锁死，故须与 T213 同批上线）。
   // 旧实现取 Date.now()/1000（≈17.9 亿）当起点 ⇒ 固件永远解不出明文，真机表现为 -1"密码错误"。
-  // T212: 但"同一会话一直 +1"同样会越窗——第 4 次「开始配网」起 seq=4，每次解不开都回 -1，
-  // 且只有冷启动小程序才恢复（09-15 夜真机实证）。故 seq 作用域收紧为单次配网尝试。
+  // T212 曾改"每轮复位为 1"解决了越窗，但 provision_key 每次配网不轮换 ⇒ 两轮用同一 (key, IV)
+  //   加密不同明文 = 经典 CTR keystream 复用（两段密文异或即得两段明文异或）。
+  // T216: 每轮自增、只在将要越出窗上限时回绕 ⇒ 越窗与 keystream 复用同时避免。
   let _wifiSeq = 0
 
   function nextWifiSeq(): number {
-    _wifiSeq += 1
+    _wifiSeq = _wifiSeq >= WIFI_SEQ_CANDIDATE_MAX ? 1 : _wifiSeq + 1
     return _wifiSeq
-  }
-
-  /** T212: 每轮「开始配网」前复位，使本轮首个 seq 回到 1（留在固件候选窗 1/2/3 内） */
-  function resetWifiSeq(): void {
-    _wifiSeq = 0
   }
 
   function setDevice(device: Device) {
@@ -68,7 +68,6 @@ export const useDeviceStore = defineStore('device', () => {
     bleDeviceId, bleName, bleConnected,
     wifiStatus, wifiStatusCode,
     nextWifiSeq,
-    resetWifiSeq,
     setDevice, clearDevice,
     setBleConnected, setWifiStatus, updateWifiStatusCode,
   }

@@ -78,7 +78,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
-import { useDeviceStore } from '../../stores/device'
+import { useDeviceStore, WIFI_SEQ_CANDIDATE_MAX } from '../../stores/device'
 import { useAuthStore } from '../../stores/auth'
 import { request } from '../../utils/request'
 import { getProvisionKey } from '../../api/provision'
@@ -542,19 +542,19 @@ async function runProvision() {
     logger.info('[T192] provision-key 就绪', { keyBytes: provision_key_hex.length / 2 })
 
     // 先订阅 B512 Notify，再写 B511，否则首帧状态（0/1）会丢
+    // T216: 订阅按「当前 deviceId + 链路代次」判定，原地重连/换设备后必然重发 notify
     onWifiStatus(handleStatus, bleDeviceId.value)
 
-    // T212: 每轮下发前复位 ⇒ 本轮 seq 恒为 1。复位必须在领取之前，
-    // 否则同会话第 4 次起 seq 越出固件候选窗 1/2/3，设备必然解不开（真回 -1）。
-    deviceStore.resetWifiSeq()
+    // T216: seq 每轮自增，仅当将要超出固件候选窗上限（64）时回绕为 1。
+    // 不再复位——provision_key 不轮换，复位会让两轮用同一 (key, IV) 加密不同明文（CTR keystream 复用）。
     const seq = deviceStore.nextWifiSeq()
     const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, seq)
     await writeWifiConfigV2(bleDeviceId.value, payload)
-    // seq 不在固件候选窗口 1/2/3 内时，设备必然解不出明文 → 会回 -1（并非真的密码错）
+    // seq 不在固件候选窗口内时，设备必然解不出明文 → 会回 -1（并非真的密码错）
     logger.info('[T192] B511 写入完成，等待设备推送', {
       payloadBytes: payload.length / 2,
       seq,
-      seqInFirmwareWindow: seq >= 1 && seq <= 3,
+      seqInFirmwareWindow: seq >= 1 && seq <= WIFI_SEQ_CANDIDATE_MAX,
       // 明文 = {"ssid":"","pwd":"","seq":N}，固定开销 27B + seq 位数 ⇒ 两个长度可反推字节数是否含意外字符
       ssidLen: enteredSsid.value.length,
       pwdLen: enteredPwd.value.length,
