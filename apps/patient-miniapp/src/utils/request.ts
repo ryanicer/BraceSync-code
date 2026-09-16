@@ -12,7 +12,7 @@ export const API_BASE_URL = __API_BASE_URL__
 
 interface RequestOptions {
   url: string
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' // 无 PATCH：wx.request 不支持（真机发不出），T226 用 PUT
   data?: Record<string, unknown>
 }
 

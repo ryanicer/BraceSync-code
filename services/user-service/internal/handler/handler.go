@@ -192,6 +192,9 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/feedbacks/:feedbackId/process", h.processFeedback)
 
 		v1.GET("/patient/profile", h.getPatientProfile) // T186 患者本人只读档案（self-scope）
+		// T226 患者自助改本人资料（白名单+限本人，handler 拦水平越权）。
+		// 用 PUT 而非 PATCH：微信小程序 wx.request 不支持 PATCH（真机发不出），PUT 承载部分更新语义。
+		v1.PUT("/patients/:patientId", h.updatePatientProfile)
 
 		v1.GET("/patients/:patientId/orthosis-plans", h.listPlans)
 		v1.POST("/patients/:patientId/orthosis-plans", h.savePlan)
@@ -611,6 +614,12 @@ func toPatientDTO(r repo.PatientRow) model.AdminPatientDTO {
 		UpdatedAt:  r.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		TeamName:   r.TeamName,
 		DoctorName: r.DoctorName,
+
+		HeightCm:                 r.HeightCm,
+		WeightKg:                 r.WeightKg,
+		EmergencyContactName:     r.EmergencyContactName,
+		EmergencyContactPhone:    r.EmergencyContactPhone,
+		EmergencyContactRelation: r.EmergencyContactRelation,
 	}
 }
 
