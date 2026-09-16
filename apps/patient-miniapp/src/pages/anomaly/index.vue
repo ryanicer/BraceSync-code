@@ -1,141 +1,266 @@
 <template>
   <view class="page">
     <view class="page-header">
-      <text class="page-title">异常事件</text>
-      <text class="page-subtitle">近期告警与异常记录</text>
+      <text class="page-title">异常监测</text>
     </view>
 
-    <!-- 筛选 -->
-    <view class="section">
+    <!-- Segmented -->
+    <view class="section seg-section">
       <view class="segmented">
-        <view :class="['seg-btn', { 'seg-active': filter === 'all' }]" @click="filter = 'all'"><text>全部</text></view>
-        <view :class="['seg-btn', { 'seg-active': filter === 'pressure' }]" @click="filter = 'pressure'"><text>压力异常</text></view>
-        <view :class="['seg-btn', { 'seg-active': filter === 'wear' }]" @click="filter = 'wear'"><text>佩戴异常</text></view>
+        <view :class="['seg-btn', { 'seg-active': activeTab === 'wearing' }]" @click="activeTab = 'wearing'"><text>佩戴异常</text></view>
+        <view :class="['seg-btn', { 'seg-active': activeTab === 'pressure' }]" @click="activeTab = 'pressure'"><text>压力异常</text></view>
       </view>
     </view>
 
-    <!-- 摘要统计 -->
-    <view v-if="!loading && !error && filteredAlerts.length > 0" class="section summary-section">
-      <view class="summary-row">
-        <view class="summary-item">
-          <text class="summary-num summary-num-error">{{ unreadCount }}</text>
-          <text class="summary-label">未读</text>
-        </view>
-        <view class="summary-item">
-          <text class="summary-num summary-num-warn">{{ activeCount }}</text>
-          <text class="summary-label">进行中</text>
-        </view>
-        <view class="summary-item">
-          <text class="summary-num summary-num-ok">{{ resolvedCount }}</text>
-          <text class="summary-label">已恢复</text>
+    <!-- Calendar -->
+    <view class="section cal-section">
+      <view class="cal-header">
+        <view class="cal-nav" @click="prevMonth"><text>&lt;</text></view>
+        <text class="cal-title">{{ monthLabel }}</text>
+        <view class="cal-nav" @click="nextMonth"><text>&gt;</text></view>
+      </view>
+      <view class="cal-weekdays">
+        <text v-for="w in WEEKDAYS" :key="w">{{ w }}</text>
+      </view>
+      <view class="cal-grid">
+        <view
+          v-for="(cell, i) in calCells"
+          :key="i"
+          :class="['cal-cell', { 'cal-empty': !cell.day, 'cal-sel': cell.key === selectedDate, 'cal-today': cell.key === todayKey }]"
+          @click="cell.day && pickDate(cell.key)"
+        >
+          <text v-if="cell.day" class="cal-num">{{ cell.day }}</text>
+          <view v-if="cell.day && cell.level !== 'ok'" :class="['cal-dot', cell.level]"></view>
         </view>
       </view>
     </view>
 
-    <!-- 告警列表 -->
-    <view class="section">
-      <view v-if="loading" class="card empty-card">
-        <text class="empty-text">加载中...</text>
+    <!-- Legend -->
+    <view class="section legend-section">
+      <view class="cal-legend">
+        <view class="cal-legend-item"><view class="cal-legend-dot red"></view><text>严重异常</text></view>
+        <view class="cal-legend-item"><view class="cal-legend-dot orange"></view><text>警告</text></view>
+        <view class="cal-legend-item"><view class="cal-legend-dot empty"></view><text>无异常</text></view>
       </view>
-      <view v-else-if="error" class="card empty-card">
-        <text class="empty-icon">⚠️</text>
-        <text class="empty-text">{{ error }}</text>
-        <view class="retry-btn" @click="loadAlerts"><text class="retry-text">重试</text></view>
-      </view>
-      <view v-else-if="filteredAlerts.length > 0" class="alert-list">
-        <view v-for="alert in filteredAlerts" :key="alert.alertId" :class="['alert-card', { 'alert-unread': alert.readStatus === 'unread' }]" @click="viewDetail(alert)">
-          <view class="alert-header">
-            <view :class="['type-badge', 'type-' + getSeverity(alert.type)]">
-              <text>{{ alertTypeLabel(alert.type) }}</text>
-            </view>
-            <view class="alert-header-right">
-              <view v-if="alert.readStatus === 'unread'" class="unread-dot"></view>
-              <view :class="['resolve-dot', 'resolve-' + alert.resolvedStatus]"></view>
-              <text class="alert-time">{{ formatTime(alert.timestamp) }}</text>
-            </view>
+    </view>
+
+    <!-- Detail Panel -->
+    <view class="section detail-section">
+      <template v-if="activeTab === 'wearing'">
+        <view v-if="wearingDetail" class="detail-card">
+          <view class="detail-date-header"><text>{{ selectedDate }} · {{ wearingDetail.statusText }}</text></view>
+          <view class="detail-wearing-hero">
+            <text class="dwh-value" :style="{ color: detailColor }">{{ wearingDetail.hours }}</text>
+            <text class="dwh-unit">h</text>
           </view>
-          <text class="alert-detail">{{ alert.detail }}</text>
-          <view v-if="alert.sensorPoint || alert.actualValue" class="alert-meta">
-            <text v-if="alert.sensorPoint" class="meta-chip">{{ alert.sensorPoint }}</text>
-            <text v-if="alert.actualValue" class="meta-chip meta-chip-warn">{{ alert.actualValue }}N</text>
-            <text v-if="alert.thresholdValue" class="meta-chip-threshold">阈值 {{ alert.thresholdValue }}N</text>
+          <view class="detail-bar-wrap">
+            <view class="detail-bar" :style="{ width: barWidth + '%', background: detailColor }"></view>
           </view>
-          <view v-if="alert.processNote" class="alert-note">
-            <text class="note-label">技师反馈</text>
-            <text class="note-text">{{ alert.processNote }}</text>
-          </view>
+          <view class="detail-bar-labels"><text>0h</text><text>目标 16h</text><text>18h</text></view>
+          <view :class="['detail-hint', { 'detail-hint-warn': wearingDetail.status !== 'ok' }]"><text>{{ wearingDetail.hintText }}</text></view>
         </view>
-      </view>
-      <view v-else class="card empty-card">
-        <text class="empty-icon">🔔</text>
-        <text class="empty-text">暂无异常事件</text>
-        <text class="empty-sub">一切正常，请继续坚持佩戴</text>
-      </view>
+        <view v-else class="detail-empty"><text>该日期无佩戴记录</text></view>
+      </template>
+      <template v-else>
+        <view class="detail-card">
+          <view class="detail-date-header">
+            <text>{{ selectedDate }}</text>
+            <text v-if="pressureDetail.length > 0" :style="{ color: pressureHeaderColor }"> · {{ pressureDetail.length }}条异常</text>
+          </view>
+          <view v-if="pressureDetail.length > 0">
+            <view v-for="(item, ii) in pressureDetail" :key="ii" :class="['ap-item', 'ap-item-' + item.level]">
+              <view class="ap-item-head">
+                <view :class="['ap-item-point', 'ap-point-' + item.level]"><text>{{ item.point }}</text></view>
+                <text :class="['ap-item-type', 'ap-type-' + item.level]">{{ item.type }}</text>
+                <text class="ap-item-threshold">阈值{{ item.threshold }}</text>
+              </view>
+              <text class="ap-item-detail">{{ item.detail }}</text>
+              <text class="ap-item-meta">{{ item.meta }}</text>
+            </view>
+          </view>
+          <view v-else class="detail-empty"><text>该日期无压力异常事件</text></view>
+        </view>
+      </template>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
 import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
+import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
 
-// 数据
-const alerts = ref<Alert[]>([])
-const filter = ref<'all' | 'pressure' | 'wear'>('all')
-const loading = ref(false)
-const error = ref('')
+// 佩戴记录（患者端查询契约：GET /patients/:patientId/daily-wear，T076）
+export interface WearingRecord {
+  date: string
+  hours: number
+  status: 'ok' | 'warn' | 'error'
+  label: string
+}
+
+export interface PressureAnomalyItem {
+  point: string
+  type: string
+  level: 'warn' | 'error'
+  detail: string
+  threshold: string
+  meta: string
+}
 
 const authStore = useAuthStore()
 
-// 过滤：pressure = pressure_high + pressure_fluctuation + sensor_drift，wear = wear_interrupt
-const filteredAlerts = computed(() => {
-  if (filter.value === 'all') return alerts.value
-  if (filter.value === 'wear') return alerts.value.filter(a => a.type === 'wear_interrupt')
-  return alerts.value.filter(a => a.type !== 'wear_interrupt')
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
+const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+
+function pad(n: number): string {
+  return n < 10 ? '0' + n : '' + n
+}
+
+const now = new Date()
+const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+
+// 数据
+const wearingData = ref<WearingRecord[]>([])
+const activeTab = ref<'wearing' | 'pressure'>('wearing')
+const wearingError = ref('')
+const pressureError = ref('')
+const pressureByDate = ref<Map<string, PressureAnomalyItem[]>>(new Map())
+
+// 日历状态（默认当月，选中今天）
+const currentYear = ref(now.getFullYear())
+const currentMonth = ref(now.getMonth() + 1)
+const selectedDate = ref(todayKey)
+
+const monthLabel = computed(() => `${currentYear.value}年${MONTH_NAMES[currentMonth.value - 1]}`)
+
+const wearingMap = computed(() => {
+  const m = new Map<string, WearingRecord>()
+  for (const item of wearingData.value) m.set(item.date, item)
+  return m
 })
 
-const unreadCount = computed(() => alerts.value.filter(a => a.readStatus === 'unread').length)
-const activeCount = computed(() => alerts.value.filter(a => a.resolvedStatus === 'active').length)
-const resolvedCount = computed(() => alerts.value.filter(a => a.resolvedStatus === 'resolved').length)
+// 合成日历格子：佩戴 + 压力任一 error → error；任一 warn → warn；否则 ok
+function getAnomalyLevel(dateKey: string): 'ok' | 'warn' | 'error' {
+  const w = wearingMap.value.get(dateKey)
+  const p = pressureByDate.value.get(dateKey)
+  if (w?.status === 'error' || p?.some((it) => it.level === 'error')) return 'error'
+  if (w?.status === 'warn' || (p && p.length > 0)) return 'warn'
+  return 'ok'
+}
 
-// 告警类型标签
-function alertTypeLabel(type: string): string {
-  const map: Record<string, string> = {
-    pressure_high: '压力偏高',
-    wear_interrupt: '佩戴中断',
-    pressure_fluctuation: '压力波动',
-    sensor_drift: '传感器漂移',
+interface CalCell {
+  key: string | null
+  day: number | null
+  level: 'ok' | 'warn' | 'error'
+}
+
+const calCells = computed<CalCell[]>(() => {
+  const y = currentYear.value
+  const m = currentMonth.value
+  const daysInMonth = new Date(y, m, 0).getDate()
+  const firstDow = new Date(y, m - 1, 1).getDay()
+  const cells: CalCell[] = []
+  for (let i = 0; i < firstDow; i++) cells.push({ key: null, day: null, level: 'ok' })
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${y}-${pad(m)}-${pad(d)}`
+    cells.push({ key, day: d, level: getAnomalyLevel(key) })
   }
-  return map[type] || type
+  while (cells.length % 7 !== 0) cells.push({ key: null, day: null, level: 'ok' })
+  return cells
+})
+
+function prevMonth() {
+  if (currentMonth.value === 1) {
+    currentMonth.value = 12
+    currentYear.value--
+  } else {
+    currentMonth.value--
+  }
 }
 
-// 严重程度
-function getSeverity(type: string): string {
-  if (type === 'pressure_high' || type === 'wear_interrupt') return 'error'
-  return 'warn'
+function nextMonth() {
+  if (currentMonth.value === 12) {
+    currentMonth.value = 1
+    currentYear.value++
+  } else {
+    currentMonth.value++
+  }
 }
 
-// 格式化时间
-function formatTime(iso: string): string {
-  const d = new Date(iso)
-  const month = d.getMonth() + 1
-  const day = d.getDate()
-  const h = String(d.getHours()).padStart(2, '0')
-  const m = String(d.getMinutes()).padStart(2, '0')
-  return `${month}/${day} ${h}:${m}`
+function pickDate(dateKey: string) {
+  selectedDate.value = dateKey
 }
 
-// 加载真实告警：alert-service GET /api/v1/alerts?patientId=xxx&page=&pageSize=
-// 患者 ID 改为从登录态 authStore.patientId 获取（T074 真实登录注入）
-async function loadAlerts() {
-  loading.value = true
-  error.value = ''
+// —— 佩戴详情卡 ——
+const wearingDetail = computed(() => {
+  const d = wearingMap.value.get(selectedDate.value)
+  if (!d) return null
+  return {
+    hours: d.hours,
+    status: d.status,
+    statusText: d.status === 'error' ? '严重不足' : d.status === 'warn' ? '佩戴不足' : '佩戴达标',
+    hintText:
+      d.status === 'ok'
+        ? '当日佩戴时长达到医生建议的 16h 目标'
+        : '当日佩戴时长低于医生建议的 16h 目标，请关注佩戴习惯',
+  }
+})
+
+const detailColor = computed(() => {
+  const s = wearingDetail.value?.status
+  if (s === 'error') return '#ef4444'
+  if (s === 'warn') return '#f59e0b'
+  return '#2563EB'
+})
+
+const barWidth = computed(() => Math.round((wearingDetail.value?.hours ?? 0) / 18 * 100))
+
+// —— 压力详情卡 ——
+const pressureDetail = computed(() => pressureByDate.value.get(selectedDate.value) ?? [])
+
+const pressureHeaderColor = computed(() =>
+  pressureDetail.value.some((it) => it.level === 'error') ? '#dc2626' : '#d97706'
+)
+
+// 将 alert-service Alert 转为按日期分组的压力异常（过滤 wear_interrupt）
+function alertsToPressureMap(alerts: Alert[]): Map<string, PressureAnomalyItem[]> {
+  const byDate = new Map<string, PressureAnomalyItem[]>()
+  for (const a of alerts) {
+    if (a.type === 'wear_interrupt') continue
+    const date = a.timestamp ? a.timestamp.slice(0, 10) : new Date().toISOString().slice(0, 10)
+    const thresholdTxt = a.thresholdValue != null ? `>${a.thresholdValue}N` : '阈值'
+    const actualTxt = a.actualValue != null ? `${a.actualValue}N` : ''
+    // Alert 没有 severity/message（shared-types 用 type + actualValue + thresholdValue + resolvedStatus 表达）
+    // level：pressure_high + actualValue/thresholdValue >= 60 → error；其余 warn
+    const level: PressureAnomalyItem['level'] =
+      a.type === 'pressure_high' && (a.actualValue >= 60 || a.thresholdValue >= 60) ? 'error' : 'warn'
+    const item: PressureAnomalyItem = {
+      point: a.sensorPoint || 'P??',
+      type: a.type === 'pressure_high' ? '偏高' : a.type === 'pressure_fluctuation' ? '压力波动' : a.type,
+      level,
+      detail: a.detail || (actualTxt ? `峰值 ${actualTxt}` : '压力异常'),
+      threshold: thresholdTxt,
+      meta: actualTxt
+        ? `实际值 ${actualTxt} · ${a.processNote ? a.processNote : a.resolvedStatus === 'resolved' ? '已恢复' : '关注'}`
+        : a.resolvedStatus === 'resolved'
+          ? '已恢复'
+          : '关注中',
+    }
+    if (!byDate.has(date)) byDate.set(date, [])
+    byDate.get(date)!.push(item)
+  }
+  return byDate
+}
+
+// 加载真实压力异常：GET /api/v1/alerts?patientId=xxx
+async function loadPressure() {
+  pressureError.value = ''
   try {
     const patientId = authStore.patientId
     if (!patientId) {
-      error.value = '请先登录'
+      pressureError.value = '请先登录'
+      pressureByDate.value = new Map()
       return
     }
     const res = await request<PaginatedResponse<Alert>>({
@@ -143,84 +268,118 @@ async function loadAlerts() {
       method: 'GET',
       data: { patientId, page: 1, pageSize: 100 },
     })
-    alerts.value = res?.list ?? []
+    pressureByDate.value = alertsToPressureMap(res?.list ?? [])
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '加载失败'
-    alerts.value = []
-  } finally {
-    loading.value = false
+    pressureError.value = e instanceof Error ? e.message : '加载失败'
+    pressureByDate.value = new Map()
   }
 }
 
-// 查看详情
-function viewDetail(alert: Alert) {
-  const lines = [
-    `类型: ${alertTypeLabel(alert.type)}`,
-    alert.sensorPoint ? `传感器: ${alert.sensorPoint}` : '',
-    alert.thresholdValue ? `阈值: ${alert.thresholdValue}N` : '',
-    alert.actualValue ? `实际值: ${alert.actualValue}N` : '',
-    `详情: ${alert.detail}`,
-    alert.processNote ? `技师反馈: ${alert.processNote}` : '',
-    `状态: ${alert.resolvedStatus === 'active' ? '进行中' : '已恢复'}`,
-  ].filter(Boolean)
-  uni.showModal({
-    title: alertTypeLabel(alert.type),
-    content: lines.join('\n'),
-    showCancel: false,
-  })
+// 加载佩戴数据：调 data-service 患者日佩戴聚合 GET /patients/:patientId/daily-wear（T076）
+// 无数据/失败时不抛错不 toast，直接空态占位（符合「不自造假数据」要求，E2E 由 route mock 兜住）
+async function loadWearing() {
+  wearingError.value = ''
+  const patientId = authStore.patientId
+  if (!patientId) {
+    wearingError.value = '请先登录'
+    wearingData.value = []
+    return
+  }
+  try {
+    const today = new Date()
+    const endY = today.getFullYear()
+    const endM = String(today.getMonth() + 1).padStart(2, '0')
+    const endD = String(today.getDate()).padStart(2, '0')
+    // 默认拉 21 天范围
+    const start = new Date(Date.now() - 20 * 86400_000)
+    const sY = start.getFullYear()
+    const sM = String(start.getMonth() + 1).padStart(2, '0')
+    const sD = String(start.getDate()).padStart(2, '0')
+    const list = await request<WearingRecord[]>({
+      url: `/api/v1/patients/${patientId}/daily-wear`,
+      method: 'GET',
+      data: { start: `${sY}-${sM}-${sD}`, end: `${endY}-${endM}-${endD}` },
+    })
+    wearingData.value = Array.isArray(list) ? list : []
+  } catch {
+    wearingData.value = []
+  }
 }
 
 onMounted(() => {
-  void loadAlerts()
+  void loadPressure()
+  void loadWearing()
 })
 </script>
 
 <style scoped>
-.page { padding-bottom: 180rpx; }
+.page { padding-bottom: 200rpx; }
 .page-header { padding: 80rpx 48rpx 16rpx; }
-.page-title { font-size: 28rpx; font-weight: 500; color: #94a3b8; letter-spacing: 1rpx; display: block; }
-.page-subtitle { font-size: 24rpx; color: #cbd5e1; display: block; margin-top: 8rpx; }
+.page-title { font-size: 28rpx; font-weight: 500; color: #94a3b8; letter-spacing: 1rpx; }
 .section { padding: 0 40rpx; margin-top: 24rpx; }
+.seg-section { margin-top: 16rpx; }
 .segmented { display: flex; background: #f1f5f9; border-radius: 20rpx; padding: 6rpx; gap: 4rpx; }
 .seg-btn { flex: 1; text-align: center; padding: 14rpx 0; font-size: 26rpx; font-weight: 500; color: #64748b; border-radius: 16rpx; transition: all 0.2s; }
 .seg-active { background: #fff; color: #2563EB; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.08); }
-.summary-section { margin-top: 16rpx; }
-.summary-row { display: flex; background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 28rpx 20rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); }
-.summary-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8rpx; }
-.summary-num { font-size: 44rpx; font-weight: 600; line-height: 1; }
-.summary-num-error { color: #ef4444; }
-.summary-num-warn { color: #d97706; }
-.summary-num-ok { color: #16a34a; }
-.summary-label { font-size: 22rpx; color: #94a3b8; }
-.alert-list { display: flex; flex-direction: column; gap: 16rpx; }
-.alert-card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 24rpx 28rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); }
-.alert-unread { border-left: 6rpx solid #ef4444; }
-.alert-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12rpx; }
-.alert-header-right { display: flex; align-items: center; gap: 10rpx; }
-.unread-dot { width: 12rpx; height: 12rpx; border-radius: 50%; background: #ef4444; flex-shrink: 0; }
-.resolve-dot { width: 12rpx; height: 12rpx; border-radius: 50%; flex-shrink: 0; }
-.resolve-active { background: #f59e0b; }
-.resolve-resolved { background: #22c55e; }
-.type-badge { font-size: 20rpx; padding: 4rpx 14rpx; border-radius: 8rpx; }
-.type-badge text { font-weight: 600; }
-.type-error { background: #fee2e2; }
-.type-error text { color: #dc2626; }
-.type-warn { background: #fef3c7; }
-.type-warn text { color: #d97706; }
-.alert-time { font-size: 22rpx; color: #94a3b8; }
-.alert-detail { font-size: 26rpx; color: #334155; line-height: 1.5; display: block; margin-bottom: 12rpx; }
-.alert-meta { display: flex; gap: 12rpx; flex-wrap: wrap; margin-bottom: 12rpx; }
-.meta-chip { font-size: 22rpx; padding: 4rpx 14rpx; background: #f1f5f9; border-radius: 8rpx; color: #475569; font-weight: 500; }
-.meta-chip-warn { background: #fef3c7; color: #d97706; }
-.meta-chip-threshold { font-size: 22rpx; color: #94a3b8; padding: 4rpx 0; }
-.alert-note { padding: 16rpx 20rpx; background: #f0f9ff; border-radius: 12rpx; display: flex; flex-direction: column; gap: 6rpx; }
-.note-label { font-size: 20rpx; color: #2563EB; font-weight: 500; }
-.note-text { font-size: 24rpx; color: #475569; line-height: 1.4; }
-.card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 32rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); }
-.empty-card { text-align: center; padding: 64rpx 32rpx; }
-.empty-icon { font-size: 64rpx; display: block; margin-bottom: 16rpx; }
-.empty-text { font-size: 28rpx; color: #94a3b8; display: block; margin-bottom: 8rpx; }
-.empty-sub { font-size: 24rpx; color: #cbd5e1; display: block; }
-.retry-btn { margin-top: 24rpx; padding: 12rpx 32rpx; background: #2563EB; border-radius: 12rpx; display: inline-block; }
-.retry-text { font-size: 26rpx; color: #fff; font-weight: 500; }
+
+/* Calendar */
+.cal-section { margin-top: 40rpx; }
+.cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24rpx; padding: 0 8rpx; }
+.cal-title { font-size: 34rpx; font-weight: 600; color: #1e293b; }
+.cal-nav { width: 64rpx; height: 64rpx; border-radius: 50%; background: #f1f5f9; color: #475569; font-size: 32rpx; display: flex; align-items: center; justify-content: center; }
+.cal-nav:active { background: #e2e8f0; }
+.cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-size: 22rpx; font-weight: 500; color: #94a3b8; margin-bottom: 8rpx; padding: 0 4rpx; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); padding: 4rpx; }
+.cal-cell { height: 94rpx; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4rpx; border-radius: 20rpx; position: relative; }
+.cal-cell:not(.cal-empty):active { background: #f1f5f9; }
+.cal-empty { pointer-events: none; }
+.cal-num { font-size: 28rpx; font-weight: 500; color: #475569; line-height: 1; }
+.cal-sel { background: #eff6ff; }
+.cal-sel .cal-num { color: #2563EB; font-weight: 600; }
+.cal-today .cal-num { font-weight: 700; }
+.cal-today:not(.cal-sel) .cal-num { color: #1e293b; }
+.cal-dot { width: 10rpx; height: 10rpx; border-radius: 50%; }
+.cal-dot.error { background: #ef4444; }
+.cal-dot.warn { background: #f59e0b; }
+
+/* Legend */
+.legend-section { margin-top: 24rpx; }
+.cal-legend { display: flex; gap: 32rpx; justify-content: center; font-size: 22rpx; color: #94a3b8; }
+.cal-legend-item { display: flex; align-items: center; gap: 8rpx; }
+.cal-legend-dot { width: 16rpx; height: 16rpx; border-radius: 50%; display: inline-block; }
+.cal-legend-dot.red { background: #ef4444; }
+.cal-legend-dot.orange { background: #f59e0b; }
+.cal-legend-dot.empty { background: #e2e8f0; }
+
+/* Detail Panel */
+.detail-section { margin-top: 24rpx; padding-bottom: 40rpx; }
+.detail-card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 32rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); }
+.detail-date-header { font-size: 28rpx; font-weight: 500; color: #1e293b; margin-bottom: 32rpx; }
+.detail-empty { font-size: 26rpx; color: #94a3b8; text-align: center; padding: 48rpx 0; }
+
+/* Wearing */
+.detail-wearing-hero { display: flex; align-items: baseline; justify-content: center; gap: 8rpx; margin-bottom: 24rpx; }
+.dwh-value { font-size: 96rpx; font-weight: 300; letter-spacing: 4rpx; line-height: 1; }
+.dwh-unit { font-size: 32rpx; color: #94a3b8; }
+.detail-bar-wrap { height: 20rpx; background: #f1f5f9; border-radius: 10rpx; overflow: hidden; margin-bottom: 8rpx; }
+.detail-bar { height: 100%; border-radius: 10rpx; transition: width 0.3s; }
+.detail-bar-labels { display: flex; justify-content: space-between; font-size: 20rpx; color: #cbd5e1; margin-bottom: 24rpx; }
+.detail-hint { font-size: 24rpx; color: #64748b; text-align: center; line-height: 1.5; padding: 16rpx 24rpx; background: #f8fafc; border-radius: 16rpx; }
+.detail-hint-warn { background: #fff7ed; color: #c2410c; }
+
+/* Pressure */
+.ap-item { padding: 20rpx 0; border-bottom: 1rpx solid #f1f5f9; display: flex; flex-direction: column; gap: 10rpx; }
+.ap-item:first-child { padding-top: 0; }
+.ap-item:last-child { border-bottom: none; padding-bottom: 0; }
+.ap-item-head { display: flex; align-items: center; gap: 16rpx; }
+.ap-item-point { font-size: 22rpx; font-weight: 600; padding: 2rpx 12rpx; border-radius: 6rpx; }
+.ap-item-point text { color: #fff; }
+.ap-point-error { background: #ef4444; }
+.ap-point-warn { background: #f59e0b; }
+.ap-item-type { font-size: 24rpx; font-weight: 500; }
+.ap-type-error { color: #dc2626; }
+.ap-type-warn { color: #d97706; }
+.ap-item-threshold { font-size: 22rpx; color: #94a3b8; }
+.ap-item-detail { font-size: 26rpx; color: #475569; line-height: 1.4; }
+.ap-item-meta { font-size: 22rpx; color: #94a3b8; }
 </style>

@@ -29,12 +29,15 @@ test('患者端核心全链路：微信登录到配网成功', async ({ page }) 
   await page.locator('.segmented .seg-btn', { hasText: '周' }).click()
   await expect(page.locator('.trend-section .section-title')).toContainText('本周压力趋势')
 
-  // ===== 3. history：tabBar 切换 + 双 Tab =====
+  // ===== 3. anomaly（T221 日历版）：tabBar 切换 + 日历 + 分段 =====
   await switchTabBy(page, '异常监测')
-  await page.waitForURL('**/pages/history/**', { timeout: 10_000 })
-  await expect(page.locator('.wearing-row')).toHaveCount(15)
+  await page.waitForURL('**/pages/anomaly/**', { timeout: 10_000 })
+  const now = new Date()
+  await expect(page.locator('.cal-title')).toHaveText(`${now.getFullYear()}年${now.getMonth() + 1}月`)
+  await expect(page.locator('.cal-legend-item')).toHaveCount(3)
   await page.locator('.segmented .seg-btn', { hasText: '压力异常' }).click()
-  await expect(page.locator('.p-group')).toHaveCount(7)
+  await expect(page.locator('.segmented .seg-btn', { hasText: '压力异常' })).toHaveClass(/seg-active/)
+  await expect(page.locator('.detail-card')).toBeVisible()
 
   // ===== 4. device：tabBar 切换 + 设备卡片 =====
   await switchTabBy(page, '设备管理')

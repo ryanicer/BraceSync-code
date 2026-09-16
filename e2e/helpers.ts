@@ -26,7 +26,7 @@ export const HOTSPOT_NAME = 'PRS-ML05-RC-001'
 export const routes = {
   login: '/#/pages/login/index',
   monitor: '/#/pages/monitor/index',
-  history: '/#/pages/history/index',
+  anomaly: '/#/pages/anomaly/index',
   device: '/#/pages/device/index',
   wifiSetup: '/#/pages/wifi-setup/index',
 } as const

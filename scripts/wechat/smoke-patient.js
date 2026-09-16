@@ -210,22 +210,22 @@ async function run() {
     }), 10000, 'evaluate monitor data');
     console.log('[4/5] monitor 数据:', String(monData).substring(0, 400));
 
-    console.log('[4/5] switchTab 到 history 页...');
-    await withTimeout(mp.switchTab('/pages/history/index'), 20000, 'switchTab history');
+    console.log('[4/5] switchTab 到 anomaly 页...');
+    await withTimeout(mp.switchTab('/pages/anomaly/index'), 20000, 'switchTab anomaly');
     await new Promise(r => setTimeout(r, 4000));
     const stH = await pageState(mp);
-    const histPass = stH.route === 'pages/history/index';
-    results.steps.push({ step: 'monitor->history', result: histPass ? 'PASS' : 'FAIL', actual: stH.route });
-    console.log(`[4/5] history: ${stH.route} (${histPass ? 'PASS' : 'FAIL'})`);
+    const histPass = stH.route === 'pages/anomaly/index';
+    results.steps.push({ step: 'monitor->anomaly', result: histPass ? 'PASS' : 'FAIL', actual: stH.route });
+    console.log(`[4/5] anomaly: ${stH.route} (${histPass ? 'PASS' : 'FAIL'})`);
 
-    await shot(mp, 'smoke-patient-3-history.png', 'screenshot history');
+    await shot(mp, 'smoke-patient-3-anomaly.png', 'screenshot anomaly');
 
-    console.log('[5/5] history 页渲染数据...');
+    console.log('[5/5] anomaly 页渲染数据...');
     const histData = await withTimeout(mp.evaluate(function () {
       var p = getCurrentPages()[getCurrentPages().length - 1];
       return JSON.stringify({ route: p.route, sample: JSON.stringify(p.data).substring(0, 300) });
-    }), 10000, 'evaluate history data');
-    console.log('[5/5] history 数据:', String(histData).substring(0, 400));
+    }), 10000, 'evaluate anomaly data');
+    console.log('[5/5] anomaly 数据:', String(histData).substring(0, 400));
 
     await mp.disconnect();
   } catch (e) {
@@ -241,7 +241,7 @@ async function run() {
   console.log('截图:', results.screenshots.join(', ') || '无');
   console.log('错误:', results.errors.length === 0 ? '无' : results.errors.join('\n'));
   const flowPass = results.steps.some(s => (s.step === 'login->monitor' && s.result === 'PASS') || s.step === 'monitor(tab-fallback)');
-  const histOk = results.steps.some(s => s.step === 'monitor->history' && s.result === 'PASS');
+  const histOk = results.steps.some(s => s.step === 'monitor->anomaly' && s.result === 'PASS');
   const pass = flowPass && histOk && results.errors.length === 0;
   console.log('总结:', pass ? 'PASS' : 'FAIL');
   process.exitCode = pass ? 0 : 1;

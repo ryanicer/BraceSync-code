@@ -111,8 +111,8 @@ export function pressureRecords(period: string, _date: string) {
 }
 
 // ---------- wearing 日记录 15 条（2026-06-28 → 2026-07-12，15 天） ----------
-//  断言 history: '2026年7月' 头 + '2026年6月' 头、15 条 wearing-row、
-//                 至少 1 条「达标」、至少 1 条「严重不足」
+//  断言 anomaly（T221 日历版）：切到 '2026年7月' 后 3 红 6 橙圆点、
+//                 点 07-08 详情卡 3.1h/严重不足、压力页签 07-12 3 条异常
 export interface WearingFixtureRow {
   date: string
   hours: number

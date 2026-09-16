@@ -300,9 +300,9 @@ function switchSegment(seg: 'day' | 'week' | 'month') {
   void loadTrend(base)
 }
 
-// T019B: 导航至异常事件页
+// T019B: 导航至异常监测页（tabBar 页须用 switchTab，navigateTo 会静默失败）
 function goAnomaly() {
-  uni.navigateTo({ url: '/pages/anomaly/index' })
+  uni.switchTab({ url: '/pages/anomaly/index' })
 }
 
 onMounted(() => {

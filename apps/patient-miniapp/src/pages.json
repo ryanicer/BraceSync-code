@@ -29,10 +29,6 @@
       "style": { "navigationBarTitleText": "实时监测", "enablePullDownRefresh": true }
     },
     {
-      "path": "pages/history/index",
-      "style": { "navigationBarTitleText": "历史记录" }
-    },
-    {
       "path": "pages/device/index",
       "style": { "navigationBarTitleText": "设备管理" }
     },
@@ -42,7 +38,7 @@
     },
     {
       "path": "pages/anomaly/index",
-      "style": { "navigationBarTitleText": "异常事件" }
+      "style": { "navigationBarTitleText": "异常监测" }
     },
     {
       "path": "pages/report/index",
@@ -56,7 +52,7 @@
     "borderStyle": "white",
     "list": [
       { "pagePath": "pages/monitor/index", "text": "实时监测" },
-      { "pagePath": "pages/history/index", "text": "异常监测" },
+      { "pagePath": "pages/anomaly/index", "text": "异常监测" },
       { "pagePath": "pages/report/index", "text": "复查管理" },
       { "pagePath": "pages/device/index", "text": "设备管理" },
       { "pagePath": "pages/profile/index", "text": "我的" }
