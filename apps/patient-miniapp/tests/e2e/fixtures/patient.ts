@@ -113,29 +113,47 @@ export function pressureRecords(period: string, _date: string) {
 // ---------- wearing 日记录 15 条（2026-06-28 → 2026-07-12，15 天） ----------
 //  断言 anomaly（T221 日历版）：切到 '2026年7月' 后 3 红 6 橙圆点、
 //                 点 07-08 详情卡 3.1h/严重不足、压力页签 07-12 3 条异常
+// 形状对齐后端 DailyWearDayDTO（data-service model.go）：date/wearMinutes/avgPressure/
+// maxPressure/maxPoint/frameCount/abnormalCount。hours/status 由页面派生
+// （≥16h ok / ≥4h warn / <4h error），夹具不再自带前端字段（真机曾因形状错位全空）。
 export interface WearingFixtureRow {
   date: string
-  hours: number
-  status: 'ok' | 'warn' | 'error'
-  label: string
+  wearMinutes: number
+  avgPressure: number
+  maxPressure: number
+  maxPoint: string
+  frameCount: number
+  abnormalCount: number
+}
+/** 按小时数生成 DTO 行（wearMinutes = hours*60，页面派生回同一 hours） */
+function wearDay(date: string, hours: number): WearingFixtureRow {
+  return {
+    date,
+    wearMinutes: Math.round(hours * 60),
+    avgPressure: 28.5,
+    maxPressure: 42.18,
+    maxPoint: 'P12',
+    frameCount: 1728,
+    abnormalCount: 0,
+  }
 }
 export function wearing15(): WearingFixtureRow[] {
   return [
-    { date: '2026-07-12', hours: 10.2, status: 'warn', label: '不足' },
-    { date: '2026-07-11', hours: 16.8, status: 'ok', label: '达标' },
-    { date: '2026-07-10', hours: 8.5, status: 'warn', label: '不足' },
-    { date: '2026-07-09', hours: 15.2, status: 'ok', label: '达标' },
-    { date: '2026-07-08', hours: 3.1, status: 'error', label: '严重不足' },
-    { date: '2026-07-07', hours: 18.2, status: 'ok', label: '达标' },
-    { date: '2026-07-06', hours: 17.5, status: 'ok', label: '达标' },
-    { date: '2026-07-05', hours: 12.1, status: 'warn', label: '不足' },
-    { date: '2026-07-04', hours: 9.3, status: 'warn', label: '不足' },
-    { date: '2026-07-03', hours: 16.0, status: 'ok', label: '达标' },
-    { date: '2026-07-02', hours: 11.7, status: 'warn', label: '不足' },
-    { date: '2026-07-01', hours: 17.1, status: 'ok', label: '达标' },
-    { date: '2026-06-30', hours: 14.5, status: 'warn', label: '不足' },
-    { date: '2026-06-29', hours: 6.2, status: 'error', label: '严重不足' },
-    { date: '2026-06-28', hours: 18.5, status: 'ok', label: '达标' },
+    wearDay('2026-07-12', 10.2),
+    wearDay('2026-07-11', 16.8),
+    wearDay('2026-07-10', 8.5),
+    wearDay('2026-07-09', 15.2),
+    wearDay('2026-07-08', 3.1),
+    wearDay('2026-07-07', 18.2),
+    wearDay('2026-07-06', 17.5),
+    wearDay('2026-07-05', 12.1),
+    wearDay('2026-07-04', 9.3),
+    wearDay('2026-07-03', 16.0),
+    wearDay('2026-07-02', 11.7),
+    wearDay('2026-07-01', 17.1),
+    wearDay('2026-06-30', 14.5),
+    wearDay('2026-06-29', 6.2),
+    wearDay('2026-06-28', 18.5),
   ]
 }
 

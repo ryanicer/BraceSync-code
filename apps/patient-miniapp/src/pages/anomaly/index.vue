@@ -15,9 +15,9 @@
     <!-- Calendar -->
     <view class="section cal-section">
       <view class="cal-header">
-        <view class="cal-nav" @click="prevMonth"><text>&lt;</text></view>
+        <view class="cal-nav" @click="prevMonth"><text>{{ NAV_PREV }}</text></view>
         <text class="cal-title">{{ monthLabel }}</text>
-        <view class="cal-nav" @click="nextMonth"><text>&gt;</text></view>
+        <view class="cal-nav" @click="nextMonth"><text>{{ NAV_NEXT }}</text></view>
       </view>
       <view class="cal-weekdays">
         <text v-for="w in WEEKDAYS" :key="w">{{ w }}</text>
@@ -91,12 +91,32 @@ import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
 
-// 佩戴记录（患者端查询契约：GET /patients/:patientId/daily-wear，T076）
+// 佩戴记录：后端 data-service DailyWearDayDTO（GET /patients/:patientId/daily-wear，T076）
+// 真机教训：DTO 只有 wearMinutes，hours/status 必须前端派生，不可直接消费
+export interface DailyWearDay {
+  date: string
+  wearMinutes: number
+  avgPressure: number
+  maxPressure: number
+  maxPoint: string
+  frameCount: number
+  abnormalCount: number
+}
+
 export interface WearingRecord {
   date: string
   hours: number
   status: 'ok' | 'warn' | 'error'
-  label: string
+}
+
+// 派生口径：目标 16h（设计稿 detail-bar-labels「目标 16h」）
+// ok ≥16h；warn ≥4h（目标的 25%）；error <4h（严重不足）
+const WEAR_TARGET_H = 16
+
+function toWearingRecord(d: DailyWearDay): WearingRecord {
+  const hours = Math.round(d.wearMinutes / 6) / 10
+  const status: WearingRecord['status'] = hours >= WEAR_TARGET_H ? 'ok' : hours >= 4 ? 'warn' : 'error'
+  return { date: d.date, hours, status }
 }
 
 export interface PressureAnomalyItem {
@@ -112,6 +132,9 @@ const authStore = useAuthStore()
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+// 月导航箭头用 mustache 绑定：模板里写 &lt;/&gt; 实体在微信小程序端按字面渲染（真机实测）
+const NAV_PREV = '<'
+const NAV_NEXT = '>'
 
 function pad(n: number): string {
   return n < 10 ? '0' + n : '' + n
@@ -295,12 +318,12 @@ async function loadWearing() {
     const sY = start.getFullYear()
     const sM = String(start.getMonth() + 1).padStart(2, '0')
     const sD = String(start.getDate()).padStart(2, '0')
-    const list = await request<WearingRecord[]>({
+    const list = await request<DailyWearDay[]>({
       url: `/api/v1/patients/${patientId}/daily-wear`,
       method: 'GET',
       data: { start: `${sY}-${sM}-${sD}`, end: `${endY}-${endM}-${endD}` },
     })
-    wearingData.value = Array.isArray(list) ? list : []
+    wearingData.value = Array.isArray(list) ? list.map(toWearingRecord) : []
   } catch {
     wearingData.value = []
   }
