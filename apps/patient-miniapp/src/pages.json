@@ -43,6 +43,10 @@
     {
       "path": "pages/report/index",
       "style": { "navigationBarTitleText": "复查管理" }
+    },
+    {
+      "path": "pages/wearing/index",
+      "style": { "navigationBarTitleText": "佩戴管理" }
     }
   ],
   "tabBar": {
