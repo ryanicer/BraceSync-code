@@ -329,8 +329,9 @@ async function tryLink(mac: string): Promise<boolean> {
 async function ensureLinkForProvision(): Promise<boolean> {
   if (installStore.bleConnected && installStore.bleDeviceId) return true
   if (!installStore.bleDeviceId) {
+    // 从未建立过链路（如调试直连本页）：无从重连，放行走原流程，写失败由失败路径兜底
     bleLog.warn(`下发前无 BLE MAC 可重连（未绑定？） secsSinceLinkUp=${secsSinceLinkUp()}`)
-    return false
+    return true
   }
   bleLog.warn(`下发前链路已断，尝试原地重连 bleDeviceId=${installStore.bleDeviceId} secsSinceLinkUp=${secsSinceLinkUp()}`)
   uni.showLoading({ title: BLE_RECONNECTING_TOAST, mask: true })

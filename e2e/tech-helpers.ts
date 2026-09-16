@@ -132,6 +132,12 @@ export async function discoverDevices() {
   ]
 }
 
+// T218 A-3: 原地重连重扫（页面从 ble.ts 导入本函数，mock 必须同步导出，否则
+// 浏览器模块绑定直接 SyntaxError，整页 chunk 加载失败＝uni-async-error 遮罩）
+export async function rescanOnce(duration) {
+  return discoverDevices(duration)
+}
+
 export async function createBLEConnection(deviceId) { return true }
 
 // T109: connectDevice = createBLEConnection + GATT 服务发现（mock 直接返回 true）
