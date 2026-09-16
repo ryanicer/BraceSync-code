@@ -40,7 +40,15 @@ helpers.runSpec(cfg, {
     catch (e) { logStep(result, 'api-login', false, e.message); return false }
     logStep(result, 'api-login', true, 'token acquired')
 
-    // [2] 真实写绑定 + 安装记录（造数据唯一后缀）
+    // [2] 绑定前快照：install-records 列表当前长度
+    let preCount = -1
+    try {
+      const pre = await apiCall(cfg.staging, '/api/v1/install-records', { token })
+      preCount = ((pre.body && pre.body.data && pre.body.data.list) || []).length
+    } catch (e) { logStep(result, 'api-snapshot-pre', false, e.message); return false }
+    logStep(result, 'api-snapshot-pre', preCount >= 0, { preCount })
+
+    // [3] 真实写绑定 + 安装记录（造数据唯一后缀）
     const suffix = uniqueName(cfg.prefix) // e.g. T054测试-<ts>-00
     let bindResp, instResp
     try {
@@ -61,16 +69,18 @@ helpers.runSpec(cfg, {
     logStep(result, 'api-write(bind+install)', f2, { bind: bindResp.status, install: instResp.status, instId })
     if (!f2) return false
 
-    // [3] 直连复核：install-records 列表确实含刚写入的 instId（数据正确性）
+    // [4] 绑定后快照：列表应 +1 且含 notes=suffix 的新行
     let recList
     try {
       const r = await apiCall(cfg.staging, '/api/v1/install-records', { token })
       recList = (r.body && r.body.data && r.body.data.list) || []
-    } catch (e) { logStep(result, 'api-verify-list', false, e.message); return false }
-    const found = recList.some((x) => x.installId === instId || x.notes === suffix)
-    logStep(result, 'api-verify-list', found, { total: recList.length, instId, suffix })
+    } catch (e) { logStep(result, 'api-snapshot-post', false, e.message); return false }
+    const postCount = recList.length
+    const newRow = recList.find((x) => x.notes === suffix || x.installId === instId)
+    const snapOk = newRow && postCount === preCount + 1
+    logStep(result, 'api-snapshot-post', snapOk, { preCount, postCount, delta: postCount - preCount, newRowFound: !!newRow, instId, suffix })
 
-    // [4] 小程序 UI 复核：records 页渲染真实列表并含新记录
+    // [5] 小程序 UI 复核：records 页渲染真实列表并含新记录
     await helpers.withTimeout(mp.reLaunch('/pages/home/index'), 15_000, 'reLaunch home')
     await new Promise((r) => setTimeout(r, 3000))
     await helpers.withTimeout(mp.reLaunch('/pages/records/index'), 15_000, 'reLaunch records')
@@ -84,6 +94,6 @@ helpers.runSpec(cfg, {
     }, suffix), 10_000, 'records render')
     logStep(result, 'ui-records-render', route === 'pages/records/index' && !!uiFound, { route, uiFound: !!uiFound, suffix })
 
-    return f2 && found && route === 'pages/records/index' && !!uiFound
+    return f2 && snapOk && route === 'pages/records/index' && !!uiFound
   },
 })
