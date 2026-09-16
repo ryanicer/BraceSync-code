@@ -25,8 +25,36 @@ var (
 	BackfillMaxAge = 7 * 24 * time.Hour
 )
 
-// WearingThresholdN 佩戴判定阈值（PRD §8.1：帧 max_pressure > 0.5N 视为佩戴帧）
+// WearingThresholdN 佩戴判定阈值默认值（PRD §8.1：帧 max_pressure > 阈值视为佩戴帧）。
+// 🔴 占位值：生产生效值走 sys_configs `wearing_pressure_threshold`（T173 可配置化），
+// 本常量仅作配置缺失时的兜底与 rollup SQL 聚合入参（D8：rollup 仍 raw 口径，见 T173 自报）。
 const WearingThresholdN = 0.5
+
+// PressureThresholds 压力量纲阈值（PRD §7D.12：可配置参数，sys_configs 驱动，不硬编码）。
+// 🔴 当前数值全部为占位值——原值基于已作废的「raw = N×100」量纲估算，待按 mN/÷1000 量级重定
+// （T173-decision 阈值重定章节，Boss 2026-09-14 明令；重定输入需 Boss+小顾给真实物理范围）。
+type PressureThresholds struct {
+	// WearingN 佩戴判定阈值（sys_configs: wearing_pressure_threshold，默认 0.5）
+	WearingN float64
+	// HeatmapMaxN 热力图色阶上界（sys_configs: heatmap_max_n，默认 60；四档分界按比例法由前端换算）
+	HeatmapMaxN float64
+	// PressureHighN 压力偏高告警阈值（sys_configs: threshold_pressure_high，默认 45；
+	// 展示分级 warning = 0.75×PressureHighN 与 alert-service 引擎同源）
+	PressureHighN float64
+}
+
+// DefaultPressureThresholds 占位默认口径（配置缺失/非法时兜底，与 seed.sql 一致）
+func DefaultPressureThresholds() PressureThresholds {
+	return PressureThresholds{
+		WearingN:      WearingThresholdN,
+		HeatmapMaxN:   60.0,
+		PressureHighN: 45.0,
+	}
+}
+
+// MnPerN 设备上报 mN（毫牛）→ N 换算分母（PRD §7A.2 数据单位口径，T173 D1 权威裁定：
+// 入口 ÷1000 归一为 N；原「N×100 定点 / ÷100」口径作废）。入口归一点：service.toPendingFrame。
+const MnPerN = 1000.0
 
 // cstZone 业务切日时区（架构 §3.5：业务切日/定时任务按 Asia/Shanghai）。
 // 用固定偏移避免容器缺 tzdata 导致 LoadLocation 失败。
@@ -112,9 +140,13 @@ func ErrInternal(format string, args ...any) *AppError {
 type SingleFrameRequest struct {
 	// DeviceID 仅为 gateway 身份头未就绪时的联调回退；
 	// 生产以 gateway 注入的 X-Device-Id 为准（验签归 gateway，本服务不越权）。
-	DeviceID  string    `json:"device_id,omitempty"`
-	Timestamp int64     `json:"timestamp"` // 采集时刻，Unix 秒
-	Points    []float64 `json:"points"`    // 20 点压力值（P01–P20 顺序），单位 N
+	DeviceID  string `json:"device_id,omitempty"`
+	Timestamp int64  `json:"timestamp"` // 采集时刻，Unix 秒
+	// Points 20 点压力值（P01–P20 顺序）。
+	// 🔴 单位 = mN（毫牛，PRD §7A.2 数据单位口径，T173 D1 权威裁定：设备上报 mN）；
+	// 入口统一 ÷1000 归一为 N 后落库/判定（toPendingFrame）。⚠️ docs/api/device-protocol.md
+	// 仍为旧「N×100」量纲，冲突已上报待订正，以本注释口径为准。
+	Points    []float64 `json:"points"`
 	Battery   int       `json:"battery"`
 	Firmware  string    `json:"firmware"`
 	WifiRSSI  *int      `json:"wifi_rssi,omitempty"`
@@ -202,18 +234,17 @@ func PointLabel(i int) (row, col int, label string) {
 	return row, col, fmt.Sprintf("R%dC%d", row, col)
 }
 
-// 压力展示分级阈值（仅用于前端 status 渲染，非告警阈值）
-const (
-	pressureWarningN  = 33.75 // 0.75 × 压力偏高默认阈值 45N
-	pressureCriticalN = 45.0  // 与告警引擎 pressure_high 默认阈值一致
-)
+// 压力展示分级阈值（仅用于前端 status 渲染，非告警阈值）：
+// warning/critical 分界由 PressureThresholds.PressureHighN 派生（0.75×/1.0×，与告警引擎 pressure_high 同源）。
+func pressureWarningN(th PressureThresholds) float64  { return 0.75 * th.PressureHighN }
+func pressureCriticalN(th PressureThresholds) float64 { return th.PressureHighN }
 
-// PointStatus 依据压力值返回展示状态
-func PointStatus(v float32) string {
+// PointStatus 依据压力值返回展示状态（阈值可配置，T173）
+func PointStatus(v float32, th PressureThresholds) string {
 	switch {
-	case float64(v) >= pressureCriticalN:
+	case float64(v) >= pressureCriticalN(th):
 		return "critical"
-	case float64(v) >= pressureWarningN:
+	case float64(v) >= pressureWarningN(th):
 		return "warning"
 	default:
 		return "normal"
@@ -230,8 +261,8 @@ type SensorPoint struct {
 	Status        string  `json:"status"`
 }
 
-// BuildSensorPoints 将 20 点原始值转为前端 SensorPoint 数组
-func BuildSensorPoints(points [PointCount]float32) []SensorPoint {
+// BuildSensorPoints 将 20 点已校准值转为前端 SensorPoint 数组（阈值可配置，T173）
+func BuildSensorPoints(points [PointCount]float32, th PressureThresholds) []SensorPoint {
 	out := make([]SensorPoint, PointCount)
 	for i, v := range points {
 		row, col, label := PointLabel(i)
@@ -241,13 +272,14 @@ func BuildSensorPoints(points [PointCount]float32) []SensorPoint {
 			Col:           col,
 			Label:         label,
 			PressureValue: float64(v),
-			Status:        PointStatus(v),
+			Status:        PointStatus(v, th),
 		}
 	}
 	return out
 }
 
-// HeatmapMaxN 热力图色阶上界（设计要求：60N）
+// HeatmapMaxN 热力图色阶上界默认值（60N）。
+// 🔴 占位值：生产生效值走 sys_configs `heatmap_max_n`（T173 可配置化），本常量仅作兜底。
 const HeatmapMaxN = 60.0
 
 // HeatmapPoint 热力图 20 点单格（RealtimeSnapshot.pressureHeatmap 元素）
@@ -286,7 +318,8 @@ func BuildHeatmap(points [PointCount]float32) []HeatmapPoint {
 
 // SeedHeatmap 根据 patientID 生成带梯度的 20 点兜底热力图（无真实帧时用）
 // 策略：按字符 hash 定最大点位置与强度，每行递增加 6N 基础 + 列 sin 波动（参考设计实时监控.html）
-func SeedHeatmap(patientID string) []HeatmapPoint {
+// heatmapMaxN 色阶上界（可配置，T173）
+func SeedHeatmap(patientID string, heatmapMaxN float64) []HeatmapPoint {
 	var seed uint32
 	for _, r := range patientID {
 		seed = seed*31 + uint32(r)
@@ -307,8 +340,8 @@ func SeedHeatmap(patientID string) []HeatmapPoint {
 			loc = 18 // 最大点额外+18N
 		}
 		v := base + wave + loc
-		if v > HeatmapMaxN {
-			v = HeatmapMaxN - 2
+		if v > float32(heatmapMaxN) {
+			v = float32(heatmapMaxN) - 2
 		}
 		pts[i] = v
 	}
@@ -323,16 +356,19 @@ type PressureRecordDTO struct {
 	Timestamp  string        `json:"timestamp"` // ISO 8601 UTC
 	Points     []SensorPoint `json:"points"`
 	UploadTime string        `json:"uploadTime"`
+	// Calibrated 是否已应用基线校准（T173 读侧派生：false = 缺基线，值为 ÷1000 后 raw）。
+	// 读取侧在减偏移后设置；DTO 构造默认 false，不得静默当已校准。
+	Calibrated bool `json:"calibrated"`
 }
 
-// ToDTO 领域实体 → 前端 DTO
-func (r *PressureRecord) ToDTO() PressureRecordDTO {
+// ToDTO 领域实体 → 前端 DTO（阈值可配置，T173；Calibrated 由读取侧按校准结果回填）
+func (r *PressureRecord) ToDTO(th PressureThresholds) PressureRecordDTO {
 	return PressureRecordDTO{
 		RecordID:   fmt.Sprintf("%d", r.RecordID),
 		DeviceID:   r.DeviceID,
 		PatientID:  r.PatientID,
 		Timestamp:  r.Ts.UTC().Format(time.RFC3339),
-		Points:     BuildSensorPoints(r.Points),
+		Points:     BuildSensorPoints(r.Points, th),
 		UploadTime: r.UploadTime.UTC().Format(time.RFC3339),
 	}
 }
@@ -351,6 +387,10 @@ type HistoryPage struct {
 
 // WearTargetMinutes 默认每日佩戴目标时长（PRD §7A.11：22h = 1320min）
 const WearTargetMinutes = 22 * 60
+
+// MaxWearMinutesPerDay 单患者每日佩戴分钟物理上限（24h = 1440min）
+// 用于 rollup clamp + Dashboard SQL 防御（T083：防止设备高频上报导致 wear_minutes 异常放大）
+const MaxWearMinutesPerDay = 24 * 60
 
 // DailyWearStats daily_wear_stats 表行（架构 §4.4 日聚合）
 type DailyWearStats struct {
@@ -406,11 +446,13 @@ type ArchiveStatus struct {
 
 // RealtimeSnapshot 对齐 api-contracts.ts getPatientRealtime 返回结构
 type RealtimeSnapshot struct {
-	Status          string              `json:"status"` // online / offline / abnormal
+	DeviceID        string              `json:"deviceId"` // 当前绑定设备号（devices.patient_id 反查）；未绑定为空串
+	Status          string              `json:"status"`   // online / offline / abnormal
 	TodayHours      float64             `json:"todayHours"`
 	MaxPressure     float64             `json:"maxPressure"`
 	MaxPoint        string              `json:"maxPoint"`
-	Events          int                 `json:"events"` // 今日异常值
+	Battery         int                 `json:"battery"` // 最新帧电量 0-100，来自 Redis rt:frame
+	Events          int                 `json:"events"`  // 今日异常值
 	PressureRecords []PressureRecordDTO `json:"pressureRecords"`
 	Alerts          []any               `json:"alerts"`          // 今日告警摘要，明细由 alert-service 提供
 	PressureHeatmap []HeatmapPoint      `json:"pressureHeatmap"` // 热力图 20 点（独立数据源，有 seed 兜底）

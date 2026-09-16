@@ -191,6 +191,8 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/feedbacks", h.listFeedbacks)
 		v1.POST("/feedbacks/:feedbackId/process", h.processFeedback)
 
+		v1.GET("/patient/profile", h.getPatientProfile) // T186 患者本人只读档案（self-scope）
+
 		v1.GET("/patients/:patientId/orthosis-plans", h.listPlans)
 		v1.POST("/patients/:patientId/orthosis-plans", h.savePlan)
 		v1.GET("/patients/:patientId/feeling-logs", h.listFeelingLogs)
@@ -645,6 +647,27 @@ func (h *Handler) getPatient(c *gin.Context) {
 	}
 	if row == nil {
 		fail(c, model.ErrNotFound("patient not found: %s", c.Param("patientId")))
+		return
+	}
+	ok(c, toPatientDTO(*row))
+}
+
+// getPatientProfile GET /api/v1/patient/profile —— 患者本人只读档案（T186，C-PM-15 只读版）
+// self-scope：查询对象只取网关注入的 X-User-Id（患者 JWT 的 sub），路径不携带患者 ID，
+// 因此结构上无法请求他人档案；身份头缺失按 fail-closed 拒绝（403）。
+func (h *Handler) getPatientProfile(c *gin.Context) {
+	patientID := c.GetHeader(headerUserID)
+	if patientID == "" {
+		fail(c, model.ErrForbidden("patient identity required"))
+		return
+	}
+	row, err := h.store.GetPatient(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("get patient profile failed"))
+		return
+	}
+	if row == nil {
+		fail(c, model.ErrNotFound("patient not found: %s", patientID))
 		return
 	}
 	ok(c, toPatientDTO(*row))
@@ -1172,8 +1195,25 @@ func toFeelingDTO(r repo.FeelingLogRow) model.FeelingLogDTO {
 }
 
 // listFeelingLogs GET /api/v1/patients/:patientId/feeling-logs
+// 水平鉴权（T184）：ROLE_ADMIN 可查任意患者；其他角色仅 X-User-Id == patientId 可查。
 func (h *Handler) listFeelingLogs(c *gin.Context) {
-	rows, err := h.store.ListFeelingLogs(c.Request.Context(), c.Param("patientId"))
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+
+	// 水平鉴权（fail-closed：缺失头视为无权限）
+	role := c.GetHeader(headerRole)
+	userID := c.GetHeader(headerUserID)
+	if role != roleAdmin {
+		if userID == "" || userID != patientID {
+			fail(c, model.ErrForbidden("may only query your own feeling logs"))
+			return
+		}
+	}
+
+	rows, err := h.store.ListFeelingLogs(c.Request.Context(), patientID)
 	if err != nil {
 		fail(c, model.ErrInternal("list feeling logs failed"))
 		return
@@ -1498,6 +1538,10 @@ func (h *Handler) updateSettings(c *gin.Context) {
 
 // createPatient POST /api/v1/admin/patients —— 创建患者（手机号必填，phone_hash 查重）
 func (h *Handler) createPatient(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can create patient"))
+		return
+	}
 	var req model.CreatePatientRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
@@ -1562,6 +1606,10 @@ func (h *Handler) createPatient(c *gin.Context) {
 
 // assignPatientTeam PUT /api/v1/admin/patients/:patientId/team —— 分配/更改团队（幂等）
 func (h *Handler) assignPatientTeam(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can assign patient team"))
+		return
+	}
 	patientID := c.Param("patientId")
 	var req model.AssignTeamRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1590,6 +1638,10 @@ func (h *Handler) assignPatientTeam(c *gin.Context) {
 
 // batchBindPatients POST /api/v1/admin/patients/batch-bind —— 批量绑定（部分失败不回滚，HTTP 仍 200）
 func (h *Handler) batchBindPatients(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can batch bind patients"))
+		return
+	}
 	var req model.BatchBindRequestDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))

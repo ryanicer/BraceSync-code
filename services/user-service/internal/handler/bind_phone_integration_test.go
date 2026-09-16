@@ -288,6 +288,31 @@ func (e *bindPhoneTestEnv) doBindPhone(phoneCode, phoneToken, authToken string) 
 	return rec, resp
 }
 
+// assertBindPhoneSuccessWire T168：断言 bind-phone 成功响应的「线上 JSON 键」，而不是反序列化进
+// 实现自己选用的 Go 结构体。
+//
+// 原测试写的是 var loginResult model.LoginResultDTO; json.Unmarshal(resp.Data, &loginResult)，
+// 只查 Token 非空：encoding/json 静默丢弃未知键，所以后端无论返回什么 shape 都恒绿，
+// 而 wire 上缺 patientId 直接让前端 bind.vue 的成功分支走不进去（线上绑定成功却提示「绑定失败」）。
+// 这就是 T154「测试抄实现字面量」同型盲区，故此处必须用 map 断言键名与键集合。
+func assertBindPhoneSuccessWire(t *testing.T, data json.RawMessage, wantPatientID, wantName string) {
+	t.Helper()
+
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(data, &wire), "成功响应 data 应为 JSON 对象")
+
+	// 契约（T088-V2 §5.2 code=0 行）：{token, patientId, name, role}
+	require.NotEmpty(t, wire["token"], "token 必须存在且非空（前端 bind.vue 判空条件之一）")
+	assert.Equal(t, wantPatientID, wire["patientId"], "patientId 必须在 wire 上（前端 bind.vue 判空条件之二）")
+	assert.Equal(t, wantName, wire["name"])
+	assert.Equal(t, "patient", wire["role"])
+
+	// 反向断言：admin 契约（LoginResultDTO）的键不得出现在患者端响应里
+	for _, adminKey := range []string{"adminId", "username", "roleId", "scope"} {
+		assert.NotContains(t, wire, adminKey, "%s 属 admin 契约 LoginResultDTO，不应出现在 bind-phone 成功响应", adminKey)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────
 // Scenario B: Happy Path - Successful Binding
 // ─────────────────────────────────────────────────────────────
@@ -316,8 +341,10 @@ func TestBindPhoneHappyPath_SuccessfulBinding(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code, "绑定成功应返回 200")
 		assert.Equal(t, model.CodeOK, resp.Code, "业务码应为 0")
 
-		// Token 校验
-		var loginResult model.LoginResultDTO
+		// T168：先断言 wire 契约（{token, patientId, name, role}），再看 token 内容
+		assertBindPhoneSuccessWire(t, resp.Data, "P20260001", "患者小明")
+
+		var loginResult model.PatientLoginResultDTO
 		require.NoError(t, json.Unmarshal(resp.Data, &loginResult))
 		require.NotEmpty(t, loginResult.Token)
 
@@ -531,7 +558,12 @@ func TestBindPhoneIdempotentSameOpenid(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, model.CodeOK, resp.Code, "幂等应返回 200 success")
 
-		// 断言：允许重复操作但不实际改变状态（不报错即幂等成功）
+		// T168：幂等重放走同一个 respondLoginOK，前端 bind.vue 的成功分支对两个场景要求一致，
+		// 故 wire 契约必须与首次绑定同 shape（Boss 真机第二次请求正是这条路径）。
+		assertBindPhoneSuccessWire(t, resp.Data, "P20260005", "患者小明")
+
+		// 幂等：已绑定自身 → 早返回，不得再写 wx_openid
+		assert.Equal(t, 0, e.store.bindOpenidCalls, "幂等路径不应调用 BindPatientOpenid（不重复改状态）")
 	})
 }
 

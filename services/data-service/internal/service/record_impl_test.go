@@ -179,6 +179,7 @@ func TestGetRealtimeDBFirst_NoDevice(t *testing.T) {
 	assert.Equal(t, "offline", snap.Status)
 	assert.Empty(t, snap.PressureRecords)
 	assert.Len(t, snap.PressureHeatmap, model.PointCount) // seed
+	assert.Empty(t, snap.DeviceID, "T200：未绑定患者 deviceId 必须为空")
 }
 
 func TestGetRealtimeDBFirst_FieldMapping(t *testing.T) {
@@ -203,9 +204,18 @@ func TestGetRealtimeDBFirst_FieldMapping(t *testing.T) {
 	for _, key := range []string{
 		`"status"`, `"todayHours"`, `"maxPressure"`, `"maxPoint"`,
 		`"events"`, `"pressureRecords"`, `"alerts"`, `"pressureHeatmap"`,
+		`"deviceId"`,
 	} {
 		assert.Contains(t, body, key, "missing JSON field %s in RealtimeSnapshot", key)
 	}
+
+	// T200：配网入口按 snap.deviceId 取设备，值必须是当前绑定设备号
+	assert.Equal(t, "DEV-001", snap.DeviceID)
+	var decoded struct {
+		DeviceID string `json:"deviceId"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, "DEV-001", decoded.DeviceID)
 }
 
 func TestGetRealtimeDBFirst_AbnormalDevice(t *testing.T) {

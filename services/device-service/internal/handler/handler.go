@@ -39,6 +39,16 @@ import (
 // headerUserID gateway 鉴权通过后注入的操作人身份头（架构 §5.2）
 const headerUserID = "X-User-Id"
 
+// headerRole gateway 鉴权通过后注入的角色头（先剥离外部伪造值再按 JWT claims 注入）
+const headerRole = "X-Role"
+
+// 角色字面量（与 gateway cmd/server/rbac.go 同源约定，跨模块不直接依赖）
+const (
+	roleAdmin   = "ROLE_ADMIN"
+	roleTech    = "technician"
+	rolePatient = "patient"
+)
+
 // Handler HTTP 处理器
 type Handler struct {
 	svc  *service.DeviceService
@@ -286,16 +296,53 @@ func (h *Handler) setWifi(c *gin.Context) {
 }
 
 // provisionKey 配网密钥派生（T067，硬件清单 §2.1 HKDF-SHA256 16B→32hex）。
-// T091：端点已迁入 gateway JWT 组（JWT + tech/admin RBAC + per-user 限流）；
+// T091：端点已迁入 gateway JWT 组（JWT + RBAC + per-user 限流）；
 // 操作人取网关注入的 X-User-Id（§5.2 内部信任链），用于审计日志与重发间隔。
-// 未注册 device → 20404；同设备重发间隔内 → 20429。
+// T193：放开患者领卡，但限「本人已绑定设备」——归属校验在派生之前（越权请求不得
+// 占用该设备的重发间隔窗口）。未注册 device → 20404；同设备重发间隔内 → 20429。
 func (h *Handler) provisionKey(c *gin.Context) {
+	if appErr := h.requireDeviceBoundToCaller(c); appErr != nil {
+		fail(c, appErr)
+		return
+	}
 	keyHex, appErr := h.svc.GetProvisionKey(c.Request.Context(), c.Param("deviceId"), c.GetHeader(headerUserID))
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
 	ok(c, gin.H{"provision_key_hex": keyHex, "expires_in_sec": service.ProvisionKeyExpiresInSec})
+}
+
+// requireDeviceBoundToCaller T193 配网密钥归属校验：放行返回 nil，否则已写出失败响应。
+//
+// 口径与 gateway rbac.go 的 provisionKeyRoles 白名单对齐（纵深防御，兜住绕过网关的直连）：
+//   - ROLE_ADMIN / technician：不限设备（T089 安装时序里技师要为未绑定/他人换绑设备领卡）
+//   - patient：必须命中 devices.patient_id == 调用者 X-User-Id
+//   - 其余（含 X-Role 缺失或未知角色）：一律 403，fail-closed
+//
+// 事实源取 devices.patient_id：Bind/Rebind/Unbind 与 device_bindings active 行同事务维护
+// （000002 注释即称其为"当前绑定冗余"列），且 data-service 反查患者当前设备用的也是这一列。
+// 未绑定（patient_id IS NULL）对患者一律 403：本人设备尚未绑定属流程未完成，不该发钥匙。
+func (h *Handler) requireDeviceBoundToCaller(c *gin.Context) *model.AppError {
+	role := c.GetHeader(headerRole)
+	if role == roleAdmin || role == roleTech {
+		return nil // 技师安装/运维兜底：不限设备
+	}
+	if role != rolePatient {
+		return model.ErrForbidden("role %q may not claim provision key", role)
+	}
+	uid := c.GetHeader(headerUserID)
+	if uid == "" {
+		return model.ErrForbidden("missing caller identity")
+	}
+	dev, appErr := h.svc.GetDevice(c.Request.Context(), c.Param("deviceId"))
+	if appErr != nil {
+		return appErr // 未注册 → 20404（沿用既有错误码契约）
+	}
+	if dev.PatientID == nil || *dev.PatientID != uid {
+		return model.ErrForbidden("device %q is not bound to caller", c.Param("deviceId"))
+	}
+	return nil
 }
 
 // createInstall 新建安装记录（技师安装流程 bind → matrix → save-baseline → complete）

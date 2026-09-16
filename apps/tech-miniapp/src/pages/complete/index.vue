@@ -33,8 +33,8 @@
         </view>
         <view class="summary-row">
           <text class="summary-label">数据可达性</text>
-          <view :class="['status-badge', reachabilityBadgeClass]">
-            <text>{{ reachabilityLabel }}</text>
+          <view :class="['status-badge', networkStatusBadgeClass]">
+            <text>{{ networkStatusLabel }}</text>
           </view>
         </view>
         <view v-if="summary.notes" class="summary-row">
@@ -73,16 +73,14 @@ const summary = ref({
   notes: '',
 })
 
-const reachabilityLabel = computed(() => {
-  const r = installStore.reachabilityStatus
-  if (r === 'verified') return '已验证'
-  if (r === 'skipped') return '已跳过'
+const networkStatusLabel = computed(() => {
+  if (installStore.networkSkipped) return '已跳过'
+  if (installStore.wifiStatus === 'connected') return '已验证'
   return '待验证'
 })
-const reachabilityBadgeClass = computed(() => {
-  const r = installStore.reachabilityStatus
-  if (r === 'verified') return 'status-ok'
-  if (r === 'skipped') return 'status-pending'
+const networkStatusBadgeClass = computed(() => {
+  if (installStore.networkSkipped) return 'status-pending'
+  if (installStore.wifiStatus === 'connected') return 'status-ok'
   return 'status-warn'
 })
 

@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@bracesync/constants": "*",
     "@bracesync/shared-types": "*",
     "@bracesync/shared-utils": "*",
     "@bracesync/ui-components": "*",

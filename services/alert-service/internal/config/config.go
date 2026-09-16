@@ -20,6 +20,7 @@ const (
 	KeyFluctuationPct  = "threshold_pressure_fluctuation_pct"
 	KeyWearInterrupt   = "threshold_wear_interrupt_minutes"
 	KeySensorDrift     = "threshold_sensor_drift"
+	KeyWearingN        = "wearing_pressure_threshold"
 	KeyCollectInterval = "collect_interval_minutes"
 )
 
@@ -35,11 +36,14 @@ type ValidationError struct {
 func (e *ValidationError) Error() string { return e.Message }
 
 // Thresholds 告警阈值配置快照（PRD §7D.12）
+// 🔴 T173：压力量纲阈值均为占位值（原值基于已作废的 N×100 量纲估算，待按 mN/÷1000 量级重定），
+// 配置文件（sys_configs）驱动、不硬编码，远期后台运营可调、调参不改代码。
 type Thresholds struct {
-	PressureHighN          float64 // 压力偏高阈值 (N)，默认 45
+	PressureHighN          float64 // 压力偏高阈值 (N)，默认 45（占位）
 	FluctuationPct         float64 // 压力波动幅度阈值 (%)，默认 30
 	WearInterruptMinutes   int     // 佩戴中断判定（分钟），默认 60
-	SensorDriftN           float64 // 传感器漂移阈值 (N)，默认 2.8
+	SensorDriftN           float64 // 传感器漂移阈值 (N)，默认 2.8（占位）
+	WearingN               float64 // 佩戴判定阈值 (N)，默认 0.5（占位；判定统一用减偏移后值，T173）
 	CollectIntervalMinutes int     // 采集间隔（分钟），默认 30
 }
 
@@ -50,6 +54,7 @@ func DefaultThresholds() Thresholds {
 		FluctuationPct:         30,
 		WearInterruptMinutes:   60,
 		SensorDriftN:           2.8,
+		WearingN:               0.5,
 		CollectIntervalMinutes: 30,
 	}
 }
@@ -61,6 +66,7 @@ func Keys() []string {
 		KeyFluctuationPct,
 		KeyWearInterrupt,
 		KeySensorDrift,
+		KeyWearingN,
 		KeyCollectInterval,
 	}
 }
@@ -106,6 +112,9 @@ func ParseThresholds(raw map[string]string) Thresholds {
 	if v, ok := parsePositiveFloat(raw[KeySensorDrift]); ok {
 		th.SensorDriftN = v
 	}
+	if v, ok := parsePositiveFloat(raw[KeyWearingN]); ok {
+		th.WearingN = v
+	}
 	if v, ok := parsePositiveInt(raw[KeyCollectInterval]); ok {
 		th.CollectIntervalMinutes = v
 	}
@@ -119,6 +128,7 @@ func (t Thresholds) ToValues() map[string]string {
 		KeyFluctuationPct:  strconv.FormatFloat(t.FluctuationPct, 'f', -1, 64),
 		KeyWearInterrupt:   strconv.Itoa(t.WearInterruptMinutes),
 		KeySensorDrift:     strconv.FormatFloat(t.SensorDriftN, 'f', -1, 64),
+		KeyWearingN:        strconv.FormatFloat(t.WearingN, 'f', -1, 64),
 		KeyCollectInterval: strconv.Itoa(t.CollectIntervalMinutes),
 	}
 }
@@ -129,6 +139,7 @@ type ThresholdPatch struct {
 	FluctuationPct         *float64
 	WearInterruptMinutes   *int
 	SensorDriftN           *float64
+	WearingN               *float64
 	CollectIntervalMinutes *int
 }
 
@@ -136,7 +147,7 @@ type ThresholdPatch struct {
 func (p ThresholdPatch) IsEmpty() bool {
 	return p.PressureHighN == nil && p.FluctuationPct == nil &&
 		p.WearInterruptMinutes == nil && p.SensorDriftN == nil &&
-		p.CollectIntervalMinutes == nil
+		p.WearingN == nil && p.CollectIntervalMinutes == nil
 }
 
 // apply 补丁合并到阈值快照（返回新快照，不改原值）
@@ -152,6 +163,9 @@ func (t Thresholds) apply(p ThresholdPatch) Thresholds {
 	}
 	if p.SensorDriftN != nil {
 		t.SensorDriftN = *p.SensorDriftN
+	}
+	if p.WearingN != nil {
+		t.WearingN = *p.WearingN
 	}
 	if p.CollectIntervalMinutes != nil {
 		t.CollectIntervalMinutes = *p.CollectIntervalMinutes

@@ -294,6 +294,8 @@ func TestGetRealtime_OK(t *testing.T) {
 	assert.NotEmpty(t, data["status"])
 	assert.NotNil(t, data["pressureRecords"])
 	assert.NotNil(t, data["alerts"])
+	// T200：患者端配网入口读本字段，缺失即弹「无设备」
+	assert.Equal(t, hDevice, data["deviceId"])
 }
 
 // 错误分支兜底：存储异常 → 90001 + HTTP 500

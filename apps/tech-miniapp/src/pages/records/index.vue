@@ -15,14 +15,6 @@
           <view :class="['seg-btn', { 'seg-active': wifiFilter === 'unconfigured' }]" @click="wifiFilter = 'unconfigured'"><text>待配置</text></view>
         </view>
       </view>
-      <view class="filter-row">
-        <view class="segmented">
-          <view :class="['seg-btn', { 'seg-active': reachabilityFilter === 'all' }]" @click="reachabilityFilter = 'all'"><text>全部可达性</text></view>
-          <view :class="['seg-btn', { 'seg-active': reachabilityFilter === 'verified' }]" @click="reachabilityFilter = 'verified'"><text>已验证</text></view>
-          <view :class="['seg-btn', { 'seg-active': reachabilityFilter === 'pending' }]" @click="reachabilityFilter = 'pending'"><text>待验证</text></view>
-          <view :class="['seg-btn', { 'seg-active': reachabilityFilter === 'skipped' }]" @click="reachabilityFilter = 'skipped'"><text>已跳过</text></view>
-        </view>
-      </view>
     </view>
 
     <!-- 记录列表 -->
@@ -56,12 +48,6 @@
               <text class="info-label">基线</text>
               <text class="info-value">{{ rec.baselineId || '未保存' }}</text>
             </view>
-            <view class="info-item">
-              <text class="info-label">可达性</text>
-              <view :class="['reachability-badge', reachabilityClass(rec)]">
-                <text>{{ reachabilityText(rec) }}</text>
-              </view>
-            </view>
           </view>
           <view v-if="rec.notes" class="record-notes">
             <text class="notes-text">{{ rec.notes }}</text>
@@ -80,11 +66,9 @@
 import { ref, computed, onMounted } from 'vue'
 import type { InstallRecord } from '@bracesync/shared-types'
 import { listInstallRecords } from '../../api/install'
-import type { ReachabilityStatus } from '../../types/app-extends'
 
 const records = ref<InstallRecord[]>([])
 const wifiFilter = ref<'all' | 'connected' | 'unconfigured'>('all')
-const reachabilityFilter = ref<'all' | ReachabilityStatus>('all')
 const loading = ref(false)
 const error = ref('')
 
@@ -103,25 +87,9 @@ async function loadRecords() {
 
 const filteredRecords = computed(() => {
   return records.value.filter((r) => {
-    const wifiOk = wifiFilter.value === 'all' || r.wifiStatus === wifiFilter.value
-    const rStat = (r as any).reachabilityStatus as ReachabilityStatus | undefined
-    const reachOk = reachabilityFilter.value === 'all' || rStat === reachabilityFilter.value
-    return wifiOk && reachOk
+    return wifiFilter.value === 'all' || r.wifiStatus === wifiFilter.value
   })
 })
-
-function reachabilityClass(rec: InstallRecord): string {
-  const s = (rec as any).reachabilityStatus as ReachabilityStatus | undefined
-  if (s === 'verified') return 'reach-ok'
-  if (s === 'skipped') return 'reach-skip'
-  return 'reach-pending'
-}
-function reachabilityText(rec: InstallRecord): string {
-  const s = (rec as any).reachabilityStatus as ReachabilityStatus | undefined
-  if (s === 'verified') return '已验证'
-  if (s === 'skipped') return '已跳过'
-  return '待验证'
-}
 
 function formatDate(iso: string): string {
   if (!iso) return '--'
@@ -165,10 +133,6 @@ onMounted(loadRecords)
 .info-item { display: flex; flex-direction: column; gap: 4rpx; }
 .info-label { font-size: 22rpx; color: #94a3b8; }
 .info-value { font-size: 26rpx; color: #334155; }
-.reachability-badge { display: inline-flex; padding: 4rpx 16rpx; border-radius: 12rpx; font-size: 22rpx; align-self: flex-start; }
-.reach-ok { background: #dcfce7; color: #15803d; }
-.reach-pending { background: #fef3c7; color: #b45309; }
-.reach-skip { background: #f1f5f9; color: #64748b; }
 .record-notes { margin-top: 16rpx; padding-top: 16rpx; border-top: 2rpx solid #f1f5f9; }
 .notes-text { font-size: 24rpx; color: #64748b; }
 .empty-card { text-align: center; padding: 64rpx 32rpx; }

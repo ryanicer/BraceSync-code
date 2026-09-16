@@ -43,6 +43,13 @@ func (e *WechatError) Error() string {
 const (
 	defaultBaseURL = "https://api.weixin.qq.com"
 	requestTimeout = 5 * time.Second
+
+	code2SessionPath = "/sns/jscode2session"
+	accessTokenPath  = "/cgi-bin/token"
+	// phonePath 微信「获取手机号」真实上游 path。
+	// ⚠️ T166：文档里该 API 的短名是 phonenumber.getPhoneNumber，但它不是 URL path；
+	// 短名当 path 用会得到恒定 404 → 上层映射为 502（本缺陷的原始根因）。
+	phonePath = "/wxa/business/getuserphonenumber"
 )
 
 // Client 微信服务端客户端
@@ -84,7 +91,7 @@ func (c *Client) DoCode2Session(ctx context.Context, code string) (*Code2Session
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	reqURL := c.baseURL + "/sns/jscode2session?" + url.Values{
+	reqURL := c.baseURL + code2SessionPath + "?" + url.Values{
 		"appid":      {c.appID},
 		"secret":     {c.appSecret},
 		"js_code":    {code},
@@ -170,7 +177,7 @@ func (c *Client) fetchAccessToken(ctx context.Context) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	reqURL := c.baseURL + "/cgi-bin/token?" + url.Values{
+	reqURL := c.baseURL + accessTokenPath + "?" + url.Values{
 		"grant_type": {"client_credential"},
 		"appid":      {c.appID},
 		"secret":     {c.appSecret},
@@ -217,7 +224,7 @@ func (c *Client) fetchAccessToken(ctx context.Context) (string, error) {
 	return res.AccessToken, nil
 }
 
-// phoneInfoResp phonenumber.getPhoneNumber 成功响应
+// phoneInfoResp phonePath（/wxa/business/getuserphonenumber）成功响应
 type phoneInfoResp struct {
 	ErrCode   int    `json:"errcode"`
 	ErrMsg    string `json:"errmsg"`
@@ -228,7 +235,9 @@ type phoneInfoResp struct {
 	} `json:"phone_info"`
 }
 
-// GetPhoneNumber T085：微信 phonenumber.getPhoneNumber（code 换手机号）。
+// GetPhoneNumber T085：微信 /wxa/business/getuserphonenumber（code 换手机号）。
+// 文档短名为 phonenumber.getPhoneNumber，实际 path 见 phonePath。
+// 需 app 级 access_token（本服务唯一打 /cgi-bin/token 的链路；DoCode2Session 不需要）。
 // 返回 (purePhoneNumber, countryCode, error)。
 //   - 业务错误 errcode!=0 → *WechatError
 //   - errcode 40001/42001（access_token 失效）→ 强制刷新并重试 1 次
@@ -245,7 +254,7 @@ func (c *Client) getPhoneNumber(ctx context.Context, code string, retried bool) 
 	if err != nil {
 		return "", "", err
 	}
-	reqURL := c.baseURL + "/phonenumber/getPhoneNumber?access_token=" + url.QueryEscape(tok)
+	reqURL := c.baseURL + phonePath + "?access_token=" + url.QueryEscape(tok)
 	reqBody, _ := json.Marshal(map[string]string{"code": code})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqBody))
 	if err != nil {

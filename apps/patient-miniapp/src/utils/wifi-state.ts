@@ -25,8 +25,8 @@ export type ProvisionStatus =
   | { kind: 'success' }
   | { kind: 'failure'; code: -1 | -2 | -3 | -4; message: string }
 
-/** 配网超时阈值（毫秒）。PRD §7A.9：患者端 15s。 */
-export const PROVISION_TIMEOUT_MS = 15000
+/** 配网超时阈值（毫秒）。PRD §7A.9：患者端 60s（T212：正常链路实测 7–8s，但出现过一次约 50s 的长尾 ⇒ 留足余量。语义不变：N 秒内无任何 B512 推送才算超时，每收一帧重新计时）。 */
+export const PROVISION_TIMEOUT_MS = 60000
 
 /**
  * 过滤 BLE 扫描结果：仅保留 BSYNC- 前缀且为 2.4G 的设备。
@@ -73,9 +73,97 @@ export function resolveProvisionStatus(code: number): ProvisionStatus {
 
 /**
  * 判断配网是否超时。
- * PRD §7A.9：患者端 15s 响应超时。
+ * PRD §7A.9：患者端 60s 响应超时。
  * @param elapsedMs 已耗时（毫秒）
  */
 export function isProvisionTimeout(elapsedMs: number): boolean {
   return elapsedMs > PROVISION_TIMEOUT_MS
+}
+
+// ===== T192：BLE 设备识别与患者端生活化文案（PRD §7A.9 患技差异表） =====
+
+/** 广播名前缀（协议定稿 §1：广播名 = BSYNC-{device_id 后 6 位}） */
+export const BSYNC_PREFIX = 'BSYNC-'
+
+/** 是否为本网关设备的广播名（02-scan 列表唯一过滤条件，不涉频段） */
+export function isBsyncDevice(name: string): boolean {
+  return (name || '').startsWith(BSYNC_PREFIX)
+}
+
+/**
+ * 广播包里是否带配网服务号 B510。
+ * 固件把设备名放在 SCAN_RSP（`ble_provision.h:408` `setScanResponse(true)`），主广播包只剩
+ * serviceUUID ⇒ Android 首帧经常"是我们的设备但这一帧没带名字"。本函数只用于诊断日志，
+ * 不参与 02 列表过滤（列表仍按广播名，PRD §7A.9）。
+ */
+export function advertisesB510(uuids?: string[]): boolean {
+  return (uuids || []).some((u) => {
+    const norm = (u || '').toUpperCase().replace(/[^0-9A-F]/g, '')
+    return norm === 'B510' || norm.startsWith('0000B510')
+  })
+}
+
+/**
+ * 扫描结果去重器：设备名只在 SCAN_RSP 里，且同一设备每轮广播都会再上报一次
+ * （见 ble.ts `allowDuplicatesKey: true`）⇒ 一个设备只能进 02 列表一次，
+ * 以"第一帧带 BSYNC- 名字"为准，无名帧一律忽略（交给 advertisesB510 打诊断日志）。
+ * @returns 该帧应入列表时返回清洗后的广播名，否则 null
+ */
+export function createScanDeduper(): (deviceId: string, rawName?: string) => string | null {
+  const listed = new Set<string>()
+  return (deviceId, rawName) => {
+    const name = (rawName || '').trim()
+    if (!isBsyncDevice(name) || listed.has(deviceId)) return null
+    listed.add(deviceId)
+    return name
+  }
+}
+
+/** 由云端 device_id 推导期望广播名；不足 6 位则原样拼接 */
+export function broadcastNameOf(deviceId: string): string {
+  const id = deviceId || ''
+  return BSYNC_PREFIX + id.slice(-6)
+}
+
+/**
+ * RSSI → 生活化信号描述。患者端不出现数值（PRD §7A.9 约束）。
+ * 阈值 -60dBm：室内 BLE 近场（设计稿要求 1 米以内）通常优于该值。
+ */
+export function signalLabel(rssi: number, good = '信号良好', weak = '信号弱'): string {
+  return typeof rssi === 'number' && rssi >= -60 ? good : weak
+}
+
+/** 网络名输入容错：前后空格自动清理（PRD §7A.9.1 ③-2） */
+export function normalizeWifiName(raw: string): string {
+  return (raw || '').trim()
+}
+
+/**
+ * 03 表单两个字段进 B511 载荷前的统一清洗，并回报是否去过空格。
+ * 网络名 trim ＝ PRD §7A.9.1 ③-2 明文要求；**密码 trim 是该条的口径外扩，待 PM/Peter 回写 PRD**：
+ * 真机 09-14 实证「密码末尾多一个空格 → 设备拿到的是错密码 → 合法回 -1」，
+ * 而 PRD 同一条自己就写着"-1 是最主要失败原因"。风险：PSK 以真空格结尾者将不再可用（WPA2 PSK 实际不出现）。
+ */
+export function normalizeWifiCreds(rawSsid: string, rawPwd: string): {
+  ssid: string
+  pwd: string
+  hadWhitespace: boolean
+} {
+  const ssid = normalizeWifiName(rawSsid)
+  const pwd = (rawPwd || '').trim()
+  return { ssid, pwd, hadWhitespace: ssid !== (rawSsid || '') || pwd !== (rawPwd || '') }
+}
+
+/**
+ * 03 原地重连时从重扫结果里挑目标：优先当初连接的那台（广播名相同），
+ * 其次窗口内任一 BSYNC 广播（设备可能只在 localName 里带名字），都没有返回 null。
+ * name 匹配只做优先、不做硬条件——真机断连后重扫到的顺序并不稳定。
+ */
+export function pickReconnectTarget<T extends { name: string }>(found: T[], expectedName: string): T | null {
+  const list = found || []
+  if (expectedName) {
+    const same = list.find((d) => (d.name || '') === expectedName)
+    if (same) return same
+  }
+  return list.find((d) => isBsyncDevice(d.name)) ?? null
 }

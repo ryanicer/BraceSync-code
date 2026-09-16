@@ -109,6 +109,8 @@ export interface PressureRecord {
   timestamp: string;
   points: SensorPoint[];
   uploadTime: string;
+  /** T173：是否已应用基线校准（减偏移）。false = 设备无基线，读数为 raw 值 */
+  calibrated?: boolean;
 }
 
 export interface Alert {

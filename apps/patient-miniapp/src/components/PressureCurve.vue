@@ -27,6 +27,8 @@ const props = withDefaults(defineProps<{
   maxValue?: number
   labels?: string[]
   height?: number
+  // 时间范围（毫秒），用于按真实时间定位 X 坐标；不传则按索引均匀分布
+  timeRange?: { start: number; end: number }
 }>(), {
   maxValue: 75,
   height: 180,
@@ -46,8 +48,15 @@ function render(ctx: any, width: number, height: number) {
   const chartWidth = width - padLeft - padRight
   const chartHeight = height - padTop - padBottom
   const getY = (v: number) => padTop + chartHeight * ((maxValue - v) / maxValue)
-  const getX = (i: number) =>
-    props.data.length <= 1 ? padLeft : padLeft + (chartWidth / (props.data.length - 1)) * i
+  const getX = (i: number) => {
+    if (props.timeRange && props.data[i]) {
+      const ts = new Date(props.data[i].timestamp).getTime()
+      const { start, end } = props.timeRange
+      const ratio = end > start ? (ts - start) / (end - start) : 0
+      return padLeft + Math.max(0, Math.min(1, ratio)) * chartWidth
+    }
+    return props.data.length <= 1 ? padLeft : padLeft + (chartWidth / (props.data.length - 1)) * i
+  }
 
   // 网格线 + Y 轴刻度
   const steps = 5

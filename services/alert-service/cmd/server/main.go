@@ -84,15 +84,18 @@ func main() {
 	// 后续每轮扫描前重试热刷新，配置修复后无需重启即生效。
 	eval := engine.NewDefaultRuleEvaluator()
 	cfgMgr := config.NewManager(repo.NewConfigRepo(pool))
-	if th, cfgErr := cfgMgr.Refresh(ctx, eval); cfgErr != nil {
+	var loadedTh config.Thresholds
+	if t, cfgErr := cfgMgr.Refresh(ctx, eval); cfgErr != nil {
 		log.Error().Err(cfgErr).Msg("alert threshold config load failed, keep engine defaults; will retry on next scan")
 	} else {
+		loadedTh = t
 		log.Info().
-			Float64("pressure_high_n", th.PressureHighN).
-			Float64("fluctuation_pct", th.FluctuationPct).
-			Int("wear_interrupt_min", th.WearInterruptMinutes).
-			Float64("sensor_drift_n", th.SensorDriftN).
-			Int("collect_interval_min", th.CollectIntervalMinutes).
+			Float64("pressure_high_n", t.PressureHighN).
+			Float64("fluctuation_pct", t.FluctuationPct).
+			Int("wear_interrupt_min", t.WearInterruptMinutes).
+			Float64("sensor_drift_n", t.SensorDriftN).
+			Float64("wearing_n", t.WearingN).
+			Int("collect_interval_min", t.CollectIntervalMinutes).
 			Msg("alert threshold config loaded")
 	}
 
@@ -106,13 +109,42 @@ func main() {
 	)
 	scan.SetLogger(log.Logger)
 
+	// T010：alert:pending 常驻消费者（服务可用即排空积压，不依赖重启触发）。
+	// T019：Notifier 接入 msg-service HTTP 推送（超时/失败进 Redis 重试队列，不阻塞落库）。
+	// T202：消费者必须在调度器创建之前装配完毕 —— scheduler.Start 会同步补跑一轮，
+	// 该轮回调即向 cons 注入热更新阈值，若延后赋值则闭包捕获到 nil 指针（启动即 panic）。
+	msgServiceURL := envOr("MSG_SERVICE_URL", "http://msg-service:8081")
+	retryQueue := repo.NewRedisNotifyRetryQueue(rdb)
+	notifier := consumer.NewHTTPNotifier(consumer.HTTPNotifierConfig{
+		MsgServiceURL: msgServiceURL,
+		Timeout:       time.Second,
+		MaxRetries:    3,
+		RetryQueue:    retryQueue,
+		Logger:        log.Logger.With().Str("component", "notifier").Logger(),
+	})
+	cons := consumer.New(
+		repo.NewRedisPendingQueue(rdb),
+		repo.NewRedisEvalDedup(rdb),
+		alertRepo,
+		eval,
+		notifier,
+	)
+	cons.SetLogger(log.Logger)
+	if loadedTh.WearingN > 0 {
+		cons.SetWearingThreshold(loadedTh.WearingN)
+	}
+
 	// 调度：每 5min（Asia/Shanghai），启动即补跑一轮
 	spec := envOr("SCAN_CRON", "*/5 * * * *")
 	sched, err := scheduler.New(spec, func(scanCtx context.Context) {
 		// 扫描前热刷新阈值（缓存过期自动重读 sys_configs = 热更新生效，引擎读最新值）；
 		// 刷新失败（校验拒绝/DB 不可达）保持上一份生效值，不阻塞本轮扫描。
-		if _, cfgErr := cfgMgr.Refresh(scanCtx, eval); cfgErr != nil {
+		// T173：佩戴阈值经 cons.SetWearingThreshold 随 cfgMgr 热更新注入补偿评估链路。
+		if t, cfgErr := cfgMgr.Refresh(scanCtx, eval); cfgErr != nil {
 			log.Error().Err(cfgErr).Msg("alert threshold config hot refresh failed, keep previous effective values")
+		} else {
+			cons.SetWearingThreshold(t.WearingN)
+			log.Info().Float64("wearing_n", t.WearingN).Msg("wearing threshold injected into pending consumer")
 		}
 		report, scanErr := scan.Scan(scanCtx)
 		if scanErr != nil {
@@ -135,25 +167,7 @@ func main() {
 	sched.Start(ctx)
 	log.Info().Str("spec", spec).Msg("wear-interrupt scanner started")
 
-	// T010：alert:pending 常驻消费者（服务可用即排空积压，不依赖重启触发）。
-	// T019：Notifier 接入 msg-service HTTP 推送（超时/失败进 Redis 重试队列，不阻塞落库）。
-	msgServiceURL := envOr("MSG_SERVICE_URL", "http://msg-service:8081")
-	retryQueue := repo.NewRedisNotifyRetryQueue(rdb)
-	notifier := consumer.NewHTTPNotifier(consumer.HTTPNotifierConfig{
-		MsgServiceURL: msgServiceURL,
-		Timeout:       time.Second,
-		MaxRetries:    3,
-		RetryQueue:    retryQueue,
-		Logger:        log.Logger.With().Str("component", "notifier").Logger(),
-	})
-	cons := consumer.New(
-		repo.NewRedisPendingQueue(rdb),
-		repo.NewRedisEvalDedup(rdb),
-		alertRepo,
-		eval,
-		notifier,
-	)
-	cons.SetLogger(log.Logger)
+	// 消费协程在调度器之后拉起（cons 已在上方装配完成）
 	pollInterval := consumer.DefaultPollInterval
 	if ms := os.Getenv("PENDING_POLL_MS"); ms != "" {
 		if n, convErr := strconv.Atoi(ms); convErr == nil && n > 0 {

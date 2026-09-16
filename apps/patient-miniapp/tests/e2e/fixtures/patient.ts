@@ -84,7 +84,9 @@ export function realtimeSnapshot() {
 }
 
 // ---------- records?period={day|week|month}&date=YYYY-MM-DD → 48 点逐帧 maxPressure 趋势 ----------
-export function pressureRecords(period: string, _date: string): PressureRecord[] {
+// 对齐后端 HistoryPage 分页契约：{ list: [...], total, page, pageSize }
+// （data-service GetHistory 返回 HistoryPage，前端 request 解包 envelope 后拿到此对象）
+export function pressureRecords(period: string, _date: string) {
   const frames = period === 'day' ? 48 : period === 'week' ? 48 : 48
   const out: PressureRecord[] = []
   const base = new Date(_date || new Date().toISOString().slice(0, 10))
@@ -105,7 +107,7 @@ export function pressureRecords(period: string, _date: string): PressureRecord[]
       uploadTime: ts,
     })
   }
-  return out
+  return { list: out, total: out.length, page: 1, pageSize: out.length }
 }
 
 // ---------- wearing 日记录 15 条（2026-06-28 → 2026-07-12，15 天） ----------

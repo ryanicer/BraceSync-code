@@ -15,7 +15,7 @@ import (
 //   - /healthz               存活探针（免鉴权）
 //   - /api/v1/*（JWT 组）     alerts（T028）+ user/device/data/msg 四服务全量端点
 //   - /api/v1/device/*（验签组）单帧上报/批量补传（data-service）+ 校时（本地）
-//   - /api/v1/devices/:id/provision-key（JWT 组，T091 收紧）配网密钥派生：JWT + tech/admin RBAC + per-user 限流
+//   - /api/v1/devices/:id/provision-key（JWT 组，T091 收紧 / T193 放开患者）配网密钥派生：JWT + 角色白名单 RBAC + per-user 限流
 func setupRouter() *gin.Engine {
 	r := gin.Default()
 	r.GET("/healthz", func(c *gin.Context) {

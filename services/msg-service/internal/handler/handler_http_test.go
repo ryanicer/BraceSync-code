@@ -7,9 +7,11 @@
 //   - 授予额度 Idempotency-Key 幂等 + 缺头 400
 //   - 佩戴提醒读写 + 非法时间 400
 //   - 规则管理（未知 type 400）+ 通知记录分页/过滤校验
+//   - T185 患者域水平鉴权（本人 200 / 越权 403 / grant 仅 admin）
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +28,28 @@ import (
 	"github.com/bracesync/bracesync/services/msg-service/internal/service"
 	"github.com/bracesync/bracesync/services/msg-service/internal/testutil"
 )
+
+// T185 患者域测试身份头（网关 §5.2 注入契约）：
+// hdrSelf = 患者本人 token（X-User-Id 与 path 中 patientId 一致）；
+// hdrAdmin = ROLE_ADMIN（订阅额度授予这类权益写操作仅此角色可调用）。
+var (
+	hdrSelf  = map[string]string{"X-User-Id": testQP, "X-Role": "patient"}
+	hdrAdmin = map[string]string{"X-User-Id": "ADM001", "X-Role": roleAdmin}
+)
+
+// testQP 测试用患者 ID（与两个契约测试文件的既有路径保持一致）
+const testQP = "P20260001"
+
+// withHdr 合并请求头为新的 map（不改写入参，避免共享夹具被用例互相污染）
+func withHdr(bases ...map[string]string) map[string]string {
+	out := map[string]string{}
+	for _, m := range bases {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
 
 // httpFixture 路由级测试夹具（真实 Handler + FakeStore + mock 发送器）
 type httpFixture struct {
@@ -134,14 +158,14 @@ func TestHTTPSendAlert_BadBody_400(t *testing.T) {
 func TestHTTPGrantQuota_MissingIdempotencyKey_400(t *testing.T) {
 	f := newHTTPFixture(t)
 
-	w, resp := f.do(t, http.MethodPost, "/api/v1/patients/P20260001/subscription-quota/grant", `{}`, nil)
+	w, resp := f.do(t, http.MethodPost, "/api/v1/patients/P20260001/subscription-quota/grant", `{}`, withHdr(hdrAdmin))
 	assert.Equal(t, http.StatusBadRequest, w.Code, "grant 必须携带 Idempotency-Key")
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
 }
 
 func TestHTTPGrantQuota_Idempotent(t *testing.T) {
 	f := newHTTPFixture(t)
-	headers := map[string]string{"Idempotency-Key": "uuid-abc-123"}
+	headers := withHdr(hdrAdmin, map[string]string{"Idempotency-Key": "uuid-abc-123"})
 
 	w, resp := f.do(t, http.MethodPost, "/api/v1/patients/P20260001/subscription-quota/grant", `{}`, headers)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -166,7 +190,7 @@ func TestHTTPGetQuota_Shape(t *testing.T) {
 	f := newHTTPFixture(t)
 	f.store.SeedQuota("P20260001", 1)
 
-	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/subscription-quota", "", nil)
+	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/subscription-quota", "", hdrSelf)
 	require.Equal(t, http.StatusOK, w.Code)
 	var quota model.SubscriptionQuotaDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &quota))
@@ -183,7 +207,7 @@ func TestHTTPWearReminder_PutThenGet(t *testing.T) {
 	f := newHTTPFixture(t)
 
 	w, resp := f.do(t, http.MethodPut, "/api/v1/patients/P20260001/wear-reminder",
-		`{"reminderEnabled":true,"reminderTime":"20:00"}`, nil)
+		`{"reminderEnabled":true,"reminderTime":"20:00"}`, hdrSelf)
 	require.Equal(t, http.StatusOK, w.Code)
 	var updated model.WearReminderDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &updated))
@@ -191,7 +215,7 @@ func TestHTTPWearReminder_PutThenGet(t *testing.T) {
 	require.NotNil(t, updated.ReminderTime)
 	assert.Equal(t, "20:00", *updated.ReminderTime)
 
-	w, resp = f.do(t, http.MethodGet, "/api/v1/patients/P20260001/wear-reminder", "", nil)
+	w, resp = f.do(t, http.MethodGet, "/api/v1/patients/P20260001/wear-reminder", "", hdrSelf)
 	require.Equal(t, http.StatusOK, w.Code)
 	var got model.WearReminderDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &got))
@@ -204,7 +228,7 @@ func TestHTTPWearReminder_InvalidTime_400(t *testing.T) {
 	f := newHTTPFixture(t)
 
 	w, resp := f.do(t, http.MethodPut, "/api/v1/patients/P20260001/wear-reminder",
-		`{"reminderEnabled":true,"reminderTime":"25:00"}`, nil)
+		`{"reminderEnabled":true,"reminderTime":"25:00"}`, hdrSelf)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
 }
@@ -257,7 +281,7 @@ func TestHTTPPatientNotifications_Paginated(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 	}
 
-	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/notifications?page=1&pageSize=1", "", nil)
+	w, resp := f.do(t, http.MethodGet, "/api/v1/patients/P20260001/notifications?page=1&pageSize=1", "", hdrSelf)
 	require.Equal(t, http.StatusOK, w.Code)
 	var page struct {
 		List     []model.NotificationRecordDTO `json:"list"`
@@ -291,4 +315,88 @@ func TestHTTPHealthz(t *testing.T) {
 	w := httptest.NewRecorder()
 	f.router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ─────────────────────────────────────────────────────────────
+// T185 患者域水平鉴权
+// ─────────────────────────────────────────────────────────────
+
+// TestHTTPPatientScope_HorizontalAuthz 四条患者域端点的水平越权边界
+// （口径同 data-service getDailyWear）：本人 200 / 传他人 patientId 403 /
+// 缺失身份头 403（fail-closed）/ ROLE_ADMIN 查任意 200。
+// 这组端点此前经 gateway 完全不可达（未挂代理），挂载即成为越权面，故同卡强制。
+func TestHTTPPatientScope_HorizontalAuthz(t *testing.T) {
+	const self = "/api/v1/patients/P20260001"
+	const other = "/api/v1/patients/P9999999"
+	const putBody = `{"reminderEnabled":true,"reminderTime":"20:00"}`
+
+	cases := []struct {
+		name      string
+		method    string
+		selfPath  string
+		otherPath string
+		body      string
+	}{
+		{"wear-reminder读", http.MethodGet, self + "/wear-reminder", other + "/wear-reminder", ""},
+		{"wear-reminder写", http.MethodPut, self + "/wear-reminder", other + "/wear-reminder", putBody},
+		{"订阅额度读", http.MethodGet, self + "/subscription-quota", other + "/subscription-quota", ""},
+		{"通知记录读", http.MethodGet, self + "/notifications", other + "/notifications", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"_本人200", func(t *testing.T) {
+			f := newHTTPFixture(t)
+			w, _ := f.do(t, tc.method, tc.selfPath, tc.body, hdrSelf)
+			assert.Equal(t, http.StatusOK, w.Code)
+		})
+		t.Run(tc.name+"_越权403", func(t *testing.T) {
+			f := newHTTPFixture(t)
+			w, resp := f.do(t, tc.method, tc.otherPath, tc.body, hdrSelf)
+			assert.Equal(t, http.StatusForbidden, w.Code)
+			assert.Equal(t, model.CodeForbidden, resp.Code)
+		})
+		t.Run(tc.name+"_缺身份头403", func(t *testing.T) {
+			f := newHTTPFixture(t)
+			w, resp := f.do(t, tc.method, tc.selfPath, tc.body, nil)
+			assert.Equal(t, http.StatusForbidden, w.Code, "身份头缺失必须 fail-closed")
+			assert.Equal(t, model.CodeForbidden, resp.Code)
+		})
+		t.Run(tc.name+"_admin任意200", func(t *testing.T) {
+			f := newHTTPFixture(t)
+			w, _ := f.do(t, tc.method, tc.otherPath, tc.body, hdrAdmin)
+			assert.Equal(t, http.StatusOK, w.Code)
+		})
+	}
+}
+
+// TestHTTPGrantQuota_AdminOnly 订阅额度授予是权益写操作：
+// 若按 self-scope 放行，患者可自行加额度 → 仅 ROLE_ADMIN。
+func TestHTTPGrantQuota_AdminOnly(t *testing.T) {
+	const grantPath = "/api/v1/patients/P20260001/subscription-quota/grant"
+	idem := map[string]string{"Idempotency-Key": "uuid-admin-only"}
+
+	t.Run("患者本人token也403", func(t *testing.T) {
+		f := newHTTPFixture(t)
+		w, resp := f.do(t, http.MethodPost, grantPath, `{}`, withHdr(hdrSelf, idem))
+		assert.Equal(t, http.StatusForbidden, w.Code, "患者不得自行授予订阅额度")
+		assert.Equal(t, model.CodeForbidden, resp.Code)
+		q, err := f.store.GetQuota(context.Background(), "P20260001")
+		require.NoError(t, err)
+		assert.Equal(t, model.DefaultQuota, q.Remaining, "403 不得已增额")
+	})
+
+	for _, role := range []string{"patient", "ROLE_DOCTOR", "ROLE_CS", "technician"} {
+		t.Run("角色"+role+"_403", func(t *testing.T) {
+			f := newHTTPFixture(t)
+			w, _ := f.do(t, http.MethodPost, grantPath, `{}`,
+				withHdr(map[string]string{"X-User-Id": "ADM001", "X-Role": role}, idem))
+			assert.Equal(t, http.StatusForbidden, w.Code)
+		})
+	}
+
+	t.Run("admin_200", func(t *testing.T) {
+		f := newHTTPFixture(t)
+		w, _ := f.do(t, http.MethodPost, grantPath, `{}`, withHdr(hdrAdmin, idem))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }

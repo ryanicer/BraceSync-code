@@ -36,6 +36,22 @@ export const NONCE_DEDUP_MINUTES = 10
 /** Sensor count per frame */
 export const SENSOR_COUNT = 20
 
+/** T173：设备上报单位 mN → N 换算因子（权威口径 mN，÷1000 归一） */
+export const MN_PER_N = 1000
+
+/**
+ * 患者端热力图色阶（N）——占位值，T173 起待 Boss+小顾重定真实物理范围后更新。
+ * 与 sys_configs heatmap/threshold 键同步演进；此常量为端上兜底默认。
+ */
+export const HEATMAP_TIERS = {
+  LOW_MAX: 20,
+  NORMAL_MAX: 40,
+  ELEVATED_MAX: 60,
+} as const
+
+/** 患者端趋势曲线 Y 轴上界 (N)——占位值，随阈值重定同步调整 */
+export const TREND_CURVE_MAX_N = 75
+
 /** Patient statuses */
 export const PATIENT_STATUS = {
   ACTIVE: 'active',

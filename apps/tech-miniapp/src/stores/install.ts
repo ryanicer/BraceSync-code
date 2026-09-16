@@ -5,7 +5,6 @@ import { clearProvisionKeyCache } from '../api/provision'
 import type {
   InstallPhase,
   PhaseStatus,
-  ReachabilityStatus,
   PatientProfile,
   RealtimeFrame,
   CalibrationResult,
@@ -16,6 +15,10 @@ import type {
  * 管理安装流程 3 阶段状态、安装记录 ID、BLE 连接、实时数据、校准结果、配网状态、可达性等。
  * P0-1：install 先行（绑定后即创建 installId，基线提交必须带 installId）。
  */
+
+/** 固件解密候选窗上限（T213：provision_crypto.h kCandidateSeqMax）。seq 到该值后回绕为 1。 */
+export const WIFI_SEQ_CANDIDATE_MAX = 64
+
 export const useInstallStore = defineStore('install', () => {
   // ===== 安装记录基础 =====
   const installId = ref<string | null>(null)
@@ -52,9 +55,12 @@ export const useInstallStore = defineStore('install', () => {
   // ===== 配网 & 可达性（阶段三） =====
   const wifiStatus = ref<'unconfigured' | 'connected'>('unconfigured')
   const wifiStatusCode = ref<number | null>(null)
-  const reachabilityStatus = ref<ReachabilityStatus>('pending')
+  // 装机过程中「已跳过配网」本地标记（内存态、不落库；resetInstall 自动清零）
+  const networkSkipped = ref(false)
 
-  // ===== 配网 seq 计数器（协议 §3：会话内递增，防 CTR 重用；跨会话/断电重置为 1） =====
+  // ===== 配网 seq 计数器（协议 §3：防 CTR 重用；取值须落在固件候选窗内） =====
+  // T216: 每轮自增，将要超出窗上限（64）才回绕为 1。
+  // 旧口径「每轮复位为 1」不越窗但会重用 (key, IV)；更早的「整会话一直 +1」则第 4 次起越窗。
   const wifiSeq = ref(1)
 
   // ===== 计算属性 =====
@@ -127,18 +133,21 @@ export const useInstallStore = defineStore('install', () => {
     wifiStatusCode.value = code
   }
 
-  function setReachabilityVerified(status: ReachabilityStatus) {
-    reachabilityStatus.value = status
+  function setNetworkSkipped(v: boolean) {
+    networkSkipped.value = v
   }
 
   function setInstallNote(note: string) {
     installNote.value = note
   }
 
-  /** 领取本次配网 seq（返回当前值并自增；首次配网 = 1，同一会话重写凭据必须 +1） */
+  /** 领取本次配网 seq（返回当前值并推进到下一个）。
+   *  T216: 每轮自增，仅当将要超出固件候选窗上限（64，T213 kCandidateSeqMax）时回绕为 1。
+   *  不再"每轮复位为 1"——provision_key 每次配网不轮换，同 (key, IV) 加密不同明文＝CTR keystream 复用。
+   *  同一轮内多次写设备仍逐次递增（协议 §3 原意）。 */
   function nextWifiSeq(): number {
     const cur = wifiSeq.value
-    wifiSeq.value += 1
+    wifiSeq.value = cur >= WIFI_SEQ_CANDIDATE_MAX ? 1 : cur + 1
     return cur
   }
 
@@ -163,8 +172,8 @@ export const useInstallStore = defineStore('install', () => {
     baselineSaved.value = false
     wifiStatus.value = 'unconfigured'
     wifiStatusCode.value = null
-    reachabilityStatus.value = 'pending'
-    wifiSeq.value = 1
+    networkSkipped.value = false
+    // T216: 故意不复位 wifiSeq——同一台设备的 provision_key 不轮换，回绕只由窗上限决定
   }
 
   return {
@@ -187,7 +196,7 @@ export const useInstallStore = defineStore('install', () => {
     baselineSaved,
     wifiStatus,
     wifiStatusCode,
-    reachabilityStatus,
+    networkSkipped,
     wifiSeq,
     // computed
     phaseDone,
@@ -206,7 +215,7 @@ export const useInstallStore = defineStore('install', () => {
     setBaselineSaved,
     setWifiStatus,
     updateWifiStatusCode,
-    setReachabilityVerified,
+    setNetworkSkipped,
     setInstallNote,
     nextWifiSeq,
     resetInstall,

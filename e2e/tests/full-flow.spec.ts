@@ -41,17 +41,37 @@ test('患者端核心全链路：微信登录到配网成功', async ({ page }) 
   await page.waitForURL('**/pages/device/**', { timeout: 10_000 })
   await expect(page.locator('.device-name')).toHaveText(HOTSPOT_NAME)
 
-  // ===== 5. wifi-setup：配网到成功 =====
+  // ===== 5. wifi-setup：T192 设计稿链路 01→02→03→04→05 =====
   await page.locator('.action-btn', { hasText: '开始添加设备' }).click()
   await page.waitForURL('**/pages/wifi-setup/**', { timeout: 10_000 })
-  await expect(page.locator('.steps .step')).toHaveCount(4)
-  await fillUniInput(page.locator('.manual-wifi input'), 'My_Custom_WiFi')
-  await fillUniInput(page.locator('uni-input.password-input input'), 'secret123')
-  await page.locator('.btn-primary', { hasText: '开始配网' }).click()
-  await expect(page.locator('.success-text')).toHaveText('配网成功!', { timeout: 30_000 })
 
-  // ===== 6. 返回设备管理 =====
-  await page.locator('.btn-primary', { hasText: '返回设备管理' }).click()
+  // 01-entry：前置检查页
+  await expect(page.getByText('配置前准备')).toBeVisible()
+  await page.getByText('开始配置家庭 WiFi').click()
+
+  // 02-scan：BLE 近场发现，列表只出 BSYNC- 设备
+  const deviceItem = page.locator('.device-item').first()
+  await expect(deviceItem).toBeVisible({ timeout: 5_000 })
+  await expect(deviceItem).toContainText('BSYNC-')
+  await deviceItem.click()
+
+  // 03-connect：建立连接后才允许填凭据
+  await expect(page.getByText('连接中')).toBeVisible()
+  await expect(page.getByText('已连接')).toBeVisible({ timeout: 10_000 })
+  await page.getByText('连接成功，下一步').click()
+  await expect(page.getByText('家庭 WiFi 名称')).toBeVisible()
+  await fillUniInput(page.locator('uni-input.input-field').first().locator('input'), 'My_Custom_WiFi')
+  await fillUniInput(page.locator('uni-input.input-field').nth(1).locator('input'), 'secret123')
+  await page.getByText('开始配网').click()
+
+  // 04-progress：四步清单（状态 0/1/2/3 的患者口径）
+  await expect(page.locator('.step-list .step')).toHaveCount(4)
+
+  // 05-success
+  await expect(page.locator('uni-page-body').getByText('配网成功')).toBeVisible({ timeout: 30_000 })
+
+  // ===== 6. 按设计稿「返回设备管理」回设备页 =====
+  await page.getByText('返回设备管理').click()
   await page.waitForURL('**/pages/device/**', { timeout: 10_000 })
   await expect(page.locator('.device-card')).toBeVisible()
 })

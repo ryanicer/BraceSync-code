@@ -98,36 +98,39 @@
           </view>
         </template>
 
-        <!-- 校准完成：R3-2 归零矩阵主视图 -->
+        <!-- 校准完成：零点偏移矩阵（T173 D4：真实采集值，非「全 0 归零」placebo） -->
         <template v-else>
           <view class="calib-success-header">
             <text class="success-icon">✓</text>
             <view class="calib-success-text">
-              <text class="calib-success-title">校准后静态压力已归零</text>
-              <text class="calib-success-sub">基线已保存</text>
+              <text class="calib-success-title">空载校准完成</text>
+              <text class="calib-success-sub">{{ installStore.baselineSaved ? '基线已保存（单次权威校准）' : '基线未保存' }}</text>
             </view>
           </view>
           <view class="phase-subtitle">
-            <text>校准后实时读数矩阵（全 0）</text>
+            <text>零点偏移矩阵（5 帧均值，单位 N）</text>
           </view>
           <view class="pressure-grid">
-            <view v-for="i in 20" :key="i" class="pressure-cell lvl-0">
-              <text>0.00</text>
+            <view
+              v-for="(v, i) in offsetValues"
+              :key="i"
+              :class="['pressure-cell', 'lvl-' + pressureLevel(v)]"
+            >
+              <text>{{ v.toFixed(3) }}</text>
             </view>
           </view>
           <view class="checks-block">
-            <view class="check-item"><text class="check-icon-pass">✓</text><text>数据点数：20/20</text></view>
-            <view class="check-item"><text class="check-icon-pass">✓</text><text>范围校验：通过</text></view>
-            <view class="check-item"><text class="check-icon-pass">✓</text><text>稳定性：通过</text></view>
-          </view>
-          <view class="offset-collapse" @click="offsetExpanded = !offsetExpanded">
-            <text>{{ offsetExpanded ? '收起零点偏移详情' : '查看零点偏移详情' }}</text>
-            <text class="collapse-arrow">{{ offsetExpanded ? '▲' : '▼' }}</text>
-          </view>
-          <view v-if="offsetExpanded" class="offset-grid">
-            <view v-for="(v, i) in offsetValues" :key="i" class="offset-cell">
-              <text class="offset-idx">P{{ String(i + 1).padStart(2, '0') }}</text>
-              <text class="offset-val">{{ v.toFixed(2) }}N</text>
+            <view class="check-item">
+              <text :class="calibrationChecks.pointCount ? 'check-icon-pass' : 'check-icon-fail'">{{ calibrationChecks.pointCount ? '✓' : '✗' }}</text>
+              <text>数据点数：{{ collectedPointCount }}/100（5 帧 × 20 点）</text>
+            </view>
+            <view class="check-item">
+              <text :class="calibrationChecks.range ? 'check-icon-pass' : 'check-icon-fail'">{{ calibrationChecks.range ? '✓' : '✗' }}</text>
+              <text>范围校验：|偏移| ≤ {{ CAL_OFFSET_N }}N（空载偏差上限）</text>
+            </view>
+            <view class="check-item">
+              <text class="check-icon-muted">○</text>
+              <text>稳定性校验：占位（阈值待重定后启用）</text>
             </view>
           </view>
           <view class="btn-primary" @click="goPhase3"><text>校准完成，下一步</text></view>
@@ -163,7 +166,7 @@
               <text class="status-ok-icon">✓</text>
               <view>
                 <text class="status-ok-title">数据可达性验证通过</text>
-                <text class="status-ok-sub">{{ reachabilityLabel }}</text>
+                <text class="status-ok-sub">{{ networkStatusLabel }}</text>
               </view>
             </view>
           </view>
@@ -184,7 +187,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { DEFAULT_THRESHOLDS } from '@bracesync/constants'
 import { useAuthStore } from '../../stores/auth'
 import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
@@ -231,8 +235,11 @@ const collectSec = ref(0)
 let collectTimer: ReturnType<typeof setInterval> | null = null
 const collectedFrames: number[][] = []
 const offsetValues = ref<number[]>(Array(20).fill(0))
-const offsetExpanded = ref(false)
 const displayFrame = ref<number[]>(Array(20).fill(0))
+// T173 D4：真实校验结果（非恒 ✓）；阈值上限取共享常量占位值，待 Boss 重定后随 constants 更新
+const CAL_OFFSET_N = DEFAULT_THRESHOLDS.CALIBRATION_OFFSET_N
+const calibrationChecks = ref({ pointCount: false, range: false, stability: true })
+const collectedPointCount = ref(0)
 
 const calibrationProgress = computed(() => Math.min(100, (collectSec.value / 5) * 100))
 const statAvg = computed(() => average(displayFrame.value))
@@ -295,14 +302,24 @@ async function finalizeCalibration() {
   })
   offsetValues.value = offsets
 
-  // 3 项校验（mock/模拟都通过）
+  // T173 D4：真实校验（点数 / 范围）；稳定性占位待阈值重定
+  collectedPointCount.value = collectedFrames.length * 20
+  calibrationChecks.value = {
+    pointCount: collectedFrames.length === 5,
+    range: offsets.every((v) => Math.abs(v) <= CAL_OFFSET_N),
+    stability: true,
+  }
+  bleLog.info(
+    `T173-dbg 校准汇总：frames=${collectedFrames.length} points=${collectedPointCount.value} ` +
+    `offsetMaxAbs=${Math.max(...offsets.map((v) => Math.abs(v))).toFixed(4)}N rangePass=${calibrationChecks.value.range}`
+  )
   const result: CalibrationResult = {
     offsetValues: offsets,
-    checks: { pointCount: true, range: true, stability: true },
+    checks: { ...calibrationChecks.value },
   }
   installStore.setCalibrationData(result)
 
-  // 保存基线（后端 T084 未实现时失败不阻断校准完成）
+  // 保存基线（规矩 A：单次权威校准；重复保存后端 409 → 友好提示）
   try {
     const bs = await saveBaseline(
       installStore.installId!,
@@ -311,8 +328,18 @@ async function finalizeCalibration() {
     )
     installStore.setBaselineSaved(bs.baselineId)
   } catch (e) {
-    bleLog.warn('saveBaseline 失败（不阻断校准）', e instanceof Error ? e.message : String(e))
-    uni.showToast({ title: '基线保存失败，校准仍有效', icon: 'none' })
+    const bizCode = (e as { code?: number } | null)?.code
+    if (bizCode === 20409) {
+      bleLog.warn('saveBaseline 409：uk_install_baseline 冲突（规矩 A 单次权威校准，有意设计）')
+      uni.showModal({
+        title: '基线已存在',
+        content: '该校准已存在，如需变更请联系出厂',
+        showCancel: false,
+      })
+    } else {
+      bleLog.warn('saveBaseline 失败（不阻断校准）', e instanceof Error ? e.message : String(e))
+      uni.showToast({ title: '基线保存失败，校准仍有效', icon: 'none' })
+    }
   }
   calibrated.value = true
 }
@@ -343,19 +370,9 @@ function goPhase3() {
 // ===== 阶段三 配网 =====
 const installNote = ref('')
 
-watch(
-  () => installStore.wifiStatus,
-  (v) => {
-    if (v === 'connected' && installStore.reachabilityStatus !== 'verified') {
-      installStore.setReachabilityVerified('verified')
-    }
-  }
-)
-
-const reachabilityLabel = computed(() => {
-  const r = installStore.reachabilityStatus
-  if (r === 'verified') return '设备云端通信链路已通'
-  if (r === 'skipped') return '已标记跳过'
+const networkStatusLabel = computed(() => {
+  if (installStore.networkSkipped) return '已标记跳过'
+  if (installStore.wifiStatus === 'connected') return '设备云端通信链路已通'
   return '待验证'
 })
 
@@ -372,7 +389,6 @@ async function completeInstall() {
   try {
     installStore.setInstallNote(installNote.value)
     await updateInstallMeta(installStore.installId, {
-      reachabilityStatus: installStore.reachabilityStatus,
       wifiStatus: installStore.wifiStatus,
       baselineId: installStore.baselineId,
       notes: installNote.value,
@@ -502,13 +518,8 @@ onUnmounted(() => {
 .checks-block { margin: 24rpx 0; }
 .check-item { display: flex; align-items: center; gap: 12rpx; padding: 10rpx 0; }
 .check-icon-pass { color: #10B981; font-size: 28rpx; }
-
-.offset-collapse { display: flex; justify-content: space-between; align-items: center; padding: 20rpx 0; border-top: 2rpx solid #e5e7eb; font-size: 26rpx; color: #2563EB; }
-.collapse-arrow { font-size: 22rpx; }
-.offset-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16rpx; padding: 16rpx; background: #f8fafc; border-radius: 16rpx; }
-.offset-cell { background: #fff; border-radius: 12rpx; padding: 12rpx; text-align: center; border: 1rpx solid #e2e8f0; }
-.offset-idx { display: block; font-size: 20rpx; color: #94a3b8; }
-.offset-val { display: block; font-size: 22rpx; font-weight: 500; color: #1e293b; margin-top: 4rpx; }
+.check-icon-fail { color: #EF4444; font-size: 28rpx; }
+.check-icon-muted { color: #94a3b8; font-size: 28rpx; }
 
 .status-block { display: flex; justify-content: space-between; align-items: center; padding: 16rpx 0 24rpx; }
 .status-label { font-size: 28rpx; color: #64748b; }

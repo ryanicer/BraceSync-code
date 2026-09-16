@@ -6,8 +6,8 @@ import {
 } from '../tech-helpers'
 
 /**
- * tech-install 页：安装流程 3 阶段（患者确认 → 空载校准归零 → WiFi 配网）
- * 对齐 T089 V2.1 install 页核心 UX：校准后静态压力已归零主视图
+ * tech-install 页：安装流程 3 阶段（患者确认 → 空载校准 → WiFi 配网）
+ * 对齐 T089 V2.1 install 页核心 UX：零点偏移矩阵主视图（T173）
  *
  * 前置：通过 bind 流程进入 install（installId + patient + bleConnected 均已就绪）
  */
@@ -34,8 +34,8 @@ async function goToPhase2(page) {
 /** 从 phase 2 执行校准并推进到 phase 3 */
 async function calibrateAndGoToPhase3(page) {
   await page.locator('.btn-primary', { hasText: '开始校准' }).click()
-  // 校准完成主视图
-  await expect(page.getByText('校准后静态压力已归零')).toBeVisible({ timeout: 20_000 })
+  // 校准完成主视图（T173：真实零点偏移矩阵，非归零 placebo）
+  await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
   await page.locator('.btn-primary', { hasText: '校准完成，下一步' }).click()
   await expect(page.locator('.card-title', { hasText: 'WiFi 网络配置' })).toBeVisible({ timeout: 5_000 })
 }
@@ -62,7 +62,7 @@ test.describe('安装流程 3 阶段', () => {
     await expect(page.locator('.card-title', { hasText: '设备校准' })).toBeVisible({ timeout: 5_000 })
   })
 
-  test('阶段二：空载校准归零（校准后静态压力已归零）', async ({ page }) => {
+  test('阶段二：空载校准（真实零点偏移矩阵）', async ({ page }) => {
     await goToPhase2(page)
     // BLE 已连接（mockTechBLE），显示空载采集确认 + 开始校准按钮
     await expect(page.getByText('空载采集确认')).toBeVisible()
@@ -70,19 +70,17 @@ test.describe('安装流程 3 阶段', () => {
 
     await page.locator('.btn-primary', { hasText: '开始校准' }).click()
 
-    // R3-2 归零矩阵主视图
-    await expect(page.getByText('校准后静态压力已归零')).toBeVisible({ timeout: 20_000 })
+    // T173 D4：零点偏移矩阵主视图（5 帧均值）
+    await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('基线已保存')).toBeVisible()
-    // 20 格全 0.00
+    await expect(page.getByText('零点偏移矩阵（5 帧均值，单位 N）')).toBeVisible()
+    // 20 格偏移矩阵
     const cells = page.locator('.pressure-cell')
     await expect(cells).toHaveCount(20)
-    for (let i = 0; i < 20; i++) {
-      await expect(cells.nth(i)).toContainText('0.00')
-    }
-    // 三项校验通过
-    await expect(page.getByText('数据点数：20/20')).toBeVisible()
-    await expect(page.getByText('范围校验：通过')).toBeVisible()
-    await expect(page.getByText('稳定性：通过')).toBeVisible()
+    // 真实校验（mock 空载帧 ±0.15N → 范围校验通过）
+    await expect(page.getByText('数据点数：100/100（5 帧 × 20 点）')).toBeVisible()
+    await expect(page.getByText('范围校验：|偏移| ≤ 0.5N（空载偏差上限）')).toBeVisible()
+    await expect(page.getByText('稳定性校验：占位（阈值待重定后启用）')).toBeVisible()
   })
 
   test('阶段三：WiFi 配网入口', async ({ page }) => {

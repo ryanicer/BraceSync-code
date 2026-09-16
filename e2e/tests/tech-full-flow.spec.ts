@@ -34,10 +34,10 @@ test.describe('技师端全链路', () => {
     await expect(page.getByText('张明远')).toBeVisible()
     await page.locator('.btn-primary', { hasText: '确认，下一步' }).click()
 
-    // === install 阶段二：空载校准归零 ===
+    // === install 阶段二：空载校准 ===
     await expect(page.locator('.card-title', { hasText: '设备校准' })).toBeVisible()
     await page.locator('.btn-primary', { hasText: '开始校准' }).click()
-    await expect(page.getByText('校准后静态压力已归零')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
     await page.locator('.btn-primary', { hasText: '校准完成，下一步' }).click()
 
     // === install 阶段三：WiFi 配网 ===

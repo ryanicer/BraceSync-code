@@ -134,6 +134,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/technicians/:techId/toggle"},
 	{http.MethodGet, "/feedbacks"},
 	{http.MethodPost, "/feedbacks/:feedbackId/process"}, // T030 #5 replyContent
+	{http.MethodGet, "/patient/profile"},                // T186 患者本人只读档案（self-scope）
 	{http.MethodGet, "/patients/:patientId/orthosis-plans"},
 	{http.MethodPost, "/patients/:patientId/orthosis-plans"},
 	{http.MethodGet, "/patients/:patientId/feeling-logs"},
@@ -181,10 +182,19 @@ var dataServiceRoutes = []proxyRoute{
 }
 
 // msgServiceRoutes 通知规则/发送记录（契约 getNotifyRules/getNotificationLogs，msg-service 已实现）
+//   - T185 患者域 5 条（msg-service 侧早已实现，本批仅补挂载；
+//     水平鉴权在 msg-service handler 层 requireSelfScope，subscription-quota/grant 另经网关 RBAC 收敛为 admin）
 var msgServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/admin/notify-rules"},
 	{http.MethodPut, "/admin/notify-rules/:type"},
 	{http.MethodGet, "/admin/notification-logs"},
+
+	// T185 佩戴提醒配置 + 订阅额度 + 通知记录（患者自查本人；越权由 msg-service 侧 403）
+	{http.MethodGet, "/patients/:patientId/wear-reminder"},
+	{http.MethodPut, "/patients/:patientId/wear-reminder"},
+	{http.MethodGet, "/patients/:patientId/subscription-quota"},
+	{http.MethodPost, "/patients/:patientId/subscription-quota/grant"},
+	{http.MethodGet, "/patients/:patientId/notifications"},
 }
 
 // fileServiceRoutes 文件上传预签名/元数据查询（T022，COS 直传凭证）

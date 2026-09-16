@@ -37,7 +37,7 @@
         <view class="btn-outline" @click="retryWifi"><text>重新配网</text></view>
         <view v-if="errorCode === -4" class="skip-hint">
           <text class="skip-text">WiFi 已连接，但暂时无法连接云端。</text>
-          <view class="btn-outline-sm" @click="skipReachability"><text>先完成安装</text></view>
+          <view class="btn-outline-sm" @click="skipNetworkSetup"><text>先完成安装</text></view>
         </view>
       </view>
     </view>
@@ -114,6 +114,11 @@ const provisioning = ref(false)
 // 取 3s：BLE 写入+设备处理约 1~2s，3s 足以让上一次操作落定，
 // 同时用户改完密码后不会感到明显阻塞。
 const MIN_PROVISION_INTERVAL = 3000
+
+// T212: 配网超时兜底 60s（与患者端 PROVISION_TIMEOUT_MS 同值）。
+// 正常链路实测 7–8s，但出现过一次约 50s 的长尾 ⇒ 留足余量。
+// 技师端语义＝自下发起 N 秒内未收到 9 即提示（收到失败码会提前 clearTimeout）。
+const PROVISION_TIMEOUT_MS = 60000
 let lastProvisionAttempt = 0
 
 const wifiStatusCode = ref<number | null>(null)
@@ -187,14 +192,14 @@ async function startWifiConfig() {
     const { provision_key_hex } = await getProvisionKey(installStore.deviceId)
 
     // 2. AES-CTR 加密 WiFi 凭据
+    // T216: seq 每轮自增，仅当将要超出固件候选窗上限（64）时回绕为 1 ⇒ 不越窗且不重用 (key, IV)
     const seq = installStore.nextWifiSeq()
     const encrypted = await encryptWifiPayload(ssid, password.value, provision_key_hex, seq)
 
-    // 3. BLE 写入加密配置（T109: 用 BLE MAC，非后端设备 ID）
+    // 3. 监听配网状态（T109: 传入 BLE MAC 以订阅 B512 Notify）
+    //    T216: 必须先订阅再写 B511 —— 设备在收到配置后立刻回 0/1，
+    //    订阅晚于写入就会把首帧丢掉（患者端 wifi-setup 一直是这个顺序）。
     const bleMac = installStore.bleDeviceId || installStore.deviceId
-    await writeWifiConfigV2(bleMac, encrypted)
-
-    // 4. 监听配网状态（T109: 传入 BLE MAC 以订阅 B512 Notify）
     statusListener = (code: number) => {
       wifiStatusCode.value = code
       statusHistory.push(code)
@@ -203,16 +208,19 @@ async function startWifiConfig() {
     }
     onWifiStatus(statusListener, bleMac)
 
+    // 4. BLE 写入加密配置（T109: 用 BLE MAC，非后端设备 ID）
+    await writeWifiConfigV2(bleMac, encrypted)
+
     // H5 mock：启动状态机序列
     // T089-MOCK: 真机由硬件 WiFi Status Notify 驱动
     startMockWifiStatusSequence()
 
-    // 协议 §2 补充：固件解密失败不 Notify，15s 超时兜底
+    // 协议 §2 补充：固件解密失败不 Notify，60s 超时兜底（T212：与患者端 PROVISION_TIMEOUT_MS 一致）
     timeoutTimer.value = setTimeout(() => {
       if (wifiStatusCode.value !== 9) {
         handleTimeout()
       }
-    }, 15000)
+    }, PROVISION_TIMEOUT_MS)
   } catch (e) {
     uni.showToast({ title: e instanceof Error ? e.message : '配网失败', icon: 'none' })
     provisioning.value = false
@@ -236,7 +244,6 @@ async function handleSuccess(ssid: string) {
 
   installStore.setWifiStatus('connected')
   installStore.updateWifiStatusCode(9)
-  installStore.setReachabilityVerified('verified')
 
   // 3 秒后自动返回 install
   autoReturnTimer.value = setTimeout(() => {
@@ -252,7 +259,7 @@ function handleError(code: number) {
 }
 
 function handleTimeout() {
-  bleLog.warn('15s 配网超时，状态历史', [...statusHistory])
+  bleLog.warn(`${PROVISION_TIMEOUT_MS / 1000}s 配网超时，状态历史`, [...statusHistory])
   // P2-5: 迟到状态 9 回转——继续监听，不立即标失败
   // 这里给提示，但保留 statusListener（未移除），迟到状态 9 仍可触发 handleSuccess
   uni.showToast({ title: '设备无响应，请靠近设备后重试', icon: 'none' })
@@ -264,10 +271,10 @@ function retryWifi() {
   password.value = ''
 }
 
-function skipReachability() {
-  // -4 状态：标记可达性 skipped，返回 install
+function skipNetworkSetup() {
+  // -4 状态：本地标记「已跳过」，返回 install（不落库）
   installStore.setWifiStatus('connected')
-  installStore.setReachabilityVerified('skipped')
+  installStore.setNetworkSkipped(true)
   uni.navigateBack()
 }
 

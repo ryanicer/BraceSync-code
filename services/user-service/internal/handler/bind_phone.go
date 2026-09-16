@@ -3,6 +3,8 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -103,9 +105,17 @@ func (h *Handler) bindPhone(c *gin.Context) {
 		if err != nil {
 			var we *wechat.WechatError
 			if errors.As(err, &we) {
+				ctxLogger(c).Info().
+					Int("wx_errcode", we.ErrCode).
+					Msg("bind-phone: wechat biz error → 10604 (T166-dbg)")
 				fail(c, model.ErrInvalidPhoneCode("wechat getPhoneNumber failed: errcode=%d", we.ErrCode))
 				return
 			}
+			// T166：本分支此前零日志，正是「handler 已 parsed 却无出口日志、外部只见 502」的盲区。
+			// 必须记 wechatErrText(err) 而不是 err 本身——见该函数注释，原始 URL 里带 AppSecret。
+			ctxLogger(c).Error().
+				Str("wechat_err", wechatErrText(err)).
+				Msg("bind-phone: wechat GetPhoneNumber failed → 10502 (T166-dbg)")
 			fail(c, model.NewWXServiceUnavailable("wechat service unavailable"))
 			return
 		}
@@ -182,6 +192,25 @@ func (h *Handler) bindPhone(c *gin.Context) {
 	h.respondLoginOK(c, row)
 }
 
+// wechatErrText 把微信上游 error 转成可安全落日志的文本。
+//
+// 不能直接 .Err(err)：Go 的 *url.Error.Error() 会内嵌完整请求 URL，而
+// /cgi-bin/token 的 query 带 appid + AppSecret、手机号接口的 query 带 access_token
+// （wechat.go 用 query string 传凭据）。原样写日志＝把 AppSecret 落进 staging 日志。
+// 这里保留整条 wrap 链的可读文本（"http do token: Get ...: dial tcp ..." 这类前缀正是
+// 定位所需），只把出现的 URL 换成去掉 query 的版本。
+func wechatErrText(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.URL != "" {
+		msg = strings.ReplaceAll(msg, ue.URL, strings.SplitN(ue.URL, "?", 2)[0])
+	}
+	return msg
+}
+
 // respondWithPhoneToken 失败分支统一响应：code + phoneToken（供客户端重试免二次微信调用）
 func (h *Handler) respondWithPhoneToken(c *gin.Context, code int, msg, phoneHash, openID string) {
 	pt := issuePhoneToken(h.phoneTokenSecret, phoneHash, openID, time.Now())
@@ -192,7 +221,12 @@ func (h *Handler) respondWithPhoneToken(c *gin.Context, code int, msg, phoneHash
 	})
 }
 
-// respondLoginOK 绑定成功响应：签发正式 JWT（sub=patientID，8h）
+// respondLoginOK 绑定成功响应：签发正式 JWT（sub=patientID，8h）。
+//
+// T168：响应体必须用 PatientLoginResultDTO（{token, patientId, name, role}，契约 T088-V2 §5.2
+// code=0 行，与 patientLogin / wx-login 两端一致）。此前误用 admin 契约 LoginResultDTO，
+// 线上 200 响应里根本没有 patientId 键，前端 bind.vue 的 data.token && data.patientId
+// 判空失败 → 绑定已落库却提示「绑定失败，请重试」。首次绑定与幂等重放共用本函数，两处同修。
 func (h *Handler) respondLoginOK(c *gin.Context, row *repo.PatientLoginRow) {
 	if h.signer == nil {
 		fail(c, model.ErrInternal("JWT_SECRET not configured"))
@@ -203,9 +237,10 @@ func (h *Handler) respondLoginOK(c *gin.Context, row *repo.PatientLoginRow) {
 		fail(c, model.ErrInternal("sign token failed"))
 		return
 	}
-	ok(c, model.LoginResultDTO{
-		Token:  tk,
-		Name:   row.Name,
-		RoleID: "patient",
+	ok(c, model.PatientLoginResultDTO{
+		Token:     tk,
+		PatientID: row.PatientID,
+		Name:      row.Name,
+		Role:      "patient",
 	})
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/bracesync/bracesync/services/data-service/internal/calibration"
 	"github.com/bracesync/bracesync/services/data-service/internal/metrics"
 	"github.com/bracesync/bracesync/services/data-service/internal/model"
 	"github.com/bracesync/bracesync/services/data-service/internal/repo"
@@ -65,6 +66,10 @@ type RecordService struct {
 	limiter *RateLimiter
 	latest  latestRecordStore // 构造时从 records 类型断言；nil 时 GetRealtime 走 Redis 回退
 
+	// calib 基线校准器（T173：nil = 未装配，读侧透出 raw + calibrated=false；
+	// 生产由 main 注入 calibration.NewCalibrator(repo.NewBaselineRepo(pool))）
+	calib *calibration.Calibrator
+
 	// deviceReport 上报事件回写 device-service（nil=未配置地址，跳过回写，
 	// devices.last_report_at 不回填但上报主链路不受影响）
 	deviceReport DeviceReporter
@@ -103,6 +108,38 @@ func (s *RecordService) SetDeviceReporter(r DeviceReporter, timeout time.Duratio
 	if timeout > 0 {
 		s.deviceReportTimeout = timeout
 	}
+}
+
+// SetCalibrator 注入基线校准器（T173；生产由 main 装配）
+func (s *RecordService) SetCalibrator(c *calibration.Calibrator) { s.calib = c }
+
+// pressureThresholds 压力量纲阈值（T173 可配置化：sys_configs 驱动，配置不可用回退占位默认）
+func (s *RecordService) pressureThresholds(ctx context.Context) model.PressureThresholds {
+	if ts, ok := s.configs.(repo.ThresholdStore); ok {
+		if th, err := ts.GetPressureThresholds(ctx); err == nil {
+			return th
+		}
+	}
+	return model.DefaultPressureThresholds()
+}
+
+// calibrate 单帧校准统一入口（T173 读侧同源：realtime 双分支 / records / heatmap / 告警入参）。
+// calib 未装配或基线查询失败时不减（fail-open 为 raw）并显式 Applied=false，不静默当零偏移。
+func (s *RecordService) calibrate(ctx context.Context, deviceID string, points [model.PointCount]float32) calibration.Result {
+	if s.calib == nil {
+		return calibration.Result{Points: points, Applied: false}
+	}
+	res, err := s.calib.Apply(ctx, deviceID, points)
+	if err != nil {
+		log.Warn().Err(err).Str("device_id", deviceID).
+			Msg("calibration: baseline lookup failed, serve raw (T173-dbg)")
+		return calibration.Result{Points: points, Applied: false}
+	}
+	log.Info().Str("device_id", deviceID).Int64("baseline_id", res.BaselineID).
+		Str("baseline_source", map[bool]string{true: "join", false: "none"}[res.Applied]).
+		Bool("applied", res.Applied).
+		Msg("calibration: frame processed (T173-dbg)")
+	return res
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -164,21 +201,25 @@ func (s *RecordService) UploadSingle(ctx context.Context, headerDeviceID string,
 }
 
 // applyRealtimeCache 单帧上报后的 Redis 三写
+// T173：佩戴判定与 stat:today 用「减偏移后」值（PRD §8.1/§7A.2：判定统一基于校准后值）；
+// rt:frame 缓存存 ÷1000 后 raw 值，读侧统一校准（与 DB 口径一致）。
 func (s *RecordService) applyRealtimeCache(ctx context.Context, deviceID, patientID string, frame repo.PendingFrame, now time.Time, countStat bool) *model.AppError {
 	if err := s.cache.SetLastSeen(ctx, deviceID, frame.Ts); err != nil {
 		log.Error().Err(err).Str("device_id", deviceID).Msg("redis set lastseen failed")
 		return model.ErrInternal("redis unavailable")
 	}
 
-	maxP, maxIdx := maxPoint(frame.Points)
+	calibRes := s.calibrate(ctx, deviceID, frame.Points)
+	calibMaxP, calibMaxIdx := maxPoint(calibRes.Points)
+
 	rtJSON, err := json.Marshal(&realtimeFrame{
 		DeviceID:    deviceID,
 		PatientID:   patientID,
 		Timestamp:   frame.Ts.UTC(),
 		Points:      pointsToFloat64(frame.Points),
 		Battery:     frame.Battery,
-		MaxPressure: maxP,
-		MaxPoint:    model.PointID(maxIdx),
+		MaxPressure: calibMaxP,
+		MaxPoint:    model.PointID(calibMaxIdx),
 		UploadTime:  now.UTC(),
 	})
 	if err != nil {
@@ -191,14 +232,14 @@ func (s *RecordService) applyRealtimeCache(ctx context.Context, deviceID, patien
 
 	if countStat {
 		wearMinutes := 0
-		if maxP > model.WearingThresholdN { // PRD §8.1 佩戴帧判定
+		if calibMaxP > s.pressureThresholds(ctx).WearingN { // PRD §8.1 佩戴帧判定（减偏移后值，T173）
 			interval, _, cfgErr := s.configs.GetDeviceConfig(ctx)
 			if cfgErr != nil {
 				interval = 30
 			}
 			wearMinutes = interval
 		}
-		if err := s.cache.ApplyStatToday(ctx, patientID, wearMinutes, maxP, model.PointID(maxIdx), 0, endOfTodayCST(now)); err != nil {
+		if err := s.cache.ApplyStatToday(ctx, patientID, wearMinutes, calibMaxP, model.PointID(calibMaxIdx), 0, endOfTodayCST(now)); err != nil {
 			log.Error().Err(err).Str("patient_id", patientID).Msg("redis update stat:today failed")
 			return model.ErrInternal("redis unavailable")
 		}
@@ -207,12 +248,15 @@ func (s *RecordService) applyRealtimeCache(ctx context.Context, deviceID, patien
 }
 
 // evaluateInline 内联告警评估（100ms 熔断 → alert:pending 降级，架构 §3.4）
+// T173：传给 alert-service 的是「减偏移后」帧——内联与 alert:pending 补偿两路同源，
+// 佩戴/漂移判定（含负值故障检测）自动基于校准后值，alert-service 无需持有校准码（D6）。
 func (s *RecordService) evaluateInline(ctx context.Context, deviceID, patientID string, frame repo.PendingFrame, uploadTime time.Time) {
+	calibRes := s.calibrate(ctx, deviceID, frame.Points)
 	evalReq := &AlertEvalRequest{
 		DeviceID:   deviceID,
 		PatientID:  patientID,
 		Timestamp:  frame.Ts.UTC(),
-		Points:     pointsToFloat64(frame.Points),
+		Points:     pointsToFloat64(calibRes.Points),
 		UploadTime: uploadTime.UTC(),
 		IsBackfill: false,
 	}
@@ -380,6 +424,7 @@ func (s *RecordService) enqueueRollup(ctx context.Context, patientID string, acc
 // ─────────────────────────────────────────────────────────────
 
 // GetHistory 压力历史查询（period+date 决定时间范围，Asia/Shanghai 切日，分页）
+// T173：逐条按其设备当前基线减偏移（读侧校准，与 realtime 同源）
 func (s *RecordService) GetHistory(ctx context.Context, patientID, period, date string, page, pageSize int) (*model.HistoryPage, *model.AppError) {
 	from, to, appErr := periodRange(period, date)
 	if appErr != nil {
@@ -389,15 +434,26 @@ func (s *RecordService) GetHistory(ctx context.Context, patientID, period, date 
 	if err != nil {
 		return nil, model.ErrInternal("query history: %v", err)
 	}
+	th := s.pressureThresholds(ctx)
 	list := make([]model.PressureRecordDTO, 0, len(records))
 	for i := range records {
-		list = append(list, records[i].ToDTO())
+		list = append(list, s.calibratedRecordDTO(ctx, th, records[i]))
 	}
 	return &model.HistoryPage{List: list, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
+// calibratedRecordDTO 单条记录读侧校准：减偏移后构造 DTO 并回填 calibrated 标记
+func (s *RecordService) calibratedRecordDTO(ctx context.Context, th model.PressureThresholds, rec model.PressureRecord) model.PressureRecordDTO {
+	res := s.calibrate(ctx, rec.DeviceID, rec.Points)
+	dto := rec.ToDTO(th)
+	dto.Points = model.BuildSensorPoints(res.Points, th)
+	dto.Calibrated = res.Applied
+	return dto
+}
+
 // GetRealtime 实时快照：DB 优先（pressure_records 最新行），无 DB reader 时走 Redis 回退
 func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*model.RealtimeSnapshot, *model.AppError) {
+	th := s.pressureThresholds(ctx)
 	snapshot := &model.RealtimeSnapshot{
 		Status:          "offline",
 		MaxPoint:        "",
@@ -409,36 +465,41 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 	if err != nil {
 		return nil, model.ErrInternal("lookup device: %v", err)
 	}
+	snapshot.DeviceID = deviceID // 未绑定时为空串，前端按「无设备」处理，不报错
+	// T200 真机取证点：配网入口「无设备」弹窗的唯一判据
+	log.Info().Str("patient_id", patientID).Str("device_id", deviceID).Bool("bound", exists).
+		Msg("realtime: snapshot device resolved (T200)")
 	if !exists {
-		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
+		snapshot.PressureHeatmap = model.SeedHeatmap(patientID, th.HeatmapMaxN)
 		return snapshot, nil // 未绑定设备
 	}
 
 	// DB 优先路径（*repo.RecordRepo 实现 GetLatestRecord 时）
 	if s.latest != nil {
-		return s.getRealtimeFromDB(ctx, patientID, deviceID, dbStatus, snapshot)
+		return s.getRealtimeFromDB(ctx, patientID, deviceID, dbStatus, snapshot, th)
 	}
 
 	// Redis 回退路径（测试 stub 无 GetLatestRecord 时走旧逻辑）
-	return s.getRealtimeFromRedis(ctx, patientID, deviceID, dbStatus, snapshot)
+	return s.getRealtimeFromRedis(ctx, patientID, deviceID, dbStatus, snapshot, th)
 }
 
 // getRealtimeFromDB DB 优先实时快照：pressure_records 最新行驱动，Redis 仅补充状态与今日统计
-// 口径对齐 Redis 路径：maxPressure/maxPoint 取 stat:today（当日全量最大），
-// 热力图 & PressureRecords 取 pressure_records 最新行（实时帧），
+// 口径对齐 Redis 路径：maxPressure/maxPoint 取 stat:today（当日全量最大，T173 起按减偏移后值累计），
+// 热力图 & PressureRecords 取 pressure_records 最新行（读侧减偏移，T173），
 // stat:today 为空时回退到最新帧的 max（避免前端空值）。
-func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot) (*model.RealtimeSnapshot, *model.AppError) {
+func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
 	rec, hasRecord, err := s.latest.GetLatestRecord(ctx, patientID)
 	if err != nil {
 		return nil, model.ErrInternal("read latest record: %v", err)
 	}
 	if !hasRecord {
-		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
+		snapshot.PressureHeatmap = model.SeedHeatmap(patientID, th.HeatmapMaxN)
 		return snapshot, nil // 有设备但无上报记录
 	}
 
-	snapshot.PressureRecords = []model.PressureRecordDTO{rec.ToDTO()}
-	snapshot.PressureHeatmap = model.BuildHeatmap(rec.Points)
+	res := s.calibrate(ctx, deviceID, rec.Points)
+	snapshot.PressureRecords = []model.PressureRecordDTO{s.calibratedRecordDTO(ctx, th, rec)}
+	snapshot.PressureHeatmap = model.BuildHeatmap(res.Points)
 
 	// 一次性读 stat:today：wear_minutes / max_pressure / max_point / abnormal_count
 	if stats, stErr := s.cache.GetStatToday(ctx, patientID); stErr == nil {
@@ -448,20 +509,24 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 		if v, e := strconv.ParseFloat(stats["max_pressure"], 64); e == nil && v > 0 {
 			snapshot.MaxPressure = v
 		} else {
-			snapshot.MaxPressure = float64(rec.MaxPressure)
+			calibMaxP, calibMaxIdx := maxPoint(res.Points)
+			snapshot.MaxPressure = calibMaxP
+			snapshot.MaxPoint = model.PointID(calibMaxIdx)
 		}
 		if stats["max_point"] != "" {
 			snapshot.MaxPoint = stats["max_point"]
 		} else {
-			snapshot.MaxPoint = rec.MaxPoint()
+			_, calibMaxIdx := maxPoint(res.Points)
+			snapshot.MaxPoint = model.PointID(calibMaxIdx)
 		}
 		if v, e := strconv.Atoi(stats["abnormal_count"]); e == nil {
 			snapshot.Events = v
 		}
 	} else {
 		// stat:today 回退：用最新帧兜底（防止首次上报当日无 rollup 时前端空白）
-		snapshot.MaxPressure = float64(rec.MaxPressure)
-		snapshot.MaxPoint = rec.MaxPoint()
+		calibMaxP, calibMaxIdx := maxPoint(res.Points)
+		snapshot.MaxPressure = calibMaxP
+		snapshot.MaxPoint = model.PointID(calibMaxIdx)
 	}
 
 	// 状态推导：abnormal 优先；Redis lastseen ≤2h → online；否则 DB ts ≤2h → online
@@ -473,11 +538,21 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 		snapshot.Status = "online"
 	}
 
+	// 电池电量：pressure_records 表无 battery 列，额外读 Redis rt:frame 取
+	if frameJSON, err := s.cache.GetRealtimeFrame(ctx, deviceID); err == nil && frameJSON != "" {
+		var rf realtimeFrame
+		if json.Unmarshal([]byte(frameJSON), &rf) == nil {
+			snapshot.Battery = rf.Battery
+		}
+	}
+
 	return snapshot, nil
 }
 
 // getRealtimeFromRedis Redis 回退路径（issue 879 前旧逻辑，测试 stub 走此路径）
-func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot) (*model.RealtimeSnapshot, *model.AppError) {
+// T173：rt:frame 为 ÷1000 后 raw 值，读侧统一减偏移（与 DB 分支同源）；
+// 佩戴（allDead）判定同样基于减偏移后值 + 可配置阈值。
+func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
 	// 状态推导：abnormal 优先，其次 lastseen ≤2h 判 online
 	if dbStatus == "abnormal" {
 		snapshot.Status = "abnormal"
@@ -496,29 +571,34 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 		var rf realtimeFrame
 		if jsonErr := json.Unmarshal([]byte(frameJSON), &rf); jsonErr == nil {
 			if len(rf.Points) >= model.PointCount {
+				var raw [model.PointCount]float32
+				for i := 0; i < model.PointCount; i++ {
+					raw[i] = float32(rf.Points[i])
+				}
+				res := s.calibrate(ctx, deviceID, raw)
+				hmPoints = res.Points
 				allDead := true
 				for i := 0; i < model.PointCount; i++ {
-					v := float32(rf.Points[i])
-					hmPoints[i] = v
-					if v >= model.WearingThresholdN {
+					if float64(res.Points[i]) >= th.WearingN { // PRD §8.1（减偏移后值，T173）
 						allDead = false
 					}
 				}
 				if !allDead {
 					heatmapReady = true
 				}
+				log.Info().Str("device_id", deviceID).Bool("redis_fallback", true).
+					Str("rt_frame_offset_state", map[bool]string{true: "calibrated", false: "raw"}[res.Applied]).
+					Msg("calibration: realtime redis fallback frame processed (T173-dbg)")
+				snapshot.PressureRecords = append(snapshot.PressureRecords, model.PressureRecordDTO{
+					DeviceID:   rf.DeviceID,
+					PatientID:  rf.PatientID,
+					Timestamp:  rf.Timestamp.UTC().Format(time.RFC3339),
+					Points:     model.BuildSensorPoints(res.Points, th),
+					UploadTime: rf.UploadTime.UTC().Format(time.RFC3339),
+					Calibrated: res.Applied,
+				})
+				snapshot.Battery = rf.Battery
 			}
-			var points [model.PointCount]float32
-			for i := 0; i < model.PointCount && i < len(rf.Points); i++ {
-				points[i] = float32(rf.Points[i])
-			}
-			snapshot.PressureRecords = append(snapshot.PressureRecords, model.PressureRecordDTO{
-				DeviceID:   rf.DeviceID,
-				PatientID:  rf.PatientID,
-				Timestamp:  rf.Timestamp.UTC().Format(time.RFC3339),
-				Points:     model.BuildSensorPoints(points),
-				UploadTime: rf.UploadTime.UTC().Format(time.RFC3339),
-			})
 		} else {
 			log.Warn().Err(jsonErr).Str("device_id", deviceID).Msg("invalid rt:frame json, heatmap fall back to seed")
 		}
@@ -526,7 +606,7 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 	if heatmapReady {
 		snapshot.PressureHeatmap = model.BuildHeatmap(hmPoints)
 	} else {
-		snapshot.PressureHeatmap = model.SeedHeatmap(patientID)
+		snapshot.PressureHeatmap = model.SeedHeatmap(patientID, th.HeatmapMaxN)
 	}
 
 	// 今日统计（stat:today）
@@ -659,11 +739,13 @@ func pointsToFloat64(points [model.PointCount]float32) []float64 {
 	return out
 }
 
-// toPendingFrame 请求参数 → 待落库帧
+// toPendingFrame 请求参数 → 待落库帧。
+// T173 D1（权威口径，PRD §7A.2）：设备上报单位 = mN，入口统一 ÷1000 归一为 N 后落库/缓存/判定；
+// 此后全链路（DB/Redis/告警帧）均为 N 空间（原「÷100 / N×100 定点」口径作废）。
 func toPendingFrame(ts time.Time, points []float64, battery, faultCode int) repo.PendingFrame {
 	var arr [model.PointCount]float32
 	for i := 0; i < model.PointCount && i < len(points); i++ {
-		arr[i] = float32(points[i])
+		arr[i] = float32(points[i] / model.MnPerN)
 	}
 	return repo.PendingFrame{Ts: ts, Points: arr, Battery: battery, FaultCode: faultCode}
 }
