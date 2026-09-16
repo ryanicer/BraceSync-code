@@ -43,7 +43,7 @@
             <text class="menu-sub">{{ deviceIdText }}</text>
             <text class="menu-arrow">›</text>
           </view>
-          <view class="menu-item" @click="comingSoon">
+          <view class="menu-item" @click="goWearing">
             <text class="menu-ic">⏱️</text>
             <text class="menu-text">佩戴管理</text>
             <text class="menu-sub">时长统计 · 佩戴提醒</text>
@@ -349,8 +349,13 @@ function goReport() {
   uni.navigateTo({ url: '/pages/report/index' })
 }
 
+function goWearing() {
+  // 佩戴管理非 tabBar 页（T224）
+  uni.navigateTo({ url: '/pages/wearing/index' })
+}
+
 function comingSoon() {
-  // 我的医生/佩戴管理/矫形日志/设置 三页未建 + 设置未建：本轮只呈现入口，不接坏链
+  // 我的医生/矫形日志/设置 未建：本轮只呈现入口，不接坏链
   uni.showToast({ title: '即将开放', icon: 'none' })
 }
 
