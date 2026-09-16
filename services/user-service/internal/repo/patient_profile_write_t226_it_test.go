@@ -25,6 +25,10 @@ INSERT INTO patients (patient_id, name, phone_enc, phone_hash, gender, age, stat
 VALUES ($1, 'T226患者', '\x00'::bytea, 'aa14' || repeat('0', 60), 'male', 14, 'active')
 ON CONFLICT (patient_id) DO NOTHING`, pid)
 	require.NoError(t, err)
+	// 共享种子库：既有用例（如 TestITListPatientsJoinAndFilter）断言全表行数，测后必须清场
+	t.Cleanup(func() {
+		_, _ = itStore.pool.Exec(ctx, `DELETE FROM patients WHERE patient_id = $1`, pid)
+	})
 
 	name := "T226患者改"
 	gender := "female"
