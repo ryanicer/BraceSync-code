@@ -91,7 +91,8 @@ describe('T216① — 标记复位入口（链路生命周期）', () => {
     expect(fnBody('closeBLEConnection')).toContain('invalidateB512Subscription(')
     const listener = fnBody('registerBleStateListener')
     expect(listener).toContain('invalidateB512Subscription(')
-    expect(listener).toMatch(/!res\.connected\)\s*invalidateB512Subscription/)
+    // T218 A-2 起断开分支体改为多语句块（B513 一并复位），不再限定单行形式
+    expect(listener).toMatch(/!res\.connected\)\s*\{[^}]*invalidateB512Subscription/)
   })
 
   it('复位函数在两个标记都空时不重复打日志（避免 connectDevice 前置 close 刷屏），且 in-flight 一并作废', () => {

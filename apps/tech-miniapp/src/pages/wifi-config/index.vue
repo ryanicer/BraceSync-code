@@ -79,8 +79,8 @@
               </text>
             </view>
           </view>
-          <view :class="['btn-primary', { 'btn-disabled': provisioning }]" @click="startWifiConfig">
-            <text>{{ provisioning ? '配置中...' : '开始配网' }}</text>
+          <view :class="['btn-primary', { 'btn-disabled': provisioning || !bleLinkUp }]" @click="startWifiConfig">
+            <text>{{ provisioning ? '配置中...' : bleLinkUp ? '开始配网' : '设备连接已断开' }}</text>
           </view>
         </view>
       </view>
@@ -95,11 +95,15 @@ import { getProvisionKey } from '../../api/provision'
 import { setDeviceWifi } from '../../api/device'
 import { encryptWifiPayload } from '../../utils/aes-ctr'
 import {
+  connectDevice,
+  registerBleStateListener,
+  rescanOnce,
   writeWifiConfigV2,
   onWifiStatus,
   startMockWifiStatusSequence,
   stopMockWifiStatusSequence,
 } from '../../utils/ble'
+import { pickReconnectTarget, RECONNECT_SCAN_MS } from '../../utils/ble-link'
 import { bleLog } from '../../utils/ble-log'
 
 const installStore = useInstallStore()
@@ -110,6 +114,11 @@ const password = ref('')
 const showPassword = ref(false)
 const provisioning = ref(false)
 
+// T218 A-2: 连接态监听——掉线给可执行提示并禁止提交，链路回来自动恢复
+const bleLinkUp = ref(true)
+const BLE_LINK_DOWN_TOAST = '设备连接已断开，请靠近设备后重试'
+const BLE_RECONNECTING_TOAST = '设备连接已断开，正在重新连接…'
+
 // T119: 最小重试间隔（ms）。防止连点导致高频 BLE 写入 / 重复申领。
 // 取 3s：BLE 写入+设备处理约 1~2s，3s 足以让上一次操作落定，
 // 同时用户改完密码后不会感到明显阻塞。
@@ -117,17 +126,44 @@ const MIN_PROVISION_INTERVAL = 3000
 
 // T212: 配网超时兜底 60s（与患者端 PROVISION_TIMEOUT_MS 同值）。
 // 正常链路实测 7–8s，但出现过一次约 50s 的长尾 ⇒ 留足余量。
-// 技师端语义＝自下发起 N 秒内未收到 9 即提示（收到失败码会提前 clearTimeout）。
+// T218 A-5: 语义对齐患者端 armTimeout——60s 内**无任何推送**才算超时，每收一帧重新计时；
+// 设备慢但正常（逐帧推进 0→1→2→3）不再被误判。
 const PROVISION_TIMEOUT_MS = 60000
 let lastProvisionAttempt = 0
+
+// T218 A-4: 一轮下发的写入次数上限（患者端 WRITE_MAX_ATTEMPTS 同款）：
+// 首写落在 API 层失败时，判死链路→原地重连→重订阅→领新 seq 重写一次，不再靠技师重新走流程
+const WRITE_MAX_ATTEMPTS = 2
 
 const wifiStatusCode = ref<number | null>(null)
 const statusHistory: number[] = []
 const errorCode = ref<number | null>(null)
 const autoReturnTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const timeoutTimer = ref<ReturnType<typeof setTimeout> | null>(null)
-let statusListener: ((code: number) => void) | null = null
 let successProcessed = false
+
+/** T218 A-5: 60s 无推送兜底表——每收一帧重新计时（armProvisionTimeout） */
+function armProvisionTimeout() {
+  if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
+  timeoutTimer.value = setTimeout(() => {
+    if (wifiStatusCode.value !== 9) {
+      handleTimeout()
+    }
+  }, PROVISION_TIMEOUT_MS)
+}
+
+// T218 A-2: 页面在栈顶期间监听连接态；卸载时解绑，把通知权还给下层页面
+const offBleState = registerBleStateListener((deviceId, connected) => {
+  bleLog.info(`wifi-config 连接态: connected=${connected} deviceId=${deviceId}`)
+  if (connected) {
+    installStore.setBleConnected(true)
+    bleLinkUp.value = true
+  } else {
+    installStore.setBleDisconnected()
+    bleLinkUp.value = false
+    uni.showToast({ title: BLE_LINK_DOWN_TOAST, icon: 'none' })
+  }
+})
 
 const errorMessage = computed(() => {
   const map: Record<number, string> = {
@@ -172,6 +208,12 @@ async function startWifiConfig() {
   }
   lastProvisionAttempt = now
 
+  // T218 A-2: 链路已断禁止提交（提示可执行：靠近设备；恢复后按钮自动可用）
+  if (!bleLinkUp.value) {
+    uni.showToast({ title: BLE_LINK_DOWN_TOAST, icon: 'none' })
+    return
+  }
+
   const ssid = manualSSID.value
   if (!ssid) {
     uni.showToast({ title: '请选择或输入 WiFi 网络', icon: 'none' })
@@ -188,42 +230,124 @@ async function startWifiConfig() {
   statusHistory.length = 0
 
   try {
-    // 1. 申领 provision-key（真实 API）
+    // T218 A-3: 下发前确保链路可用——断链不再要求技师退出重走
+    if (!(await ensureLinkForProvision())) {
+      uni.showToast({ title: BLE_LINK_DOWN_TOAST, icon: 'none' })
+      provisioning.value = false
+      return
+    }
+    let bleMac = installStore.bleDeviceId || installStore.deviceId
+
+    // 1. 申领 provision-key（真实 API，一轮一次；provision_key 原文不入日志）
     const { provision_key_hex } = await getProvisionKey(installStore.deviceId)
 
-    // 2. AES-CTR 加密 WiFi 凭据
-    // T216: seq 每轮自增，仅当将要超出固件候选窗上限（64）时回绕为 1 ⇒ 不越窗且不重用 (key, IV)
-    const seq = installStore.nextWifiSeq()
-    const encrypted = await encryptWifiPayload(ssid, password.value, provision_key_hex, seq)
-
-    // 3. 监听配网状态（T109: 传入 BLE MAC 以订阅 B512 Notify）
+    // 2. 监听配网状态（T109: 传入 BLE MAC 以订阅 B512 Notify）
     //    T216: 必须先订阅再写 B511 —— 设备在收到配置后立刻回 0/1，
     //    订阅晚于写入就会把首帧丢掉（患者端 wifi-setup 一直是这个顺序）。
-    const bleMac = installStore.bleDeviceId || installStore.deviceId
-    statusListener = (code: number) => {
+    const statusListener = (code: number) => {
       wifiStatusCode.value = code
       statusHistory.push(code)
       if (code === 9) handleSuccess(ssid)
       else if (code < 0) handleError(code)
+      // T218 A-5: 每收一帧重新计时——60s 无推送才算超时
+      else armProvisionTimeout()
     }
-    onWifiStatus(statusListener, bleMac)
 
-    // 4. BLE 写入加密配置（T109: 用 BLE MAC，非后端设备 ID）
-    await writeWifiConfigV2(bleMac, encrypted)
+    // 3. BLE 写入加密配置（T109: 用 BLE MAC，非后端设备 ID）
+    //    T218 A-4: 整段可重试——链路在写入途中自断时微信回的是 API 层 fail
+    //    （writeBLECharacteristicValue:fail:system error:Inner error.），不是设备失败码
+    let writeErr: Error | null = null
+    for (let attempt = 1; attempt <= WRITE_MAX_ATTEMPTS; attempt++) {
+      writeErr = null
+      try {
+        onWifiStatus(statusListener, bleMac)
+
+        // T216: seq 每轮自增，仅当将要超出固件候选窗上限（64）时回绕为 1。
+        // 🔴 重试同样领新 seq（重放同一 IV ＝ CTR keystream 复用）
+        const seq = installStore.nextWifiSeq()
+        const encrypted = await encryptWifiPayload(ssid, password.value, provision_key_hex, seq)
+        await writeWifiConfigV2(bleMac, encrypted)
+        bleLog.info(`B511 写入完成，等待设备推送 attempt=${attempt} seq=${seq} payloadBytes=${encrypted.length / 2}`)
+        break
+      } catch (e) {
+        writeErr = e as Error
+        // 与"设备回失败码"区分开：这条只在 API 层写失败时出现，设备侧的 -1..-4 走 handleError
+        bleLog.error(`B511 下发失败（API 层，非设备失败码）attempt=${attempt} msg=${writeErr.message} bleConnected=${installStore.bleConnected}`)
+        // 主动判死：写 fail 多半就是链路已断。仍标着已连 ⇒ 下一次 ensureLink 会跳过重连、原地再失败一次
+        installStore.setBleConnected(false)
+        bleLinkUp.value = false
+        if (attempt === WRITE_MAX_ATTEMPTS) break
+        if (!(await ensureLinkForProvision())) break
+        // 重扫可能命中另一广播名对应的 MAC，后续写入以 store 里最新的为准
+        bleMac = installStore.bleDeviceId || installStore.deviceId
+        bleLog.warn(`T218 重试已续上链路，领新 seq 重写 attempt=${attempt + 1} bleMac=${bleMac}`)
+      }
+    }
+    if (writeErr) throw writeErr
 
     // H5 mock：启动状态机序列
     // T089-MOCK: 真机由硬件 WiFi Status Notify 驱动
     startMockWifiStatusSequence()
 
-    // 协议 §2 补充：固件解密失败不 Notify，60s 超时兜底（T212：与患者端 PROVISION_TIMEOUT_MS 一致）
-    timeoutTimer.value = setTimeout(() => {
-      if (wifiStatusCode.value !== 9) {
-        handleTimeout()
-      }
-    }, PROVISION_TIMEOUT_MS)
+    // T218 A-5: 写入完成后起表——60s 无任何推送才超时（收到帧即续期，见 statusListener）
+    armProvisionTimeout()
   } catch (e) {
     uni.showToast({ title: e instanceof Error ? e.message : '配网失败', icon: 'none' })
     provisioning.value = false
+  }
+}
+
+/* ===== T218 A-3: 链路保障（患者端 wifi-setup ensureLinkForProvision 平移） ===== */
+
+/** 距本页最近一次建连成功的秒数（从未建连返回 -1）：用于量化固件空闲保活窗口 */
+let linkUpAtMs = 0
+function secsSinceLinkUp(): number {
+  return linkUpAtMs ? Math.round((Date.now() - linkUpAtMs) / 1000) : -1
+}
+
+async function tryLink(mac: string): Promise<boolean> {
+  try {
+    const ok = await connectDevice(mac)
+    installStore.setBleConnected(ok, mac)
+    if (ok) {
+      bleLinkUp.value = true
+      linkUpAtMs = Date.now()
+    }
+    bleLog.info(`原地重连结果 deviceId=${mac} ok=${ok}`)
+    return ok
+  } catch (e) {
+    bleLog.warn(`原地重连异常 deviceId=${mac}`, e instanceof Error ? e.message : String(e))
+    return false
+  }
+}
+
+/**
+ * 下发前确保链路可用：直连已存 MAC → 不成再一次性重扫（等设备重新广播）→ 连上即回 true。
+ * 技师端没有设备广播名可比对（bind 页只存 MAC），expectedName 传空走 BSYNC 兜底，
+ * 与患者端"重扫兜底第一台 BSYNC"同一行为。
+ */
+async function ensureLinkForProvision(): Promise<boolean> {
+  if (installStore.bleConnected && installStore.bleDeviceId) return true
+  if (!installStore.bleDeviceId) {
+    // 从未建立过链路（如调试直连本页）：无从重连，放行走原流程，写失败由失败路径兜底
+    bleLog.warn(`下发前无 BLE MAC 可重连（未绑定？） secsSinceLinkUp=${secsSinceLinkUp()}`)
+    return true
+  }
+  bleLog.warn(`下发前链路已断，尝试原地重连 bleDeviceId=${installStore.bleDeviceId} secsSinceLinkUp=${secsSinceLinkUp()}`)
+  uni.showLoading({ title: BLE_RECONNECTING_TOAST, mask: true })
+  try {
+    if (await tryLink(installStore.bleDeviceId)) return true
+
+    const found = await rescanOnce(RECONNECT_SCAN_MS)
+    const target = pickReconnectTarget(found, '')
+    if (!target) {
+      bleLog.warn(`原地重连失败：重扫窗口内无可用广播 found=${found.length} windowMs=${RECONNECT_SCAN_MS}`)
+      return false
+    }
+    bleLog.info(`重扫命中 name=${target.name} deviceId=${target.deviceId}`)
+    return await tryLink(target.deviceId)
+  } finally {
+    uni.hideLoading()
   }
 }
 
@@ -259,7 +383,7 @@ function handleError(code: number) {
 }
 
 function handleTimeout() {
-  bleLog.warn(`${PROVISION_TIMEOUT_MS / 1000}s 配网超时，状态历史`, [...statusHistory])
+  bleLog.warn(`${PROVISION_TIMEOUT_MS / 1000}s 无推送超时，状态历史`, [...statusHistory])
   // P2-5: 迟到状态 9 回转——继续监听，不立即标失败
   // 这里给提示，但保留 statusListener（未移除），迟到状态 9 仍可触发 handleSuccess
   uni.showToast({ title: '设备无响应，请靠近设备后重试', icon: 'none' })
@@ -282,6 +406,7 @@ onUnmounted(() => {
   if (autoReturnTimer.value) clearTimeout(autoReturnTimer.value)
   if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
   stopMockWifiStatusSequence()
+  offBleState()
 })
 </script>
 

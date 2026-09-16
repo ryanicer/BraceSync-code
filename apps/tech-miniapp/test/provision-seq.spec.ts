@@ -95,8 +95,8 @@ describe('T216 — 落点接线（技师端下发前不复位、订阅先于写�
     expect(atSubscribe).toBeLessThan(atWrite)
   })
 
-  it('T212：超时兜底用 60s 常量，且不再是裸 20000', () => {
-    expect(body).toContain('}, PROVISION_TIMEOUT_MS)')
+  it('T212：超时兜底用 60s 常量，且不再是裸 20000（T218 A-5 起表移入 armProvisionTimeout）', () => {
+    expect(src).toContain('}, PROVISION_TIMEOUT_MS)')
     expect(src).toMatch(/const PROVISION_TIMEOUT_MS = 60000/)
     expect(src).not.toMatch(/\}, 20000\)/)
   })

@@ -61,9 +61,11 @@ const CHAR_DEVICE_INFO = '0000b514-0000-1000-8000-00805f9b34fb'
 let discoveryTimer: ReturnType<typeof setTimeout> | null = null
 let adapterStateRegistered = false
 
-// T109: BLE 连接状态变化监听（全局只注册一次）
+// T109: BLE 连接状态变化监听（适配层全局只注册一次）
+// T218: 回调改多播——页面栈上 bind / install / wifi-config 同时关心连接态，
+//       单回调"后注册覆盖前者"会让从配网页返回 install 后断连无人感知。
 let bleStateRegistered = false
-let bleStateCallback: ((deviceId: string, connected: boolean) => void) | null = null
+const bleStateCallbacks = new Set<(deviceId: string, connected: boolean) => void>()
 
 // T216: BLE 链路代次。notifyBLECharacteristicValueChange 的订阅只活在「当前这条链路」上，
 // 断开即失效 ⇒ 用它区分「同一链路重复调用（跳过）」与「重连后必须重订阅」。
@@ -269,7 +271,7 @@ export async function initBluetooth(): Promise<boolean> {
   })
 }
 
-export async function discoverDevices(): Promise<{ deviceId: string; name: string; RSSI: number }[]> {
+export async function discoverDevices(duration = 6000): Promise<{ deviceId: string; name: string; RSSI: number }[]> {
   if (isH5()) {
     // H5 不造假设备，返回空数组由上层展示空态
     return []
@@ -294,7 +296,7 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
     }
 
     // T101: 扫描时长 3s→6s，给 scan response（含设备名）留足时间
-    const SCAN_DURATION = 6000
+    const SCAN_DURATION = duration
 
     bleLog.info('调用 startBluetoothDevicesDiscovery')
     uni.startBluetoothDevicesDiscovery({
@@ -361,6 +363,22 @@ export async function discoverDevices(): Promise<{ deviceId: string; name: strin
       },
     })
   })
+}
+
+/**
+ * T218 A-3: 一次性重扫（患者端同款语义）——原地重连失败后，不回绑定页、不清已填内容，
+ * 只在窗口内等设备重新广播。实测设备断开后 ≥6s 不广播，故窗口比普通扫描长。
+ */
+export async function rescanOnce(duration = 15000): Promise<{ deviceId: string; name: string; RSSI: number }[]> {
+  // 清掉可能残留的上一轮扫描收尾定时器，避免它迟到时把本轮扫描提前 stop
+  if (discoveryTimer) {
+    clearTimeout(discoveryTimer)
+    discoveryTimer = null
+  }
+  bleLog.info(`rescanOnce 开始 duration=${duration}`)
+  const found = await discoverDevices(duration)
+  bleLog.info(`rescanOnce 结束 found=${found.length}`)
+  return found
 }
 
 export async function createBLEConnection(deviceId: string): Promise<boolean> {
@@ -512,23 +530,32 @@ export async function connectDevice(deviceId: string): Promise<boolean> {
 }
 
 /**
- * T109: 注册 BLE 连接状态变化监听（全局只注册一次）
+ * T109: 注册 BLE 连接状态变化监听（适配层全局只注册一次，回调多播）
  * 回调参数：(deviceId, connected) —— connected=false 表示设备意外断连
+ * T218: 返回解绑函数，页面卸载时调用以免悬挂回调。
  */
 export function registerBleStateListener(
   cb: (deviceId: string, connected: boolean) => void
-): void {
-  bleStateCallback = cb
-  if (bleStateRegistered || isH5()) return
+): () => void {
+  bleStateCallbacks.add(cb)
+  const off = () => {
+    bleStateCallbacks.delete(cb)
+  }
+  if (bleStateRegistered || isH5()) return off
   bleStateRegistered = true
   uni.onBLEConnectionStateChange((res) => {
     bleLog.info(
       `onBLEConnectionStateChange: deviceId=${res.deviceId}, connected=${res.connected}`
     )
-    // T216: 链路一断，B512 订阅随之失效 ⇒ 复位标记，重连后必然重订阅
-    if (!res.connected) invalidateB512Subscription(`链路断开 deviceId=${res.deviceId}`)
-    bleStateCallback?.(res.deviceId, res.connected)
+    if (!res.connected) {
+      // T216: 链路一断，B512 订阅随之失效 ⇒ 复位标记，重连后必然重订阅
+      invalidateB512Subscription(`链路断开 deviceId=${res.deviceId}`)
+      // T218 A-1: B513 实时流订阅同链路同命运，一并作废
+      invalidateRealtimeSubscription(`链路断开 deviceId=${res.deviceId}`)
+    }
+    for (const fn of bleStateCallbacks) fn(res.deviceId, res.connected)
   })
+  return off
 }
 
 export async function closeBLEConnection(deviceId: string): Promise<void> {
@@ -536,6 +563,7 @@ export async function closeBLEConnection(deviceId: string): Promise<void> {
     return
   }
   invalidateB512Subscription(`主动关闭连接 deviceId=${deviceId}`)
+  invalidateRealtimeSubscription(`主动关闭连接 deviceId=${deviceId}`)
   return new Promise((resolve) => {
     uni.closeBLEConnection({
       deviceId,
@@ -574,10 +602,27 @@ export async function readFirmwareVersion(deviceId: string): Promise<string> {
 
 let realtimeTimer: ReturnType<typeof setInterval> | null = null
 let realtimeCallback: ((frame: number[]) => void) | null = null
-let realtimeNotifyRegistered = false
+// T218 A-1: 订阅按「deviceId + 链路代次」判定（T216① 同款），标记只在 success 回执授予。
+// 旧的一次性布尔没有复位入口 ⇒ 断一次链、重连后不再订阅，校准/测压页压力数恒 0。
+let realtimeListenerRegistered = false
+let realtimeSubscribedKey = ''
+/** 已发出、正等回执的订阅；只在 success/fail 回执里清空——realtimeSubscribedKey 必须由 success 授予 */
+let realtimeInFlightKey = ''
+let realtimeSubscribeRounds = 0
 let realtimeDeviceId = ''
 // T109: B513 分包拼接缓冲区（默认 MTU 下 40 字节帧被拆成 2×20 字节 Notify）
 let realtimeBuffer: number[] = []
+
+/**
+ * T218 A-1: 作废「B513 当前订阅仍然生效」的标记。
+ * 链路一走 CCCD 订阅即失效；不复位 ⇒ 重连后 startRealtimePressure 跳过订阅、零收帧。
+ */
+function invalidateRealtimeSubscription(reason: string): void {
+  if (!realtimeSubscribedKey && !realtimeInFlightKey) return
+  realtimeSubscribedKey = ''
+  realtimeInFlightKey = ''
+  bleLog.warn(`B513 订阅标记复位（${reason}）`)
+}
 
 /**
  * 启动 BLE 实时压力推送
@@ -595,17 +640,9 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
   }
   realtimeDeviceId = deviceId
   bleLog.info(`startRealtimePressure deviceId=${deviceId}，写入 0x01 启动 B513 Notify`)
-  // 1. 订阅 B513 Notify（仅注册一次）
-  if (!realtimeNotifyRegistered) {
-    realtimeNotifyRegistered = true
-    uni.notifyBLECharacteristicValueChange({
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_REALTIME,
-      state: true,
-      success: () => bleLog.info('B513 Notify 订阅成功'),
-      fail: (err) => bleLog.error('B513 Notify 订阅失败', err?.errMsg),
-    })
+  // 1. 全局帧监听只注册一次；订阅动作按「deviceId + 链路代次」判定，重连/换设备必重发（T218 A-1）
+  if (!realtimeListenerRegistered) {
+    realtimeListenerRegistered = true
     uni.onBLECharacteristicValueChange((res) => {
       if (res.characteristicId?.toLowerCase() !== CHAR_REALTIME.toLowerCase()) return
       try {
@@ -638,6 +675,34 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
       } catch (e) {
         bleLog.error('B513 数据解析失败', e instanceof Error ? e.message : String(e))
       }
+    })
+  }
+
+  const key = `${deviceId}#${linkGeneration}`
+  if (realtimeSubscribedKey === key || realtimeInFlightKey === key) {
+    bleLog.info(`B513 当前链路已订阅，跳过重复 notify deviceId=${deviceId} linkGeneration=${linkGeneration}`)
+  } else {
+    realtimeInFlightKey = key
+    realtimeSubscribeRounds += 1
+    const round = realtimeSubscribeRounds
+    bleLog.info(`B513 发起订阅 第${round}次 deviceId=${deviceId} linkGeneration=${linkGeneration}`)
+    uni.notifyBLECharacteristicValueChange({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_REALTIME,
+      state: true,
+      success: () => {
+        // 🔴 标记只在 success 回执里授予（发起前置真 ⇒ 订阅 fail 后本链路永不重试）
+        if (realtimeInFlightKey !== key) return
+        realtimeInFlightKey = ''
+        realtimeSubscribedKey = key
+        bleLog.info(`B513 Notify 订阅成功 第${round}次 deviceId=${deviceId}`)
+      },
+      fail: (err) => {
+        // 只清 in-flight，不置 subscribedKey ⇒ 下一轮（含同一链路）可重试
+        if (realtimeInFlightKey === key) realtimeInFlightKey = ''
+        bleLog.error(`B513 Notify 订阅失败 第${round}次 deviceId=${deviceId}`, err?.errMsg)
+      },
     })
   }
   // 2. 写入 0x01 启动推送
