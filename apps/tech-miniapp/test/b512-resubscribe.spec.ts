@@ -59,11 +59,26 @@ describe('T216① — 订阅动作与全局监听解耦', () => {
     expect(body.slice(atNotify, atNotify + 200)).toContain('deviceId,')
   })
 
-  it('订阅失败要把标记放回空值，否则下一轮仍被短路', () => {
+  it('③-4 订阅标记只在 success 回执里授予（发起前置真＝fail 后本会话永久不再重试）', () => {
     const body = fnBody('subscribeB512Notify')
+    const atNotify = body.indexOf('uni.notifyBLECharacteristicValueChange(')
     const atFail = body.indexOf('fail: (err)')
-    expect(atFail).toBeGreaterThan(-1)
-    expect(body.slice(atFail)).toContain("b512SubscribedKey = ''")
+    const atSuccess = body.indexOf('success: ()')
+    expect(atNotify).toBeGreaterThan(-1)
+    expect(atSuccess).toBeGreaterThan(atNotify)
+    expect(atFail).toBeGreaterThan(atNotify)
+
+    // 授予动作必须落在 success 分支里
+    expect(body.slice(atSuccess, atFail)).toContain('b512SubscribedKey = key')
+    // 发起之前不得预先占坑；fail 分支也不得授予
+    expect(body.slice(0, atNotify), '发起前就写 b512SubscribedKey = key ⇒ 订阅 fail 后永不重试').not.toContain('b512SubscribedKey = key')
+    expect(body.slice(atFail)).not.toContain('b512SubscribedKey = key')
+  })
+
+  it('回执必须比对本次 key（旧链路迟到的 success/fail 不能污染新链路标记）', () => {
+    const body = fnBody('subscribeB512Notify')
+    expect(body).toMatch(/if \(b512InFlightKey !== key\) return/)
+    expect(body).toMatch(/if \(b512InFlightKey === key\) b512InFlightKey = ''/)
   })
 })
 
@@ -79,8 +94,10 @@ describe('T216① — 标记复位入口（链路生命周期）', () => {
     expect(listener).toMatch(/!res\.connected\)\s*invalidateB512Subscription/)
   })
 
-  it('复位函数在标记已空时不重复打日志（避免 connectDevice 前置 close 刷屏）', () => {
-    expect(fnBody('invalidateB512Subscription')).toMatch(/if \(!b512SubscribedKey\) return/)
+  it('复位函数在两个标记都空时不重复打日志（避免 connectDevice 前置 close 刷屏），且 in-flight 一并作废', () => {
+    const body = fnBody('invalidateB512Subscription')
+    expect(body).toMatch(/if \(!b512SubscribedKey && !b512InFlightKey\) return/)
+    expect(body).toContain("b512InFlightKey = ''")
   })
 })
 
