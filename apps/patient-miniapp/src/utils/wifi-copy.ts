@@ -148,7 +148,7 @@ export const SUCCESS = {
 } as const
 
 /** 失败态落点：与 index.vue 视图名一一对应 */
-export type FailureKey = 'pwd' | 'nonet' | 'addr' | 'srv' | 'timeout'
+export type FailureKey = 'pwd' | 'nonet' | 'addr' | 'srv' | 'timeout' | 'linklost'
 
 export interface FailureCopy {
   /** 图标色：设计稿 red = 密码/服务器；amber = 无网络/地址/超时 */
@@ -234,6 +234,22 @@ export const FAILURES: Record<FailureKey, FailureCopy> = {
     primaryTo: 'entry',
     contactHash: 'timeout',
   },
+  // T218-B(A20)：配网途中断链且重连不回时的失败态——与"设备响应超时"区分：
+  // 设备侧配网不依赖 BLE、可能仍在继续甚至已配好，文案不得让用户误以为设备一定没配好
+  linklost: {
+    tone: 'amber',
+    title: '连接中断，未能确认结果',
+    desc: '配网过程中手机与设备的连接中断了。设备的配网可能在后台继续，它有可能已经配置成功。',
+    actions: [
+      '等待一分钟后，到设备页看看设备是否已经联网',
+      '若设备未联网，请靠近设备后重新配网（重复配网不会损坏设备）',
+      '多次中断时，请确认手机与设备之间没有墙体或电器遮挡',
+    ],
+    primaryLabel: '重新配网',
+    primaryTo: 'entry',
+    secondaryLabel: '重试配网',
+    contactHash: 'linklost',
+  },
 }
 
 /** 失败页共用：导航标题与「建议操作」区块标题 */
@@ -286,6 +302,7 @@ export const CONTACT = {
     addr: '网络地址获取失败',
     srv: '服务器不可达',
     timeout: '设备响应超时',
+    linklost: '连接中断，结果未确认',
     nodevice: '未搜索到设备',
   } as Record<ContactIssue, string>,
 } as const

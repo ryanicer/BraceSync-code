@@ -184,6 +184,9 @@ const enteredPwd = ref('')
 /** 最近一次建连成功时刻（ms）：断开/重连时上报"距建连秒数"，用来量化固件空闲保活窗口 */
 let connectedAtMs = 0
 let successHandled = false
+// T218-B(A20)：本轮配网期间发生过链路断开。断链后"没等到推送"的结果是不确定的，
+// 超时文案要落 linklost（"可能已配好"），不能落 timeout（暗示设备没响应/没配好）
+let linkLostDuringProvision = false
 let timeoutTimer: ReturnType<typeof setTimeout> | null = null
 let lastAttemptAt = 0
 // B512 帧时序：lastCodeAt 初值＝本次 B511 写入时刻，之后每收一帧前移 ⇒ gapMs 即"上一事件距今"
@@ -233,13 +236,13 @@ onLoad(async (options) => {
     if (connected) bleLinkUp.value = true
     else bleLinkUp.value = false
     if (connected || view.value !== 'progress' || successHandled) return
-    // 配网途中断连：不再有状态推送，按超时分支给可执行处置
+    // T218-B(A20)：配网途中断连**不得硬判失败**——设备侧配网不依赖 BLE，可能仍在继续甚至已配好。
+    // 先原地重连 + 重订阅继续等（recoverAfterLinkLoss）；确实判失败时文案区分
+    // "没等到设备响应"（timeout）与"设备可能已配置成功"（linklost）。
+    linkLostDuringProvision = true
     stopProvisionTimer()
-    stopMockWifiStatusSequence()
-    failureType.value = 'timeout'
-    deviceStore.setWifiStatus('failed')
-    view.value = 'failure'
-    uni.showToast({ title: BLE_DISCONNECTED_TOAST, icon: 'none' })
+    uni.showToast({ title: CONNECT.reconnectingToast, icon: 'none' })
+    void recoverAfterLinkLoss()
   })
   deviceReady = await ensureCloudDevice()
 })
@@ -476,6 +479,18 @@ async function tryLink(deviceId: string): Promise<boolean> {
  * 改为原地重连：先拿已存 MAC 直连，直连不成再一次性重扫等设备回来再连。
  */
 async function ensureLinkForProvision(): Promise<boolean> {
+  // T218-B(A20)：断开回调与写失败重试可能并发要求重连；同一窗口内复用同一次重连，
+  // 避免两个 connectDevice 打同一台设备互踩（Android 会触发断开-重连循环）
+  if (linkRecovery) return linkRecovery
+  linkRecovery = doEnsureLinkForProvision().finally(() => {
+    linkRecovery = null
+  })
+  return linkRecovery
+}
+
+let linkRecovery: Promise<boolean> | null = null
+
+async function doEnsureLinkForProvision(): Promise<boolean> {
   if (deviceStore.bleConnected && bleDeviceId.value) return true
   if (!bleDeviceId.value) {
     logger.warn('[T192] 无 BLE 标识可重连，只能回 02 重新发现', { secsSinceLinkUp: secsSinceLinkUp() })
@@ -509,6 +524,35 @@ async function ensureLinkForProvision(): Promise<boolean> {
   }
 }
 
+/**
+ * T218-B(A20)：配网途中断链的恢复路径。
+ * 重连续上 → 重订阅 B512、重起 60s 无推送表，继续等设备推进（设备侧流程不依赖 BLE，
+ * 断链期间它可能已完成配网——若它重推状态帧，handleStatus 会正常落到成功页）；
+ * 重连失败 → 判失败但落 linklost：文案明确"设备可能已配置成功"，不误导用户重配。
+ * 返回时页面已被用户取消 / 已成功 / 已离开配网中 ⇒ 不再改任何状态。
+ */
+async function recoverAfterLinkLoss() {
+  const ok = await ensureLinkForProvision()
+  if (view.value !== 'progress' || successHandled) {
+    logger.info('[T218] 断链恢复返回时页面已离开配网中', { ok, view: view.value, successHandled })
+    return
+  }
+  if (!ok) {
+    logger.warn('[T218] 断链后原地重连失败，判失败（linklost）', { secsSinceLinkUp: secsSinceLinkUp() })
+    stopProvisionTimer()
+    stopMockWifiStatusSequence()
+    failureType.value = 'linklost'
+    deviceStore.setWifiStatus('failed')
+    view.value = 'failure'
+    return
+  }
+  logger.info('[T218] 断链已续上，重订阅继续等设备推送', { secsSinceLinkUp: secsSinceLinkUp() })
+  deviceStore.setWifiStatus('configuring')
+  onWifiStatus(handleStatus, bleDeviceId.value)
+  lastCodeAt = Date.now()
+  armTimeout()
+}
+
 /* ===== 04-progress ===== */
 
 async function runProvision() {
@@ -532,6 +576,7 @@ async function runProvision() {
   view.value = 'progress'
   provisionCode.value = null
   successHandled = false
+  linkLostDuringProvision = false
   lastCodeAt = 0
   prevCode = null
   deviceStore.setWifiStatus('configuring')
@@ -584,8 +629,8 @@ async function runProvision() {
         bleLinkUp.value = false
         if (attempt === WRITE_MAX_ATTEMPTS) break
         if (!(await ensureLinkForProvision())) break
-        // 断开回调已把页面打到 06（它不知道我们还要重试）。重试续上链路后必须扳回进度态，
-        // 否则第 2 次写成功、设备一路推到 9，用户却还停在"失败页"看处置建议。
+        // T218-B 后断开回调不再判失败；但恢复路径（recoverAfterLinkLoss）可能与我们并发，
+        // 此处显式扳回进度态并重置超时表，保证 UI 一定停在"配网中"等待第二次写入结果。
         logger.warn('[T216] 重试已续上链路，回到配网进度', { attempt: attempt + 1 })
         deviceStore.setWifiStatus('configuring')
         view.value = 'progress'
@@ -648,9 +693,13 @@ function armTimeout() {
   stopProvisionTimer()
   timeoutTimer = setTimeout(() => {
     if (successHandled) return
-    logger.warn(`[T192] ${PROVISION_TIMEOUT_MS / 1000}s 无推送超时`, { lastCode: provisionCode.value })
+    logger.warn(`[T192] ${PROVISION_TIMEOUT_MS / 1000}s 无推送超时`, {
+      lastCode: provisionCode.value,
+      // 断链后"没等到推送"不代表设备没配好（它可能已离线完成），文案要区分
+      linkLostDuringProvision,
+    })
     stopMockWifiStatusSequence()
-    failureType.value = 'timeout'
+    failureType.value = linkLostDuringProvision ? 'linklost' : 'timeout'
     deviceStore.setWifiStatus('failed')
     view.value = 'failure'
   }, PROVISION_TIMEOUT_MS)

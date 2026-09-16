@@ -39,11 +39,11 @@ describe('T192 — 患者端零技术术语（PRD §7A.9 患技差异表）', ()
   })
 })
 
-describe('T192 — 五类失败态各自独立（设计稿 06a–06e）', () => {
-  const KEYS: FailureKey[] = ['pwd', 'nonet', 'addr', 'srv', 'timeout']
+describe('T192/T218 — 失败态各自独立（设计稿 06a–06e + T218-B linklost）', () => {
+  const KEYS: FailureKey[] = ['pwd', 'nonet', 'addr', 'srv', 'timeout', 'linklost']
 
-  it('五个失败键齐全且各自有标题/说明/三条建议', () => {
-    expect(Object.keys(FAILURES)).toHaveLength(5)
+  it('失败键齐全且各自有标题/说明/三条建议', () => {
+    expect(Object.keys(FAILURES)).toHaveLength(6)
     for (const k of KEYS) {
       expect(FAILURES[k].title).not.toBe('')
       expect(FAILURES[k].desc).not.toBe('')
@@ -53,16 +53,22 @@ describe('T192 — 五类失败态各自独立（设计稿 06a–06e）', () => 
     }
   })
 
-  it('五页标题互不重复', () => {
-    expect(new Set(KEYS.map((k) => FAILURES[k].title)).size).toBe(5)
+  it('各失败页标题互不重复', () => {
+    expect(new Set(KEYS.map((k) => FAILURES[k].title)).size).toBe(KEYS.length)
   })
 
-  it('06a/06b 有次按钮，06c/06d/06e 只有主按钮 + 联系技师（设计稿按钮组）', () => {
+  it('06a/06b 有次按钮，06c/06d/06e 只有主按钮 + 联系技师（设计稿按钮组）；linklost 有次按钮（T218-B）', () => {
     expect(FAILURES.pwd.secondaryLabel).toBeTruthy()
     expect(FAILURES.nonet.secondaryLabel).toBeTruthy()
     expect(FAILURES.addr.secondaryLabel).toBeFalsy()
     expect(FAILURES.srv.secondaryLabel).toBeFalsy()
     expect(FAILURES.timeout.secondaryLabel).toBeFalsy()
+    expect(FAILURES.linklost.secondaryLabel).toBeTruthy()
+  })
+
+  it('T218-B(A20)：linklost 文案必须表达"设备可能已配置成功"，不得暗示设备一定没配好', () => {
+    expect(FAILURES.linklost.desc).toContain('有可能已经配置成功')
+    expect(FAILURES.linklost.title).not.toBe(FAILURES.timeout.title)
   })
 
   it('状态码 -1~-4 映射到四个不同失败页', () => {
@@ -77,8 +83,8 @@ describe('T192 — 状态推进口径（PRD §7A.9 状态 0/1/2/3/9）', () => {
     expect([...pcts].sort((a, b) => a - b)).toEqual(pcts)
   })
 
-  it('联系技师页覆盖五类失败 + 扫描无设备', () => {
-    expect(Object.keys(CONTACT.typeMap)).toEqual(['pwd', 'nonet', 'addr', 'srv', 'timeout', 'nodevice'])
+  it('联系技师页覆盖六类失败 + 扫描无设备', () => {
+    expect(Object.keys(CONTACT.typeMap)).toEqual(['pwd', 'nonet', 'addr', 'srv', 'timeout', 'linklost', 'nodevice'])
   })
 
   it('前置检查三项：蓝牙 / 位置 / 设备上电', () => {
