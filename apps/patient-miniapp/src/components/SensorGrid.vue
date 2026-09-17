@@ -14,13 +14,15 @@
         @click="onSelect(r, c)"
       >
         <text class="cell-id">{{ getCell(r, c)?.id }}</text>
-        <text class="cell-value">{{ getCell(r, c)?.value }}</text>
+        <text class="cell-value">{{ formatPressureValue(getCell(r, c)?.value) }}</text>
       </view>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
+import { formatPressureValue } from '../utils/format'
+
 export interface GridCell {
   id: string
   value: number
