@@ -14,6 +14,7 @@
   "dependencies": {
     "@bracesync/constants": "*",
     "@bracesync/shared-types": "*",
+    "@bracesync/shared-utils": "*",
     "@element-plus/icons-vue": "^2.3.2",
     "chart.js": "^4.4.0",
     "element-plus": "^2.9.0",

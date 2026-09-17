@@ -4,6 +4,7 @@ import {
   formatWearDuration,
   pressureChangeRate,
   isPressureHigh,
+  formatAlertValue,
 } from '../src/index'
 
 describe('formatPressure', () => {
@@ -77,5 +78,42 @@ describe('isPressureHigh', () => {
 
   it('returns false when pressure below threshold', () => {
     expect(isPressureHigh(44.9, 45)).toBe(false)
+  })
+})
+
+describe('formatAlertValue (T235)', () => {
+  it('pressure_high → N', () => {
+    expect(formatAlertValue('pressure_high', 68.5)).toBe('68.50N')
+  })
+
+  it('pressure_high threshold with prefix', () => {
+    expect(formatAlertValue('pressure_high', 60, { prefix: '>' })).toBe('>60.00N')
+  })
+
+  it('pressure_fluctuation → %', () => {
+    expect(formatAlertValue('pressure_fluctuation', 12.5)).toBe('12.5%')
+    expect(formatAlertValue('pressure_fluctuation', 15, { prefix: '>' })).toBe('>15.0%')
+  })
+
+  it('sensor_drift negative value clamps to 0', () => {
+    expect(formatAlertValue('sensor_drift', -3.2)).toBe('0.00N')
+  })
+
+  it('sensor_drift positive value shows N', () => {
+    expect(formatAlertValue('sensor_drift', 10, { prefix: '>' })).toBe('>10.00N')
+  })
+
+  it('wear_interrupt → min', () => {
+    expect(formatAlertValue('wear_interrupt', 45.6)).toBe('46min')
+    expect(formatAlertValue('wear_interrupt', -5)).toBe('0min')
+  })
+
+  it('unknown type → bare value, no unit', () => {
+    expect(formatAlertValue('foobar', 5)).toBe('5')
+    expect(formatAlertValue('foobar', 5, { prefix: '>' })).toBe('>5')
+  })
+
+  it('no prefix by default', () => {
+    expect(formatAlertValue('pressure_high', 40)).toBe('40.00N')
   })
 })

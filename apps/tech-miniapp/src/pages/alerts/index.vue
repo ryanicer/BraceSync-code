@@ -48,7 +48,7 @@
               </view>
               <view v-if="alert.actualValue" class="meta-item">
                 <text class="meta-label">实际值</text>
-                <text class="meta-value meta-warn">{{ alert.actualValue }}N</text>
+                <text class="meta-value meta-warn">{{ formatAlertValue(alert.type, alert.actualValue) }}</text>
               </view>
             </view>
           </view>
@@ -80,6 +80,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
+import { formatAlertValue } from '@bracesync/shared-utils'
 import { request } from '../../utils/request'
 
 // 数据
@@ -147,8 +148,8 @@ function viewDetail(alert: Alert) {
     `患者: ${alert.patientId}`,
     `设备: ${alert.deviceId}`,
     alert.sensorPoint ? `传感器: ${alert.sensorPoint}` : '',
-    alert.thresholdValue ? `阈值: ${alert.thresholdValue}N` : '',
-    alert.actualValue ? `实际值: ${alert.actualValue}N` : '',
+    alert.thresholdValue ? `阈值: ${formatAlertValue(alert.type, alert.thresholdValue)}` : '',
+    alert.actualValue ? `实际值: ${formatAlertValue(alert.type, alert.actualValue)}` : '',
     `详情: ${alert.detail}`,
     alert.processNote ? `处理备注: ${alert.processNote}` : '',
     `状态: ${alert.processStatus === 'pending' ? '待处理' : '已处理'}`,
