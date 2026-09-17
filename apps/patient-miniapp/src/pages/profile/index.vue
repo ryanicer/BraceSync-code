@@ -279,16 +279,6 @@ function closeSettingsSheet() {
   settingsSheetVisible.value = false
 }
 
-const settingsSheetVisible = ref(false)
-
-function openSettingsSheet() {
-  settingsSheetVisible.value = true
-}
-
-function closeSettingsSheet() {
-  settingsSheetVisible.value = false
-}
-
 async function loadProfile() {
   if (!auth.isLoggedIn) {
     profile.value = null
