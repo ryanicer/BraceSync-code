@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 
 	"github.com/bracesync/bracesync/services/file-service/internal/model"
@@ -46,6 +47,7 @@ func (h *FileHandler) Router() *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/metrics", gin.WrapH(promhttp.Handler())) // T234 Prometheus 采集端点
 
 	api := r.Group("/api/v1/files")
 	{

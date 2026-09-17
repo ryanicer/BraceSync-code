@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -21,6 +22,8 @@ func setupRouter() *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	// T234 Prometheus 采集端点 —— 注册在引擎顶层（非 JWT 组），避免被鉴权中间件拦截或反向代理误吞
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	agt := loadGatewayAuth()           // JWT_SECRET + 设备密钥提供器（环境变量注入，不入库）
 	registerAPIProxies(r, agt)         // T032：/api/v1 全量路由 + 统一 JWT 鉴权 + 端点级 RBAC（T039-H2）+ T091 provision-key 限流
