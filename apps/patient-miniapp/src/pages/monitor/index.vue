@@ -71,6 +71,7 @@ import type { PressureRecord, SensorPoint } from '@bracesync/shared-types'
 import { TREND_CURVE_MAX_N } from '@bracesync/constants'
 import { request } from '../../utils/request'
 import { logger } from '../../utils/logger'
+import { formatPressureValue } from '../../utils/format'
 import { useAuthStore } from '../../stores/auth'
 
 // 后端 data-service RealtimeSnapshot（返回结构）简化接口描述
@@ -108,7 +109,7 @@ const activePoint = computed(() =>
   activeIndex.value >= 0 ? sensorPoints.value[activeIndex.value] : undefined
 )
 const heroValue = computed(() =>
-  activePoint.value ? activePoint.value.pressureValue.toFixed(2) : '--'
+  activePoint.value ? formatPressureValue(activePoint.value.pressureValue) : '--'
 )
 const segLabel = computed(() => {
   const map = { day: '今日', week: '本周', month: '本月' }
@@ -271,6 +272,16 @@ async function loadData() {
     }
     activeIndex.value = maxIdx >= 0 ? maxIdx : -1
     const base = maxIdx >= 0 ? points[maxIdx].pressureValue : snap?.maxPressure ?? 0
+    // T206：realtime snapshot 关键日志，便于 SSH frontend 远程反查数值口径
+    logger.info('[T206] realtime snapshot received', {
+      recordCount: recs.length,
+      calibratedFlag: calibratedFlag.value,
+      battery: battery.value,
+      pointCount: points.length,
+      maxPointId: maxIdx >= 0 ? points[maxIdx].pointId : null,
+      maxPressure: base,
+      sampleValues: points.slice(0, 5).map(p => ({ id: p.pointId, v: p.pressureValue })),
+    })
     void loadTrend(base)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : '加载实时数据失败'
