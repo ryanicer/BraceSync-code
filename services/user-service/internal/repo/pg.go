@@ -194,6 +194,58 @@ func (s *PGStore) UpdatePatientPhone(ctx context.Context, patientID string, phon
 	return nil
 }
 
+// UpdatePatientProfile T226 患者自助改本人档案：白名单字段动态 SET（nil=不改），
+// updated_at 应用层刷新；不命中返回 ErrPatientNotFound。phone 不在白名单（微信授权写入）。
+func (s *PGStore) UpdatePatientProfile(ctx context.Context, patientID string, in PatientProfileUpdate) error {
+	sets := []string{"updated_at = NOW()"}
+	args := []any{}
+	add := func(col string, v any) {
+		args = append(args, v)
+		sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
+	}
+	if in.Name != nil {
+		add("name", *in.Name)
+	}
+	if in.Gender != nil {
+		add("gender", *in.Gender)
+	}
+	if in.Age != nil {
+		add("age", *in.Age)
+	}
+	if in.CobbAngle != nil {
+		add("cobb_angle", *in.CobbAngle)
+	}
+	if in.HeightCm != nil {
+		add("height_cm", *in.HeightCm)
+	}
+	if in.WeightKg != nil {
+		add("weight_kg", *in.WeightKg)
+	}
+	if in.EmergencyContactName != nil {
+		add("emergency_contact_name", *in.EmergencyContactName)
+	}
+	if in.EmergencyContactPhone != nil {
+		add("emergency_contact_phone", *in.EmergencyContactPhone)
+	}
+	if in.EmergencyContactRelation != nil {
+		add("emergency_contact_relation", *in.EmergencyContactRelation)
+	}
+	if len(sets) == 1 { // 仅 updated_at：无白名单字段可写（handler 已先拒 400，此处兜底防空 SET）
+		return nil
+	}
+	args = append(args, patientID)
+	tag, err := s.pool.Exec(ctx,
+		fmt.Sprintf(`UPDATE patients SET %s WHERE patient_id = $%d`, strings.Join(sets, ", "), len(args)),
+		args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPatientNotFound
+	}
+	return nil
+}
+
 // PatientPhoneHashTaken T085：phone_hash 是否已被其他患者占用（排除自身）。
 func (s *PGStore) PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error) {
 	row := s.pool.QueryRow(ctx,
@@ -244,7 +296,8 @@ func (s *PGStore) DoctorIDByAdmin(ctx context.Context, adminID string) (string, 
 const patientSelect = `
 SELECT p.patient_id, p.name, p.gender, p.age, p.diagnosis, p.cobb_angle,
        dev.device_id, p.team_id, p.primary_doctor_id, p.status, p.created_at, p.updated_at,
-       t.name AS team_name, d.name AS doctor_name
+       t.name AS team_name, d.name AS doctor_name,
+       p.height_cm, p.weight_kg, p.emergency_contact_name, p.emergency_contact_phone, p.emergency_contact_relation
 FROM patients p
 LEFT JOIN devices dev ON dev.patient_id = p.patient_id
 LEFT JOIN teams t ON t.team_id = p.team_id
@@ -272,7 +325,8 @@ func scanPatient(row pgx.Row) (*PatientRow, error) {
 	var p PatientRow
 	err := row.Scan(&p.PatientID, &p.Name, &p.Gender, &p.Age, &p.Diagnosis, &p.CobbAngle,
 		&p.DeviceID, &p.TeamID, &p.DoctorID, &p.Status, &p.CreatedAt, &p.UpdatedAt,
-		&p.TeamName, &p.DoctorName)
+		&p.TeamName, &p.DoctorName,
+		&p.HeightCm, &p.WeightKg, &p.EmergencyContactName, &p.EmergencyContactPhone, &p.EmergencyContactRelation)
 	if err != nil {
 		return nil, err
 	}
