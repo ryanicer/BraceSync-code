@@ -90,6 +90,7 @@ import { ref, computed, onMounted } from 'vue'
 import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
+import { formatAlertValue } from '../../utils/format'
 
 // 佩戴记录：后端 data-service DailyWearDayDTO（GET /patients/:patientId/daily-wear，T076）
 // 真机教训：DTO 只有 wearMinutes，hours/status 必须前端派生，不可直接消费
@@ -252,8 +253,8 @@ function alertsToPressureMap(alerts: Alert[]): Map<string, PressureAnomalyItem[]
   for (const a of alerts) {
     if (a.type === 'wear_interrupt') continue
     const date = a.timestamp ? a.timestamp.slice(0, 10) : new Date().toISOString().slice(0, 10)
-    const thresholdTxt = a.thresholdValue != null ? `>${a.thresholdValue}N` : '阈值'
-    const actualTxt = a.actualValue != null ? `${a.actualValue}N` : ''
+    const thresholdTxt = a.thresholdValue != null ? formatAlertValue(a.type, a.thresholdValue, { prefix: '>' }) : '阈值'
+    const actualTxt = a.actualValue != null ? formatAlertValue(a.type, a.actualValue) : ''
     // Alert 没有 severity/message（shared-types 用 type + actualValue + thresholdValue + resolvedStatus 表达）
     // level：pressure_high + actualValue/thresholdValue >= 60 → error；其余 warn
     const level: PressureAnomalyItem['level'] =
