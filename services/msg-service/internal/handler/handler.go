@@ -28,6 +28,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/bracesync/bracesync/services/msg-service/internal/model"
 	"github.com/bracesync/bracesync/services/msg-service/internal/repo"
@@ -60,6 +61,7 @@ func (h *Handler) Router() *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.GET("/metrics", gin.WrapH(promhttp.Handler())) // T234 Prometheus 采集端点
 
 	// 服务间内部接口（不经 gateway，Compose 内网隔离 + X-Internal-Service 头）
 	internal := r.Group("/internal")
