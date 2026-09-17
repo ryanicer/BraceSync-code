@@ -123,6 +123,8 @@ services:
     environment:
       - DB_URL=${DB_URL}
       - REDIS_URL=${REDIS_URL}
+      # T231：alert-service → msg-service 推送端口默认值（8086）
+      - MSG_SERVICE_URL=http://msg-service:8086
     depends_on:
       postgres:
         condition: service_healthy

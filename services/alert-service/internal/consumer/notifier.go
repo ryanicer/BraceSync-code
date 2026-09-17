@@ -65,7 +65,7 @@ type RetryQueue interface {
 // HTTPNotifier Notifier HTTP 实现：调用 msg-service 推送告警通知。
 // 超时/失败不阻塞主链路，失败进本地重试队列。
 type HTTPNotifier struct {
-	url        string       // msg-service 地址（如 http://msg-service:8081）
+	url        string       // msg-service 地址（如 http://msg-service:8086）
 	client     *http.Client // 带超时的 HTTP 客户端
 	retryQueue RetryQueue   // 失败重试队列（Redis）；nil 时仅日志
 	maxRetries int          // 最大重试次数（含首次调用 = maxRetries+1 次机会）
