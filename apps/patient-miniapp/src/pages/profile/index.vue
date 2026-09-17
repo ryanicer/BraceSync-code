@@ -111,11 +111,7 @@
           <text class="form-label">Cobb角度 (°)</text>
           <input v-model="editCobb" class="form-input" type="digit" placeholder="请输入Cobb角度数" />
         </view>
-        <text class="form-section-label">联系方式</text>
-        <view class="form-row">
-          <text class="form-label">手机号</text>
-          <input v-model="editPhone" class="form-input" type="number" maxlength="11" placeholder="请输入手机号" />
-        </view>
+        <text class="form-section-label">紧急联系人</text>
         <view class="form-row">
           <text class="form-label">紧急联系人</text>
           <input v-model="editEmergencyName" class="form-input" type="text" placeholder="请输入姓名" />
@@ -128,6 +124,7 @@
           <text class="form-label">与本人关系</text>
           <input v-model="editEmergencyRelation" class="form-input" type="text" placeholder="如：父亲、母亲" />
         </view>
+        <text class="form-section-label">手机号由微信授权提供，如需变更请联系客服</text>
       </view>
     </view>
 
@@ -157,7 +154,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-import { getPatientProfile, type PatientProfile } from '../../api/profile'
+import { getPatientProfile, updatePatientProfile, type PatientProfile, type PatientProfileUpdate } from '../../api/profile'
 import { useAuthStore } from '../../stores/auth'
 import { logger } from '../../utils/logger'
 import { avatarCharOf, cobbText as fmtCobb, textOrDash } from '../../utils/profile-format'
@@ -197,23 +194,23 @@ const editAge = ref('')
 const editHeight = ref('')
 const editWeight = ref('')
 const editCobb = ref('')
-const editPhone = ref('')
 const editEmergencyName = ref('')
 const editEmergencyPhone = ref('')
 const editEmergencyRelation = ref('')
+const savingProfile = ref(false)
 
+// T223 编辑资料表单（字段按 profile.html 设计稿）；手机号行按 PM 2026-09-16 裁定移除：
+// 手机号由微信登录授权写入，患者不可自助改、无任何填号入口
 function openEditSheet() {
   editNickname.value = profile.value?.name ?? ''
   editGender.value = profile.value?.gender ?? ''
   editAge.value = profile.value?.age != null ? String(profile.value.age) : ''
   editCobb.value = profile.value?.cobbAngle != null ? String(profile.value.cobbAngle) : ''
-  // 身高/体重/联系方式后端档案暂无对应字段，按设计稿呈现空表单
-  editHeight.value = ''
-  editWeight.value = ''
-  editPhone.value = ''
-  editEmergencyName.value = ''
-  editEmergencyPhone.value = ''
-  editEmergencyRelation.value = ''
+  editHeight.value = profile.value?.heightCm != null ? String(profile.value.heightCm) : ''
+  editWeight.value = profile.value?.weightKg != null ? String(profile.value.weightKg) : ''
+  editEmergencyName.value = profile.value?.emergencyContactName ?? ''
+  editEmergencyPhone.value = profile.value?.emergencyContactPhone ?? ''
+  editEmergencyRelation.value = profile.value?.emergencyContactRelation ?? ''
   editSheetVisible.value = true
 }
 
@@ -226,9 +223,60 @@ function onGenderChange(e: unknown) {
   if (value === 'male' || value === 'female') editGender.value = value
 }
 
-function saveProfile() {
-  // 患者资料写接口后端尚未提供（T098-Q4 §3-②），本轮仅呈现表单，不做假保存
-  uni.showToast({ title: '资料保存接口暂未开放', icon: 'none' })
+// 空串→不提交该字段（服务端指针语义 nil=不改）；数字字段非法时忽略
+function numOrUndef(v: string): number | undefined {
+  if (v.trim() === '') return undefined
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+async function saveProfile() {
+  // T226：接 PUT /api/v1/patients/:patientId（白名单+限本人；wx.request 不支持 PATCH 故用 PUT），成功后回读刷新
+  if (!profile.value || savingProfile.value) return
+  const patientId = profile.value.patientId || auth.patientId
+  if (!patientId) {
+    uni.showToast({ title: '登录态缺失，请重新登录', icon: 'none' })
+    return
+  }
+  const payload: PatientProfileUpdate = {}
+  if (editNickname.value.trim()) payload.name = editNickname.value.trim()
+  if (editGender.value) payload.gender = editGender.value
+  const age = numOrUndef(editAge.value)
+  if (age !== undefined) payload.age = age
+  const cobb = numOrUndef(editCobb.value)
+  if (cobb !== undefined) payload.cobbAngle = cobb
+  const height = numOrUndef(editHeight.value)
+  if (height !== undefined) payload.heightCm = height
+  const weight = numOrUndef(editWeight.value)
+  if (weight !== undefined) payload.weightKg = weight
+  if (editEmergencyName.value.trim()) payload.emergencyContactName = editEmergencyName.value.trim()
+  if (editEmergencyPhone.value.trim()) payload.emergencyContactPhone = editEmergencyPhone.value.trim()
+  if (editEmergencyRelation.value.trim()) payload.emergencyContactRelation = editEmergencyRelation.value.trim()
+
+  savingProfile.value = true
+  try {
+    await updatePatientProfile(patientId, payload)
+    uni.showToast({ title: '已保存', icon: 'success' })
+    editSheetVisible.value = false
+    await loadProfile()
+    logger.info('[T226] profile saved', { patientId })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '保存失败，请稍后重试'
+    uni.showToast({ title: msg, icon: 'none' })
+    logger.warn('[T226] profile save failed', { error: msg })
+  } finally {
+    savingProfile.value = false
+  }
+}
+
+const settingsSheetVisible = ref(false)
+
+function openSettingsSheet() {
+  settingsSheetVisible.value = true
+}
+
+function closeSettingsSheet() {
+  settingsSheetVisible.value = false
 }
 
 const settingsSheetVisible = ref(false)

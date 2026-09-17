@@ -138,6 +138,27 @@ type PatientRow struct {
 	UpdatedAt  time.Time
 	TeamName   *string
 	DoctorName *string
+
+	// T226 患者自助资料字段（迁移 000014；均 nullable）
+	HeightCm                 *float64
+	WeightKg                 *float64
+	EmergencyContactName     *string
+	EmergencyContactPhone    *string
+	EmergencyContactRelation *string
+}
+
+// PatientProfileUpdate T226 患者自助资料白名单入参（指针=nil=不改）。
+// 🔴 无 phone：手机号由微信登录授权写入，患者不可自助改（PM 2026-09-16 裁定）。
+type PatientProfileUpdate struct {
+	Name                     *string
+	Gender                   *string
+	Age                      *int
+	CobbAngle                *float64
+	HeightCm                 *float64
+	WeightKg                 *float64
+	EmergencyContactName     *string
+	EmergencyContactPhone    *string
+	EmergencyContactRelation *string
 }
 
 // TeamRow teams 表投影
@@ -373,6 +394,8 @@ type Store interface {
 	UnbindWechat(ctx context.Context, patientID string) error
 	// UpdatePatientPhone 改手机号：phone_enc + phone_hash 同步更新（admin 维护）。
 	UpdatePatientPhone(ctx context.Context, patientID string, phoneEnc []byte, phoneHash string) error
+	// UpdatePatientProfile 患者自助改本人档案（T226 白名单动态 SET，见 PatientProfileUpdate）。
+	UpdatePatientProfile(ctx context.Context, patientID string, in PatientProfileUpdate) error
 	// PatientPhoneHashTaken phone_hash 是否已被其他患者占用（excludePatientID 排除自身）。
 	PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error)
 	RoleScope(ctx context.Context, roleID string) (scope string, err error)

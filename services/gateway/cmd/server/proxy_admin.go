@@ -135,6 +135,9 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/feedbacks"},
 	{http.MethodPost, "/feedbacks/:feedbackId/process"}, // T030 #5 replyContent
 	{http.MethodGet, "/patient/profile"},                // T186 患者本人只读档案（self-scope）
+	// T226 患者自助改本人资料（白名单+限本人，水平越权 user-service handler 拦截）。
+	// PUT 而非 PATCH：wx.request 不支持 PATCH（真机发不出），PUT 承载部分更新语义。
+	{http.MethodPut, "/patients/:patientId"},
 	{http.MethodGet, "/patients/:patientId/orthosis-plans"},
 	{http.MethodPost, "/patients/:patientId/orthosis-plans"},
 	{http.MethodGet, "/patients/:patientId/feeling-logs"},

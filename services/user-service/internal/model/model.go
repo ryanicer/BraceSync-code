@@ -152,6 +152,13 @@ type AdminPatientDTO struct {
 	UpdatedAt  string   `json:"updatedAt"`
 	TeamName   *string  `json:"teamName"`
 	DoctorName *string  `json:"doctorName"`
+
+	// T226 患者自助资料字段（迁移 000014；均 nullable）。phone 不开放自助写（微信授权写入）。
+	HeightCm                 *float64 `json:"heightCm"`
+	WeightKg                 *float64 `json:"weightKg"`
+	EmergencyContactName     *string  `json:"emergencyContactName"`
+	EmergencyContactPhone    *string  `json:"emergencyContactPhone"`
+	EmergencyContactRelation *string  `json:"emergencyContactRelation"`
 }
 
 // TeamDTO 团队概要（契约 getTeams，对齐 shared-types Team）
