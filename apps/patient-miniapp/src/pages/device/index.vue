@@ -12,6 +12,7 @@
       </view>
     </view>
 
+    <!-- T223 Boss 2026-09-16：添加流程/网络配置两块先注释下线（配网交互统一走 wifi-setup 页），保留「添加新设备」与「已添加设备」
     <view class="section">
       <text class="section-title">添加流程</text>
       <view class="card steps-card">
@@ -38,8 +39,10 @@
         </view>
       </view>
     </view>
+    -->
 
-    <view class="section"><view class="action-btn" @click="goWifiSetup"><text>开始添加设备</text></view></view>
+    <!-- 同上注释下线：与「添加新设备」卡片同为 goWifiSetup 入口 -->
+    <!-- <view class="section"><view class="action-btn" @click="goWifiSetup"><text>开始添加设备</text></view></view> -->
 
     <view class="section device-section">
       <text class="section-title">已添加设备</text>
@@ -79,9 +82,10 @@ const deviceStore = useDeviceStore()
 const authStore = useAuthStore()
 const device = ref<Device | null>(deviceStore.currentDevice)
 const loading = ref(false)
-const wifiSSID = ref('')
-const wifiPassword = ref('')
-const steps = ['打开手机蓝牙', '选择目标设备', '输入WiFi网络信息', '等待配对完成']
+// T223 添加流程/网络配置注释下线后暂不使用，随模板一并保留待恢复
+// const wifiSSID = ref('')
+// const wifiPassword = ref('')
+// const steps = ['打开手机蓝牙', '选择目标设备', '输入WiFi网络信息', '等待配对完成']
 
 onMounted(() => {
   void refreshDevice()

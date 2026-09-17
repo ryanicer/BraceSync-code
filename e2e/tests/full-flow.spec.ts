@@ -45,7 +45,8 @@ test('患者端核心全链路：微信登录到配网成功', async ({ page }) 
   await expect(page.locator('.device-name')).toHaveText(HOTSPOT_NAME)
 
   // ===== 5. wifi-setup：T192 设计稿链路 01→02→03→04→05 =====
-  await page.locator('.action-btn', { hasText: '开始添加设备' }).click()
+  // T223: 原「开始添加设备」按钮已注释下线，统一走「添加新设备」卡片
+  await page.locator('.add-card').click()
   await page.waitForURL('**/pages/wifi-setup/**', { timeout: 10_000 })
 
   // 01-entry：前置检查页
