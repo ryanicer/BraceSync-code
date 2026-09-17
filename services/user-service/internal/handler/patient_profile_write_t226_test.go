@@ -3,8 +3,9 @@
 // 验收对应（T226 ④）：
 //  1. 限本人：X-User-Id == 路径 patientId 才可写；缺失/不一致 → 403 fail-closed；
 //     绑定态 JWT（scope=bind）被 scopeGuard 前置拦截 → 403/40301。
-//  2. 字段白名单：设计稿 8 字段可写；携带 phone / diagnosis / status 等白名单外字段 → 400。
-//  3. 值域：gender 枚举 / age 0-150 / cobb 0-180 / height 30-250 / weight 2-300，越界 400。
+//  2. 字段白名单：设计稿 7 字段可写；携带 phone / cobbAngle / diagnosis / status 等白名单外字段 → 400
+//     （cobbAngle 于 T230 移出：影像学测量值由临床端写入，Boss 2026-09-17 裁定 B）。
+//  3. 值域：gender 枚举 / age 0-150 / height 30-250 / weight 2-300，越界 400。
 //  4. 档案缺失 → 404；存储故障 → 500。
 package handler
 
@@ -60,13 +61,11 @@ func t226ResetStoreSpies() {
 
 func t226FullPayload() map[string]any {
 	h42, w48 := 42.0, 48.5
-	cobb := 28.0
 	age := 14
 	return map[string]any{
 		"name":                     "患者小明改",
 		"gender":                   "female",
 		"age":                      age,
-		"cobbAngle":                cobb,
 		"heightCm":                 h42,
 		"weightKg":                 w48,
 		"emergencyContactName":     "张建国",
@@ -92,8 +91,6 @@ func TestT226_UpdateProfile_SelfAllowed_WhitelistApplied(t *testing.T) {
 	assert.Equal(t, "female", *t226LastUpdate.Gender)
 	require.NotNil(t, t226LastUpdate.Age)
 	assert.Equal(t, 14, *t226LastUpdate.Age)
-	require.NotNil(t, t226LastUpdate.CobbAngle)
-	assert.Equal(t, 28.0, *t226LastUpdate.CobbAngle)
 	require.NotNil(t, t226LastUpdate.HeightCm)
 	assert.Equal(t, 42.0, *t226LastUpdate.HeightCm)
 	require.NotNil(t, t226LastUpdate.WeightKg)
@@ -139,7 +136,8 @@ func TestT226_UpdateProfile_NonWhitelistRejected(t *testing.T) {
 	e.store.patient = &p
 
 	// phone：微信授权写入，患者不可自助改（PM 2026-09-16 裁定）→ 白名单外 400
-	for _, key := range []string{"phone", "diagnosis", "status", "deviceId", "teamId"} {
+	// cobbAngle：影像学测量值由临床端写入，患者不可自助改（T230 / Boss 2026-09-17 裁定 B）→ 白名单外 400
+	for _, key := range []string{"phone", "cobbAngle", "diagnosis", "status", "deviceId", "teamId"} {
 		payload := t226FullPayload()
 		payload[key] = "hacked"
 		w, resp := e.do(http.MethodPut, t226ProfilePath, payload, selfHdr("P20260001", "patient"))
@@ -159,7 +157,7 @@ func TestT226_UpdateProfile_RangeValidation(t *testing.T) {
 		key string
 		val any
 	}{
-		{"gender", "unknown"}, {"age", 200}, {"cobbAngle", 181.0},
+		{"gender", "unknown"}, {"age", 200},
 		{"heightCm", 29.9}, {"weightKg", 1.0},
 	}
 	for _, tc := range cases {

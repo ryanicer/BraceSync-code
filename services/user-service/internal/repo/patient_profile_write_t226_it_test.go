@@ -33,7 +33,6 @@ ON CONFLICT (patient_id) DO NOTHING`, pid)
 	name := "T226患者改"
 	gender := "female"
 	age := 15
-	cobb := 27.5
 	height := 162.0
 	weight := 48.5
 	ecName := "张建国"
@@ -49,7 +48,6 @@ ON CONFLICT (patient_id) DO NOTHING`, pid)
 		Name:                     &name,
 		Gender:                   &gender,
 		Age:                      &age,
-		CobbAngle:                &cobb,
 		HeightCm:                 &height,
 		WeightKg:                 &weight,
 		EmergencyContactName:     &ecName,
@@ -62,17 +60,16 @@ ON CONFLICT (patient_id) DO NOTHING`, pid)
 	require.NoError(t, err)
 	require.NotNil(t, after)
 
-	t.Logf("T226 字段级实测: name %q→%q, gender %v→%s, age %d→%d, cobb %v→%v, height→%v, weight→%v, 紧急联系人→(%s,%s,%s)",
+	// cobb_angle 不在患者自助白名单（T230 / Boss 2026-09-17 裁定 B）：PatientProfileUpdate 无该字段，编译期即无写通道
+	t.Logf("T226 字段级实测: name %q→%q, gender %v→%s, age %d→%d, height→%v, weight→%v, 紧急联系人→(%s,%s,%s)",
 		before.Name, after.Name, derefStr(before.Gender), derefStr(after.Gender),
 		derefInt(before.Age), derefInt(after.Age),
-		derefF(before.CobbAngle), derefF(after.CobbAngle),
 		derefF(after.HeightCm), derefF(after.WeightKg),
 		derefStr(after.EmergencyContactName), derefStr(after.EmergencyContactPhone), derefStr(after.EmergencyContactRelation))
 
 	assert.Equal(t, "T226患者改", after.Name)
 	assert.Equal(t, "female", derefStr(after.Gender))
 	assert.Equal(t, 15, derefInt(after.Age))
-	assert.Equal(t, 27.5, derefF(after.CobbAngle))
 	assert.Equal(t, 162.0, derefF(after.HeightCm))
 	assert.Equal(t, 48.5, derefF(after.WeightKg))
 	assert.Equal(t, "张建国", derefStr(after.EmergencyContactName))

@@ -212,9 +212,6 @@ func (s *PGStore) UpdatePatientProfile(ctx context.Context, patientID string, in
 	if in.Age != nil {
 		add("age", *in.Age)
 	}
-	if in.CobbAngle != nil {
-		add("cobb_angle", *in.CobbAngle)
-	}
 	if in.HeightCm != nil {
 		add("height_cm", *in.HeightCm)
 	}

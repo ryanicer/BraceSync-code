@@ -149,11 +149,11 @@ type PatientRow struct {
 
 // PatientProfileUpdate T226 患者自助资料白名单入参（指针=nil=不改）。
 // 🔴 无 phone：手机号由微信登录授权写入，患者不可自助改（PM 2026-09-16 裁定）。
+// 🔴 无 CobbAngle：影像学测量值由临床端写入，患者自助通道不落该列（Boss 2026-09-17 裁定 B / T230）。
 type PatientProfileUpdate struct {
 	Name                     *string
 	Gender                   *string
 	Age                      *int
-	CobbAngle                *float64
 	HeightCm                 *float64
 	WeightKg                 *float64
 	EmergencyContactName     *string

@@ -1,9 +1,11 @@
 // Package handler — T226 患者自助资料写接口（PUT /api/v1/patients/:patientId）
 //
 // 白名单（对齐设计稿 docs/design/patient/profile.html 编辑表单，去除手机号）：
-// name / gender / age / cobbAngle / heightCm / weightKg / 紧急联系人×3。
+// name / gender / age / heightCm / weightKg / 紧急联系人×3。
 // 🔴 phone 不在白名单：手机号由微信登录授权写入，患者不可自助改、患者端无任何填号入口
 // （PM 2026-09-16 裁定）；请求体携带 phone 或任何白名单外字段 → 400。
+// 🔴 cobbAngle 不在白名单（Boss 2026-09-17 裁定 B / T230）：影像学测量值由临床端写入，
+// 患者自助 PUT 不接受该键；临床侧写通道见 admin 建档 CreatePatient（cobb_angle 列仍保留）。
 // 限本人：X-User-Id（gateway 从 JWT sub 注入）必须等于路径 patientId，缺失或不一致一律 403（fail-closed）。
 package handler
 
@@ -31,7 +33,6 @@ type updatePatientProfileRequest struct {
 	Name                     *string  `json:"name"`
 	Gender                   *string  `json:"gender"`
 	Age                      *int     `json:"age"`
-	CobbAngle                *float64 `json:"cobbAngle"`
 	HeightCm                 *float64 `json:"heightCm"`
 	WeightKg                 *float64 `json:"weightKg"`
 	EmergencyContactName     *string  `json:"emergencyContactName"`
@@ -121,13 +122,6 @@ func buildPatientProfileUpdate(req *updatePatientProfileRequest) (*repo.PatientP
 			return nil, model.ErrInvalidParam("age must be between 0 and 150")
 		}
 		in.Age = req.Age
-		anyField = true
-	}
-	if req.CobbAngle != nil {
-		if *req.CobbAngle < 0 || *req.CobbAngle > 180 { // 设计稿表单 0–180
-			return nil, model.ErrInvalidParam("cobbAngle must be between 0 and 180")
-		}
-		in.CobbAngle = req.CobbAngle
 		anyField = true
 	}
 	if req.HeightCm != nil {
