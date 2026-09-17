@@ -113,7 +113,7 @@ func main() {
 	// T019：Notifier 接入 msg-service HTTP 推送（超时/失败进 Redis 重试队列，不阻塞落库）。
 	// T202：消费者必须在调度器创建之前装配完毕 —— scheduler.Start 会同步补跑一轮，
 	// 该轮回调即向 cons 注入热更新阈值，若延后赋值则闭包捕获到 nil 指针（启动即 panic）。
-	msgServiceURL := envOr("MSG_SERVICE_URL", "http://msg-service:8081")
+	msgServiceURL := envOr("MSG_SERVICE_URL", "http://msg-service:8086")
 	retryQueue := repo.NewRedisNotifyRetryQueue(rdb)
 	notifier := consumer.NewHTTPNotifier(consumer.HTTPNotifierConfig{
 		MsgServiceURL: msgServiceURL,
