@@ -20,7 +20,7 @@ test.describe('告警列表', () => {
     await expect(first).toContainText('压力偏高')
     await expect(first).toContainText('林小雨')
     await expect(first).toContainText('DEV-A3F312')
-    await expect(first).toContainText('60/68.5N')
+    await expect(first).toContainText('60.00N/68.50N')
     await expect(first).toContainText('待处理')
     await expect(first).toContainText('进行中')
   })
