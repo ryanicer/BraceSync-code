@@ -37,3 +37,36 @@ export function debounce<T extends (...args: unknown[]) => void>(
 export function isPressureHigh(value: number, threshold: number): boolean {
   return value > threshold
 }
+
+/**
+ * T235：按 Alert.type 格式化 actualValue / thresholdValue 显示口径（跨三端共享）
+ *
+ * Alert.actualValue 是多义字段，含义随 type 变：
+ *   pressure_high        → 压力（N）
+ *   pressure_fluctuation → 百分比（后端 engine.go 明确用 %%）
+ *   sensor_drift         → 空载读数（N，可能负，显示层归零）
+ *   wear_interrupt       → 分钟数
+ *   未知 type            → 原样数字，不硬编码单位
+ *
+ * @param type Alert.type
+ * @param value actualValue 或 thresholdValue
+ * @param opts.prefix 给 thresholdValue 传 '>'，actualValue 不传
+ */
+export function formatAlertValue(
+  type: string,
+  value: number,
+  opts?: { prefix?: string },
+): string {
+  const { prefix = '' } = opts ?? {}
+  switch (type) {
+    case 'pressure_high':
+    case 'sensor_drift':
+      return `${prefix}${Math.max(0, value).toFixed(2)}N`
+    case 'pressure_fluctuation':
+      return `${prefix}${value.toFixed(1)}%`
+    case 'wear_interrupt':
+      return `${prefix}${Math.max(0, Math.round(value))}min`
+    default:
+      return `${prefix}${value}`
+  }
+}

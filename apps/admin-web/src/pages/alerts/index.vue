@@ -31,7 +31,7 @@
         </el-table-column>
         <el-table-column label="阈值/实际" width="110">
           <template #default="{ row }">
-            {{ row.thresholdValue ? `${row.thresholdValue}/${row.actualValue}N` : '-' }}
+            {{ row.thresholdValue != null ? `${formatAlertValue(row.type, row.thresholdValue)}/${formatAlertValue(row.type, row.actualValue)}` : '-' }}
           </template>
         </el-table-column>
         <el-table-column label="时间" width="140">
@@ -92,6 +92,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Alert } from '@bracesync/shared-types'
+import { formatAlertValue } from '@bracesync/shared-utils'
 import { fetchAlerts, processAlertApi, patientNameOf } from '../../api'
 
 const list = ref<Alert[]>([])
