@@ -49,12 +49,14 @@ export async function getPatientProfile(): Promise<PatientProfile> {
   })
 }
 
-/** T226 可编辑白名单字段（phone 不在内：由微信登录授权写入，患者不可自助改） */
+/**
+ * T226 可编辑白名单字段（phone 不在内：由微信登录授权写入，患者不可自助改；
+ * cobbAngle 不在内：影像学测量值由临床端写入，患者不可自助编辑 — T230 / Boss 2026-09-17 裁定 B）
+ */
 export interface PatientProfileUpdate {
   name?: string
   gender?: 'male' | 'female'
   age?: number
-  cobbAngle?: number
   heightCm?: number
   weightKg?: number
   emergencyContactName?: string

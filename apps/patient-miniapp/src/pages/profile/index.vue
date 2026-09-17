@@ -107,10 +107,7 @@
           <text class="form-label">体重 (kg)</text>
           <input v-model="editWeight" class="form-input" type="digit" placeholder="请输入体重" />
         </view>
-        <view class="form-row">
-          <text class="form-label">Cobb角度 (°)</text>
-          <input v-model="editCobb" class="form-input" type="digit" placeholder="请输入Cobb角度数" />
-        </view>
+        <!-- Cobb角：影像学测量值，由临床端写入，患者不可自助编辑（T230 / Boss 2026-09-17 裁定 B） -->
         <text class="form-section-label">紧急联系人</text>
         <view class="form-row">
           <text class="form-label">紧急联系人</text>
@@ -193,7 +190,6 @@ const editGender = ref<'male' | 'female' | ''>('')
 const editAge = ref('')
 const editHeight = ref('')
 const editWeight = ref('')
-const editCobb = ref('')
 const editEmergencyName = ref('')
 const editEmergencyPhone = ref('')
 const editEmergencyRelation = ref('')
@@ -205,7 +201,6 @@ function openEditSheet() {
   editNickname.value = profile.value?.name ?? ''
   editGender.value = profile.value?.gender ?? ''
   editAge.value = profile.value?.age != null ? String(profile.value.age) : ''
-  editCobb.value = profile.value?.cobbAngle != null ? String(profile.value.cobbAngle) : ''
   editHeight.value = profile.value?.heightCm != null ? String(profile.value.heightCm) : ''
   editWeight.value = profile.value?.weightKg != null ? String(profile.value.weightKg) : ''
   editEmergencyName.value = profile.value?.emergencyContactName ?? ''
@@ -243,8 +238,6 @@ async function saveProfile() {
   if (editGender.value) payload.gender = editGender.value
   const age = numOrUndef(editAge.value)
   if (age !== undefined) payload.age = age
-  const cobb = numOrUndef(editCobb.value)
-  if (cobb !== undefined) payload.cobbAngle = cobb
   const height = numOrUndef(editHeight.value)
   if (height !== undefined) payload.heightCm = height
   const weight = numOrUndef(editWeight.value)
