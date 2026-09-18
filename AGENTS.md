@@ -58,6 +58,7 @@
 - 推送用：`git push origin HEAD:refs/heads/<你的分支>`（**不要写 `refs/heads/main`**，那是直推主干）
 - 🔴 **推送后必做**：`git ls-remote origin <你的分支>` 确认远端真有你的 commit
   （防「报成功但没推」—— 2026-09-18 已踩 2 次）
-- 🔴 **开 PR 后必做**：`gh pr checks <PR号>`；若显示 **`no checks reported`，多半是分支冲突了**
-  （GitHub 对冲突 PR 不跑 CI），**不是延迟** —— 先 `git merge origin/main` 解决
+- 🔴 **开 PR 后必做**：`gh pr checks <PR号>`；若显示 **`no checks reported`**，先分辨两种可能：
+  - PR 是 `CONFLICTING`/`DIRTY` ⇒ **分支冲突**（GitHub 对冲突 PR 不跑 CI）→ 先 `git merge origin/main`
+  - PR 是 `MERGEABLE` ⇒ 多半是**纯文档改动被 CI 路径过滤跳过**（正常，可合并）
 - 出问题？对象库损坏 → 不原地抢救，丢弃重 clone
