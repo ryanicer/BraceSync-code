@@ -110,7 +110,6 @@ import {
   stopMockWifiStatusSequence,
   sendWifiClear,
   waitForWifiClear,
-  closeBLEConnection,
 } from '../../utils/ble'
 import { pickReconnectTarget, RECONNECT_SCAN_MS } from '../../utils/ble-link'
 import { bleLog } from '../../utils/ble-log'
@@ -150,6 +149,9 @@ const errorCode = ref<number | null>(null)
 const autoReturnTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const timeoutTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 let successProcessed = false
+// T240 修复：配网成功（收到 9）后冻结 wifiStatusCode，
+// 防止 clear 回执 B512 notify 0 把状态码打回 0、步骤条勾号消失。
+let provisioningDone = false
 
 // T240: 配网成功后清设备 WiFi 的子状态
 const clearState = ref<'pending' | 'success' | 'failed'>('pending')
@@ -241,6 +243,7 @@ async function startWifiConfig() {
   wifiStatusCode.value = null
   errorCode.value = null
   successProcessed = false
+  provisioningDone = false
   statusHistory.length = 0
 
   try {
@@ -259,12 +262,15 @@ async function startWifiConfig() {
     //    T216: 必须先订阅再写 B511 —— 设备在收到配置后立刻回 0/1，
     //    订阅晚于写入就会把首帧丢掉（患者端 wifi-setup 一直是这个顺序）。
     const statusListener = (code: number) => {
-      wifiStatusCode.value = code
-      statusHistory.push(code)
+      // T240 修复：成功后不再让 B512 帧覆盖状态码（clear 的 notify 0 会把勾打没）
+      if (!provisioningDone) {
+        wifiStatusCode.value = code
+        statusHistory.push(code)
+      }
       if (code === 9) handleSuccess(ssid)
       else if (code < 0) handleError(code)
       // T218 A-5: 每收一帧重新计时——60s 无推送才算超时
-      else armProvisionTimeout()
+      else if (!provisioningDone) armProvisionTimeout()
     }
 
     // 3. BLE 写入加密配置（T109: 用 BLE MAC，非后端设备 ID）
@@ -365,17 +371,31 @@ async function ensureLinkForProvision(): Promise<boolean> {
   }
 }
 
+// T240 修复：设备在收到 9 后会连发多次 9（实测 3 次，约 2s 窗口期），
+// 期间写入 0x02 会被固件忽略 → clear 超时。先等 1.5s 让 9 突冲落定再发 clear。
+const CLEAR_SETTLE_DELAY_MS = 1500
+
 // T240: 清掉刚配的 WiFi —— 设备出厂态交付患者。
 // 发 clear (B513 0x02) → 等 B512 notify 0（≤10s）。返回 false 表示未完成。
+// 超时自动重试一次（实测首次常因设备仍在发 9 而被忽略，重试即成功）。
 async function doWifiClear(): Promise<boolean> {
   const bleMac = installStore.bleDeviceId || installStore.deviceId
-  try {
-    await sendWifiClear(bleMac)
-    return await waitForWifiClear(10000)
-  } catch (e) {
-    bleLog.error('sendWifiClear 异常', e instanceof Error ? e.message : String(e))
-    return false
+  const attemptOnce = async (): Promise<boolean> => {
+    try {
+      await sendWifiClear(bleMac)
+      return await waitForWifiClear(10000)
+    } catch (e) {
+      bleLog.error('sendWifiClear 异常', e instanceof Error ? e.message : String(e))
+      return false
+    }
   }
+  // 首次：等 9 突冲落定
+  await new Promise((r) => setTimeout(r, CLEAR_SETTLE_DELAY_MS))
+  const firstOk = await attemptOnce()
+  if (firstOk) return true
+  // 自动重试一次（不再额外等待——设备此时已空闲）
+  bleLog.warn('T240 clear 首次未收到回执，自动重试一次')
+  return await attemptOnce()
 }
 
 // T240: clear 失败后技师手动重试
@@ -385,7 +405,8 @@ async function retryClear() {
   if (!pageAlive) return
   if (clearOk) {
     clearState.value = 'success'
-    closeBLEConnection(installStore.bleDeviceId || installStore.deviceId).catch(() => {})
+    // 不主动 closeBLEConnection：设备清完 WiFi 会自行重启掉链，
+    // 主动断开会让 install 页校准的 B513 订阅链路代次错乱、零收帧。
     autoReturnTimer.value = setTimeout(() => {
       uni.navigateBack()
     }, 3000)
@@ -399,6 +420,7 @@ async function handleSuccess(ssid: string) {
   // 固件会 Notify 两次 9（防 BLE 漏收），第二次直接忽略，不重复跳转/回写
   if (successProcessed) return
   successProcessed = true
+  provisioningDone = true
   if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
   stopMockWifiStatusSequence()
   provisioning.value = false
@@ -421,8 +443,8 @@ async function handleSuccess(ssid: string) {
 
   if (clearOk) {
     clearState.value = 'success'
-    // 设备已回广播态，技师端使命完成，断开 BLE
-    closeBLEConnection(installStore.bleDeviceId || installStore.deviceId).catch(() => {})
+    // 不主动 closeBLEConnection：设备清完 WiFi 会自行重启掉链，
+    // 主动断开会让 install 页校准的 B513 订阅链路代次错乱、零收帧。
     autoReturnTimer.value = setTimeout(() => {
       uni.navigateBack()
     }, 3000)

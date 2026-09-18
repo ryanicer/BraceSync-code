@@ -138,7 +138,7 @@ describe('T218 A-4 — 写失败受控重试（领新 seq）', () => {
 describe('T218 A-5 — 超时逐帧续期', () => {
   it('armProvisionTimeout 存在，statusListener 收帧续期，startWifiConfig 不再内联一次性起表', () => {
     expect(PAGE).toContain('function armProvisionTimeout()')
-    expect(PAGE).toContain('else armProvisionTimeout()')
+    expect(PAGE).toContain('else if (!provisioningDone) armProvisionTimeout()')
     const start = PAGE.indexOf('async function startWifiConfig(')
     const end = PAGE.indexOf('\nasync function ', start + 10)
     const body = PAGE.slice(start, end)
