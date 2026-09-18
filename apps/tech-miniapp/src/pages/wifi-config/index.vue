@@ -25,7 +25,13 @@
         <text class="success-icon">✓</text>
         <text class="success-title">配网成功</text>
         <text class="success-sub">WiFi 已连接，数据可达性验证通过</text>
-        <text class="auto-return-tip">3 秒后自动返回安装流程...</text>
+        <text v-if="clearState === 'pending'" class="clear-tip">正在清除设备 WiFi…</text>
+        <text v-else-if="clearState === 'success'" class="clear-tip clear-ok">设备 WiFi 已清除，可安全交付</text>
+        <view v-else class="clear-failed">
+          <text class="clear-tip clear-err">设备 WiFi 清除未完成</text>
+          <view class="btn-outline-sm" @click="retryClear"><text>重新清除</text></view>
+        </view>
+        <text v-if="clearState === 'success'" class="auto-return-tip">3 秒后自动返回安装流程...</text>
       </view>
     </view>
 
@@ -102,6 +108,9 @@ import {
   onWifiStatus,
   startMockWifiStatusSequence,
   stopMockWifiStatusSequence,
+  sendWifiClear,
+  waitForWifiClear,
+  closeBLEConnection,
 } from '../../utils/ble'
 import { pickReconnectTarget, RECONNECT_SCAN_MS } from '../../utils/ble-link'
 import { bleLog } from '../../utils/ble-log'
@@ -141,6 +150,11 @@ const errorCode = ref<number | null>(null)
 const autoReturnTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const timeoutTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 let successProcessed = false
+
+// T240: 配网成功后清设备 WiFi 的子状态
+const clearState = ref<'pending' | 'success' | 'failed'>('pending')
+// 页面卸载后置 false，防止 clear settle 后对已卸载页面调 navigateBack/toast
+let pageAlive = true
 
 /** T218 A-5: 60s 无推送兜底表——每收一帧重新计时（armProvisionTimeout） */
 function armProvisionTimeout() {
@@ -351,6 +365,36 @@ async function ensureLinkForProvision(): Promise<boolean> {
   }
 }
 
+// T240: 清掉刚配的 WiFi —— 设备出厂态交付患者。
+// 发 clear (B513 0x02) → 等 B512 notify 0（≤10s）。返回 false 表示未完成。
+async function doWifiClear(): Promise<boolean> {
+  const bleMac = installStore.bleDeviceId || installStore.deviceId
+  try {
+    await sendWifiClear(bleMac)
+    return await waitForWifiClear(10000)
+  } catch (e) {
+    bleLog.error('sendWifiClear 异常', e instanceof Error ? e.message : String(e))
+    return false
+  }
+}
+
+// T240: clear 失败后技师手动重试
+async function retryClear() {
+  clearState.value = 'pending'
+  const clearOk = await doWifiClear()
+  if (!pageAlive) return
+  if (clearOk) {
+    clearState.value = 'success'
+    closeBLEConnection(installStore.bleDeviceId || installStore.deviceId).catch(() => {})
+    autoReturnTimer.value = setTimeout(() => {
+      uni.navigateBack()
+    }, 3000)
+  } else {
+    clearState.value = 'failed'
+    uni.showToast({ title: '设备 WiFi 清除未完成，请靠近设备后重试', icon: 'none' })
+  }
+}
+
 async function handleSuccess(ssid: string) {
   // 固件会 Notify 两次 9（防 BLE 漏收），第二次直接忽略，不重复跳转/回写
   if (successProcessed) return
@@ -358,6 +402,7 @@ async function handleSuccess(ssid: string) {
   if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
   stopMockWifiStatusSequence()
   provisioning.value = false
+  clearState.value = 'pending'
 
   // 云端 WiFi 状态回写（mock 先行）
   try {
@@ -369,10 +414,22 @@ async function handleSuccess(ssid: string) {
   installStore.setWifiStatus('connected')
   installStore.updateWifiStatusCode(9)
 
-  // 3 秒后自动返回 install
-  autoReturnTimer.value = setTimeout(() => {
-    uni.navigateBack()
-  }, 3000)
+  // T240: 配网成功后必须清掉刚配的 WiFi，设备出厂态交付患者。
+  // 仅在 clear 完成（或失败提示）后才决定是否自动返回，禁止 3s 窗口抢先返回。
+  const clearOk = await doWifiClear()
+  if (!pageAlive) return
+
+  if (clearOk) {
+    clearState.value = 'success'
+    // 设备已回广播态，技师端使命完成，断开 BLE
+    closeBLEConnection(installStore.bleDeviceId || installStore.deviceId).catch(() => {})
+    autoReturnTimer.value = setTimeout(() => {
+      uni.navigateBack()
+    }, 3000)
+  } else {
+    clearState.value = 'failed'
+    uni.showToast({ title: '设备 WiFi 清除未完成，请靠近设备后重试', icon: 'none' })
+  }
 }
 
 function handleError(code: number) {
@@ -403,6 +460,7 @@ function skipNetworkSetup() {
 }
 
 onUnmounted(() => {
+  pageAlive = false
   if (autoReturnTimer.value) clearTimeout(autoReturnTimer.value)
   if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
   stopMockWifiStatusSequence()
@@ -459,6 +517,10 @@ onUnmounted(() => {
 .success-icon { display: inline-flex; width: 120rpx; height: 120rpx; border-radius: 50%; background: #10B981; color: #fff; font-size: 64rpx; align-items: center; justify-content: center; }
 .success-title { display: block; font-size: 36rpx; font-weight: 600; color: #166534; margin-top: 24rpx; }
 .success-sub { display: block; font-size: 26rpx; color: #047857; margin-top: 12rpx; }
+.clear-tip { display: block; font-size: 26rpx; margin-top: 24rpx; color: #6b7280; }
+.clear-ok { color: #047857; }
+.clear-err { color: #b91c1c; }
+.clear-failed { margin-top: 24rpx; }
 .auto-return-tip { display: block; font-size: 24rpx; color: #6b7280; margin-top: 24rpx; }
 
 .error-card { background: #fef2f2; border: 1rpx solid #fecaca; border-radius: 24rpx; padding: 48rpx 32rpx; text-align: center; }

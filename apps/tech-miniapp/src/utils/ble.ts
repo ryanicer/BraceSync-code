@@ -751,6 +751,33 @@ export async function stopRealtimePressure(deviceId: string): Promise<void> {
   })
 }
 
+/**
+ * T240: 清除设备已配 WiFi —— 向 B513 写 0x02（Write With Response）。
+ * 固件收到后清 NVS WiFi 并通过 B512 notify 0 回执；0 同时是配网初始态，
+ * 因此调用方须用 waitForWifiClear 的一次性回调取信，不能复用配网状态机。
+ * H5 mock 直接 return。
+ */
+export async function sendWifiClear(deviceId: string): Promise<void> {
+  if (isH5()) return
+  bleLog.info(`sendWifiClear deviceId=${deviceId}，B513 写入 0x02 清 WiFi`)
+  await new Promise<void>((resolve, reject) => {
+    uni.writeBLECharacteristicValue({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_REALTIME,
+      value: new Uint8Array([0x02]).buffer,
+      success: () => {
+        bleLog.info('B513 写入 0x02 成功，等待设备 clear 完成回执 (B512 notify 0)')
+        resolve()
+      },
+      fail: (err) => {
+        bleLog.error('B513 写入 0x02 失败', err?.errMsg)
+        reject(new Error(`清除设备 WiFi 失败: ${err.errMsg}`))
+      },
+    })
+  })
+}
+
 /** 注册实时帧回调 */
 export function onRealtimeFrame(cb: (frame: number[]) => void): void {
   realtimeCallback = cb
@@ -760,6 +787,9 @@ export function onRealtimeFrame(cb: (frame: number[]) => void): void {
 
 let wifiStatusTimer: ReturnType<typeof setInterval> | null = null
 let wifiStatusCallback: ((code: number) => void) | null = null
+// T240: clear 完成信号一次性回调槽（B512 notify 0）。独立于 wifiStatusCallback，
+// 不替换既有配网状态机；由 waitForWifiClear 注册、settle 即清空。
+let wifiClearCallback: ((code: number) => void) | null = null
 let b512ListenerRegistered = false
 let b512SubscribedKey = ''
 /** 已发出、正等回执的订阅；只在 success/fail 回执里清空——b512SubscribedKey 必须由 success 授予 */
@@ -851,6 +881,37 @@ export function onWifiStatus(cb: (code: number) => void, deviceId?: string): voi
 }
 
 /**
+ * T240: 等待 clear 完成回执（B512 notify 0），一次性监听。
+ * 与配网状态机解耦：用独立 wifiClearCallback 槽，不替换 wifiStatusCallback。
+ * 收到 0 → resolve(true)；超时 → resolve(false)；两条路径都清空回调与定时器。
+ * H5 mock 直接 resolve(true)。
+ */
+export function waitForWifiClear(timeoutMs = 10000): Promise<boolean> {
+  if (isH5()) return Promise.resolve(true)
+  return new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const settle = (ok: boolean) => {
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+      wifiClearCallback = null
+      resolve(ok)
+    }
+    wifiClearCallback = (code: number) => {
+      if (code === 0) {
+        bleLog.info('B512 clear 完成回执收到 (code=0)')
+        settle(true)
+      }
+    }
+    timer = setTimeout(() => {
+      bleLog.warn(`B512 clear 等待超时 ${timeoutMs}ms 未收到 code=0`)
+      settle(false)
+    }, timeoutMs)
+  })
+}
+
+/**
  * T216: 订阅 B512 Notify。
  * 旧实现用一次性布尔把「订阅动作」也短路了 ⇒ 同一会话第二次连接起不再订阅、零收帧。
  * 现在：全局特征监听仍只注册一次，订阅动作按「deviceId + 链路代次」判定，重连/换设备必重发。
@@ -868,6 +929,8 @@ function subscribeB512Notify(deviceId: string): void {
           `B512 状态原始值=${code} 第${b512FramesReceived}帧 订阅轮次=${b512SubscribeRounds}`
         )
         wifiStatusCallback?.(code)
+        // T240: clear 完成信号分发（一次性回调，与配网状态机解耦）
+        wifiClearCallback?.(code)
       } catch (e) {
         bleLog.error('B512 状态解析失败', e instanceof Error ? e.message : String(e))
       }
