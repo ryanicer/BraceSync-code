@@ -51,7 +51,7 @@
         <div class="peak-cell peak-value">
           <div class="peak-label">峰值压力</div>
           <div class="peak-num" :style="{ color: hmColor(todayPeak?.value ?? 0, HM_MAX_N) }">
-            {{ todayPeak ? todayPeak.value.toFixed(1) + ' N' : '--' }}
+            {{ todayPeak ? todayPeak.value.toFixed(2) + ' N' : '--' }}
           </div>
         </div>
         <div class="peak-cell">
@@ -65,7 +65,7 @@
         <div class="peak-cell">
           <div class="peak-label">当前帧值</div>
           <div class="peak-text" :style="{ color: hmColor(curFrameValue, HM_MAX_N) }">
-            {{ curFrameValue.toFixed(1) }} N
+            {{ curFrameValue.toFixed(2) }} N
           </div>
         </div>
       </div>
@@ -110,11 +110,11 @@
                 :key="pt.pointId"
                 :class="['hm-cell', { 'hm-cell-max': pt.isMax, 'hm-cell-pulse': pt.isMax }]"
                 :style="{ background: hmColor(pt.pressureValue, HM_MAX_N) }"
-                :title="`${pt.pointId} (${pt.label}): ${pt.pressureValue.toFixed(1)} N`"
+                :title="`${pt.pointId} (${pt.label}): ${pt.pressureValue.toFixed(2)} N`"
                 @click="selectHeatmapPoint(pt)"
               >
                 <span class="hm-cell-id">{{ pt.pointId }}</span>
-                <span class="hm-cell-val">{{ pt.pressureValue.toFixed(0) }}</span>
+                <span class="hm-cell-val">{{ pt.pressureValue.toFixed(2) }}</span>
               </div>
             </div>
           </div>
@@ -254,7 +254,7 @@ const chartOptions: ChartOptions<'line'> = {
       mode: 'index',
       intersect: false,
       callbacks: {
-        label: (c) => `压力：${Number(c.parsed.y).toFixed(1)} N`,
+        label: (c) => `压力：${Number(c.parsed.y).toFixed(2)} N`,
       },
     },
   },
