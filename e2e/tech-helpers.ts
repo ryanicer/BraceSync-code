@@ -201,6 +201,10 @@ export function stopMockWifiStatusSequence() {
   if (wifiStatusTimer) { clearInterval(wifiStatusTimer); wifiStatusTimer = null }
 }
 
+// T240: 清设备 WiFi mock —— 秒级成功，保证 E2E 3s 自动返回时序
+export async function sendWifiClear(deviceId) { }
+export function waitForWifiClear() { return Promise.resolve(true) }
+
 export async function readDeviceInfo(deviceId) {
   return { deviceId, firmware: 'v1.2.3', battery: 85 }
 }
