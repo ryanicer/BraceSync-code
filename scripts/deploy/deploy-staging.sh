@@ -57,6 +57,11 @@ npm install --silent 2>/dev/null || fail "npm install 失败"
 VITE_USE_MOCK=false npm run build -w apps/admin-web || fail "admin-web 构建失败"
 log "   admin-web 产物: $PROJECT_ROOT/apps/admin-web/dist/"
 
+# rsync admin-web 产物到 staging 目录
+log "   rsync admin-web 产物到 $STAGING_DIR/apps/admin-web/dist/ ..."
+sudo mkdir -p "$STAGING_DIR/apps/admin-web/dist"
+sudo rsync -a --delete "$PROJECT_ROOT/apps/admin-web/dist/" "$STAGING_DIR/apps/admin-web/dist/"
+
 # ④ 增量数据库迁移
 log "④ 增量数据库迁移 ..."
 PG_CONTAINER="bracesync-staging-postgres-1"
@@ -113,7 +118,7 @@ if [ -f "$PROJECT_ROOT/scripts/deploy/docker-compose.yml" ]; then
   sudo sed -i 's/"443:443"/"8443:443"/g' "$STAGING_DIR/docker-compose.yml"
   # 确保 nginx volumes 包含 default.conf.disabled 和 admin-web dist 挂载
   if ! grep -q 'default.conf.disabled' "$STAGING_DIR/docker-compose.yml"; then
-    sudo sed -i '/nginx\.conf:ro/a\      - ./default.conf.disabled:/etc/nginx/conf.d/default.conf:ro\n      - /home/ubuntu/bracesync/apps/admin-web/dist:/usr/share/nginx/html/admin:ro' "$STAGING_DIR/docker-compose.yml"
+    sudo sed -i '/nginx\.conf:ro/a\      - ./default.conf.disabled:/etc/nginx/conf.d/default.conf:ro' "$STAGING_DIR/docker-compose.yml"
   fi
 fi
 
@@ -125,6 +130,8 @@ fi
 # 同步 prometheus.yml
 if [ -f "$PROJECT_ROOT/scripts/deploy/prometheus.yml" ]; then
   sudo cp "$PROJECT_ROOT/scripts/deploy/prometheus.yml" "$STAGING_DIR/prometheus.yml"
+  # restart prometheus 容器使新配置生效
+  sudo docker compose restart prometheus 2>/dev/null || log "   prometheus 容器未运行或不存在，跳过 restart"
 fi
 
 # 确保 .env 存在
