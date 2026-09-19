@@ -94,10 +94,15 @@ VALUES ($1, 'question', $2, $3, $4, $5, $6, $7)`,
 	require.NotNil(t, row.AvgReplySec, "存在已回复样本时均值不得为 NULL")
 	assert.Greater(t, *row.AvgReplySec, 0.0)
 
-	// 无样本窗口 → 计数 0 且均值 NULL（不以 0 冒充「秒回」）
+	// 远早于任何样本的窗口：今日计数归零（证明窗口边界生效），
+	// 而 avgResponseSeconds 仍非 nil —— 它是**全量已回复样本**均值，不随窗口变化（已声明口径）。
+	// 「无已回复样本 ⇒ NULL」这一支由 fake 层用例覆盖；真库共享种子表恒有已回复样本，
+	// 不为此删种子（会打断 TestITFeedbackProcess 等既有用例）。
 	farStart := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	far, err := itStore.FeedbackStats(ctx, farStart, farStart.AddDate(0, 0, 1))
 	require.NoError(t, err)
 	assert.Zero(t, far.TodayCount)
-	assert.Nil(t, far.AvgReplySec)
+	require.NotNil(t, far.AvgReplySec, "全量口径：不受今日窗口约束")
+	require.NotNil(t, row.AvgReplySec)
+	assert.Equal(t, *far.AvgReplySec, *row.AvgReplySec, "同一批样本，两次查询均值一致")
 }
