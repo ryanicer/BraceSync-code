@@ -75,6 +75,7 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/teams"),
 	rbacOf(http.MethodGet, "/api/v1/teams/:teamId/members"),
 	rbacOf(http.MethodGet, "/api/v1/doctors"),
+	rbacOf(http.MethodGet, "/api/v1/admin/teams/stats"), // T256 #1 团队统计卡
 
 	// T185 订阅额度授予：权益写操作。患者域读端点（wear-reminder / subscription-quota /
 	// notifications）不进本矩阵——患者需自查本人，水平越权由 msg-service handler 层
@@ -148,6 +149,7 @@ var doctorAdminOnlyPatterns = []rbacPattern{
 var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/admin/patients"),
 	rbacOf(http.MethodGet, "/api/v1/admin/patients/:patientId"),
+	rbacOf(http.MethodGet, "/api/v1/admin/feeling-logs"), // T256 #2 跨患者感受日志流
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/kpi"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/wear-trend"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/wear-distribution"),
