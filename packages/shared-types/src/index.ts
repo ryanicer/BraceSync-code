@@ -71,6 +71,14 @@ export interface TeamDetail extends Team {
   createdAt: string;
 }
 
+/** 团队管理统计卡（T256 #1：GET /admin/teams/stats，4 个计数） */
+export interface TeamStats {
+  teamCount: number;        // 团队总数
+  memberCount: number;      // 成员总数
+  patientCount: number;     // 管理患者数（已分配团队的患者）
+  unassignedPatientCount: number; // 待分配患者数（未分配团队）
+}
+
 /** 团队成员（T059 成员管理，对齐后端 TeamMemberDTO） */
 export interface TeamMember {
   memberId: string;
@@ -162,7 +170,8 @@ export interface FeelingLog {
   logId: string;
   patientId: string;
   logDate: string;               // 对齐 DB feeling_logs.log_date（YYYY-MM-DD）
-  comfortScore: number;          // 0.5–5（可半星）
+  comfortScore: number | null;   // 0.5–5（可半星）；T256 #3 历史星级口径，写入口径以 feeling 为准
+  feeling: 'fitted' | 'discomfort' | null; // T256 #3：贴合(fitted)/不适(discomfort)两档，来自 comfort_level 列
   discomfortAreas: string[];     // neck/thoracic/lumbar/pelvis
   notes: string;
   replyContent: string | null;   // 医生回复
@@ -396,6 +405,9 @@ export interface SystemSettings {
   wearInterruptMinutes: number;      // threshold_wear_interrupt_minutes（≥2×采集间隔）
   sensorDriftN: number;              // threshold_sensor_drift
   wifiPresets: WifiPreset[];         // wifi_presets
+  collectIntervalSeconds: number;    // T256 #4：采集间隔（秒，设计稿口径；内部存储 collect_interval_minutes）
+  retentionDays: number;             // T256 #4：数据保留天数（data_retention_days）
+  maxPatients: number;               // T256 #4：最大患者数（max_patients）
 }
 
 /** 运营后台登录响应（T030 #9：user-service 签发，gateway Phase 1 JWT 校验消费） */

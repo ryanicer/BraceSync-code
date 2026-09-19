@@ -176,6 +176,7 @@ func (h *Handler) Router() *gin.Engine {
 
 		v1.GET("/teams", h.listTeams)
 		v1.GET("/teams/:teamId/members", h.getTeamMembers)
+		v1.GET("/admin/teams/stats", h.getTeamStats) // T256 #1 团队管理统计卡
 		// T059 团队/成员写操作（stub，统一返回 500；实现方转绿时填充逻辑）
 		v1.POST("/teams", h.createTeam)
 		v1.PUT("/teams/:teamId", h.updateTeam)
@@ -202,6 +203,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/patients/:patientId/orthosis-plans", h.savePlan)
 		v1.GET("/patients/:patientId/feeling-logs", h.listFeelingLogs)
 		v1.POST("/feeling-logs/:logId/reply", h.replyFeelingLog)
+		v1.GET("/admin/feeling-logs", h.listFeelingLogsAdmin) // T256 #2 跨患者感受日志流
 
 		v1.GET("/admin/roles", h.listRoles)
 		v1.GET("/admin/roles/:roleId/permissions", h.getPermissions)
@@ -1193,11 +1195,13 @@ func toFeelingDTO(r repo.FeelingLogRow) model.FeelingLogDTO {
 		s := r.ReplyTime.UTC().Format("2006-01-02T15:04:05Z07:00")
 		replyTime = &s
 	}
+	// T256 #3：feeling 直接来自 comfort_level 列（fitted=贴合 / discomfort=不适），不再从 comfort_score 派生。
 	return model.FeelingLogDTO{
 		LogID:           strconv.FormatInt(r.LogID, 10),
 		PatientID:       r.PatientID,
 		LogDate:         r.LogDate.Format("2006-01-02"),
 		ComfortScore:    r.ComfortScore,
+		Feeling:         r.ComfortLevel,
 		DiscomfortAreas: areas,
 		Notes:           r.Notes,
 		ReplyContent:    r.ReplyContent,
@@ -1271,6 +1275,57 @@ func (h *Handler) replyFeelingLog(c *gin.Context) {
 		return
 	}
 	ok(c, nil)
+}
+
+// ─────────────────────────────────────────────────────────────
+// T256 #1 团队统计卡 + #2 跨患者感受日志
+// ─────────────────────────────────────────────────────────────
+
+// getTeamStats GET /api/v1/admin/teams/stats —— 团队管理 4 张统计卡（T256 #1）
+func (h *Handler) getTeamStats(c *gin.Context) {
+	teamCount, memberCount, managed, unassigned, err := h.store.GetTeamStats(c.Request.Context())
+	if err != nil {
+		fail(c, model.ErrInternal("get team stats failed"))
+		return
+	}
+	ok(c, model.TeamStatsDTO{
+		TeamCount:              teamCount,
+		MemberCount:            memberCount,
+		ManagedPatientCount:    managed,
+		UnassignedPatientCount: unassigned,
+	})
+}
+
+// listFeelingLogsAdmin GET /api/v1/admin/feeling-logs —— 跨患者感受日志流（T256 #2）
+// 支持 keyword / startDate / endDate / feeling 筛选 + 分页。
+func (h *Handler) listFeelingLogsAdmin(c *gin.Context) {
+	page, pageSize, appErr := parsePaging(c)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	feeling := strings.TrimSpace(c.Query("feeling"))
+	if feeling != "" && feeling != "fitted" && feeling != "discomfort" {
+		fail(c, model.ErrInvalidParam("invalid feeling: %s (fitted|discomfort)", feeling))
+		return
+	}
+	rows, total, err := h.store.ListFeelingLogsAdmin(c.Request.Context(), repo.FeelingLogAdminFilter{
+		Keyword:   strings.TrimSpace(c.Query("keyword")),
+		StartDate: strings.TrimSpace(c.Query("startDate")),
+		EndDate:   strings.TrimSpace(c.Query("endDate")),
+		Feeling:   feeling,
+		Page:      page,
+		PageSize:  pageSize,
+	})
+	if err != nil {
+		fail(c, model.ErrInternal("list feeling logs failed"))
+		return
+	}
+	list := make([]model.FeelingLogDTO, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, toFeelingDTO(r))
+	}
+	ok(c, model.PageData{List: list, Total: total, Page: page, PageSize: pageSize})
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1379,7 +1434,10 @@ const (
 	keyWearInterrupt   = "threshold_wear_interrupt_minutes"
 	keySensorDrift     = "threshold_sensor_drift"
 	keyWifiPresets     = "wifi_presets"
-	keyCollectInterval = "collect_interval_minutes"
+	keyCollectInterval = "collect_interval_minutes" // 内部分钟（device/alert 服务依赖）
+	keyCollectIntervalSeconds = "collect_interval_seconds" // T256 #4：API 秒口径（设计稿）
+	keyRetentionDays   = "data_retention_days"      // T256 #4：数据保留天数
+	keyMaxPatients     = "max_patients"             // T256 #4：最大患者数
 )
 
 // 缺失键默认值（PRD §7D.12，与 @bracesync/constants DEFAULT_THRESHOLDS 对齐）
@@ -1390,6 +1448,9 @@ var settingsDefaults = model.SystemSettingsDTO{
 	WearInterruptMinutes:   60,
 	SensorDriftN:           2.8,
 	WifiPresets:            []model.WifiPresetDTO{},
+	CollectIntervalSeconds: 1800, // 默认 30 分钟 = 1800 秒
+	RetentionDays:          365,  // 默认保留 365 天
+	MaxPatients:            10000, // 默认最大 10000 患者（对齐 seed.sql）
 }
 
 func numOr(raw string, def float64) float64 {
@@ -1428,8 +1489,10 @@ func maskWifiPasswords(list []model.WifiPresetDTO) []model.WifiPresetDTO {
 }
 
 // getSettings GET /api/v1/admin/settings —— sys_configs 映射（缺失键回默认值）
+// T256 #4：collectIntervalSeconds 直接读 collect_interval_seconds（设计稿秒口径）；
+// 内部分钟键 collect_interval_minutes 由写入端点同步维护，供 device/alert 服务消费。
 func (h *Handler) getSettings(c *gin.Context) {
-	keys := []string{keyWearTarget, keyPressureHigh, keyFluctuationPct, keyWearInterrupt, keySensorDrift, keyWifiPresets}
+	keys := []string{keyWearTarget, keyPressureHigh, keyFluctuationPct, keyWearInterrupt, keySensorDrift, keyWifiPresets, keyCollectIntervalSeconds, keyRetentionDays, keyMaxPatients}
 	kvs, err := h.store.GetConfigs(c.Request.Context(), keys)
 	if err != nil {
 		fail(c, model.ErrInternal("read settings failed"))
@@ -1442,11 +1505,15 @@ func (h *Handler) getSettings(c *gin.Context) {
 		WearInterruptMinutes:   numOr(kvs[keyWearInterrupt], settingsDefaults.WearInterruptMinutes),
 		SensorDriftN:           numOr(kvs[keySensorDrift], settingsDefaults.SensorDriftN),
 		WifiPresets:            maskWifiPasswords(parseWifiPresets(kvs[keyWifiPresets])),
+		CollectIntervalSeconds: int(numOr(kvs[keyCollectIntervalSeconds], float64(settingsDefaults.CollectIntervalSeconds))),
+		RetentionDays:          int(numOr(kvs[keyRetentionDays], float64(settingsDefaults.RetentionDays))),
+		MaxPatients:            int(numOr(kvs[keyMaxPatients], float64(settingsDefaults.MaxPatients))),
 	}
 	ok(c, dto)
 }
 
 // validateSettings 参数范围校验（对齐前端表单 min/max 与 T009 阈值联动口径）
+// T256 #4：collectIntervalSeconds 需为 60 的整数倍（内部分钟存储）；retentionDays/maxPatients 正数。
 func validateSettings(s model.SystemSettingsDTO, collectInterval float64) *model.AppError {
 	switch {
 	case s.DailyWearTargetHours < 1 || s.DailyWearTargetHours > 24:
@@ -1461,6 +1528,12 @@ func validateSettings(s model.SystemSettingsDTO, collectInterval float64) *model
 		return model.ErrInvalidParam("wearInterruptMinutes must be >= 2x collect interval (%.0f)", 2*collectInterval)
 	case s.SensorDriftN < 0.1 || s.SensorDriftN > 20:
 		return model.ErrInvalidParam("sensorDriftN must be in [0.1,20]")
+	case s.CollectIntervalSeconds < 60 || s.CollectIntervalSeconds%60 != 0:
+		return model.ErrInvalidParam("collectIntervalSeconds must be a positive multiple of 60 (seconds)")
+	case s.RetentionDays < 1:
+		return model.ErrInvalidParam("retentionDays must be >= 1")
+	case s.MaxPatients < 1:
+		return model.ErrInvalidParam("maxPatients must be >= 1")
 	case len(s.WifiPresets) > 32:
 		return model.ErrInvalidParam("wifiPresets exceeds 32 entries")
 	}
@@ -1491,6 +1564,8 @@ func mergeWifiPasswords(incoming []model.WifiPresetDTO, stored []model.WifiPrese
 func fmtNum(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 
 // updateSettings PUT /api/v1/admin/settings —— 校验 + UPSERT sys_configs
+// T256 #4：collectIntervalSeconds（秒）换算为 collect_interval_minutes（分钟）写入，兼容 device/alert 服务；
+// retentionDays / maxPatients 写入新键。
 func (h *Handler) updateSettings(c *gin.Context) {
 	var req model.SystemSettingsDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1498,24 +1573,21 @@ func (h *Handler) updateSettings(c *gin.Context) {
 		return
 	}
 
-	// 采集间隔（中断阈值联动校验用；缺失回默认 30）
-	intervalKVs, err := h.store.GetConfigs(c.Request.Context(), []string{keyCollectInterval})
-	if err != nil {
-		fail(c, model.ErrInternal("read collect interval failed"))
-		return
-	}
-	interval := numOr(intervalKVs[keyCollectInterval], 30)
+	// 采集间隔（中断阈值联动校验用）：用请求体的秒值换算分钟
+	intervalMinutes := float64(req.CollectIntervalSeconds) / 60.0
 
-	if appErr := validateSettings(req, interval); appErr != nil {
+	if appErr := validateSettings(req, intervalMinutes); appErr != nil {
 		fail(c, appErr)
 		return
 	}
 
 	storedPresets := []model.WifiPresetDTO{}
 	presetKVs, err := h.store.GetConfigs(c.Request.Context(), []string{keyWifiPresets})
-	if err == nil {
-		storedPresets = parseWifiPresets(presetKVs[keyWifiPresets])
+	if err != nil {
+		fail(c, model.ErrInternal("read existing settings failed"))
+		return
 	}
+	storedPresets = parseWifiPresets(presetKVs[keyWifiPresets])
 	merged := mergeWifiPasswords(req.WifiPresets, storedPresets)
 	wifiJSON, err := json.Marshal(merged)
 	if err != nil {
@@ -1530,6 +1602,10 @@ func (h *Handler) updateSettings(c *gin.Context) {
 		{Key: keyWearInterrupt, Value: fmtNum(req.WearInterruptMinutes)},
 		{Key: keySensorDrift, Value: fmtNum(req.SensorDriftN)},
 		{Key: keyWifiPresets, Value: string(wifiJSON)},
+		{Key: keyCollectIntervalSeconds, Value: strconv.Itoa(req.CollectIntervalSeconds)}, // API 秒口径
+		{Key: keyCollectInterval, Value: fmtNum(intervalMinutes)},                         // 内部分钟（device/alert）
+		{Key: keyRetentionDays, Value: strconv.Itoa(req.RetentionDays)},
+		{Key: keyMaxPatients, Value: strconv.Itoa(req.MaxPatients)},
 	}
 	if err := h.store.UpsertConfigs(c.Request.Context(), kvs, operatorID(c, "ops")); err != nil {
 		fail(c, model.ErrInternal("save settings failed"))
