@@ -158,6 +158,9 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/alert-trend"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/team-ranking"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/doctor-ranking"),
+	// T248 7.1 患者沟通统计栏：全院聚合计数（今日咨询/待回复/平均响应），后台工作台专用。
+	// 不登记即 default-allow ⇒ 患者 token 也能读全院计数。
+	rbacOf(http.MethodGet, "/api/v1/feedbacks/stats"),
 }
 
 // staffRoles 内部 staff 角色集合（患者端 patient-miniapp 全仓零 /admin/* 调用，故不含 rolePatient）

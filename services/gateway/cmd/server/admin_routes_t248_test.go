@@ -1,7 +1,7 @@
 // Package main — T248 gateway 侧取证：两条新 user-service 端点的挂载与 RBAC
 //
 //   - PUT /api/v1/admin/patients/:patientId（4.3 档案编辑）：admin 放行、其余角色入口即 403；
-//   - GET /api/v1/feedbacks/stats（7.1 统计栏）：与 GET /feedbacks 同权限面，正常代理。
+//   - GET /api/v1/feedbacks/stats（7.1 统计栏）：登记 staffOnlyPatterns ⇒ staff 放行、患者 403。
 package main
 
 import (
@@ -44,7 +44,7 @@ func TestT248_AdminEditPatient_NonAdmin403(t *testing.T) {
 	backend, received := captureBackend(t)
 	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
 
-	for _, role := range []string{"doctor", "cs", "patient", "technician"} {
+	for _, role := range []string{"ROLE_DOCTOR", "ROLE_CS", "patient", "technician", "doctor", "cs"} {
 		code, body := httpDoFull(t, "PUT", gw.URL+t248EditPath, `{"name":"x"}`, t248JWT(t, "U-"+role, role))
 		t.Logf("role=%s → HTTP %d %s", role, code, body)
 		assert.Equal(t, 403, code, "角色 %s 不得改他人档案", role)
@@ -52,17 +52,27 @@ func TestT248_AdminEditPatient_NonAdmin403(t *testing.T) {
 	assert.Empty(t, *received, "RBAC 拒绝不得触达 user-service")
 }
 
-// TestT248_FeedbackStats_Proxied 统计栏端点经 JWT 组正常代理（客服工作台用）
-func TestT248_FeedbackStats_Proxied(t *testing.T) {
+// TestT248_FeedbackStats_StaffOnly 统计栏端点角色矩阵（7.1 新登记 staffOnlyPatterns）：
+// 内部 staff 放行代理；患者 token 在网关层 403，后端零调用。
+func TestT248_FeedbackStats_StaffOnly(t *testing.T) {
 	backend, received := captureBackend(t)
 	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
 
-	code, respBody := httpDoFull(t, "GET", gw.URL+t248StatsPath, "", t248JWT(t, "CS001", "cs"))
-	t.Logf("gateway → 后端实收: %v\n后端响应原文 (HTTP %d): %s", *received, code, respBody)
+	for _, role := range []string{"ROLE_ADMIN", "ROLE_DOCTOR", "ROLE_CS", "technician"} {
+		code, respBody := httpDoFull(t, "GET", gw.URL+t248StatsPath, "", t248JWT(t, "U-"+role, role))
+		t.Logf("role=%s → HTTP %d %s｜后端实收 %v", role, code, respBody, *received)
+		require.Equal(t, 200, code, "staff 角色 %s 应可读统计栏", role)
+	}
+	require.Len(t, *received, 4)
+	for _, r := range *received {
+		assert.Contains(t, r, "GET "+t248StatsPath)
+	}
 
-	require.Equal(t, 200, code)
-	require.Len(t, *received, 1)
-	assert.Contains(t, (*received)[0], "GET "+t248StatsPath)
+	before := len(*received)
+	code, body := httpDoFull(t, "GET", gw.URL+t248StatsPath, "", t248JWT(t, "P20260001", "patient"))
+	t.Logf("patient → HTTP %d %s", code, body)
+	assert.Equal(t, 403, code, "患者 token 不得读全院统计")
+	assert.Len(t, *received, before, "RBAC 拒绝不得触达 user-service")
 }
 
 // TestT248_NewRoutes_NoToken_401 未鉴权不得触达后端
