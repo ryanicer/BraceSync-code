@@ -1511,11 +1511,12 @@ func (h *Handler) updateSettings(c *gin.Context) {
 		return
 	}
 
-	storedPresets := []model.WifiPresetDTO{}
 	presetKVs, err := h.store.GetConfigs(c.Request.Context(), []string{keyWifiPresets})
-	if err == nil {
-		storedPresets = parseWifiPresets(presetKVs[keyWifiPresets])
+	if err != nil {
+		fail(c, model.ErrInternal("read existing settings failed"))
+		return
 	}
+	storedPresets := parseWifiPresets(presetKVs[keyWifiPresets])
 	merged := mergeWifiPasswords(req.WifiPresets, storedPresets)
 	wifiJSON, err := json.Marshal(merged)
 	if err != nil {
