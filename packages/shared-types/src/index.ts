@@ -34,6 +34,7 @@ export interface Technician {
   installCount: number;
   status: 'enabled' | 'disabled';
   authStatus: 'authorized' | 'unauthorized';  // 对齐 DB technicians.auth_status
+  createdAt?: string;            // T247 10.4: 创建时间（设计稿 技师管理.html:102）
 }
 
 export interface Device {

@@ -22,56 +22,64 @@
       <span class="kf-hint">小程序客服消息 · 需使用运营账号登录微信公众平台</span>
     </div>
 
-    <div class="page-card">
-      <el-table :data="list" size="small" v-loading="loading">
-        <el-table-column prop="feedbackId" label="反馈ID" width="100" />
-        <el-table-column label="患者" width="110">
-          <template #default="{ row }">{{ patientNameOf(row.patientId) }}</template>
-        </el-table-column>
-        <el-table-column prop="type" label="类型" width="100" />
-        <el-table-column prop="content" label="反馈内容" min-width="280" show-overflow-tooltip />
-        <el-table-column label="提交时间" width="140">
-          <template #default="{ row }">{{ formatTime(row.submitTime) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="处理人" width="100">
-          <template #default="{ row }">{{ row.handler || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" link type="primary" @click="viewDetail(row)">详情</el-button>
-            <el-button
-              v-if="row.status !== 'resolved'"
-              size="small"
-              link
-              type="success"
-              @click="markResolved(row)"
-            >标记已处理</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </div>
+    <div class="layout">
+      <!-- 左：反馈列表 -->
+      <div class="left-pane page-card">
+        <div class="pane-title">反馈列表</div>
+        <el-table
+          :data="list"
+          size="small"
+          v-loading="loading"
+          highlight-current-row
+          @row-click="selectFeedback"
+        >
+          <el-table-column prop="feedbackId" label="ID" width="80" />
+          <el-table-column label="患者" width="90">
+            <template #default="{ row }">{{ patientNameOf(row.patientId) }}</template>
+          </el-table-column>
+          <el-table-column prop="type" label="类型" width="90" />
+          <el-table-column prop="content" label="反馈内容" min-width="180" show-overflow-tooltip />
+          <el-table-column label="状态" width="80">
+            <template #default="{ row }">
+              <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
 
-    <!-- 反馈详情/回复对话框 -->
-    <el-dialog v-model="detailVisible" :title="current ? `反馈 ${current.feedbackId}` : ''" width="480px">
-      <template v-if="current">
-        <el-descriptions :column="1" border size="small">
-          <el-descriptions-item label="患者">{{ patientNameOf(current.patientId) }}</el-descriptions-item>
-          <el-descriptions-item label="类型">{{ current.type }}</el-descriptions-item>
-          <el-descriptions-item label="内容">{{ current.content }}</el-descriptions-item>
-          <el-descriptions-item label="提交时间">{{ current.submitTime }}</el-descriptions-item>
-          <el-descriptions-item v-if="current.replyContent" label="回复">{{ current.replyContent }}</el-descriptions-item>
-        </el-descriptions>
-        <template v-if="current.status === 'pending'">
-          <el-input v-model="replyText" type="textarea" :rows="3" placeholder="回复内容（协调微信客服后填写）" class="reply-input" />
-          <el-button type="primary" :loading="replying" @click="submitReply">回复并标记</el-button>
+      <!-- 右：反馈详情 + 回复 -->
+      <div class="right-pane page-card">
+        <template v-if="current">
+          <div class="pane-title">反馈 {{ current.feedbackId }} 详情</div>
+          <el-descriptions :column="1" border size="small" class="desc">
+            <el-descriptions-item label="患者">{{ patientNameOf(current.patientId) }}</el-descriptions-item>
+            <el-descriptions-item label="类型">{{ current.type }}</el-descriptions-item>
+            <el-descriptions-item label="内容">{{ current.content }}</el-descriptions-item>
+            <el-descriptions-item label="提交时间">{{ formatTime(current.submitTime) }}</el-descriptions-item>
+            <el-descriptions-item label="状态">
+              <el-tag :type="statusTagType(current.status)" size="small">{{ statusLabel(current.status) }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item v-if="current.replyContent" label="回复">{{ current.replyContent }}</el-descriptions-item>
+          </el-descriptions>
+
+          <template v-if="current.status === 'pending'">
+            <div class="reply-box">
+              <div class="reply-label">回复内容（协调微信客服后填写）</div>
+              <el-input v-model="replyText" type="textarea" :rows="4" placeholder="输入回复..." />
+              <div class="reply-actions">
+                <el-button type="primary" :loading="replying" @click="submitReply">回复并标记</el-button>
+                <el-button @click="markResolved(current)">仅标记已处理</el-button>
+              </div>
+            </div>
+          </template>
+          <template v-else-if="current.status === 'replied'">
+            <el-button type="success" @click="markResolved(current)">标记已解决</el-button>
+          </template>
+          <el-empty v-else description="该反馈已解决" :image-size="60" class="empty-desc" />
         </template>
-      </template>
-    </el-dialog>
+        <el-empty v-else description="选择左侧反馈查看详情" :image-size="80" class="empty-desc" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -86,7 +94,6 @@ const auth = useAuthStore()
 const list = ref<Feedback[]>([])
 const keyword = ref('')
 const loading = ref(false)
-const detailVisible = ref(false)
 const current = ref<Feedback | null>(null)
 const replyText = ref('')
 const replying = ref(false)
@@ -114,6 +121,9 @@ async function loadData() {
   loading.value = true
   try {
     list.value = await fetchFeedbacks({ keyword: keyword.value || undefined })
+    if (list.value.length > 0 && !current.value) {
+      current.value = list.value[0]
+    }
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -121,10 +131,9 @@ async function loadData() {
   }
 }
 
-function viewDetail(row: Feedback) {
+function selectFeedback(row: Feedback) {
   current.value = row
   replyText.value = ''
-  detailVisible.value = true
 }
 
 async function submitReply() {
@@ -137,8 +146,6 @@ async function submitReply() {
     current.value.status = 'replied'
     current.value.handler = auth.user?.name ?? null
     ElMessage.success('回复成功')
-    detailVisible.value = false
-    loadData()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '回复失败')
   } finally {
@@ -161,19 +168,29 @@ onMounted(loadData)
 </script>
 
 <style scoped>
-.role-hint {
-  margin-bottom: 16px;
+.role-hint { margin-bottom: 16px; }
+.search-input { width: 240px; }
+.kf-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-left: 8px; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
 }
-.search-input {
-  width: 240px;
+@media (max-width: 992px) {
+  .layout { grid-template-columns: 1fr; }
 }
-.reply-input {
-  margin-top: 16px;
+.left-pane, .right-pane { padding: 16px; }
+.pane-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a6db5;
   margin-bottom: 12px;
 }
-.kf-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin-left: 8px;
-}
+.desc { margin-bottom: 16px; }
+.reply-box { margin-top: 12px; }
+.reply-label { font-size: 13px; color: #64748b; margin-bottom: 6px; }
+.reply-actions { margin-top: 10px; display: flex; gap: 8px; }
+.empty-desc { margin-top: 40px; }
 </style>

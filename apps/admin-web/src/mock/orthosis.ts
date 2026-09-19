@@ -28,6 +28,15 @@ export function mockFeelingLogs(patientId: string): FeelingLog[] {
   return FEELINGS.filter((f) => f.patientId === patientId).map((f) => ({ ...f }))
 }
 
+// T247 8.3: 医生回复感受日志 mock
+export function mockReplyFeelingLog(logId: string, replyContent: string): void {
+  const f = FEELINGS.find((x) => x.logId === logId)
+  if (f) {
+    f.replyContent = replyContent
+    f.replyTime = new Date().toISOString()
+  }
+}
+
 export function mockHealthReports(patientId: string): HealthReport[] {
   return REPORTS.filter((r) => r.patientId === patientId).map((r) => ({ ...r }))
 }
