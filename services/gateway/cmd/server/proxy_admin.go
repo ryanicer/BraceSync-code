@@ -122,6 +122,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/admin/patients/batch-bind"},         // T057 批量绑定
 	{http.MethodGet, "/teams"},                              // T030 #10 概要
 	{http.MethodGet, "/teams/:teamId/members"},              // T030 #10 成员明细
+	{http.MethodGet, "/admin/teams/stats"},                  // T256 #1 团队管理统计卡
 	{http.MethodPost, "/teams"},                             // T059 创建团队
 	{http.MethodPut, "/teams/:teamId"},                      // T059 编辑团队
 	{http.MethodDelete, "/teams/:teamId"},                   // T059 删除团队
@@ -144,6 +145,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/patients/:patientId/orthosis-plans"},
 	{http.MethodGet, "/patients/:patientId/feeling-logs"},
 	{http.MethodPost, "/feeling-logs/:logId/reply"}, // T030 #6 医生回复
+	{http.MethodGet, "/admin/feeling-logs"},         // T256 #2 跨患者感受日志流
 	{http.MethodGet, "/admin/roles"},                // T030 #7
 	{http.MethodGet, "/admin/roles/:roleId/permissions"},
 	{http.MethodPut, "/admin/roles/:roleId/permissions"},

@@ -689,7 +689,7 @@ func (s *PGStore) CreatePlan(ctx context.Context, patientID, doctorID, content, 
 // ListFeelingLogs 患者感受日志（按日期倒序）
 func (s *PGStore) ListFeelingLogs(ctx context.Context, patientID string) ([]FeelingLogRow, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT log_id, patient_id, log_date, comfort_score, discomfort_areas, notes, reply_content, reply_time
+		`SELECT log_id, patient_id, '' AS patient_name, log_date, comfort_score, comfort_level, discomfort_areas, notes, reply_content, reply_time
 		 FROM feeling_logs WHERE patient_id = $1 ORDER BY log_date DESC, log_id DESC`, patientID)
 	if err != nil {
 		return nil, err
@@ -698,8 +698,8 @@ func (s *PGStore) ListFeelingLogs(ctx context.Context, patientID string) ([]Feel
 	var list []FeelingLogRow
 	for rows.Next() {
 		var f FeelingLogRow
-		if scanErr := rows.Scan(&f.LogID, &f.PatientID, &f.LogDate, &f.ComfortScore,
-			&f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime); scanErr != nil {
+		if scanErr := rows.Scan(&f.LogID, &f.PatientID, &f.PatientName, &f.LogDate, &f.ComfortScore,
+			&f.ComfortLevel, &f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime); scanErr != nil {
 			return nil, scanErr
 		}
 		list = append(list, f)
@@ -716,6 +716,89 @@ func (s *PGStore) ReplyFeelingLog(ctx context.Context, logID int64, replyContent
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// GetTeamStats T256 #1：团队管理 4 张统计卡。
+// 团队总数=COUNT(teams)；成员总数=SUM(teams.member_count)；
+// 管理患者=COUNT(patients WHERE team_id IS NOT NULL)；待分配=COUNT(patients WHERE team_id IS NULL)。
+func (s *PGStore) GetTeamStats(ctx context.Context) (int, int, int, int, error) {
+	var teamCount, memberCount, managedCount, unassignedCount int
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM teams) AS team_count,
+			COALESCE((SELECT SUM(member_count) FROM teams), 0) AS member_count,
+			(SELECT COUNT(*) FROM patients WHERE team_id IS NOT NULL) AS managed_count,
+			(SELECT COUNT(*) FROM patients WHERE team_id IS NULL) AS unassigned_count
+	`).Scan(&teamCount, &memberCount, &managedCount, &unassignedCount)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return teamCount, memberCount, managedCount, unassignedCount, nil
+}
+
+// ListFeelingLogsAdmin T256 #2：跨患者感受日志流。
+// 支持 keyword（患者姓名 ILIKE）、startDate/endDate（log_date 范围）、feeling（comfortable/uncomfortable，
+// 由 comfort_score>=3/<3 派生）。按 log_date DESC 分页。
+func (s *PGStore) ListFeelingLogsAdmin(ctx context.Context, f FeelingLogAdminFilter) ([]FeelingLogRow, int64, error) {
+	where := []string{"1=1"}
+	args := []any{}
+	idx := 1
+	if f.Keyword != "" {
+		where = append(where, fmt.Sprintf("p.name ILIKE $%d", idx))
+		args = append(args, "%"+f.Keyword+"%")
+		idx++
+	}
+	if f.StartDate != "" {
+		where = append(where, fmt.Sprintf("fl.log_date >= $%d", idx))
+		args = append(args, f.StartDate)
+		idx++
+	}
+	if f.EndDate != "" {
+		where = append(where, fmt.Sprintf("fl.log_date <= $%d", idx))
+		args = append(args, f.EndDate)
+		idx++
+	}
+	switch f.Feeling {
+	case "fitted":
+		where = append(where, fmt.Sprintf("fl.comfort_level = $%d", idx))
+		args = append(args, "fitted")
+		idx++
+	case "discomfort":
+		where = append(where, fmt.Sprintf("fl.comfort_level = $%d", idx))
+		args = append(args, "discomfort")
+		idx++
+	}
+	whereSQL := strings.Join(where, " AND ")
+
+	// count
+	var total int64
+	countSQL := fmt.Sprintf(`SELECT COUNT(*) FROM feeling_logs fl JOIN patients p ON p.patient_id = fl.patient_id WHERE %s`, whereSQL)
+	if err := s.pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (f.Page - 1) * f.PageSize
+	listSQL := fmt.Sprintf(`
+		SELECT fl.log_id, fl.patient_id, p.name, fl.log_date, fl.comfort_score, fl.comfort_level, fl.discomfort_areas, fl.notes, fl.reply_content, fl.reply_time
+		FROM feeling_logs fl JOIN patients p ON p.patient_id = fl.patient_id
+		WHERE %s ORDER BY fl.log_date DESC, fl.log_id DESC LIMIT $%d OFFSET $%d`, whereSQL, idx, idx+1)
+	args = append(args, f.PageSize, offset)
+
+	rows, err := s.pool.Query(ctx, listSQL, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []FeelingLogRow
+	for rows.Next() {
+		var f FeelingLogRow
+		if scanErr := rows.Scan(&f.LogID, &f.PatientID, &f.PatientName, &f.LogDate, &f.ComfortScore,
+			&f.ComfortLevel, &f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime); scanErr != nil {
+			return nil, 0, scanErr
+		}
+		list = append(list, f)
+	}
+	return list, total, rows.Err()
 }
 
 // ─────────────────────────────────────────────────────────────

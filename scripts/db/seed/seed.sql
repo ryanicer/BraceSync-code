@@ -217,9 +217,13 @@ WHERE EXISTS (SELECT 1 FROM install_records WHERE install_id = 3)
 UPDATE install_records SET baseline_id = 3 WHERE install_id = 3 AND baseline_id IS NULL;
 
 -- ===== 感受日志（2+ 患者各 1+，覆盖矫形日志页）=====
+-- T256 8.2：两档（贴合/不适）各有样例——P20260001 2026-08-25 为低分样例。
+-- 注：两档落列（comfort_level）还是读时按 comfort_score≥3.0 派生，属 T256 待 PM 裁定的分叉，
+-- 故此处刻意不绑定列名，两种方案下本 seed 均可用。
 INSERT INTO feeling_logs (patient_id, log_date, comfort_score, discomfort_areas, notes) VALUES
   ('P20260001', '2026-07-26', 4.0, ARRAY['thoracic']::varchar[], '胸段稍紧，可接受'),
   ('P20260001', '2026-08-20', 3.5, ARRAY['thoracic','lumbar']::varchar[], '胸段和腰段均有压迫感'),
+  ('P20260001', '2026-08-25', 2.0, ARRAY['lumbar']::varchar[], '腰段压痛明显，已回院调整'),
   ('P20260003', '2026-08-20', 4.5, ARRAY['thoracic']::varchar[], '整体舒适，轻微紧绷'),
   ('P20260003', '2026-08-22', 3.0, ARRAY['lumbar']::varchar[], '腰段压痛较明显'),
   ('P20260004', '2026-08-21', 4.0, ARRAY[]::varchar[], '佩戴舒适，无不适')
@@ -337,6 +341,13 @@ INSERT INTO sys_configs (config_key, config_value, description) VALUES
   ('wearing_pressure_threshold', '0.5', 'wearing 佩戴判定压力阈值（N，占位值待重定 T173；判定统一用减偏移后值）'),
   ('heatmap_max_n', '60', '热力图色阶上界（N，占位值待重定 T173；四档分界按比例法派生）'),
   ('device_config_version', '1', '设备配置版本（设备侧上报后比对，不一致则应用新配置）'),
+  -- T256 12.5（设计稿 系统配置.html:88-90）：采集间隔单位收口为「秒」（T245 §9 K9）。
+  -- collect_interval_minutes 仍保留：alert-service / data-service 运行时消费分钟口径，
+  -- 两键由 PUT /admin/settings 按 60 换算同步写入，不允许手工只改其一。
+  -- 值 = 30 分钟等值换算（设计稿原型的 60 为占位显示值，不作默认口径），与 PRD §7D.12 默认一致。
+  ('collect_interval_seconds', '1800', '数据采集间隔（秒，运营后台按设计稿秒口径读写；=collect_interval_minutes×60）'),
+  ('data_retention_days', '365', '数据保留天数（T256 12.5；清理任务未启用）'),
+  ('max_patients', '10000', '最大患者数（T256 12.5；建员上限未启用）'),
   ('wifi_presets', '[{"ssid":"ClinicWiFi"},{"ssid":"HomeWiFi"}]', 'WiFi 预置列表（JSON 数组，技师端拉取辅助配网）')
 ON CONFLICT (config_key) DO NOTHING;
 

@@ -175,6 +175,16 @@ type TeamRow struct {
 	PatientCount int
 }
 
+// TeamStatsRow 团队维度聚合投影（T256 5.1，设计稿 团队管理.html:87-90 四张统计卡）。
+// 成员口径 = doctors/technicians 中 team_id 非空者，与 DeleteTeam 的引用计数、
+// GET /teams/:teamId/members 成员列表三者同源，不用 teams.member_count 维护列（防漂移）。
+type TeamStatsRow struct {
+	TotalTeams         int // 团队总数（status='active'）
+	TotalMembers       int // 成员总数（医生 + 技师，已挂团队）
+	ManagedPatients    int // 管理患者（patients.team_id 非空）
+	UnassignedPatients int // 待分配患者（patients.team_id 为空）
+}
+
 // TeamDetailRow teams 详情投影（T059 写功能返回；扩展 leader/description/status/createdAt）
 type TeamDetailRow struct {
 	TeamID       string
@@ -283,8 +293,10 @@ type OrthosisPlanRow struct {
 type FeelingLogRow struct {
 	LogID           int64
 	PatientID       string
+	PatientName     string // T256 #2：跨患者查询 join patients.name（单患者查询为空）
 	LogDate         time.Time
 	ComfortScore    *float64
+	ComfortLevel    *string // T256 #3：fitted(贴合) | discomfort(不适)，NULL=未评
 	DiscomfortAreas []string
 	Notes           *string
 	ReplyContent    *string
@@ -342,6 +354,16 @@ type PatientFilter struct {
 	TeamID   string
 	Page     int
 	PageSize int
+}
+
+// FeelingLogAdminFilter T256 #2：跨患者感受日志筛选条件
+type FeelingLogAdminFilter struct {
+	Keyword   string // 患者姓名 ILIKE
+	StartDate string // YYYY-MM-DD（含）
+	EndDate   string // YYYY-MM-DD（含）
+	Feeling   string // comfortable | uncomfortable（由 comfort_score 派生筛选）
+	Page      int
+	PageSize  int
 }
 
 // TechInput 技师新建/编辑入参（PhoneEnc/PhoneHash 由 service/handler 层准备）
@@ -428,6 +450,8 @@ type Store interface {
 	TeamExists(ctx context.Context, teamID string) (bool, error)
 	ListDoctors(ctx context.Context) ([]DoctorRow, error)
 	ListDoctorsByTeam(ctx context.Context, teamID string) ([]DoctorRow, error)
+	// GetTeamStats T256 #1：团队管理 4 张统计卡（团队/成员/管理患者/待分配患者计数）
+	GetTeamStats(ctx context.Context) (teamCount, memberCount, managedPatientCount, unassignedPatientCount int, err error)
 
 	// 团队 / 成员写操作（T059 写功能契约）
 	// 契约：docs/tasks/ella/T059-团队管理测试规格.md
@@ -462,6 +486,8 @@ type Store interface {
 	// 感受日志
 	ListFeelingLogs(ctx context.Context, patientID string) ([]FeelingLogRow, error)
 	ReplyFeelingLog(ctx context.Context, logID int64, replyContent string) (bool, error)
+	// ListFeelingLogsAdmin T256 #2：跨患者感受日志流（搜索/日期范围/感受筛选）
+	ListFeelingLogsAdmin(ctx context.Context, f FeelingLogAdminFilter) ([]FeelingLogRow, int64, error)
 
 	// 角色与权限矩阵
 	ListRoles(ctx context.Context) ([]RoleRow, error)
