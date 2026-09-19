@@ -84,6 +84,37 @@ func TestITKPI(t *testing.T) {
 	assert.GreaterOrEqual(t, row.AlertCount, int64(1))    // alert from yesterday
 }
 
+// T248 1.1 对比基准 SQL 真库回归：半开区间边界 + 上月累计/新增包含关系
+func TestITKPICompare(t *testing.T) {
+	ctx := context.Background()
+	r := NewDashboardRepo(dashPool)
+	to := time.Now().In(model.CSTZone())
+	today := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, model.CSTZone())
+	yesterday := today.AddDate(0, 0, -1)
+	monthStart := time.Date(to.Year(), to.Month(), 1, 0, 0, 0, 0, model.CSTZone())
+	prevMonthStart := monthStart.AddDate(0, -1, 0)
+
+	// 种子 daily_wear_stats 落在「昨天」：前窗 [昨天, 今天) 应命中，右端不取今天
+	seeded, err := r.KPICompare(ctx, yesterday.Format("2006-01-02"), today.Format("2006-01-02"),
+		yesterday, today, monthStart, prevMonthStart)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, seeded.ActiveWear, int64(1), "昨日有佩戴统计")
+	assert.Greater(t, seeded.AvgWearMinutes, 0.0)
+	assert.LessOrEqual(t, seeded.PrevMonthNewPatients, seeded.TotalPatientsAtMonth,
+		"上月新增必然 ⊆ 上月末累计")
+
+	// 远早于任何种子数据的窗口：全部为 0（证明 stat_date 半开区间与 created_at 边界不越界）
+	far := time.Date(2000, 1, 2, 0, 0, 0, 0, model.CSTZone())
+	empty, err := r.KPICompare(ctx, far.Format("2006-01-02"), far.AddDate(0, 0, 1).Format("2006-01-02"),
+		far, far.AddDate(0, 0, 1), far, far.AddDate(0, -1, 0))
+	require.NoError(t, err)
+	assert.Zero(t, empty.ActiveWear)
+	assert.Zero(t, empty.AlertCount)
+	assert.Zero(t, empty.AvgWearMinutes)
+	assert.Zero(t, empty.TotalPatientsAtMonth)
+	assert.Zero(t, empty.PrevMonthNewPatients)
+}
+
 func TestITWearTrendFillMissingDays(t *testing.T) {
 	ctx := context.Background()
 	r := NewDashboardRepo(dashPool)

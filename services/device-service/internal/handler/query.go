@@ -55,6 +55,8 @@ type installListDTO struct {
 	Notes         string  `json:"notes"`
 	SignatureUrl  string  `json:"signatureUrl"`
 	WifiStatus    string  `json:"wifiStatus"`
+	// CalibStatus 设计稿「校准」列（T248 9.3）：uncalibrated / normal / abnormal
+	CalibStatus string `json:"calibStatus"`
 }
 
 // pageData PaginatedResponse<T>（契约统一分页响应）
@@ -147,6 +149,7 @@ func (h *Handler) listInstallRecords(c *gin.Context) {
 			Notes:         strOrEmpty(r.Notes),
 			SignatureUrl:  strOrEmpty(r.SignatureURL),
 			WifiStatus:    r.WifiStatus,
+			CalibStatus:   model.CalibStatus(r.BaselineID, r.OffsetValues, calibOffsetAnomalyN()),
 		}
 		if r.BaselineID != nil {
 			s := strconv.FormatInt(*r.BaselineID, 10)

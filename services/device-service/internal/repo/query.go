@@ -36,6 +36,8 @@ type InstallListItem struct {
 	Notes         *string
 	SignatureURL  *string
 	WifiStatus    string
+	// OffsetValues 基线 20 点偏移值（T248 9.3 校准列派生用；未校准为 nil）
+	OffsetValues []float32
 }
 
 // ListStore 管理端查询契约（handler 注入点；单测 fake / 集成 PGStore）
@@ -91,7 +93,8 @@ func (r *PGStore) ListDevices(ctx context.Context, keyword string, page, pageSiz
 func (r *PGStore) ListInstallRecords(ctx context.Context, keyword string, page, pageSize int) ([]InstallListItem, int64, error) {
 	base := `FROM install_records i
 	         LEFT JOIN patients p ON p.patient_id = i.patient_id
-	         LEFT JOIN technicians t ON t.tech_id = i.tech_id`
+	         LEFT JOIN technicians t ON t.tech_id = i.tech_id
+	         LEFT JOIN baselines b ON b.baseline_id = i.baseline_id`
 	var args []any
 	if keyword != "" {
 		args = append(args, likeArg(keyword))
@@ -107,7 +110,8 @@ func (r *PGStore) ListInstallRecords(ctx context.Context, keyword string, page, 
 	offset := (page - 1) * pageSize
 	listArgs := append(append([]any{}, args...), pageSize, offset)
 	query := `SELECT i.install_id, i.device_id, i.patient_id, p.name, i.tech_id, t.name,
-	                 i.calibrate_time, i.baseline_id, i.notes, i.signature_url, i.wifi_status ` + base +
+	                 i.calibrate_time, i.baseline_id, i.notes, i.signature_url, i.wifi_status,
+	                 COALESCE(b.offset_values, '{}'::real[]) ` + base +
 		fmt.Sprintf(` ORDER BY i.install_id DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
 
 	rows, err := r.pool.Query(ctx, query, listArgs...)
@@ -120,7 +124,8 @@ func (r *PGStore) ListInstallRecords(ctx context.Context, keyword string, page, 
 	for rows.Next() {
 		var i InstallListItem
 		if scanErr := rows.Scan(&i.InstallID, &i.DeviceID, &i.PatientID, &i.PatientName, &i.TechID, &i.TechName,
-			&i.CalibrateTime, &i.BaselineID, &i.Notes, &i.SignatureURL, &i.WifiStatus); scanErr != nil {
+			&i.CalibrateTime, &i.BaselineID, &i.Notes, &i.SignatureURL, &i.WifiStatus,
+			&i.OffsetValues); scanErr != nil {
 			return nil, 0, fmt.Errorf("scan install item: %w", scanErr)
 		}
 		list = append(list, i)

@@ -147,9 +147,11 @@ type PatientRow struct {
 	EmergencyContactRelation *string
 }
 
-// PatientProfileUpdate T226 患者自助资料白名单入参（指针=nil=不改）。
-// 🔴 无 phone：手机号由微信登录授权写入，患者不可自助改（PM 2026-09-16 裁定）。
-// 🔴 无 CobbAngle：影像学测量值由临床端写入，患者自助通道不落该列（Boss 2026-09-17 裁定 B / T230）。
+// PatientProfileUpdate 资料更新入参（指针=nil=不改），两条通道共用：
+//   - T226 患者自助 PUT：仅前 8 个键，phone 一律无通道（手机号由微信登录授权写入，PM 2026-09-16 裁定）；
+//   - T248 4.3 admin「编辑患者」：额外可写 Diagnosis / CobbAngle。
+//
+// 即：本结构体是字段全集，各通道的白名单在 handler 层请求体解码处收口。
 type PatientProfileUpdate struct {
 	Name                     *string
 	Gender                   *string
@@ -159,6 +161,10 @@ type PatientProfileUpdate struct {
 	EmergencyContactName     *string
 	EmergencyContactPhone    *string
 	EmergencyContactRelation *string
+	// Diagnosis / CobbAngle 临床字段，仅 admin「编辑患者」通道写入（T248 4.3 · PRD §7D.3 编辑弹窗）。
+	// 患者自助 PUT（T226）白名单请求体不含这两个键 ⇒ DisallowUnknownFields 直接 400。
+	Diagnosis *string
+	CobbAngle *float64
 }
 
 // TeamRow teams 表投影
@@ -254,6 +260,13 @@ type FeedbackRow struct {
 	ReplyContent *string
 	ReplyTime    *time.Time
 	Status       string
+}
+
+// FeedbackStatsRow 患者沟通统计栏聚合投影（T248 7.1 · PRD §7D.7 统计条）
+type FeedbackStatsRow struct {
+	TodayCount   int64    // 今日（Asia/Shanghai 切日）提交数
+	PendingCount int64    // status='pending'（待回复）
+	AvgReplySec  *float64 // 已回复样本的 (reply_time - submit_time) 均值，单位秒；无样本为 nil
 }
 
 // OrthosisPlanRow orthosis_plans 表投影
@@ -437,6 +450,8 @@ type Store interface {
 
 	// 反馈
 	ListFeedbacks(ctx context.Context, keyword string) ([]FeedbackRow, error)
+	// FeedbackStats 患者沟通统计栏（T248 7.1）：今日区间由调用方按 Asia/Shanghai 切日传入
+	FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time) (FeedbackStatsRow, error)
 	ProcessFeedback(ctx context.Context, feedbackID int64, handlerID string, replyContent *string) (bool, error)
 
 	// 矫形方案

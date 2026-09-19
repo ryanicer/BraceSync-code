@@ -90,6 +90,8 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId/team"),
 	rbacOf(http.MethodPost, "/api/v1/admin/patients/:patientId/unbind-wechat"),
 	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId/phone"),
+	// T248 4.3 档案编辑（姓名/性别/年龄/诊断/Cobb）。不登记则 default-allow 放行任意角色。
+	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId"),
 }
 
 // techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T122）：

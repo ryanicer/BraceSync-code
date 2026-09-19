@@ -211,6 +211,14 @@ type FeedbackDTO struct {
 	Status       string  `json:"status"`
 }
 
+// FeedbackStatsDTO 患者沟通统计栏（T248 7.1，契约 getFeedbackStats）
+// avgResponseSeconds 无已回复样本时为 null（不以 0 冒充「秒回」）；单位秒，格式化归前端。
+type FeedbackStatsDTO struct {
+	TodayCount         int64    `json:"todayCount"`         // 今日咨询数（Asia/Shanghai 切日）
+	PendingCount       int64    `json:"pendingCount"`       // 待回复数（status=pending）
+	AvgResponseSeconds *float64 `json:"avgResponseSeconds"` // 全量已回复样本均值，不受今日窗口约束
+}
+
 // OrthosisPlanDTO 矫形方案（契约 getOrthosisPlans，对齐 shared-types OrthosisPlan）
 type OrthosisPlanDTO struct {
 	PlanID    string `json:"planId"`

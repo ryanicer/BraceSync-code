@@ -41,6 +41,11 @@ const (
 // ─────────────────────────────────────────────────────────────
 
 // DashboardKPIDTO 对齐 shared-types DashboardKPI
+//
+// T248 1.1 对比基准（PRD §7D.1 KPI 表「对比基准」列 · 设计稿 数据概览.html:97-119 卡片 trend 行）：
+// prev* = 紧邻当前窗口的**等长前窗**原值（period=today→昨日、week→前一 7 日、month→前一 30 日），
+// changePct = 相对前窗的变化百分比，avgWearHoursDelta = 绝对差（小时，设计稿「0.3h 较昨日」口径）。
+// 🔴 一律指针：前窗为 0 或无基准时变化率无定义 ⇒ null，不以 0 冒充「持平」。
 type DashboardKPIDTO struct {
 	TotalPatients    int64   `json:"totalPatients"`
 	TodayActiveWear  int64   `json:"todayActiveWear"`
@@ -48,6 +53,22 @@ type DashboardKPIDTO struct {
 	AvgWearHours     float64 `json:"avgWearHours"`
 	DeviceOnlineRate float64 `json:"deviceOnlineRate"`
 	MonthNewPatients int64   `json:"monthNewPatients"`
+
+	PrevTodayActiveWear  *int64   `json:"prevTodayActiveWear"`
+	PrevTodayAlerts      *int64   `json:"prevTodayAlerts"`
+	PrevAvgWearHours     *float64 `json:"prevAvgWearHours"`
+	PrevTotalPatients    *int64   `json:"prevTotalPatients"`    // 上月末累计患者
+	PrevMonthNewPatients *int64   `json:"prevMonthNewPatients"` // 上月新增患者
+	// 🔴 设备在线率无对比基准：devices.status 是当前态快照、无历史表，昨日在线率取不到。
+	// 补齐需新增按日快照（schema 变更），已作为待裁项上报，不在本卡范围。
+	PrevDeviceOnlineRate *float64 `json:"prevDeviceOnlineRate"`
+
+	ActiveWearChangePct       *float64 `json:"activeWearChangePct"`
+	AlertsChangePct           *float64 `json:"alertsChangePct"`
+	AvgWearHoursDelta         *float64 `json:"avgWearHoursDelta"`
+	DeviceOnlineRateDelta     *float64 `json:"deviceOnlineRateDelta"` // 恒 null，理由同上
+	TotalPatientsChangePct    *float64 `json:"totalPatientsChangePct"`
+	MonthNewPatientsChangePct *float64 `json:"monthNewPatientsChangePct"`
 }
 
 // WearTrendPoint 佩戴趋势点（date 为 MM-DD，对齐 admin-web mock 口径）
@@ -108,13 +129,13 @@ func NewDashboardService(store repo.DashboardStore, cache DashboardCache) *Dashb
 	return &DashboardService{store: store, cache: cache, now: time.Now}
 }
 
-// periodWindow period 枚举 → 窗口起点（CST 切日；today=当日，week=近7日，month=近30日）
-func (s *DashboardService) periodWindow(period string) (fromDate string, fromTime time.Time, appErr *model.AppError) {
+// periodWindow period 枚举 → 窗口起点与天数（CST 切日；today=当日，week=近7日，month=近30日）。
+// days 供 T248 1.1 的「上一等长周期」对比使用。
+func (s *DashboardService) periodWindow(period string) (fromDate string, fromTime time.Time, days int, appErr *model.AppError) {
 	if _, ok := validKPIPeriods[period]; !ok {
-		return "", time.Time{}, model.ErrQueryParam("invalid period %q (want today|week|month)", period)
+		return "", time.Time{}, 0, model.ErrQueryParam("invalid period %q (want today|week|month)", period)
 	}
 	now := s.now().In(model.CSTZone())
-	var days int
 	switch period {
 	case "week":
 		days = 6
@@ -122,13 +143,13 @@ func (s *DashboardService) periodWindow(period string) (fromDate string, fromTim
 		days = 29
 	}
 	start := time.Date(now.Year(), now.Month(), now.Day()-days, 0, 0, 0, 0, model.CSTZone())
-	return start.Format("2006-01-02"), start, nil
+	return start.Format("2006-01-02"), start, days + 1, nil
 }
 
 // GetKPI 契约 getDashboardKPI：缓存命中直返；未命中查库并回填（TTL 60s，§4.7）。
 // Redis 故障降级直查 DB（可用性优先）。
 func (s *DashboardService) GetKPI(ctx context.Context, period string) (*DashboardKPIDTO, *model.AppError) {
-	fromDate, fromTime, appErr := s.periodWindow(period)
+	fromDate, fromTime, days, appErr := s.periodWindow(period)
 	if appErr != nil {
 		return nil, appErr
 	}
@@ -158,6 +179,17 @@ func (s *DashboardService) GetKPI(ctx context.Context, period string) (*Dashboar
 		AvgWearHours:     min(round2(row.AvgWearMinutes/60), 24),
 		DeviceOnlineRate: round2(row.DeviceOnlineRate),
 		MonthNewPatients: row.MonthNewPatients,
+	}
+	// T248 1.1 对比基准。查询失败只降级（对比字段留空），不让整块看板 500 ——
+	// 六项主指标可用性优先，与 Redis 故障降级直查 DB 同口径。
+	prevStart := fromTime.AddDate(0, 0, -days)
+	prevMonthStart := monthStart.AddDate(0, -1, 0)
+	cmp, cmpErr := s.store.KPICompare(ctx, prevStart.Format("2006-01-02"), fromDate,
+		prevStart, fromTime, monthStart, prevMonthStart)
+	if cmpErr != nil {
+		log.Error().Err(cmpErr).Str("period", period).Msg("query dashboard kpi compare failed, comparison omitted")
+	} else {
+		fillKPIComparison(dto, cmp)
 	}
 	if data, mErr := json.Marshal(dto); mErr == nil && s.cache != nil {
 		if sErr := s.cache.SetKPI(ctx, period, string(data), kpiCacheTTL); sErr != nil {
@@ -320,3 +352,32 @@ func (s *DashboardService) GetWearDistribution(ctx context.Context) ([]WearDistr
 
 // round2 保留两位小数（Dashboard 展示口径）
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
+
+// fillKPIComparison 装配上一等长周期的原值与变化（T248 1.1）。
+// 设备在线率两项不填：devices.status 无历史快照，基准取不到（见 DashboardKPIDTO 注释）。
+func fillKPIComparison(dto *DashboardKPIDTO, cmp *repo.KPICompareRow) {
+	prevHours := min(round2(cmp.AvgWearMinutes/60), 24)
+	dto.PrevTodayActiveWear = int64Val(cmp.ActiveWear)
+	dto.PrevTodayAlerts = int64Val(cmp.AlertCount)
+	dto.PrevAvgWearHours = float64Val(prevHours)
+	dto.PrevTotalPatients = int64Val(cmp.TotalPatientsAtMonth)
+	dto.PrevMonthNewPatients = int64Val(cmp.PrevMonthNewPatients)
+
+	dto.ActiveWearChangePct = changePct(float64(dto.TodayActiveWear), float64(cmp.ActiveWear))
+	dto.AlertsChangePct = changePct(float64(dto.TodayAlerts), float64(cmp.AlertCount))
+	dto.TotalPatientsChangePct = changePct(float64(dto.TotalPatients), float64(cmp.TotalPatientsAtMonth))
+	dto.MonthNewPatientsChangePct = changePct(float64(dto.MonthNewPatients), float64(cmp.PrevMonthNewPatients))
+	dto.AvgWearHoursDelta = float64Val(round2(dto.AvgWearHours - prevHours))
+}
+
+// changePct 相对前窗的变化百分比 (cur-prev)/prev×100；prev=0 ⇒ 无定义，返回 nil（不以 0 冒充持平）
+func changePct(cur, prev float64) *float64 {
+	if prev == 0 {
+		return nil
+	}
+	v := round2((cur - prev) / prev * 100)
+	return &v
+}
+
+func int64Val(v int64) *int64       { return &v }
+func float64Val(v float64) *float64 { return &v }

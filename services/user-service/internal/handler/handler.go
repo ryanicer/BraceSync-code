@@ -13,7 +13,9 @@
 //	PUT  /api/v1/admin/technicians/:techId               技师编辑
 //	POST /api/v1/technicians/:techId/toggle              技师启用/禁用
 //	GET  /api/v1/feedbacks                               反馈列表
+//	GET  /api/v1/feedbacks/stats                         反馈统计栏三项（T248 7.1）
 //	POST /api/v1/feedbacks/:feedbackId/process           反馈处理（replyContent 落库）
+//	PUT  /api/v1/admin/patients/:patientId               患者档案编辑（T248 4.3）
 //	GET  /api/v1/patients/:patientId/orthosis-plans      矫形方案历史
 //	POST /api/v1/patients/:patientId/orthosis-plans      保存新方案（版本递增）
 //	GET  /api/v1/patients/:patientId/feeling-logs        佩戴感受日志
@@ -173,6 +175,7 @@ func (h *Handler) Router() *gin.Engine {
 		// T085 Admin 档案维护
 		v1.POST("/admin/patients/:patientId/unbind-wechat", h.unbindWechat) // 解绑微信
 		v1.PUT("/admin/patients/:patientId/phone", h.updatePatientPhone)    // 改手机号
+		v1.PUT("/admin/patients/:patientId", h.updatePatientAdmin)          // T248 4.3 档案编辑
 
 		v1.GET("/teams", h.listTeams)
 		v1.GET("/teams/:teamId/members", h.getTeamMembers)
@@ -191,6 +194,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/technicians/:techId/toggle", h.toggleTechnician)
 
 		v1.GET("/feedbacks", h.listFeedbacks)
+		v1.GET("/feedbacks/stats", h.feedbackStats) // T248 7.1 统计栏三项
 		v1.POST("/feedbacks/:feedbackId/process", h.processFeedback)
 
 		v1.GET("/patient/profile", h.getPatientProfile) // T186 患者本人只读档案（self-scope）
@@ -1045,6 +1049,31 @@ func (h *Handler) listFeedbacks(c *gin.Context) {
 		list = append(list, toFeedbackDTO(r))
 	}
 	ok(c, list)
+}
+
+// cstLoc 业务切日时区（架构 §3.5）。用 FixedZone 而非 LoadLocation，与 data-service
+// model.CSTZone 同口径 —— 容器内可能无 tzdata。
+var cstLoc = time.FixedZone("Asia/Shanghai", 8*3600)
+
+// feedbackStats GET /api/v1/feedbacks/stats —— 统计栏三项（T248 7.1 · PRD §7D.7 统计条）
+//
+// 口径：仅「今日咨询」按 Asia/Shanghai 切日；「待回复」为全量 pending；
+// 「平均响应」为全量已回复样本均值（设计稿标签「平均响应」无期限词，限定今日会在
+// 多数时段无样本而空栏）。🔴 设计稿第四项「满意度」无数据模型字段（feedbacks 无评分列），
+// 本端点不返回，已作为待裁项上报。
+func (h *Handler) feedbackStats(c *gin.Context) {
+	now := time.Now().In(cstLoc)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, cstLoc)
+	row, err := h.store.FeedbackStats(c.Request.Context(), todayStart, todayStart.AddDate(0, 0, 1))
+	if err != nil {
+		fail(c, model.ErrInternal("feedback stats failed"))
+		return
+	}
+	ok(c, model.FeedbackStatsDTO{
+		TodayCount:         row.TodayCount,
+		PendingCount:       row.PendingCount,
+		AvgResponseSeconds: row.AvgReplySec,
+	})
 }
 
 type processFeedbackRequest struct {
