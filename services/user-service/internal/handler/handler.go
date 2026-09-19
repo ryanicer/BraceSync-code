@@ -21,8 +21,17 @@
 //	GET  /api/v1/admin/roles                             RBAC 角色列表
 //	GET  /api/v1/admin/roles/:roleId/permissions         权限矩阵读
 //	PUT  /api/v1/admin/roles/:roleId/permissions         权限矩阵写
+//	GET  /api/v1/admin/role-templates                   T252 11.4 角色模板下拉
+//	POST /api/v1/admin/roles                            T252 11.2 新建角色
+//	PUT  /api/v1/admin/roles/:roleId                    T252 11.2 改角色（预置改名 400）
+//	DELETE /api/v1/admin/roles/:roleId                  T252 11.2 删除角色（被引用 409）
 //	GET  /api/v1/admin/settings                          系统参数读
 //	PUT  /api/v1/admin/settings                          系统参数写
+//	GET  /api/v1/admin/alert-rules                      T252 2.2 告警规则聚合视图
+//	PUT  /api/v1/admin/alert-rules/points               T252 2.2 保存逐采集点阈值
+//	POST /api/v1/admin/alert-rules/points/reset         T252 2.2 恢复默认
+//	PUT  /api/v1/admin/alert-rules/global               T252 2.2 保存全局告警规则
+//	GET  /api/v1/admin/audit-logs                       T252 12.3 操作日志分页查询
 //	GET  /healthz                                        存活探针
 //
 // 统一响应体（架构 §3.5）：{ "code": 0, "message": "success", "data": {...} }
@@ -78,10 +87,20 @@ func stripScopeBindPrefix(sub string) string {
 }
 
 // 预置角色（PRD §7D.11，权限系统锁定标识）
+// T252 11.4：后 5 条是设计稿 admin/权限控制.html:100-104 的预置角色（migration 000016 播种）。
+// 命中本表的锁定语义见 11.2：禁删除（403）、禁改名（400），描述与启停仍可改。
+// 🔴 网关 RBAC / 登录签发链路按字面量匹配的只有前 3 条；后 5 条尚无登录身份，
+//
+//	能否真登进去取决于网关矩阵，已登记 T252 交件待裁。
 var presetRoles = map[string]struct{}{
-	"ROLE_ADMIN":  {},
-	"ROLE_DOCTOR": {},
-	"ROLE_CS":     {},
+	"ROLE_ADMIN":            {},
+	"ROLE_DOCTOR":           {},
+	"ROLE_CS":               {},
+	"ROLE_SUPER_ADMIN":      {},
+	"ROLE_CHIEF_DOCTOR":     {},
+	"ROLE_ATTENDING_DOCTOR": {},
+	"ROLE_REHAB_THERAPIST":  {},
+	"ROLE_NURSE":            {},
 }
 
 // Handler HTTP 处理器（signer/phoneCipher 允许为 nil：对应登录/技师写入返回 500 配置错误；
@@ -158,6 +177,8 @@ func (h *Handler) Router() *gin.Engine {
 	r.GET("/metrics", gin.WrapH(promhttp.Handler())) // T234 Prometheus 采集端点
 
 	v1 := r.Group("/api/v1")
+	// T252 12.3 操作日志：表驱动埋点（auditRoutes 命中的路由在 HTTP<400 时写 audit_logs）
+	v1.Use(h.auditTrail())
 	{
 		v1.POST("/auth/login", h.login)
 		v1.POST("/tech/login", h.techLogin)         // T037 技师登录（免 JWT）
@@ -208,9 +229,23 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/admin/roles", h.listRoles)
 		v1.GET("/admin/roles/:roleId/permissions", h.getPermissions)
 		v1.PUT("/admin/roles/:roleId/permissions", h.updatePermissions)
+		// T252 11.2 角色增删改（权限页「新增/编辑/删除」按钮）+ 11.4 角色模板下拉
+		v1.GET("/admin/role-templates", h.listRoleTemplates)
+		v1.POST("/admin/roles", h.createAdminRole)
+		v1.PUT("/admin/roles/:roleId", h.updateAdminRole)
+		v1.DELETE("/admin/roles/:roleId", h.deleteAdminRole)
 
 		v1.GET("/admin/settings", h.getSettings)
 		v1.PUT("/admin/settings", h.updateSettings)
+
+		// T252 2.2 告警规则配置（告警页 Tab2：4×5 网格逐点阈值 + 全局规则）
+		v1.GET("/admin/alert-rules", h.getAlertRules)
+		v1.PUT("/admin/alert-rules/points", h.updateAlertPointRules)
+		v1.POST("/admin/alert-rules/points/reset", h.resetAlertPointRules)
+		v1.PUT("/admin/alert-rules/global", h.updateAlertGlobalRules)
+
+		// T252 12.3 操作日志（系统配置页 Tab3）
+		v1.GET("/admin/audit-logs", h.getAuditLogs)
 
 		// T130 复查记录（合同患者端「复查管理」）
 		v1.POST("/admin/review-records", h.createReviewRecord)
@@ -404,6 +439,16 @@ func (h *Handler) login(c *gin.Context) {
 		fail(c, model.ErrInternal("sign token failed"))
 		return
 	}
+	// T252 12.3：登录留痕（PRD §9.2a「谁在何时登录」）。必须在签发后写：
+	// 操作人身份此处取 admin 行本身——登录接口在 gateway 免 JWT 白名单内，没有 X-User-Id 头。
+	h.audit(c, repo.AuditInput{
+		OperatorID:   admin.AdminID,
+		OperatorRole: admin.RoleID,
+		Action:       auditActionLogin,
+		TargetType:   "admin",
+		TargetID:     admin.AdminID,
+		Description:  fmt.Sprintf("运营后台登录成功：%s（%s）", admin.Username, admin.RoleID),
+	})
 	ok(c, model.LoginResultDTO{
 		Token:    tk,
 		AdminID:  admin.AdminID,

@@ -83,7 +83,9 @@ func main() {
 	// 加载失败（校验拒绝/DB 不可达）时保持引擎默认口径（45N/30%/60min/2.8N）并记录错误，
 	// 后续每轮扫描前重试热刷新，配置修复后无需重启即生效。
 	eval := engine.NewDefaultRuleEvaluator()
-	cfgMgr := config.NewManager(repo.NewConfigRepo(pool))
+	// 同一个 repo 实现两份契约：sys_configs 阈值（Store）+ alert_point_rules 逐点规则（PointRuleStore）
+	cfgRepo := repo.NewConfigRepo(pool)
+	cfgMgr := config.NewManagerWithPointRules(cfgRepo, cfgRepo)
 	var loadedTh config.Thresholds
 	if t, cfgErr := cfgMgr.Refresh(ctx, eval); cfgErr != nil {
 		log.Error().Err(cfgErr).Msg("alert threshold config load failed, keep engine defaults; will retry on next scan")

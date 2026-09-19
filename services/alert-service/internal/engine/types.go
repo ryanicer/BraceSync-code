@@ -48,6 +48,13 @@ type AlertResult struct {
 	Message        string
 }
 
+// PointRule 单个采集点的独立规则（T252 2.2 · admin 告警规则配置 Tab2 网格的一格）。
+// 目前只有压力偏高方向有消费者：Monitored=false 跳过该点，UpperN 覆盖统一上限。
+type PointRule struct {
+	Monitored bool    // false = 该点不参与压力偏高判定
+	UpperN    float64 // 独立压力上限 (N)；0 = 跟随统一上限
+}
+
 // RuleEvaluator 规则评估器。
 //
 // 阈值语义（由 engine_test.go 契约决定）：字段为**零值表示该规则不启用**，
@@ -63,6 +70,23 @@ type RuleEvaluator struct {
 
 	mu         sync.Mutex
 	lastAlerts map[string]time.Time // 去重窗口："deviceID|alertType" → 最近一次告警时间（帧 Timestamp）
+	pointRules map[string]PointRule // 逐点独立规则（SetPointRules 注入；nil = 全点位跟随统一上限）
+}
+
+// SetPointRules 注入逐采集点规则（配置热更新路径调用；传 nil 清空 = 回退统一阈值）。
+// 整图替换、永不原地改，故读取方持锁取出后即可安全使用。
+func (e *RuleEvaluator) SetPointRules(rules map[string]PointRule) {
+	e.mu.Lock()
+	e.pointRules = rules
+	e.mu.Unlock()
+}
+
+// pointRule 取指定点位独立规则；无条目 = 该点未单独配置（跟随统一上限、默认参与监控）。
+func (e *RuleEvaluator) pointRule(point string) (PointRule, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	r, ok := e.pointRules[point]
+	return r, ok
 }
 
 // Evaluate 评估单帧，返回首个命中的告警结果；无命中返回 nil。

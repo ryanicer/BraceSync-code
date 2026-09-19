@@ -60,6 +60,17 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/admin/roles"),
 	rbacOf(http.MethodGet, "/api/v1/admin/roles/:roleId/permissions"),
 	rbacOf(http.MethodPut, "/api/v1/admin/roles/:roleId/permissions"),
+	// T252 11.2/11.4：角色增删改 + 模板下拉（权限页仅 admin 可见）
+	rbacOf(http.MethodGet, "/api/v1/admin/role-templates"),
+	rbacOf(http.MethodPost, "/api/v1/admin/roles"),
+	rbacOf(http.MethodPut, "/api/v1/admin/roles/:roleId"),
+	rbacOf(http.MethodDelete, "/api/v1/admin/roles/:roleId"),
+	// T252 2.2 告警规则配置（告警页 Tab2）+ 12.3 操作日志（系统配置页 Tab3）
+	rbacOf(http.MethodGet, "/api/v1/admin/alert-rules"),
+	rbacOf(http.MethodPut, "/api/v1/admin/alert-rules/points"),
+	rbacOf(http.MethodPost, "/api/v1/admin/alert-rules/points/reset"),
+	rbacOf(http.MethodPut, "/api/v1/admin/alert-rules/global"),
+	rbacOf(http.MethodGet, "/api/v1/admin/audit-logs"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notify-rules"),
 	rbacOf(http.MethodPut, "/api/v1/admin/notify-rules/:type"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notification-logs"),

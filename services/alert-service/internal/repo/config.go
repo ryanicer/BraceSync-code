@@ -2,14 +2,18 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"sort"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bracesync/bracesync/services/alert-service/internal/config"
+	"github.com/bracesync/bracesync/services/alert-service/internal/engine"
 )
 
-// PGConfigRepo sys_configs 阈值配置读写（实现 config.Store，T009）
+// PGConfigRepo sys_configs 阈值配置读写 + alert_point_rules 逐点规则读取
+// （实现 config.Store（T009）与 config.PointRuleStore（T252 2.2））
 //
 // 表归属：sys_configs 为共享 KV 配置表（架构 §4.2）；本服务经 config.Manager.Update
 // （§7D.12 系统配置变更路径，写入前联动校验）维护告警阈值相关键（config.Keys()）。
@@ -38,6 +42,42 @@ func (r *PGConfigRepo) FetchAll(ctx context.Context) (map[string]string, error) 
 		out[key] = value
 	}
 	return out, rows.Err()
+}
+
+// FetchPointRules 读取逐采集点规则（实现 config.PointRuleStore，T252 2.2）。
+// 表为稀疏存储：只有运营在网格上改过的点有行，缺失点位由引擎回退统一阈值。
+// 表尚未迁移（42P01）时按「无逐点规则」返回，不让迁移顺序卡住整条阈值热更新链路。
+func (r *PGConfigRepo) FetchPointRules(ctx context.Context) (map[string]engine.PointRule, error) {
+	rows, err := r.pool.Query(ctx, `SELECT point_id, monitored, upper_n::float8 FROM alert_point_rules`)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]engine.PointRule)
+	for rows.Next() {
+		var pointID string
+		var monitored bool
+		var upperN *float64
+		if err := rows.Scan(&pointID, &monitored, &upperN); err != nil {
+			return nil, err
+		}
+		rule := engine.PointRule{Monitored: monitored}
+		if upperN != nil {
+			rule.UpperN = *upperN
+		}
+		out[pointID] = rule
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // Upsert 单事务批量写入（INSERT ON CONFLICT DO UPDATE）；写失败整体回滚

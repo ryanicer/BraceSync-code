@@ -483,6 +483,24 @@ type Store interface {
 	GetConfigs(ctx context.Context, keys []string) (map[string]string, error)
 	UpsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy string) error
 
+	// T252 2.2 逐采集点告警阈值（alert_point_rules，稀疏存放：未落库点由 handler 回默认）
+	ListAlertPointRules(ctx context.Context) ([]AlertPointRuleRow, error)
+	// SaveAlertRules 单事务写统一上下限（kvs → sys_configs）+ 逐点阈值 UPSERT。
+	SaveAlertRules(ctx context.Context, kvs []ConfigKV, rules []AlertPointRuleRow, updatedBy string) error
+	// ResetAlertRules 恢复默认：清空逐点表 + 统一/全局键写回默认值（同一事务）。
+	ResetAlertRules(ctx context.Context, kvs []ConfigKV, updatedBy string) error
+
+	// T252 11.2 角色增删改（重名由 handler 先调 RoleNameTaken 拦 409；
+	// sentinel：ErrRoleNotFound / *ErrRoleInUse）
+	RoleNameTaken(ctx context.Context, name, excludeRoleID string) (bool, error)
+	CreateRole(ctx context.Context, name, description, permissionsJSON string) (*RoleRow, error)
+	UpdateRole(ctx context.Context, roleID string, name, description, status *string) (*RoleRow, error)
+	DeleteRole(ctx context.Context, roleID string) error
+
+	// T252 12.3 操作日志（audit_logs；写入失败不得阻断主流程，handler 侧记 WARN）
+	WriteAuditLog(ctx context.Context, in AuditInput) error
+	QueryAuditLogs(ctx context.Context, f AuditFilter) ([]AuditLogRow, int64, error)
+
 	// T130 复查记录
 	CreateReviewRecord(ctx context.Context, row ReviewRecordRow) (*ReviewRecordRow, error)
 	ListReviewRecordsByPatient(ctx context.Context, patientID string) ([]ReviewRecordRow, error)

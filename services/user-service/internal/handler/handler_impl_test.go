@@ -104,6 +104,34 @@ type fakeStore struct {
 	configs                map[string]string
 	configsErr             error
 	upsertErr              error
+	// T252 2.2 告警规则 / 11.2 角色写 / 12.3 审计
+	pointRules      []repo.AlertPointRuleRow
+	pointRulesErr   error
+	savedKVs        []repo.ConfigKV
+	savedRules      []repo.AlertPointRuleRow
+	resetKVs        []repo.ConfigKV
+	resetCalled     bool
+	saveRulesErr    error
+	roleNameTaken   bool
+	roleNameErr     error
+	createdRole     *repo.RoleRow
+	createRoleErr   error
+	updatedRole     *repo.RoleRow
+	updateRoleErr   error
+	deleteRoleErr   error
+	lastRoleID      string
+	lastRoleName    string
+	lastRoleDesc    string
+	lastRolePerms   string
+	roleUpdName     *string
+	roleUpdDesc     *string
+	roleUpdStatus   *string
+	auditRows       []repo.AuditInput
+	auditErr        error
+	auditLogRows    []repo.AuditLogRow
+	auditLogTotal   int64
+	auditLogErr     error
+	lastAuditFilter repo.AuditFilter
 
 	lastUpsert       []repo.ConfigKV
 	lastUpsertBy     string
@@ -300,6 +328,48 @@ func (f *fakeStore) UpsertConfigs(_ context.Context, kvs []repo.ConfigKV, update
 	f.lastUpsertBy = updatedBy
 	return f.upsertErr
 }
+
+// T252 2.2 告警规则（alert_point_rules）
+func (f *fakeStore) ListAlertPointRules(_ context.Context) ([]repo.AlertPointRuleRow, error) {
+	return f.pointRules, f.pointRulesErr
+}
+func (f *fakeStore) SaveAlertRules(_ context.Context, kvs []repo.ConfigKV, rules []repo.AlertPointRuleRow, _ string) error {
+	f.savedKVs, f.savedRules = kvs, rules
+	return f.saveRulesErr
+}
+func (f *fakeStore) ResetAlertRules(_ context.Context, kvs []repo.ConfigKV, _ string) error {
+	f.resetKVs, f.resetCalled = kvs, true
+	return f.saveRulesErr
+}
+
+// T252 11.2 角色增删改
+func (f *fakeStore) RoleNameTaken(_ context.Context, name, _ string) (bool, error) {
+	f.lastRoleName = name
+	return f.roleNameTaken, f.roleNameErr
+}
+func (f *fakeStore) CreateRole(_ context.Context, name, description, permissionsJSON string) (*repo.RoleRow, error) {
+	f.lastRoleName, f.lastRoleDesc, f.lastRolePerms = name, description, permissionsJSON
+	return f.createdRole, f.createRoleErr
+}
+func (f *fakeStore) UpdateRole(_ context.Context, roleID string, name, description, status *string) (*repo.RoleRow, error) {
+	f.lastRoleID, f.roleUpdName, f.roleUpdDesc, f.roleUpdStatus = roleID, name, description, status
+	return f.updatedRole, f.updateRoleErr
+}
+func (f *fakeStore) DeleteRole(_ context.Context, roleID string) error {
+	f.lastRoleID = roleID
+	return f.deleteRoleErr
+}
+
+// T252 12.3 操作日志
+func (f *fakeStore) WriteAuditLog(_ context.Context, in repo.AuditInput) error {
+	f.auditRows = append(f.auditRows, in)
+	return f.auditErr
+}
+func (f *fakeStore) QueryAuditLogs(_ context.Context, filter repo.AuditFilter) ([]repo.AuditLogRow, int64, error) {
+	f.lastAuditFilter = filter
+	return f.auditLogRows, f.auditLogTotal, f.auditLogErr
+}
+
 func (f *fakeStore) GetTechByPhoneHash(_ context.Context, _ string) (*repo.TechLoginRow, error) {
 	return f.techLogin, f.techLoginErr
 }
