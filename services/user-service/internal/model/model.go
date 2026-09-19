@@ -200,9 +200,9 @@ type TeamMembersDTO struct {
 
 // TeamStatsDTO 团队管理页 4 张统计卡（T256 #1，设计稿 团队管理.html:87-90）
 type TeamStatsDTO struct {
-	TeamCount           int `json:"teamCount"`           // 团队总数
-	MemberCount         int `json:"memberCount"`         // 成员总数（医生+技师，teams.member_count 汇总）
-	ManagedPatientCount int `json:"managedPatientCount"` // 管理患者（已分配团队的患者数）
+	TeamCount              int `json:"teamCount"`              // 团队总数
+	MemberCount            int `json:"memberCount"`            // 成员总数（医生+技师，teams.member_count 汇总）
+	ManagedPatientCount    int `json:"managedPatientCount"`    // 管理患者（已分配团队的患者数）
 	UnassignedPatientCount int `json:"unassignedPatientCount"` // 待分配患者（team_id IS NULL）
 }
 
@@ -236,8 +236,8 @@ type FeelingLogDTO struct {
 	LogID           string   `json:"logId"`
 	PatientID       string   `json:"patientId"`
 	LogDate         string   `json:"logDate"`
-	ComfortScore    *float64 `json:"comfortScore"`    // 历史 1–5 星（保留兼容）
-	Feeling         *string  `json:"feeling"`         // T256 #3：fitted | discomfort（来自 comfort_level 列）
+	ComfortScore    *float64 `json:"comfortScore"` // 历史 1–5 星（保留兼容）
+	Feeling         *string  `json:"feeling"`      // T256 #3：fitted | discomfort（来自 comfort_level 列）
 	DiscomfortAreas []string `json:"discomfortAreas"`
 	Notes           *string  `json:"notes"`
 	ReplyContent    *string  `json:"replyContent"`

@@ -1428,16 +1428,16 @@ func (h *Handler) updatePermissions(c *gin.Context) {
 
 // 配置键（对齐 scripts/db/seed/seed.sql sys_configs）
 const (
-	keyWearTarget      = "wear_target_hours"
-	keyPressureHigh    = "threshold_pressure_high"
-	keyFluctuationPct  = "threshold_pressure_fluctuation_pct"
-	keyWearInterrupt   = "threshold_wear_interrupt_minutes"
-	keySensorDrift     = "threshold_sensor_drift"
-	keyWifiPresets     = "wifi_presets"
-	keyCollectInterval = "collect_interval_minutes" // 内部分钟（device/alert 服务依赖）
+	keyWearTarget             = "wear_target_hours"
+	keyPressureHigh           = "threshold_pressure_high"
+	keyFluctuationPct         = "threshold_pressure_fluctuation_pct"
+	keyWearInterrupt          = "threshold_wear_interrupt_minutes"
+	keySensorDrift            = "threshold_sensor_drift"
+	keyWifiPresets            = "wifi_presets"
+	keyCollectInterval        = "collect_interval_minutes" // 内部分钟（device/alert 服务依赖）
 	keyCollectIntervalSeconds = "collect_interval_seconds" // T256 #4：API 秒口径（设计稿）
-	keyRetentionDays   = "data_retention_days"      // T256 #4：数据保留天数
-	keyMaxPatients     = "max_patients"             // T256 #4：最大患者数
+	keyRetentionDays          = "data_retention_days"      // T256 #4：数据保留天数
+	keyMaxPatients            = "max_patients"             // T256 #4：最大患者数
 )
 
 // 缺失键默认值（PRD §7D.12，与 @bracesync/constants DEFAULT_THRESHOLDS 对齐）
@@ -1448,8 +1448,8 @@ var settingsDefaults = model.SystemSettingsDTO{
 	WearInterruptMinutes:   60,
 	SensorDriftN:           2.8,
 	WifiPresets:            []model.WifiPresetDTO{},
-	CollectIntervalSeconds: 1800, // 默认 30 分钟 = 1800 秒
-	RetentionDays:          365,  // 默认保留 365 天
+	CollectIntervalSeconds: 1800,  // 默认 30 分钟 = 1800 秒
+	RetentionDays:          365,   // 默认保留 365 天
 	MaxPatients:            10000, // 默认最大 10000 患者（对齐 seed.sql）
 }
 

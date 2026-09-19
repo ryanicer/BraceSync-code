@@ -91,19 +91,19 @@ type fakeStore struct {
 	unassignedPatientCount int
 	teamStatsErr           error
 	// T256 #2 跨患者感受日志
-	feelingsAdmin       []repo.FeelingLogRow
-	feelingsAdminTotal  int64
-	feelingsAdminErr    error
+	feelingsAdmin          []repo.FeelingLogRow
+	feelingsAdminTotal     int64
+	feelingsAdminErr       error
 	lastFeelingAdminFilter repo.FeelingLogAdminFilter
-	roles            []repo.RoleRow
-	rolesErr         error
-	role             *repo.RoleRow
-	roleErr          error
-	updRoleOK        bool
-	updRoleErr       error
-	configs          map[string]string
-	configsErr       error
-	upsertErr        error
+	roles                  []repo.RoleRow
+	rolesErr               error
+	role                   *repo.RoleRow
+	roleErr                error
+	updRoleOK              bool
+	updRoleErr             error
+	configs                map[string]string
+	configsErr             error
+	upsertErr              error
 
 	lastUpsert       []repo.ConfigKV
 	lastUpsertBy     string
@@ -275,6 +275,7 @@ func (f *fakeStore) ReplyFeelingLog(_ context.Context, _ int64, reply string) (b
 	f.lastReply = reply
 	return f.replyOK, f.replyErr
 }
+
 // T256 #1 团队统计卡 + #2 跨患者感受日志桩
 func (f *fakeStore) GetTeamStats(_ context.Context) (int, int, int, int, error) {
 	return f.teamCount, f.memberCount, f.managedPatientCount, f.unassignedPatientCount, f.teamStatsErr
