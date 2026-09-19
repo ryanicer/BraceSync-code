@@ -122,7 +122,7 @@ func (h *Handler) createAdminRole(c *gin.Context) {
 		return
 	}
 
-	perms := model.RolePermissionsDTO{}
+	var perms model.RolePermissionsDTO
 	switch {
 	case req.Permissions != nil:
 		perms = *req.Permissions

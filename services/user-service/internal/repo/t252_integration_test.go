@@ -166,9 +166,16 @@ func TestITT252RoleCRUD(t *testing.T) {
 	assert.Equal(t, 0, created.MemberCount)
 	assert.Equal(t, "集成用例角色", *created.Description)
 
+	// 查重语义（两条写入口都用它）：exclude 空 → 撞自己的名字算占用；
+	// exclude 传自身 roleId → 排除本行（改名改回原名不算冲突）。
+	// 注：roles.name 无唯一索引，查重是单条 SELECT EXISTS，并发窗口内仍可能落进两个同名，故列为待裁项。
+	taken, err = itStore.RoleNameTaken(ctx, name, "")
+	require.NoError(t, err)
+	assert.True(t, taken, "exclude 为空时同名应判占用（拦 409）")
+
 	taken, err = itStore.RoleNameTaken(ctx, name, created.RoleID)
 	require.NoError(t, err)
-	assert.True(t, taken, "同名已占用")
+	assert.False(t, taken, "排除自身 roleId 后同名不再判占用")
 
 	// 编辑：只改描述，其余保持
 	updated, err := itStore.UpdateRole(ctx, created.RoleID, nil, strPtrIT("改后描述"), nil)
@@ -210,10 +217,10 @@ func TestITT252RoleCRUD(t *testing.T) {
 func TestITT252AuditLogWriteAndQuery(t *testing.T) {
 	ctx := context.Background()
 	const (
-		action    = "it_t252_config_change"
-		targetID  = "P-USR-IT-1"
-		opID      = itAdmin
-		opName    = "集成账号" // seedITData 里 ADM-USR-IT 的 name
+		action   = "it_t252_config_change"
+		targetID = "P-USR-IT-1"
+		opID     = itAdmin
+		opName   = "集成账号" // seedITData 里 ADM-USR-IT 的 name
 	)
 	require.NoError(t, itStore.WriteAuditLog(ctx, AuditInput{
 		OperatorID: opID, OperatorRole: "ROLE_IT", Action: action,

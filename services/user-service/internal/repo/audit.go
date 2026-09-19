@@ -80,36 +80,31 @@ func (s *PGStore) WriteAuditLog(ctx context.Context, in AuditInput) error {
 func auditWhere(f AuditFilter) (string, []any) {
 	var conds []string
 	var args []any
-	idx := 1
+	// 每条筛选恰好占一个序号；序号由已有条件数推导，不再手工维护计数器
+	next := func() int { return len(conds) + 1 }
+	add := func(cond string, arg any) {
+		conds = append(conds, cond)
+		args = append(args, arg)
+	}
+
 	if f.From != nil {
-		conds = append(conds, fmt.Sprintf("l.ts >= $%d", idx))
-		args = append(args, *f.From)
-		idx++
+		add(fmt.Sprintf("l.ts >= $%d", next()), *f.From)
 	}
 	if f.To != nil {
-		conds = append(conds, fmt.Sprintf("l.ts < $%d", idx))
-		args = append(args, *f.To)
-		idx++
+		add(fmt.Sprintf("l.ts < $%d", next()), *f.To)
 	}
 	if f.Action != "" {
-		conds = append(conds, fmt.Sprintf("l.action = $%d", idx))
-		args = append(args, f.Action)
-		idx++
+		add(fmt.Sprintf("l.action = $%d", next()), f.Action)
 	}
 	if f.Operator != "" {
-		conds = append(conds, fmt.Sprintf("(l.operator_id ILIKE $%d OR %s ILIKE $%d)", idx, auditOperatorName, idx))
-		args = append(args, "%"+f.Operator+"%")
-		idx++
+		n := next()
+		add(fmt.Sprintf("(l.operator_id ILIKE $%d OR %s ILIKE $%d)", n, auditOperatorName, n), "%"+f.Operator+"%")
 	}
 	if f.TargetType != "" {
-		conds = append(conds, fmt.Sprintf("l.target_type = $%d", idx))
-		args = append(args, f.TargetType)
-		idx++
+		add(fmt.Sprintf("l.target_type = $%d", next()), f.TargetType)
 	}
 	if f.TargetID != "" {
-		conds = append(conds, fmt.Sprintf("l.target_id = $%d", idx))
-		args = append(args, f.TargetID)
-		idx++
+		add(fmt.Sprintf("l.target_id = $%d", next()), f.TargetID)
 	}
 	if len(conds) == 0 {
 		return "", args
