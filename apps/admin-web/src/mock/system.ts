@@ -2,7 +2,7 @@
 // 通知规则与发送记录对齐 api-contracts.ts getNotifyRules/getNotificationLogs）
 import type { NotifyRule, NotificationRecord } from '@bracesync/shared-types'
 import { DEFAULT_THRESHOLDS } from '@bracesync/constants'
-import { PRESET_ROLES } from '../router/permissions'
+import { PRESET_ROLES, ROLE_PAGE_MATRIX } from '../router/permissions'
 
 export interface AdminRoleRow {
   roleId: string
@@ -22,6 +22,22 @@ export function mockAdminRoles(): AdminRoleRow[] {
   ]
 }
 
+// T247: 角色权限 mock（基于 ROLE_PAGE_MATRIX，预置角色不可编辑权限但可读）
+const rolePermStore: Record<string, string[]> = {}
+
+export function mockRolePermissions(roleId: string): { roleId: string; permissions: string[] } {
+  if (!rolePermStore[roleId]) {
+    // 按 roleId 匹配预置角色
+    const key = roleId === 'ROLE-ADMIN' ? 'admin' : roleId === 'ROLE-DOCTOR' ? 'doctor' : 'cs'
+    rolePermStore[roleId] = [...(ROLE_PAGE_MATRIX[key as keyof typeof ROLE_PAGE_MATRIX] ?? [])]
+  }
+  return { roleId, permissions: [...rolePermStore[roleId]] }
+}
+
+export function mockUpdateRolePermissions(roleId: string, permissions: string[]): void {
+  rolePermStore[roleId] = [...permissions]
+}
+
 /** 系统配置（PRD §7D.12，默认值对齐 @bracesync/constants DEFAULT_THRESHOLDS） */
 export interface SystemSettings {
   dailyWearTargetHours: number
@@ -30,6 +46,10 @@ export interface SystemSettings {
   wearInterruptMinutes: number
   sensorDriftN: number
   wifiPresets: { ssid: string; password: string }[]
+  // T247 12.5: 设计稿系统参数三项（系统配置.html:88-90）
+  collectionIntervalSec: number
+  dataRetentionDays: number
+  maxPatients: number
 }
 
 export function mockSystemSettings(): SystemSettings {
@@ -43,6 +63,9 @@ export function mockSystemSettings(): SystemSettings {
       { ssid: 'Hospital-WiFi', password: '********' },
       { ssid: 'Brace-Clinic', password: '********' },
     ],
+    collectionIntervalSec: 60,
+    dataRetentionDays: 365,
+    maxPatients: 10000,
   }
 }
 

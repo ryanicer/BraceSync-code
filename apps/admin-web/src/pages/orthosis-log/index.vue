@@ -46,8 +46,27 @@
                 </template>
               </el-table-column>
               <el-table-column prop="notes" label="患者备注" min-width="180" />
-              <el-table-column label="医生回复" min-width="160">
-                <template #default="{ row }">{{ row.replyContent || '未回复' }}</template>
+              <el-table-column label="医生回复" min-width="200">
+                <template #default="{ row }">
+                  <div v-if="row.replyContent" class="reply-content">{{ row.replyContent }}</div>
+                  <div v-else>
+                    <el-input
+                      v-model="replyDrafts[row.logId]"
+                      type="textarea"
+                      :rows="2"
+                      placeholder="输入回复内容..."
+                      size="small"
+                    />
+                    <el-button
+                      size="small"
+                      type="primary"
+                      :loading="replyingId === row.logId"
+                      :disabled="!replyDrafts[row.logId]?.trim()"
+                      style="margin-top: 6px"
+                      @click="submitReply(row)"
+                    >回复</el-button>
+                  </div>
+                </template>
               </el-table-column>
             </el-table>
             <el-empty v-if="feelings.length === 0" description="暂无感受日志" :image-size="60" />
@@ -81,7 +100,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Patient, OrthosisPlan, FeelingLog, HealthReport } from '@bracesync/shared-types'
-import { fetchPatients, fetchOrthosisPlans, saveOrthosisPlanApi, fetchFeelingLogs, fetchHealthReports } from '../../api'
+import { fetchPatients, fetchOrthosisPlans, saveOrthosisPlanApi, fetchFeelingLogs, fetchHealthReports, replyFeelingLogApi } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 
 const auth = useAuthStore()
@@ -93,6 +112,8 @@ const feelings = ref<FeelingLog[]>([])
 const reports = ref<HealthReport[]>([])
 const newPlanContent = ref('')
 const savingPlan = ref(false)
+const replyDrafts = ref<Record<string, string>>({})
+const replyingId = ref<string | null>(null)
 
 function areaLabel(area: string): string {
   const map: Record<string, string> = { neck: '颈部', thoracic: '胸段', lumbar: '腰段', pelvis: '骨盆' }
@@ -140,6 +161,24 @@ async function savePlan() {
   }
 }
 
+// T247 8.3: 医生回复感受日志
+async function submitReply(row: FeelingLog) {
+  const content = replyDrafts.value[row.logId]?.trim()
+  if (!content) return
+  replyingId.value = row.logId
+  try {
+    await replyFeelingLogApi(row.logId, content)
+    row.replyContent = content
+    row.replyTime = new Date().toISOString()
+    delete replyDrafts.value[row.logId]
+    ElMessage.success('回复成功')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '回复失败')
+  } finally {
+    replyingId.value = null
+  }
+}
+
 onMounted(async () => {
   try {
     const res = await fetchPatients({ page: 1, pageSize: 50 })
@@ -177,5 +216,10 @@ onMounted(async () => {
 }
 .empty-placeholder {
   margin-top: 80px;
+}
+.reply-content {
+  color: #1a6db5;
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>

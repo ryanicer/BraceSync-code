@@ -32,10 +32,10 @@ const DOCTORS: Doctor[] = [
 ]
 
 const TECHNICIANS: Technician[] = [
-  { techId: 'TECH-001', name: '周师傅', phoneMasked: '138****5678', teamId: 'TEAM-001', installCount: 46, status: 'enabled', authStatus: 'authorized' },
-  { techId: 'TECH-002', name: '吴师傅', phoneMasked: '139****6789', teamId: 'TEAM-002', installCount: 38, status: 'enabled', authStatus: 'authorized' },
-  { techId: 'TECH-003', name: '郑师傅', phoneMasked: '137****7890', teamId: 'TEAM-003', installCount: 29, status: 'enabled', authStatus: 'unauthorized' },
-  { techId: 'TECH-004', name: '冯师傅', phoneMasked: '136****8901', teamId: 'TEAM-004', installCount: 52, status: 'disabled', authStatus: 'authorized' },
+  { techId: 'TECH-001', name: '周师傅', phoneMasked: '138****5678', teamId: 'TEAM-001', installCount: 46, status: 'enabled', authStatus: 'authorized', createdAt: '2026-05-15T00:00:00+08:00' },
+  { techId: 'TECH-002', name: '吴师傅', phoneMasked: '139****6789', teamId: 'TEAM-002', installCount: 38, status: 'enabled', authStatus: 'authorized', createdAt: '2026-06-01T00:00:00+08:00' },
+  { techId: 'TECH-003', name: '郑师傅', phoneMasked: '137****7890', teamId: 'TEAM-003', installCount: 29, status: 'enabled', authStatus: 'unauthorized', createdAt: '2026-06-20T00:00:00+08:00' },
+  { techId: 'TECH-004', name: '冯师傅', phoneMasked: '136****8901', teamId: 'TEAM-004', installCount: 52, status: 'disabled', authStatus: 'authorized', createdAt: '2026-07-01T00:00:00+08:00' },
 ]
 
 const INSTALL_RECORDS: InstallRecord[] = [
@@ -85,6 +85,36 @@ export function mockInstallRecords(params: { keyword?: string; page?: number; pa
 
 export function mockTechName(techId: string): string {
   return TECHNICIANS.find((t) => t.techId === techId)?.name ?? techId
+}
+
+// T247: 技师新建 / 编辑 mock
+function maskPhoneLocal(phone: string): string {
+  if (phone.length < 7) return phone
+  return phone.slice(0, 3) + '****' + phone.slice(7)
+}
+
+export function mockCreateTechnician(input: { name: string; phone: string; teamId: string }): Technician {
+  const tech: Technician = {
+    techId: `TECH-${String(TECHNICIANS.length + 1).padStart(3, '0')}`,
+    name: input.name,
+    phoneMasked: maskPhoneLocal(input.phone),
+    teamId: input.teamId,
+    installCount: 0,
+    status: 'enabled',
+    authStatus: 'unauthorized',
+    createdAt: new Date().toISOString(),
+  }
+  TECHNICIANS.push(tech)
+  return { ...tech }
+}
+
+export function mockUpdateTechnician(techId: string, input: Partial<{ name: string; phone: string; teamId: string }>): Technician {
+  const idx = TECHNICIANS.findIndex((t) => t.techId === techId)
+  if (idx === -1) throw new Error('技师不存在')
+  if (input.name) TECHNICIANS[idx].name = input.name
+  if (input.teamId) TECHNICIANS[idx].teamId = input.teamId
+  if (input.phone) TECHNICIANS[idx].phoneMasked = maskPhoneLocal(input.phone)
+  return { ...TECHNICIANS[idx] }
 }
 
 // ========== T059 团队管理写功能 mock ==========

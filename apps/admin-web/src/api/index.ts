@@ -190,6 +190,23 @@ export async function toggleTechnicianApi(techId: string, action: 'enable' | 'di
   await request<null>({ url: `/api/v1/technicians/${techId}/toggle`, method: 'POST', data: { action } })
 }
 
+// T247: 技师新建 / 编辑（后端 handler.go:869 / :913 已实现，网关 proxy_admin.go:132-133 已放行）
+export interface CreateTechnicianInput {
+  name: string
+  phone: string
+  teamId: string
+}
+
+export async function createTechnicianApi(input: CreateTechnicianInput): Promise<Technician> {
+  if (USE_MOCK) { await delay(); return orgMock.mockCreateTechnician(input) }
+  return request<Technician>({ url: '/api/v1/admin/technicians', method: 'POST', data: input as unknown as Record<string, unknown> })
+}
+
+export async function updateTechnicianApi(techId: string, input: Partial<CreateTechnicianInput>): Promise<Technician> {
+  if (USE_MOCK) { await delay(); return orgMock.mockUpdateTechnician(techId, input) }
+  return request<Technician>({ url: `/api/v1/admin/technicians/${techId}`, method: 'PUT', data: input as unknown as Record<string, unknown> })
+}
+
 export async function fetchInstallRecords(params: { keyword?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<InstallRecord>> {
   if (USE_MOCK) { await delay(); return orgMock.mockInstallRecords(params) }
   return request<PaginatedResponse<InstallRecord>>({ url: '/api/v1/install-records', data: params as Record<string, unknown> })
@@ -227,6 +244,12 @@ export async function fetchFeelingLogs(patientId: string): Promise<FeelingLog[]>
   return request<FeelingLog[]>({ url: `/api/v1/patients/${patientId}/feeling-logs` })
 }
 
+// T247: 医生回复感受日志（后端已放行，网关 proxy_admin.go:144）
+export async function replyFeelingLogApi(logId: string, replyContent: string): Promise<void> {
+  if (USE_MOCK) { await delay(); orthosisMock.mockReplyFeelingLog(logId, replyContent); return }
+  await request<null>({ url: `/api/v1/feeling-logs/${logId}/reply`, method: 'POST', data: { replyContent } })
+}
+
 export async function fetchHealthReports(patientId: string): Promise<HealthReport[]> {
   if (USE_MOCK) { await delay(); return orthosisMock.mockHealthReports(patientId) }
   return request<HealthReport[]>({ url: `/api/v1/patients/${patientId}/health-reports` })
@@ -237,6 +260,22 @@ export async function fetchHealthReports(patientId: string): Promise<HealthRepor
 export async function fetchAdminRoles(): Promise<AdminRoleRow[]> {
   if (USE_MOCK) { await delay(); return systemMock.mockAdminRoles() }
   return request<AdminRoleRow[]>({ url: '/api/v1/admin/roles' })
+}
+
+// T247: 角色权限读写（后端 UpdateRolePermissions handler.go:1358 已实现，网关 proxy_admin.go:146-147 已放行）
+export interface RolePermissions {
+  roleId: string
+  permissions: string[] // 页面路径数组，如 ['/monitor', '/alerts']
+}
+
+export async function fetchRolePermissionsApi(roleId: string): Promise<RolePermissions> {
+  if (USE_MOCK) { await delay(); return systemMock.mockRolePermissions(roleId) }
+  return request<RolePermissions>({ url: `/api/v1/admin/roles/${roleId}/permissions` })
+}
+
+export async function updateRolePermissionsApi(roleId: string, permissions: string[]): Promise<void> {
+  if (USE_MOCK) { await delay(); systemMock.mockUpdateRolePermissions(roleId, permissions); return }
+  await request<null>({ url: `/api/v1/admin/roles/${roleId}/permissions`, method: 'PUT', data: { permissions } })
 }
 
 export async function fetchSystemSettings(): Promise<SystemSettings> {
