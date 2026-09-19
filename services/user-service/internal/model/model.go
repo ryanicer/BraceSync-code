@@ -198,6 +198,14 @@ type TeamMembersDTO struct {
 	Technicians []TechnicianDTO `json:"technicians"`
 }
 
+// TeamStatsDTO 团队管理页 4 张统计卡（T256 #1，设计稿 团队管理.html:87-90）
+type TeamStatsDTO struct {
+	TeamCount              int `json:"teamCount"`              // 团队总数
+	MemberCount            int `json:"memberCount"`            // 成员总数（医生+技师，teams.member_count 汇总）
+	ManagedPatientCount    int `json:"managedPatientCount"`    // 管理患者（已分配团队的患者数）
+	UnassignedPatientCount int `json:"unassignedPatientCount"` // 待分配患者（team_id IS NULL）
+}
+
 // FeedbackDTO 患者反馈（契约 getFeedbacks，对齐 shared-types Feedback）
 type FeedbackDTO struct {
 	FeedbackID   string  `json:"feedbackId"`
@@ -222,11 +230,14 @@ type OrthosisPlanDTO struct {
 }
 
 // FeelingLogDTO 佩戴感受日志（契约 getFeelingLogs，对齐 shared-types FeelingLog）
+// T256 #3：comfort_level 两档（fitted=贴合 / discomfort=不适），由 000015 迁移新增列；
+// comfort_score 保留为历史星级口径（PRD §8.2），写入口径以 comfort_level 为准。
 type FeelingLogDTO struct {
 	LogID           string   `json:"logId"`
 	PatientID       string   `json:"patientId"`
 	LogDate         string   `json:"logDate"`
-	ComfortScore    *float64 `json:"comfortScore"`
+	ComfortScore    *float64 `json:"comfortScore"` // 历史 1–5 星（保留兼容）
+	Feeling         *string  `json:"feeling"`      // T256 #3：fitted | discomfort（来自 comfort_level 列）
 	DiscomfortAreas []string `json:"discomfortAreas"`
 	Notes           *string  `json:"notes"`
 	ReplyContent    *string  `json:"replyContent"`
@@ -257,6 +268,8 @@ type WifiPresetDTO struct {
 }
 
 // SystemSettingsDTO 系统参数（契约 getSystemSettings，PRD §7D.12，映射 sys_configs）
+// T256 #4：新增 collectIntervalSeconds / retentionDays / maxPatients 三项（设计稿 系统配置.html:88-90）。
+// collectIntervalSeconds 由内部 collect_interval_minutes 换算（API 口径秒，内部存储分钟，兼容 device/alert 服务）。
 type SystemSettingsDTO struct {
 	DailyWearTargetHours   float64         `json:"dailyWearTargetHours"`
 	PressureHighThresholdN float64         `json:"pressureHighThresholdN"`
@@ -264,6 +277,9 @@ type SystemSettingsDTO struct {
 	WearInterruptMinutes   float64         `json:"wearInterruptMinutes"`
 	SensorDriftN           float64         `json:"sensorDriftN"`
 	WifiPresets            []WifiPresetDTO `json:"wifiPresets"`
+	CollectIntervalSeconds int             `json:"collectIntervalSeconds"` // 采集间隔（秒，设计稿口径）
+	RetentionDays          int             `json:"retentionDays"`          // 数据保留天数
+	MaxPatients            int             `json:"maxPatients"`            // 最大患者数
 }
 
 // LoginResultDTO 登录响应（契约 adminLogin，T030 #9）
