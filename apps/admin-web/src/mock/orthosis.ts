@@ -9,9 +9,9 @@ const PLANS: OrthosisPlan[] = [
 ]
 
 const FEELINGS: FeelingLog[] = [
-  { logId: 'FL-001', patientId: 'PT-001', logDate: '2026-08-11', comfortScore: 3.5, discomfortAreas: ['thoracic'], notes: '上午有点闷，下午适应一些', replyContent: null, replyTime: null },
-  { logId: 'FL-002', patientId: 'PT-001', logDate: '2026-08-10', comfortScore: 4, discomfortAreas: [], notes: '整体不错', replyContent: '继续保持，注意睡姿', replyTime: '2026-08-10T21:00:00+08:00' },
-  { logId: 'FL-003', patientId: 'PT-002', logDate: '2026-08-11', comfortScore: 2.5, discomfortAreas: ['lumbar', 'pelvis'], notes: '腰部压得比较疼', replyContent: null, replyTime: null },
+  { logId: 'FL-001', patientId: 'PT-001', logDate: '2026-08-11', comfortScore: 3.5, feeling: 'fitted', discomfortAreas: ['thoracic'], notes: '上午有点闷，下午适应一些', replyContent: null, replyTime: null },
+  { logId: 'FL-002', patientId: 'PT-001', logDate: '2026-08-10', comfortScore: 4, feeling: 'fitted', discomfortAreas: [], notes: '整体不错', replyContent: '继续保持，注意睡姿', replyTime: '2026-08-10T21:00:00+08:00' },
+  { logId: 'FL-003', patientId: 'PT-002', logDate: '2026-08-11', comfortScore: 2.5, feeling: 'discomfort', discomfortAreas: ['lumbar', 'pelvis'], notes: '腰部压得比较疼', replyContent: null, replyTime: null },
 ]
 
 const REPORTS: HealthReport[] = [

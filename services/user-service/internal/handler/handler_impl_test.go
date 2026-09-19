@@ -84,15 +84,26 @@ type fakeStore struct {
 	feelingsErr      error
 	replyOK          bool
 	replyErr         error
-	roles            []repo.RoleRow
-	rolesErr         error
-	role             *repo.RoleRow
-	roleErr          error
-	updRoleOK        bool
-	updRoleErr       error
-	configs          map[string]string
-	configsErr       error
-	upsertErr        error
+	// T256 #1 团队统计卡
+	teamCount              int
+	memberCount            int
+	managedPatientCount    int
+	unassignedPatientCount int
+	teamStatsErr           error
+	// T256 #2 跨患者感受日志
+	feelingsAdmin          []repo.FeelingLogRow
+	feelingsAdminTotal     int64
+	feelingsAdminErr       error
+	lastFeelingAdminFilter repo.FeelingLogAdminFilter
+	roles                  []repo.RoleRow
+	rolesErr               error
+	role                   *repo.RoleRow
+	roleErr                error
+	updRoleOK              bool
+	updRoleErr             error
+	configs                map[string]string
+	configsErr             error
+	upsertErr              error
 
 	lastUpsert       []repo.ConfigKV
 	lastUpsertBy     string
@@ -263,6 +274,15 @@ func (f *fakeStore) ListFeelingLogs(_ context.Context, patientID string) ([]repo
 func (f *fakeStore) ReplyFeelingLog(_ context.Context, _ int64, reply string) (bool, error) {
 	f.lastReply = reply
 	return f.replyOK, f.replyErr
+}
+
+// T256 #1 团队统计卡 + #2 跨患者感受日志桩
+func (f *fakeStore) GetTeamStats(_ context.Context) (int, int, int, int, error) {
+	return f.teamCount, f.memberCount, f.managedPatientCount, f.unassignedPatientCount, f.teamStatsErr
+}
+func (f *fakeStore) ListFeelingLogsAdmin(_ context.Context, flt repo.FeelingLogAdminFilter) ([]repo.FeelingLogRow, int64, error) {
+	f.lastFeelingAdminFilter = flt
+	return f.feelingsAdmin, f.feelingsAdminTotal, f.feelingsAdminErr
 }
 func (f *fakeStore) ListRoles(_ context.Context) ([]repo.RoleRow, error) { return f.roles, f.rolesErr }
 func (f *fakeStore) GetRole(_ context.Context, _ string) (*repo.RoleRow, error) {
@@ -1571,6 +1591,7 @@ func validSettingsBody() map[string]any {
 	return map[string]any{
 		"dailyWearTargetHours": 22, "pressureHighThresholdN": 45, "pressureFluctuationPct": 30,
 		"wearInterruptMinutes": 60, "sensorDriftN": 2.8,
+		"collectIntervalSeconds": 1800, "retentionDays": 365, "maxPatients": 10000,
 		"wifiPresets": []map[string]any{{"ssid": "ClinicWiFi", "password": "newpass"}},
 	}
 }
@@ -1582,7 +1603,7 @@ func TestUpdateSettings(t *testing.T) {
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/settings", validSettingsBody(), map[string]string{"X-User-Id": "A0001"})
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "A0001", e.store.lastUpsertBy)
-	require.Len(t, e.store.lastUpsert, 6)
+	require.Len(t, e.store.lastUpsert, 10)
 	// 响应中密码脱敏
 	var dto model.SystemSettingsDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &dto))
