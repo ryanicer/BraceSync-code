@@ -19,6 +19,13 @@
           <template #default="{ row }">{{ teamNameOf(row.teamId) }}</template>
         </el-table-column>
         <el-table-column prop="installCount" label="安装次数" width="90" />
+        <el-table-column label="认证状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.authStatus === 'authorized' ? 'success' : 'warning'" size="small">
+              {{ row.authStatus === 'authorized' ? '已认证' : '未认证' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.status === 'enabled' ? 'success' : 'info'" size="small">

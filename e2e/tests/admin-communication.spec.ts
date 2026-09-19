@@ -111,21 +111,18 @@ test.describe('患者沟通 · admin 视角', () => {
       expect(allTags.some((t) => t.includes('已解决'))).toBe(true)
     })
 
-    test('点击详情按钮打开对话框显示反馈内容', async ({ page }) => {
+    test('点击反馈行在右侧面板显示反馈内容', async ({ page }) => {
+      // T247: 改为左右布局，左侧列表点击行 → 右侧详情面板
       const rows = tableRows(page)
       await expect(rows).toHaveCount(4)
 
-      // 点首行"详情"按钮
-      const detailBtn = rows.nth(0).getByRole('button', { name: '详情' })
-      await expect(detailBtn).toBeVisible()
-      await detailBtn.click()
+      // 点首行（FB-001 林小雨）
+      await rows.nth(0).click()
 
-      const dialog = page.locator('.el-dialog').filter({ hasText: '反馈' })
-      await expect(dialog).toBeVisible({ timeout: 5_000 })
-
-      // el-descriptions 含关键字段
-      const descriptions = dialog.locator('.el-descriptions')
-      await expect(descriptions).toBeVisible()
+      // 右侧面板显示 el-descriptions
+      const rightPane = page.locator('.right-pane')
+      const descriptions = rightPane.locator('.el-descriptions')
+      await expect(descriptions).toBeVisible({ timeout: 5_000 })
       await expect(descriptions).toContainText('患者')
       await expect(descriptions).toContainText('类型')
       await expect(descriptions).toContainText('内容')
@@ -136,20 +133,19 @@ test.describe('患者沟通 · admin 视角', () => {
   // ── 回复与处理流程 ──────────────────────────────────────
   test.describe('回复与处理流程', () => {
     test('填写回复并提交后 ElMessage 成功 + 状态变更 + 列表刷新', async ({ page }) => {
+      // T247: 改为左右布局，回复在右侧面板内联操作
       const rows = tableRows(page)
       await expect(rows).toHaveCount(4)
 
-      // 找 pending 行（林小雨，第 0 行）点详情
+      // 点 pending 行（林小雨，第 0 行）
       const firstRow = rows.nth(0)
       await expect(firstRow).toContainText('林小雨')
-      await firstRow.getByRole('button', { name: '详情' }).click()
+      await firstRow.click()
 
-      const dialog = page.locator('.el-dialog').filter({ hasText: '反馈' })
-      await expect(dialog).toBeVisible()
-
+      const rightPane = page.locator('.right-pane')
       // status=pending 时应有回复输入框 + 按钮
-      const replyInput = dialog.locator('textarea.reply-input, .el-textarea textarea')
-      const submitBtn = dialog.getByRole('button', { name: '回复并标记' })
+      const replyInput = rightPane.locator('.reply-box textarea, .reply-box .el-textarea textarea')
+      const submitBtn = rightPane.getByRole('button', { name: '回复并标记' })
       await expect(replyInput).toBeVisible()
       await expect(submitBtn).toBeVisible()
 
@@ -158,12 +154,8 @@ test.describe('患者沟通 · admin 视角', () => {
 
       // ElMessage 成功提示
       await expect(adminMessage(page)).toContainText('成功', { timeout: 10_000 })
-      // 对话框关闭
-      await expect(dialog).toBeHidden({ timeout: 10_000 })
 
       // 列表对应行状态变更（变为 replied=已回复 或 resolved=已解决 任一即可）
-      // 注意：mock 未补内存更新时，loadData() 拉回的数据不会反映此变更 → 本断言可能 FAIL
-      // 实现方转绿补 mock 内存更新后必过
       const rowsAfter = tableRows(page)
       await expect(rowsAfter.nth(0).locator('.el-tag')).toContainText(/已回复|已解决/, {
         timeout: 15_000,
