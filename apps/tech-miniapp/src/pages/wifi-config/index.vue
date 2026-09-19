@@ -11,7 +11,7 @@
         <view :class="['step', stepStatus(i)]">
           <view class="step-circle">
             <text v-if="stepStatus(i) !== 'done'">{{ i + 1 }}</text>
-            <text v-else>✓</text>
+            <text v-else class="step-check">✓</text>
           </view>
           <text class="step-label">{{ label }}</text>
         </view>
@@ -502,6 +502,7 @@ onUnmounted(() => {
 .stepper { display: flex; align-items: center; justify-content: center; padding: 24rpx 48rpx; }
 .step { display: flex; flex-direction: column; align-items: center; position: relative; z-index: 1; }
 .step-circle { width: 52rpx; height: 52rpx; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24rpx; font-weight: 600; color: #fff; transition: all 0.3s; }
+.step-check { font-size: 30rpx; font-weight: 700; line-height: 1; }
 .step-done .step-circle { background: #10B981; }
 .step-active .step-circle { background: #3B82F6; }
 .step-pending .step-circle { background: #e5e7eb; color: #9ca3af; }

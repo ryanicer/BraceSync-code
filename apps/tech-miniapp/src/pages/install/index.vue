@@ -108,7 +108,7 @@
             </view>
           </view>
           <view class="phase-subtitle">
-            <text>零点偏移矩阵（5 帧均值，单位 N）</text>
+            <text>零点偏移量（将从后续读数中扣除，单位 N）</text>
           </view>
           <view class="pressure-grid">
             <view
@@ -116,7 +116,7 @@
               :key="i"
               :class="['pressure-cell', 'lvl-' + pressureLevel(v)]"
             >
-              <text>{{ v.toFixed(3) }}</text>
+              <text>{{ v.toFixed(2) }}</text>
             </view>
           </view>
           <view class="checks-block">
@@ -131,6 +131,10 @@
             <view class="check-item">
               <text class="check-icon-muted">○</text>
               <text>稳定性校验：占位（阈值待重定后启用）</text>
+            </view>
+            <view class="check-item">
+              <text class="check-icon-muted">ℹ</text>
+              <text>校准完成后，实时压力读数将自动减去上述偏移值</text>
             </view>
           </view>
           <view class="btn-primary" @click="goPhase3"><text>校准完成，下一步</text></view>

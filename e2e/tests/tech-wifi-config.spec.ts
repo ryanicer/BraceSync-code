@@ -52,4 +52,6 @@ test('配网全流程到成功', async ({ page }) => {
   // 步骤条推进 + 成功态
   await expect(page.getByText('配网成功')).toBeVisible({ timeout: 30_000 })
   await expect(page.getByText('WiFi 已连接，数据可达性验证通过')).toBeVisible()
+  // T240 回归：成功态下 5 个步骤全部显示 ✓（不应被 clear 的 notify 0 打回数字）
+  await expect(page.locator('.step-check')).toHaveCount(5)
 })
