@@ -26,6 +26,7 @@ package handler
 
 import (
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -156,16 +157,18 @@ type installMetaRequest struct {
 
 // installDetailDTO 单条安装记录响应体（T122 GET /:id）
 type installDetailDTO struct {
-	InstallID     string  `json:"installId"`
-	DeviceID      string  `json:"deviceId"`
-	PatientID     string  `json:"patientId"`
-	TechID        string  `json:"techId"`
-	CalibrateTime string  `json:"calibrateTime"`
-	BaselineID    *string `json:"baselineId"`
-	Notes         string  `json:"notes"`
-	SignatureURL  string  `json:"signatureUrl"`
-	WifiStatus    string  `json:"wifiStatus"`
-	CreatedAt     string  `json:"createdAt"`
+	InstallID     string    `json:"installId"`
+	DeviceID      string    `json:"deviceId"`
+	PatientID     string    `json:"patientId"`
+	TechID        string    `json:"techId"`
+	CalibrateTime string    `json:"calibrateTime"`
+	BaselineID    *string   `json:"baselineId"`
+	Notes         string    `json:"notes"`
+	SignatureURL  string    `json:"signatureUrl"`
+	WifiStatus    string    `json:"wifiStatus"`
+	CreatedAt     string    `json:"createdAt"`
+	OffsetValues  []float32 `json:"offsetValues"` // T248 9.1：20 点偏移值网格；未校准为 []
+	CalibStatus   string    `json:"calibStatus"`  // T248 9.3：uncalibrated / normal / abnormal
 }
 
 type baselineRequest struct {
@@ -415,6 +418,27 @@ func (h *Handler) updateInstallMeta(c *gin.Context) {
 	ok(c, nil)
 }
 
+// calibOffsetAnomalyN 校准偏移越界阈值（单位 N）。设计稿 安装记录.html:182 详情区标 >2.8N 为异常点；
+// PRD §7D.12 口径为「可配置占位值、待按 mN/÷1000 量级重定」⇒ 不硬编码，走 CALIB_OFFSET_ANOMALY_N；
+// 显式置 0 关闭越界判定（只区分已/未校准）。后台可视化调参入口归 T257 的 12.4。
+func calibOffsetAnomalyN() float32 {
+	if v := os.Getenv("CALIB_OFFSET_ANOMALY_N"); v != "" {
+		f, err := strconv.ParseFloat(v, 32)
+		if err == nil && f >= 0 {
+			return float32(f)
+		}
+	}
+	return 2.8
+}
+
+// offsetsOrEmpty 未校准（nil）序列化为 []，避免前端网格判 null
+func offsetsOrEmpty(offsets []float32) []float32 {
+	if offsets == nil {
+		return []float32{}
+	}
+	return offsets
+}
+
 // toInstallDetailDTO model.InstallRecord → 单条详情响应 DTO
 func toInstallDetailDTO(r *model.InstallRecord) installDetailDTO {
 	dto := installDetailDTO{
@@ -427,6 +451,8 @@ func toInstallDetailDTO(r *model.InstallRecord) installDetailDTO {
 		SignatureURL:  strOrEmpty(r.SignatureURL),
 		WifiStatus:    r.WifiStatus,
 		CreatedAt:     r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		OffsetValues:  offsetsOrEmpty(r.OffsetValues),
+		CalibStatus:   model.CalibStatus(r.BaselineID, r.OffsetValues, calibOffsetAnomalyN()),
 	}
 	if r.BaselineID != nil {
 		s := strconv.FormatInt(*r.BaselineID, 10)

@@ -113,6 +113,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/patient/bind-phone"},                      // 患者绑定手机号（scope=bind）
 	{http.MethodPost, "/admin/patients/:patientId/unbind-wechat"}, // 解绑微信
 	{http.MethodPut, "/admin/patients/:patientId/phone"},          // 改手机号
+	{http.MethodPut, "/admin/patients/:patientId"},                // T248 4.3 档案编辑（姓名/性别/年龄/诊断/Cobb）
 
 	{http.MethodGet, "/admin/patients"},                     // T030 #1
 	{http.MethodGet, "/admin/patients/:patientId"},          // T030 #2
@@ -134,6 +135,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPut, "/admin/technicians/:techId"}, // T030 #4 编辑
 	{http.MethodPost, "/technicians/:techId/toggle"},
 	{http.MethodGet, "/feedbacks"},
+	{http.MethodGet, "/feedbacks/stats"},                // T248 7.1 统计栏三项
 	{http.MethodPost, "/feedbacks/:feedbackId/process"}, // T030 #5 replyContent
 	{http.MethodGet, "/patient/profile"},                // T186 患者本人只读档案（self-scope）
 	// T226 患者自助改本人资料（白名单+限本人，水平越权 user-service handler 拦截）。

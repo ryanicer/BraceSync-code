@@ -254,6 +254,12 @@ func (f *FakeStore) GetInstall(_ context.Context, installID int64) (*model.Insta
 		return nil, repo.ErrNotFound
 	}
 	cp := *rec
+	cp.OffsetValues = nil // 对齐 PGStore LEFT JOIN：仅已校准才有偏移值
+	if rec.BaselineID != nil {
+		if b, has := f.baselines[*rec.BaselineID]; has {
+			cp.OffsetValues = append([]float32(nil), b.OffsetValues...)
+		}
+	}
 	return &cp, nil
 }
 

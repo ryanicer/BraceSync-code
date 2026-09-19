@@ -227,6 +227,12 @@ func (s *PGStore) UpdatePatientProfile(ctx context.Context, patientID string, in
 	if in.EmergencyContactRelation != nil {
 		add("emergency_contact_relation", *in.EmergencyContactRelation)
 	}
+	if in.Diagnosis != nil {
+		add("diagnosis", *in.Diagnosis)
+	}
+	if in.CobbAngle != nil {
+		add("cobb_angle", *in.CobbAngle)
+	}
 	if len(sets) == 1 { // 仅 updated_at：无白名单字段可写（handler 已先拒 400，此处兜底防空 SET）
 		return nil
 	}
@@ -589,6 +595,23 @@ func (s *PGStore) ListFeedbacks(ctx context.Context, keyword string) ([]Feedback
 		list = append(list, f)
 	}
 	return list, rows.Err()
+}
+
+// FeedbackStats 患者沟通统计栏（T248 7.1）：一次聚合出今日咨询 / 待回复 / 平均响应
+func (s *PGStore) FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time) (FeedbackStatsRow, error) {
+	var out FeedbackStatsRow
+	err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FILTER (WHERE f.submit_time >= $1 AND f.submit_time < $2),
+		        COUNT(*) FILTER (WHERE f.status = 'pending'),
+		        AVG(EXTRACT(EPOCH FROM (f.reply_time - f.submit_time)))
+		            FILTER (WHERE f.reply_time IS NOT NULL AND f.submit_time IS NOT NULL)
+		 FROM feedbacks f`,
+		todayStart, todayEnd,
+	).Scan(&out.TodayCount, &out.PendingCount, &out.AvgReplySec)
+	if err != nil {
+		return FeedbackStatsRow{}, err
+	}
+	return out, nil
 }
 
 // ProcessFeedback 回复落库 + 标记处理（resolved 不回退）；返回反馈是否存在

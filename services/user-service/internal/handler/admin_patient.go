@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 
 	"github.com/gin-gonic/gin"
 
@@ -129,4 +132,116 @@ func (h *Handler) updatePatientPhone(c *gin.Context) {
 		Msg("update patient phone")
 
 	ok(c, gin.H{"patientId": patientID})
+}
+
+// adminPatientEditRequest PUT /api/v1/admin/patients/:patientId 入参（T248 4.3，指针=nil=不改）。
+// 只覆盖 PRD §7D.3「编辑患者弹窗」五项；phone / teamId / primaryDoctorId / status 各有专属端点，
+// 由 DisallowUnknownFields 拒掉，避免调用方以为改了其实被静默丢弃。
+type adminPatientEditRequest struct {
+	Name      *string  `json:"name"`
+	Gender    *string  `json:"gender"`
+	Age       *int     `json:"age"`
+	Diagnosis *string  `json:"diagnosis"`
+	CobbAngle *float64 `json:"cobbAngle"`
+}
+
+// maxDiagnosisLen patients.diagnosis VARCHAR(255)
+const maxDiagnosisLen = 255
+
+// updatePatientAdmin PUT /api/v1/admin/patients/:patientId —— admin 侧患者档案编辑（T248 4.3）。
+// Cobb 角度可写系 Boss 2026-09-17 裁定 B 的「临床侧写通道」延伸：患者自助通道仍拒该键
+// （见 patient_profile_write.go 头注）。
+func (h *Handler) updatePatientAdmin(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can edit patient profile"))
+		return
+	}
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
+	if err != nil {
+		fail(c, model.ErrInvalidParam("read request body failed"))
+		return
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var req adminPatientEditRequest
+	if decErr := dec.Decode(&req); decErr != nil {
+		fail(c, model.ErrInvalidParam("request contains fields outside the editable set: %v", decErr))
+		return
+	}
+	in, appErr := buildAdminPatientEdit(&req)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	if err := h.store.UpdatePatientProfile(c.Request.Context(), patientID, *in); err != nil {
+		if err == repo.ErrPatientNotFound {
+			fail(c, model.ErrNotFound("patient not found: %s", patientID))
+			return
+		}
+		fail(c, model.ErrInternal("update patient failed"))
+		return
+	}
+	row, err := h.store.GetPatient(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("get patient failed"))
+		return
+	}
+	if row == nil {
+		fail(c, model.ErrNotFound("patient not found: %s", patientID))
+		return
+	}
+	ok(c, toPatientDTO(*row))
+}
+
+// buildAdminPatientEdit 值域校验 + 装配 repo 入参；一个字段都没给 → 400（空编辑无意义）。
+func buildAdminPatientEdit(req *adminPatientEditRequest) (*repo.PatientProfileUpdate, *model.AppError) {
+	in := &repo.PatientProfileUpdate{}
+	anyField := false
+	if req.Name != nil {
+		name := trimStr(*req.Name)
+		if name == "" || runeLen(name) > maxPatientNameLen {
+			return nil, model.ErrInvalidParam("name must be 1-%d characters", maxPatientNameLen)
+		}
+		in.Name = &name
+		anyField = true
+	}
+	if req.Gender != nil {
+		if *req.Gender != "male" && *req.Gender != "female" {
+			return nil, model.ErrInvalidParam("gender must be male or female")
+		}
+		in.Gender = req.Gender
+		anyField = true
+	}
+	if req.Age != nil {
+		if *req.Age < 0 || *req.Age > 150 { // patients.age CHECK (BETWEEN 0 AND 150)
+			return nil, model.ErrInvalidParam("age must be between 0 and 150")
+		}
+		in.Age = req.Age
+		anyField = true
+	}
+	if req.Diagnosis != nil {
+		v := trimStr(*req.Diagnosis)
+		if runeLen(v) > maxDiagnosisLen {
+			return nil, model.ErrInvalidParam("diagnosis exceeds %d characters", maxDiagnosisLen)
+		}
+		in.Diagnosis = &v
+		anyField = true
+	}
+	if req.CobbAngle != nil {
+		// patients.cobb_angle NUMERIC(5,2)；值域与建档端点 createPatient 一致
+		if *req.CobbAngle < 0 || *req.CobbAngle > 180 {
+			return nil, model.ErrInvalidParam("invalid cobbAngle range: [0,180]")
+		}
+		in.CobbAngle = req.CobbAngle
+		anyField = true
+	}
+	if !anyField {
+		return nil, model.ErrInvalidParam("no updatable fields in request body")
+	}
+	return in, nil
 }
