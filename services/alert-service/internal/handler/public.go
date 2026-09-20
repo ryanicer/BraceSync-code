@@ -20,7 +20,28 @@ import (
 )
 
 // codeNotFound 资源不存在（HTTP 状态码同步映射）
-const codeNotFound = 404
+const (
+	codeNotFound  = 404
+	codeForbidden = 403
+)
+
+// 身份头（gateway JWT 鉴权后注入）
+const (
+	headerUserID = "X-User-Id"
+	headerRole   = "X-Role"
+	roleAdmin    = "ROLE_ADMIN"
+)
+
+// staffRoles 内部 staff 角色集合（与 gateway / 其他服务对齐；不含 patient）
+var staffRoles = map[string]bool{
+	"admin":       true,
+	"ROLE_ADMIN":  true,
+	"ROLE_DOCTOR": true,
+	"ROLE_CS":     true,
+	"technician":  true,
+}
+
+func isStaffRole(role string) bool { return staffRoles[role] }
 
 // maxPageSize 分页上限（防大页扫描；与前端契约 page 从 1 起配套）
 const maxPageSize = 100
@@ -113,6 +134,11 @@ func (h *Handler) SetPublicStore(s PublicAlertStore) { h.public = s }
 
 // listAlerts GET /api/v1/alerts —— 分页 + patientId/type/status 筛选。
 // 参数缺省 page=1 / pageSize=20；非法枚举/分页越界返回 400。
+//
+// T264 水平鉴权：
+//   - staff（admin/doctor/cs/technician）：可按 ?patientId= 过滤（跨患者）
+//   - 非 staff（patient）：强制 patientId = X-User-Id，忽略调用方传入值（只看本人告警）；
+//     缺失 X-User-Id → 403（fail-closed）
 func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 	if h.public == nil {
 		h.reject(w, codeInternalError, "public store not configured")
@@ -124,6 +150,16 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 		PatientID: q.Get("patientId"),
 		Type:      q.Get("type"),
 		Status:    q.Get("status"),
+	}
+
+	// T264：患者身份绑定
+	if !isStaffRole(r.Header.Get(headerRole)) {
+		userID := r.Header.Get(headerUserID)
+		if userID == "" {
+			h.reject(w, codeForbidden, "missing user identity")
+			return
+		}
+		filter.PatientID = userID // 强制覆盖，不接受调用方传入的 patientId
 	}
 	if filter.Type != "" {
 		if _, ok := validAlertTypes[filter.Type]; !ok {

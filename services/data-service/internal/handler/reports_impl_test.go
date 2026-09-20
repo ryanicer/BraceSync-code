@@ -46,6 +46,7 @@ func TestGetHealthReports(t *testing.T) {
 	h.SetReportLister(lister)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/patients/P20260001/health-reports", nil)
+	req.Header.Set(headerRole, roleAdmin) // T264：staff 身份放行
 	w := httptest.NewRecorder()
 	h.Router().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -72,6 +73,7 @@ func TestGetHealthReportsErrors(t *testing.T) {
 	// 未注入 → 500
 	h := New(nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/patients/P1/health-reports", nil)
+	req.Header.Set(headerRole, roleAdmin) // T264：staff 身份放行
 	w := httptest.NewRecorder()
 	h.Router().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

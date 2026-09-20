@@ -37,6 +37,36 @@ const (
 	roleAdmin    = "ROLE_ADMIN"
 )
 
+// staffRoles 内部 staff 角色集合（与 gateway / file-service 对齐；不含 patient）。
+// T264：admin 全量跨患者；doctor/cs/technician 暂按 staff 放行（团队归属过滤待 T184 落地）。
+var staffRoles = map[string]bool{
+	"admin":       true,
+	"ROLE_ADMIN":  true,
+	"ROLE_DOCTOR": true,
+	"ROLE_CS":     true,
+	"technician":  true,
+}
+
+// isStaffRole 判断角色是否属于内部 staff
+func isStaffRole(role string) bool { return staffRoles[role] }
+
+// assertAdminOrSelf 水平鉴权（T264，照抄 getDailyWear 范式）：
+//   - staff 放行（跨患者访问）
+//   - 非 staff（patient）仅当 X-User-Id == patientId 放行，否则 403
+//
+// fail-closed：缺失 X-User-Id 视为无权限。
+func assertAdminOrSelf(c *gin.Context, patientID string) bool {
+	if isStaffRole(c.GetHeader(headerRole)) {
+		return true
+	}
+	userID := c.GetHeader(headerUserID)
+	if userID == "" || userID != patientID {
+		fail(c, model.ErrForbidden("may only access your own data"))
+		return false
+	}
+	return true
+}
+
 // Handler HTTP 处理器
 type Handler struct {
 	svc       *service.RecordService
@@ -122,6 +152,9 @@ func (h *Handler) uploadBatch(c *gin.Context) {
 // getHistory 压力历史查询（period=day|week|month，date=YYYY-MM-DD，分页默认 20 上限 100）
 func (h *Handler) getHistory(c *gin.Context) {
 	patientID := c.Param("patientId")
+	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
+		return
+	}
 	period := c.DefaultQuery("period", "day")
 	date := c.DefaultQuery("date", "")
 	if date == "" {
@@ -160,7 +193,11 @@ func (h *Handler) getHistory(c *gin.Context) {
 
 // getRealtime 实时快照（读 Redis，零 DB 明细命中）
 func (h *Handler) getRealtime(c *gin.Context) {
-	resp, appErr := h.svc.GetRealtime(c.Request.Context(), c.Param("patientId"))
+	patientID := c.Param("patientId")
+	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
+		return
+	}
+	resp, appErr := h.svc.GetRealtime(c.Request.Context(), patientID)
 	if appErr != nil {
 		fail(c, appErr)
 		return

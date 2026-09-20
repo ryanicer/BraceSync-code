@@ -76,6 +76,33 @@ const headerRole = "X-Role"
 
 const roleAdmin = "ROLE_ADMIN"
 
+// staffRoles 内部 staff 角色集合（与 gateway / file-service / data-service 对齐；不含 patient）。
+// T264：admin 全量跨患者；doctor/cs/technician 暂按 staff 放行（团队归属过滤待 T184 落地）。
+var staffRoles = map[string]bool{
+	"admin":       true,
+	"ROLE_ADMIN":  true,
+	"ROLE_DOCTOR": true,
+	"ROLE_CS":     true,
+	"technician":  true,
+}
+
+// isStaffRole 判断角色是否属于内部 staff
+func isStaffRole(role string) bool { return staffRoles[role] }
+
+// assertAdminOrSelf 水平鉴权（T264）：staff 放行；非 staff（patient）仅 X-User-Id == patientId。
+// fail-closed：缺失 X-User-Id 视为无权限。
+func assertAdminOrSelf(c *gin.Context, patientID string) bool {
+	if isStaffRole(c.GetHeader(headerRole)) {
+		return true
+	}
+	userID := c.GetHeader(headerUserID)
+	if userID == "" || userID != patientID {
+		fail(c, model.ErrForbidden("may only access your own data"))
+		return false
+	}
+	return true
+}
+
 // scopeBindPrefix T159：绑定态 JWT sub 前缀（标记 scope=bind）。
 // 与 services/gateway/cmd/server/scope_authz.go scopeBindPrefix 同名同值（双侧契约）。
 // wxLogin 签发 bindToken 时把 openid 包成 "openid_<raw>"；bindPhone 消费侧用
@@ -1174,7 +1201,11 @@ func toPlanDTO(r repo.OrthosisPlanRow) model.OrthosisPlanDTO {
 
 // listPlans GET /api/v1/patients/:patientId/orthosis-plans
 func (h *Handler) listPlans(c *gin.Context) {
-	rows, err := h.store.ListPlans(c.Request.Context(), c.Param("patientId"))
+	patientID := c.Param("patientId")
+	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
+		return
+	}
+	rows, err := h.store.ListPlans(c.Request.Context(), patientID)
 	if err != nil {
 		fail(c, model.ErrInternal("list orthosis plans failed"))
 		return

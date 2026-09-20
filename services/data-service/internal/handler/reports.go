@@ -42,7 +42,11 @@ func (h *Handler) getHealthReports(c *gin.Context) {
 		fail(c, model.ErrInternal("report lister not configured"))
 		return
 	}
-	rows, err := h.reports.ListReports(c.Request.Context(), c.Param("patientId"))
+	patientID := c.Param("patientId")
+	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
+		return
+	}
+	rows, err := h.reports.ListReports(c.Request.Context(), patientID)
 	if err != nil {
 		fail(c, model.ErrInternal("list health reports failed"))
 		return

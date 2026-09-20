@@ -56,7 +56,12 @@ func newPublicHandler(store PublicAlertStore) *Handler {
 
 func doGet(h *Handler, target string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	h.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	// 默认 staff 身份（ROLE_ADMIN），使 ?patientId= 等筛选参数生效；
+	// 患者身份绑定另由 T264 专项测试覆盖。
+	req.Header.Set(headerRole, roleAdmin)
+	req.Header.Set(headerUserID, "ADMIN-001")
+	h.Router().ServeHTTP(rec, req)
 	return rec
 }
 
