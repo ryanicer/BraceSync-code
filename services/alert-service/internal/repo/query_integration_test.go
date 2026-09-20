@@ -7,6 +7,7 @@
 //
 //	分页 + patientId/type/status 筛选 + ts DESC 排序
 //	process 幂等（重复处理不报错、不重写处理时间）+ 不存在返回 exists=false
+//	T257 2.7：pending/processing/processed 三态流转 + in_progress_at 幂等不刷新
 //
 // 运行：make test-integration（需 Docker）
 package repo
@@ -137,6 +138,7 @@ func TestIT_T028_ListAlerts_FieldProjection(t *testing.T) {
 	assert.Equal(t, "pending", row.ProcessStatus)
 	assert.Equal(t, "active", row.ResolvedStatus)
 	assert.Nil(t, row.ResolvedAt)
+	assert.Nil(t, row.InProgressAt, "T257 2.7：历史行/未进入处理中 → in_progress_at 为 NULL")
 	assert.Nil(t, row.ProcessedBy)
 	assert.Nil(t, row.ProcessedAt)
 	assert.Nil(t, row.ProcessNote)
@@ -153,26 +155,30 @@ func TestIT_T028_ProcessAlert_Idempotent(t *testing.T) {
 	alertID := rows[0].AlertID
 
 	// 首次处理
-	exists, err := r.ProcessAlert(ctx, alertID)
+	exists, err := r.ProcessAlert(ctx, alertID, "DOCTOR-IT")
 	require.NoError(t, err)
 	assert.True(t, exists)
 	var status string
 	var processedAt *time.Time
+	var processedBy *string
 	require.NoError(t, itPool.QueryRow(ctx,
-		`SELECT process_status, processed_at FROM alerts WHERE alert_id = $1`, alertID).
-		Scan(&status, &processedAt))
+		`SELECT process_status, processed_at, processed_by FROM alerts WHERE alert_id = $1`, alertID).
+		Scan(&status, &processedAt, &processedBy))
 	assert.Equal(t, "processed", status)
 	require.NotNil(t, processedAt)
+	require.NotNil(t, processedBy)
+	assert.Equal(t, "DOCTOR-IT", *processedBy, "T257 2.7：processed_by 落操作人")
 	firstAt := *processedAt
 
-	// 重复处理幂等：exists=true 且 processed_at 不重写
+	// 重复处理幂等：exists=true 且 processed_at / processed_by 不重写
 	time.Sleep(10 * time.Millisecond)
-	exists, err = r.ProcessAlert(ctx, alertID)
+	exists, err = r.ProcessAlert(ctx, alertID, "CS-OTHER")
 	require.NoError(t, err)
 	assert.True(t, exists, "重复处理不报错")
 	require.NoError(t, itPool.QueryRow(ctx,
-		`SELECT processed_at FROM alerts WHERE alert_id = $1`, alertID).Scan(&processedAt))
+		`SELECT processed_at, processed_by FROM alerts WHERE alert_id = $1`, alertID).Scan(&processedAt, &processedBy))
 	assert.True(t, processedAt.Equal(firstAt), "幂等：处理时间不被重写")
+	assert.Equal(t, "DOCTOR-IT", *processedBy, "幂等：首个操作人不被覆盖")
 
 	// 筛选联动：processed 可见
 	_, total, err := r.ListAlerts(ctx, AlertQueryFilter{Status: "processed"})
@@ -180,7 +186,73 @@ func TestIT_T028_ProcessAlert_Idempotent(t *testing.T) {
 	assert.EqualValues(t, 1, total)
 
 	// 不存在的告警
-	exists, err = r.ProcessAlert(ctx, 99999999)
+	exists, err = r.ProcessAlert(ctx, 99999999, "DOCTOR-IT")
 	require.NoError(t, err)
 	assert.False(t, exists, "不存在返回 exists=false（handler 映射 404）")
+}
+
+// T257 2.7 三态：pending → processing → processed，以及跳级/幂等/409 判据
+func TestIT_T257_StartProcessing_StateFlow(t *testing.T) {
+	ctx := context.Background()
+	seedQAlerts(ctx, t, 2)
+	r := NewAlertRepo(itPool)
+
+	rows, _, err := r.ListAlerts(ctx, AlertQueryFilter{Status: "pending"})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(rows), 3)
+	pendingID, otherID, keepID := rows[0].AlertID, rows[1].AlertID, rows[2].AlertID
+
+	// ① pending → processing：写 in_progress_at
+	st, err := r.StartProcessing(ctx, pendingID)
+	require.NoError(t, err)
+	assert.True(t, st.Exists)
+	assert.Equal(t, "processing", st.Status)
+	require.NotNil(t, st.InProgressAt, "进入处理中必须记起点")
+	first := *st.InProgressAt
+
+	// ② 幂等：再点一次仍是 processing，in_progress_at 不刷新（否则处理耗时被无限拉长）
+	time.Sleep(10 * time.Millisecond)
+	st2, err := r.StartProcessing(ctx, pendingID)
+	require.NoError(t, err)
+	assert.Equal(t, "processing", st2.Status)
+	require.NotNil(t, st2.InProgressAt)
+	assert.True(t, st2.InProgressAt.Equal(first), "幂等：耗时起点不被刷新")
+
+	// ③ processing → processed（正常闭环）
+	exists, err := r.ProcessAlert(ctx, pendingID, "DOCTOR-IT")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	// 已 processed 再 StartProcessing → 状态仍 processed（handler 据此回 409）
+	st3, err := r.StartProcessing(ctx, pendingID)
+	require.NoError(t, err)
+	assert.Equal(t, "processed", st3.Status)
+
+	// ④ 跳级：pending → processed 直接允许（设计稿允许不经过「处理中」）
+	exists, err = r.ProcessAlert(ctx, otherID, "CS-IT")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	var status string
+	require.NoError(t, itPool.QueryRow(ctx,
+		`SELECT process_status FROM alerts WHERE alert_id = $1`, otherID).Scan(&status))
+	assert.Equal(t, "processed", status)
+
+	// ⑤ 三态筛选互斥：keepID 停在 processing（另两条已 processed），pending 归零
+	stKeep, err := r.StartProcessing(ctx, keepID)
+	require.NoError(t, err)
+	assert.Equal(t, "processing", stKeep.Status)
+	for _, c := range []struct {
+		status string
+		want   int64
+	}{
+		{"processing", 1}, {"processed", 2}, {"pending", 0},
+	} {
+		_, total, err := r.ListAlerts(ctx, AlertQueryFilter{Status: c.status})
+		require.NoError(t, err)
+		assert.EqualValues(t, c.want, total, "status=%s", c.status)
+	}
+
+	// ⑥ 不存在的告警 → Exists=false（handler 映射 404）
+	st4, err := r.StartProcessing(ctx, 99999999)
+	require.NoError(t, err)
+	assert.False(t, st4.Exists)
 }

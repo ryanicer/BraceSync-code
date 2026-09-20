@@ -3,6 +3,9 @@
 // engine_test.go（Ella T002）是唯一行为契约，禁止修改；
 // 本文件仅覆盖契约用例未触达的实现分支（默认构造 / 佩戴中断触发 / 去重抑制 /
 // EvaluateAll 聚合 / 补传帧短路），钉住实现行为并支撑 ≥90% 覆盖率验收。
+//
+// T257 2.6：压力波动规则摘除 ⇒ 原 Fluctuation_* 三条用例替换为「不再产生波动告警」的回归门禁；
+// 新增 EvaluateWearDurationShort（佩戴时长不足）用例。
 package engine_test
 
 import (
@@ -17,11 +20,12 @@ import (
 func TestSupplement_DefaultEvaluatorThresholds(t *testing.T) {
 	e := engine.NewDefaultRuleEvaluator()
 	assert.Equal(t, 45.0, e.PressureHighThreshold)
-	assert.Equal(t, 30.0, e.FluctuationThresholdPct)
 	assert.Equal(t, 60, e.WearInterruptMinutes)
 	assert.Equal(t, 2.8, e.SensorDriftThreshold)
 	assert.Equal(t, 30, e.DedupWindowMinutes)
 	assert.Equal(t, 30, e.CollectionIntervalMin)
+	// T257 2.6：默认评估器不再携带波动阈值（规则已摘除，字段仅为冻结契约保留）
+	assert.Zero(t, e.FluctuationThresholdPct)
 }
 
 func TestSupplement_WearInterrupt_GapTriggers(t *testing.T) {
@@ -149,10 +153,9 @@ func TestSupplement_Dedup_DifferentTypesNotSuppressed(t *testing.T) {
 
 func TestSupplement_EvaluateAll_AggregatesMultipleHits(t *testing.T) {
 	evaluator := &engine.RuleEvaluator{
-		PressureHighThreshold:   45.0,
-		FluctuationThresholdPct: 30,
-		SensorDriftThreshold:    2.8,
-		DedupWindowMinutes:      30,
+		PressureHighThreshold: 45.0,
+		SensorDriftThreshold:  2.8,
+		DedupWindowMinutes:    30,
 	}
 
 	prevPressures := [20]float64{}
@@ -164,7 +167,7 @@ func TestSupplement_EvaluateAll_AggregatesMultipleHits(t *testing.T) {
 		Wearing:   true,
 	}
 
-	// P03: 20→50（偏高 + 波动 150%）；P08 空载 3.5（漂移）
+	// P03: 20→50（偏高；波动规则已摘除故不再有第二条）；P08 空载 3.5（漂移）
 	pressures := [20]float64{}
 	pressures[2] = 50.0
 	pressures[7] = 3.5
@@ -176,7 +179,7 @@ func TestSupplement_EvaluateAll_AggregatesMultipleHits(t *testing.T) {
 	}
 
 	results := evaluator.EvaluateAll(frame, prevFrame)
-	require.Len(t, results, 3, "high + fluctuation + drift should all fire")
+	require.Len(t, results, 2, "high + drift 命中；波动已停产生 ⇒ 3 条变 2 条")
 
 	types := make([]engine.AlertType, 0, len(results))
 	for _, r := range results {
@@ -184,41 +187,38 @@ func TestSupplement_EvaluateAll_AggregatesMultipleHits(t *testing.T) {
 		types = append(types, r.AlertType)
 	}
 	assert.Equal(t,
-		[]engine.AlertType{engine.TypePressureHigh, engine.TypePressureFluctuation, engine.TypeSensorDrift},
+		[]engine.AlertType{engine.TypePressureHigh, engine.TypeSensorDrift},
 		types, "EvaluateAll keeps rule priority order")
 
 	// Evaluate 返回优先级最高的命中（新评估器避免去重窗口干扰）
 	fresh := &engine.RuleEvaluator{
-		PressureHighThreshold:   45.0,
-		FluctuationThresholdPct: 30,
-		SensorDriftThreshold:    2.8,
+		PressureHighThreshold: 45.0,
+		SensorDriftThreshold:  2.8,
 	}
 	first := fresh.Evaluate(frame, prevFrame)
 	require.NotNil(t, first)
 	assert.Equal(t, engine.TypePressureHigh, first.AlertType)
 }
 
-// TestSupplement_Fluctuation_PrevZeroSkips 验证遗留点2：prev=0→curr>0 波动突变跳过。
-// 当上一帧某采集点读数为 0 时，变化率不可计算（除零），引擎按 skip 处理。
-// 此用例钉住 skip 行为，避免将来误改为触发。
-func TestSupplement_Fluctuation_PrevZeroSkips(t *testing.T) {
+// TestSupplement_PressureFluctuation_NotProducedAnymore T257 2.6 回归门禁：
+// 即使相邻帧变化率远超 30%，引擎也不再产生 pressure_fluctuation（方案A 四类）。
+// 原 3 条 Fluctuation_* 用例钉的是「除零跳过」等实现细节，规则摘除后一并删除。
+func TestSupplement_PressureFluctuation_NotProducedAnymore(t *testing.T) {
 	evaluator := &engine.RuleEvaluator{
-		FluctuationThresholdPct: 30,
-		PressureHighThreshold:   99, // 设得极高，排除 pressure_high 干扰
+		PressureHighThreshold:   99, // 排除 pressure_high 干扰
+		FluctuationThresholdPct: 30, // 故意仍设阈值：证明「有阈值也不产生」
 	}
 
 	prevPressures := [20]float64{}
-	prevPressures[2] = 0.0
+	prevPressures[5] = 20.0
 	prevFrame := &engine.PressureFrame{
 		DeviceID:  "DEV001",
 		Pressures: prevPressures,
 		Timestamp: time.Now().Add(-30 * time.Minute),
 		Wearing:   true,
 	}
-
-	// P03: prev=0 → curr=30 (理论上 +∞%，但除零不可算)
 	currPressures := [20]float64{}
-	currPressures[2] = 30.0
+	currPressures[5] = 28.0 // 20→28 = +40%，旧规则必触发
 	frame := engine.PressureFrame{
 		DeviceID:  "DEV001",
 		Pressures: currPressures,
@@ -226,88 +226,38 @@ func TestSupplement_Fluctuation_PrevZeroSkips(t *testing.T) {
 		Wearing:   true,
 	}
 
-	result := evaluator.Evaluate(frame, prevFrame)
-	assert.Nil(t, result, "prev=0 → curr=30: fluctuation check should skip (division by zero), no alert expected")
+	assert.Empty(t, evaluator.EvaluateAll(frame, prevFrame), "波动规则已摘除")
+	assert.Nil(t, evaluator.Evaluate(frame, prevFrame))
 }
 
-// TestSupplement_Fluctuation_PrevZeroButPressureHighStillFires 验证：
-// prev=0 跳过波动检测，但不影响其他规则（如 pressure_high 仍可独立触发）。
-func TestSupplement_Fluctuation_PrevZeroButPressureHighStillFires(t *testing.T) {
-	evaluator := &engine.RuleEvaluator{
-		FluctuationThresholdPct: 30,
-		PressureHighThreshold:   45,
-	}
+// ─────────────────────────────────────────────────────────────
+// T257 2.6 EvaluateWearDurationShort（佩戴时长不足，按自然日）
+// ─────────────────────────────────────────────────────────────
 
-	prevPressures := [20]float64{}
-	prevFrame := &engine.PressureFrame{
-		DeviceID:  "DEV001",
-		Pressures: prevPressures, // 全部为 0
-		Timestamp: time.Now().Add(-30 * time.Minute),
-		Wearing:   true,
-	}
+func TestSupplement_WearDurationShort_TriggerAndBoundary(t *testing.T) {
+	evaluator := engine.NewDefaultRuleEvaluator()
+	bizDay := time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC)
 
-	// P03: prev=0 → curr=50 (>45N threshold)
-	currPressures := [20]float64{}
-	currPressures[2] = 50.0
-	frame := engine.PressureFrame{
-		DeviceID:  "DEV001",
-		Pressures: currPressures,
-		Timestamp: time.Now(),
-		Wearing:   true,
-	}
+	// 设计稿样例：阈值 18h / 实际 6.5h ⇒ 触发
+	res := evaluator.EvaluateWearDurationShort("P001", bizDay, 6.5*60, 18)
+	require.NotNil(t, res, "6.5h < 18h 应触发")
+	assert.Equal(t, engine.TypeWearDurationShort, res.AlertType)
+	assert.True(t, res.ShouldAlert)
+	assert.InDelta(t, 18*60, res.ThresholdValue, 0.001, "阈值以分钟口径落库")
+	assert.InDelta(t, 6.5*60, res.ActualValue, 0.001)
+	assert.Contains(t, res.Message, "2026-09-19", "detail 要写明业务日，否则事后无法核对")
+	assert.Contains(t, res.Message, "6.5 小时")
 
-	result := evaluator.Evaluate(frame, prevFrame)
-	require.NotNil(t, result, "prev=0→curr=50 > 45N: pressure_high should fire independently")
-	assert.Equal(t, engine.TypePressureHigh, result.AlertType,
-		"prev=0 skips fluctuation but pressure_high is unaffected")
-}
-
-// TestSupplement_Fluctuation_MixedPrevZeros 验证多采集点混合场景：
-// 部分点 prev=0（跳过），部分点 prev>0（正常参与波动计算）。
-func TestSupplement_Fluctuation_MixedPrevZeros(t *testing.T) {
-	evaluator := &engine.RuleEvaluator{
-		FluctuationThresholdPct: 30,
-		PressureHighThreshold:   99, // 排除 pressure_high
-	}
-
-	prevPressures := [20]float64{}
-	prevPressures[2] = 0.0  // P03: prev=0, 应跳过
-	prevPressures[5] = 20.0 // P06: prev=20, 正常参与
-	prevFrame := &engine.PressureFrame{
-		DeviceID:  "DEV001",
-		Pressures: prevPressures,
-		Timestamp: time.Now().Add(-30 * time.Minute),
-		Wearing:   true,
-	}
-
-	// P03: 0→30 (跳过), P06: 20→15 (变化25% < 30%, 不触发)
-	currPressures := [20]float64{}
-	currPressures[2] = 30.0
-	currPressures[5] = 15.0
-	frame := engine.PressureFrame{
-		DeviceID:  "DEV001",
-		Pressures: currPressures,
-		Timestamp: time.Now(),
-		Wearing:   true,
-	}
-
-	// P03 被跳过，P06 变化 25% 不超阈值 → 整体不触发
-	result := evaluator.Evaluate(frame, prevFrame)
-	assert.Nil(t, result,
-		"mixed prev=0/prev>0: only non-zero prev points participate; 25% < 30% threshold, no alert")
-
-	// 反之：P06 变化 40% > 30% → 应触发
-	currPressures[5] = 28.0 // 20→28 = +40%
-	frame2 := engine.PressureFrame{
-		DeviceID:  "DEV001",
-		Pressures: currPressures,
-		Timestamp: time.Now(),
-		Wearing:   true,
-	}
-	result2 := evaluator.Evaluate(frame2, prevFrame)
-	require.NotNil(t, result2, "P06 20→28 (+40%) exceeds 30% → should fire fluctuation")
-	assert.Equal(t, engine.TypePressureFluctuation, result2.AlertType)
-	assert.Equal(t, "P06", result2.SensorPoint)
+	// 边界：恰好等于目标不触发（其他规则同为严格大于/小于口径）
+	assert.Nil(t, evaluator.EvaluateWearDurationShort("P001", bizDay, 18*60, 18))
+	// 达标
+	assert.Nil(t, evaluator.EvaluateWearDurationShort("P001", bizDay, 19*60, 18))
+	// 阈值 0 = 规则未启用（与全引擎「零值即关闭」口径一致）
+	assert.Nil(t, evaluator.EvaluateWearDurationShort("P001", bizDay, 0, 0))
+	// 无当日统计行（-1）按不足处理
+	below := evaluator.EvaluateWearDurationShort("P001", bizDay, -1, 18)
+	require.NotNil(t, below, "整日无上报记录也应视为时长不足")
+	assert.InDelta(t, -1, below.ActualValue, 0.001)
 }
 
 func TestSupplement_EvaluateAll_BackfillReturnsEmpty(t *testing.T) {

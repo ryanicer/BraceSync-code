@@ -24,8 +24,8 @@ describe('ALERT_TYPES', () => {
 })
 
 describe('DEFAULT_THRESHOLDS', () => {
-  it('pressure high threshold is 45N', () => {
-    expect(DEFAULT_THRESHOLDS.PRESSURE_HIGH_N).toBe(45)
+  it('pressure high threshold is 5N (T203 ÷10)', () => {
+    expect(DEFAULT_THRESHOLDS.PRESSURE_HIGH_N).toBe(5)
   })
 
   it('pressure fluctuation threshold is 30%', () => {
@@ -37,12 +37,12 @@ describe('DEFAULT_THRESHOLDS', () => {
     expect(DEFAULT_THRESHOLDS.WEAR_INTERRUPT_MINUTES).toBeGreaterThanOrEqual(60)
   })
 
-  it('sensor drift threshold is 2.8N', () => {
-    expect(DEFAULT_THRESHOLDS.SENSOR_DRIFT_N).toBe(2.8)
+  it('sensor drift threshold is 0.3N (T203 ÷10)', () => {
+    expect(DEFAULT_THRESHOLDS.SENSOR_DRIFT_N).toBe(0.3)
   })
 
-  it('calibration offset threshold is 0.5N', () => {
-    expect(DEFAULT_THRESHOLDS.CALIBRATION_OFFSET_N).toBe(0.5)
+  it('calibration offset threshold is 0.05N (T203 ÷10)', () => {
+    expect(DEFAULT_THRESHOLDS.CALIBRATION_OFFSET_N).toBe(0.05)
   })
 })
 

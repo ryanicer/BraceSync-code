@@ -27,8 +27,8 @@ const (
 // AlertQueryFilter 公开查询筛选条件（空值 = 不过滤）
 type AlertQueryFilter struct {
 	PatientID string
-	Type      string // pressure_high / pressure_fluctuation / wear_interrupt / sensor_drift
-	Status    string // process_status：pending / processed
+	Type      string // pressure_high / wear_interrupt / sensor_drift / wear_duration_short（pressure_fluctuation 只读历史行）
+	Status    string // process_status：pending / processing / processed（T257 2.7 三态）
 	Page      int
 	PageSize  int
 }
@@ -89,6 +89,7 @@ type AlertRow struct {
 	ProcessStatus  string
 	ResolvedStatus string
 	ResolvedAt     *time.Time
+	InProgressAt   *time.Time // T257 2.7：NULL = 从未进入过「处理中」（含迁移前历史行）
 	ProcessedBy    *string
 	ProcessedAt    *time.Time
 	ProcessNote    *string
@@ -100,7 +101,7 @@ const alertSelectColumns = `a.alert_id, a.patient_id, COALESCE(p.name, ''), a.de
 	COALESCE(a.detail, ''), COALESCE(a.sensor_point, ''),
 	COALESCE(a.threshold_value, 0), COALESCE(a.actual_value, 0),
 	a.ts, a.read_status, a.process_status, a.resolved_status,
-	a.resolved_at, a.processed_by, a.processed_at, a.process_note`
+	a.resolved_at, a.in_progress_at, a.processed_by, a.processed_at, a.process_note`
 
 // rowScanner pgx.Row / pgx.Rows 的最小公共接口（便于单测扫描逻辑）
 type rowScanner interface{ Scan(dest ...any) error }
@@ -110,7 +111,7 @@ func scanAlertRow(s rowScanner, r *AlertRow) error {
 	return s.Scan(&r.AlertID, &r.PatientID, &r.PatientName, &r.DeviceID, &r.Type,
 		&r.Detail, &r.SensorPoint, &r.ThresholdValue, &r.ActualValue,
 		&r.Ts, &r.ReadStatus, &r.ProcessStatus, &r.ResolvedStatus,
-		&r.ResolvedAt, &r.ProcessedBy, &r.ProcessedAt, &r.ProcessNote)
+		&r.ResolvedAt, &r.InProgressAt, &r.ProcessedBy, &r.ProcessedAt, &r.ProcessNote)
 }
 
 // ListAlerts 分页查询告警（返回当页记录 + 筛选总数）。
@@ -145,14 +146,64 @@ func (r *PGAlertRepo) ListAlerts(ctx context.Context, f AlertQueryFilter) ([]Ale
 	return out, total, rows.Err()
 }
 
-// ProcessAlert 标记告警已处理（幂等）：
-//   - 存在且 pending → 置 processed + processed_at，返回 exists=true
-//   - 存在且已 processed → 不重写处理时间，返回 exists=true（幂等）
-//   - 不存在 → 返回 exists=false
-func (r *PGAlertRepo) ProcessAlert(ctx context.Context, alertID int64) (exists bool, err error) {
+// ProcessState StartProcessing 的返回值（handler 据此映射 404/409/200）。
+type ProcessState struct {
+	Exists       bool
+	Status       string // 本次调用后的 process_status
+	InProgressAt *time.Time
+}
+
+// StartProcessing T257 2.7：pending → processing，写 in_progress_at = now()。
+//   - pending → 置 processing，回读新时刻，Exists=true
+//   - 已是 processing → **不刷新** in_progress_at（反复点「开始处理」不应把耗时清零），幂等返回原时刻
+//   - 已 processed → 不回退（处理完的记录不能被重新打开），Status 原样返回供 handler 出 409
+//   - 不存在 → Exists=false（handler 映射 404）
+//
+// 并发安全：UPDATE 只针对 pending；未命中时再单读一次当前状态，天然覆盖上面四种结局。
+func (r *PGAlertRepo) StartProcessing(ctx context.Context, alertID int64) (ProcessState, error) {
+	var st ProcessState
 	cmd, err := r.pool.Exec(ctx,
-		`UPDATE alerts SET process_status = 'processed', processed_at = now()
+		`UPDATE alerts SET process_status = 'processing', in_progress_at = now()
 		 WHERE alert_id = $1 AND process_status = 'pending'`, alertID)
+	if err != nil {
+		return st, err
+	}
+	if cmd.RowsAffected() == 1 {
+		st.Exists = true
+		st.Status = "processing"
+		return r.readState(ctx, alertID, &st)
+	}
+	err = r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM alerts WHERE alert_id = $1)`, alertID).Scan(&st.Exists)
+	if err != nil || !st.Exists {
+		return st, err
+	}
+	return r.readState(ctx, alertID, &st)
+}
+
+// readState 读回 alert_id 的当前处理态（Exists 由调用方保证为 true）。
+func (r *PGAlertRepo) readState(ctx context.Context, alertID int64, st *ProcessState) (ProcessState, error) {
+	err := r.pool.QueryRow(ctx,
+		`SELECT process_status, in_progress_at FROM alerts WHERE alert_id = $1`,
+		alertID).Scan(&st.Status, &st.InProgressAt)
+	return *st, err
+}
+
+// ProcessAlert 标记告警已处理（幂等）：
+//   - 存在且 pending / processing → 置 processed + processed_at + processed_by，返回 exists=true
+//   - 存在且已 processed → 不重写处理时间与处理人（首次置为 processed 者为准），返回 exists=true（幂等）
+//   - 不存在 → 返回 exists=false
+//
+// T257 2.7：守卫由「仅 pending 可改」放宽为「非 processed 即可改」——否则三态下
+// 「处理中」的记录永远点不完成（跳级与逐级都走本端点，老调用方行为不变）。
+// operatorID 来自 gateway 注入的 X-User-Id（可为空，空则不写 processed_by，保持旧行为）。
+func (r *PGAlertRepo) ProcessAlert(ctx context.Context, alertID int64, operatorID string) (exists bool, err error) {
+	cmd, err := r.pool.Exec(ctx,
+		`UPDATE alerts
+		    SET process_status = 'processed',
+		        processed_at   = now(),
+		        processed_by   = COALESCE(NULLIF($2, ''), processed_by)
+		 WHERE alert_id = $1 AND process_status <> 'processed'`, alertID, operatorID)
 	if err != nil {
 		return false, err
 	}

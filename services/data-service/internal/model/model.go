@@ -26,29 +26,26 @@ var (
 )
 
 // WearingThresholdN 佩戴判定阈值默认值（PRD §8.1：帧 max_pressure > 阈值视为佩戴帧）。
-// 🔴 占位值：生产生效值走 sys_configs `wearing_pressure_threshold`（T173 可配置化），
-// 本常量仅作配置缺失时的兜底与 rollup SQL 聚合入参（D8：rollup 仍 raw 口径，见 T173 自报）。
-const WearingThresholdN = 0.5
+// 🔴 T203 ÷10 后兜底值 0.05；生产生效值走 sys_configs `wearing_pressure_threshold`。
+const WearingThresholdN = 0.05
 
 // PressureThresholds 压力量纲阈值（PRD §7D.12：可配置参数，sys_configs 驱动，不硬编码）。
-// 🔴 当前数值全部为占位值——原值基于已作废的「raw = N×100」量纲估算，待按 mN/÷1000 量级重定
-// （T173-decision 阈值重定章节，Boss 2026-09-14 明令；重定输入需 Boss+小顾给真实物理范围）。
+// T203 ÷10 后量纲：所有数值已同步下调。
 type PressureThresholds struct {
-	// WearingN 佩戴判定阈值（sys_configs: wearing_pressure_threshold，默认 0.5）
+	// WearingN 佩戴判定阈值（sys_configs: wearing_pressure_threshold，T203 后默认 0.05）
 	WearingN float64
-	// HeatmapMaxN 热力图色阶上界（sys_configs: heatmap_max_n，默认 60；四档分界按比例法由前端换算）
+	// HeatmapMaxN 热力图色阶上界（sys_configs: heatmap_max_n，T203 后默认 6）
 	HeatmapMaxN float64
-	// PressureHighN 压力偏高告警阈值（sys_configs: threshold_pressure_high，默认 45；
-	// 展示分级 warning = 0.75×PressureHighN 与 alert-service 引擎同源）
+	// PressureHighN 压力偏高告警阈值（sys_configs: threshold_pressure_high，T203 后默认 5）
 	PressureHighN float64
 }
 
-// DefaultPressureThresholds 占位默认口径（配置缺失/非法时兜底，与 seed.sql 一致）
+// DefaultPressureThresholds T203 ÷10 后默认口径（配置缺失/非法时兜底）
 func DefaultPressureThresholds() PressureThresholds {
 	return PressureThresholds{
 		WearingN:      WearingThresholdN,
-		HeatmapMaxN:   60.0,
-		PressureHighN: 45.0,
+		HeatmapMaxN:   6.0,    // T203: 60 → 6
+		PressureHighN: 5.0,    // T203: 45 → 5
 	}
 }
 
@@ -278,9 +275,8 @@ func BuildSensorPoints(points [PointCount]float32, th PressureThresholds) []Sens
 	return out
 }
 
-// HeatmapMaxN 热力图色阶上界默认值（60N）。
-// 🔴 占位值：生产生效值走 sys_configs `heatmap_max_n`（T173 可配置化），本常量仅作兜底。
-const HeatmapMaxN = 60.0
+// HeatmapMaxN 热力图色阶上界默认值（T203 ÷10 后 6N）。
+const HeatmapMaxN = 6.0
 
 // HeatmapPoint 热力图 20 点单格（RealtimeSnapshot.pressureHeatmap 元素）
 type HeatmapPoint struct {

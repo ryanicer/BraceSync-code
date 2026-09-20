@@ -65,6 +65,8 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/admin/roles"),
 	rbacOf(http.MethodPut, "/api/v1/admin/roles/:roleId"),
 	rbacOf(http.MethodDelete, "/api/v1/admin/roles/:roleId"),
+	// T257 11.5 子权限目录：只有权限分配页（admin 专属）要渲染这棵树
+	rbacOf(http.MethodGet, "/api/v1/admin/permissions/catalog"),
 	// T252 2.2 告警规则配置（告警页 Tab2）+ 12.3 操作日志（系统配置页 Tab3）
 	rbacOf(http.MethodGet, "/api/v1/admin/alert-rules"),
 	rbacOf(http.MethodPut, "/api/v1/admin/alert-rules/points"),
@@ -171,6 +173,9 @@ var doctorAdminOnlyPatterns = []rbacPattern{
 //
 // 用 staff allow-list 而非「deny patient」：X-Role 缺失或将来新增角色时默认 403（fail-closed）。
 var staffOnlyPatterns = []rbacPattern{
+	// T257 11.5：当前用户有效权限 —— 每个 staff 都要用它渲染菜单/按钮（只回自己的，非 admin 专属）；
+	// 患者 token 无后台菜单，一律 403
+	rbacOf(http.MethodGet, "/api/v1/admin/me/permissions"),
 	rbacOf(http.MethodGet, "/api/v1/admin/patients"),
 	rbacOf(http.MethodGet, "/api/v1/admin/patients/:patientId"),
 	rbacOf(http.MethodGet, "/api/v1/admin/feeling-logs"), // T256 #2 跨患者感受日志流
@@ -189,6 +194,8 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/feedbacks/:feedbackId/process"),
 	// T260-A：告警处理 —— 仅 staff（admin-web 告警页 admin/doctor + tech-miniapp 技师）
 	rbacOf(http.MethodPost, "/api/v1/alerts/:alertId/process"),
+	// T257 2.7：开始处理（pending → processing）—— 同为 staff 专属写端点
+	rbacOf(http.MethodPost, "/api/v1/alerts/:alertId/processing"),
 
 	// T260-B：设备管理域 —— 列表/详情/绑定/配网/基线/安装记录（technician 安装流程 +
 	// admin/doctor 管理页）。绑定互斥/归属等业务校验由 device-service handler 层负责。

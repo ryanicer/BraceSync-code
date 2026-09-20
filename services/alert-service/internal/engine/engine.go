@@ -1,7 +1,9 @@
 // Package engine — 告警规则引擎实现（T003）
 //
 // 行为契约：engine_test.go（T002 Ella，禁止修改）——各用例断言是唯一行为契约。
-// 阈值口径：压力偏高 45N / 波动 30% / 中断 60min / 漂移 2.8N（架构 §7D.12 / 协议 §4.1）。
+// 阈值口径：压力偏高 45N / 中断 60min / 漂移 2.8N（架构 §7D.12 / 协议 §4.1）。
+// T257 2.6（方案A）：按帧规则摘除「压力波动」，新增按自然日的「佩戴时长不足」
+// （EvaluateWearDurationShort，由扫描器调用）；波动 30% 阈值仅保留配置键供历史数据解释。
 package engine
 
 import (
@@ -14,12 +16,12 @@ import (
 // 注意：规则字段零值 = 该规则不启用（测试契约），默认值只经由此构造函数注入。
 func NewDefaultRuleEvaluator() *RuleEvaluator {
 	return &RuleEvaluator{
-		PressureHighThreshold:   45,
-		FluctuationThresholdPct: 30,
-		WearInterruptMinutes:    60,
-		SensorDriftThreshold:    2.8,
-		DedupWindowMinutes:      30,
-		CollectionIntervalMin:   30,
+		PressureHighThreshold: 45,
+		WearInterruptMinutes:  60,
+		SensorDriftThreshold:  2.8,
+		DedupWindowMinutes:    30,
+		CollectionIntervalMin: 30,
+		// T257 2.6：不再注入 FluctuationThresholdPct（压力波动规则已摘除）。
 	}
 }
 
@@ -65,41 +67,6 @@ func (e *RuleEvaluator) checkPressureHigh(frame PressureFrame, _ *PressureFrame)
 		Severity:       "high",
 		Message: fmt.Sprintf("压力偏高：采集点 %s 压力 %.1fN 超阈值 %.1fN",
 			point, maxVal, maxThr),
-	}
-}
-
-// checkPressureFluctuation 压力波动：与上一帧同点压力偏差严格大于阈值百分比（A3）。
-// 无前一帧不评估（A3-NoPrev）；上一帧读数为 0 时无法计算变化率，跳过该点。
-func (e *RuleEvaluator) checkPressureFluctuation(frame PressureFrame, prevFrame *PressureFrame) *AlertResult {
-	if e.FluctuationThresholdPct <= 0 || prevFrame == nil {
-		return nil
-	}
-	maxIdx := -1
-	maxPct := 0.0
-	for i := range frame.Pressures {
-		prev := prevFrame.Pressures[i]
-		if prev <= 0 {
-			continue // T005(Ella) 已闭环：prev=0 → 变化率除零不可算，跳过为正确行为。用例见 engine_supplement_test.go TestSupplement_Fluctuation_PrevZero*
-		}
-		pct := math.Abs(frame.Pressures[i]-prev) / prev * 100
-		if pct > e.FluctuationThresholdPct && pct > maxPct {
-			maxPct = pct
-			maxIdx = i
-		}
-	}
-	if maxIdx < 0 {
-		return nil
-	}
-	point := sensorPointName(maxIdx)
-	return &AlertResult{
-		ShouldAlert:    true,
-		AlertType:      TypePressureFluctuation,
-		SensorPoint:    point,
-		ThresholdValue: e.FluctuationThresholdPct,
-		ActualValue:    maxPct,
-		Severity:       "medium",
-		Message: fmt.Sprintf("压力波动：采集点 %s 与上一帧偏差 %.1f%% 超阈值 %.1f%%",
-			point, maxPct, e.FluctuationThresholdPct),
 	}
 }
 
@@ -152,7 +119,7 @@ func (e *RuleEvaluator) checkWearInterrupt(frame PressureFrame, prevFrame *Press
 		ThresholdValue: float64(e.WearInterruptMinutes),
 		ActualValue:    gap.Minutes(),
 		Severity:       "high",
-		Message: fmt.Sprintf("佩戴中断：设备 %s 上报间隔 %.0f 分钟超阈值 %d 分钟",
+		Message: fmt.Sprintf("设备离线：设备 %s 上报间隔 %.0f 分钟超阈值 %d 分钟",
 			frame.DeviceID, gap.Minutes(), e.WearInterruptMinutes),
 	}
 }
@@ -174,8 +141,37 @@ func (e *RuleEvaluator) EvaluateWearInterrupt(deviceID string, lastSeen, now tim
 		ThresholdValue: float64(e.WearInterruptMinutes),
 		ActualValue:    gap.Minutes(),
 		Severity:       "high",
-		Message: fmt.Sprintf("佩戴中断：设备 %s 上报间隔 %.0f 分钟超阈值 %d 分钟",
+		Message: fmt.Sprintf("设备离线：设备 %s 上报间隔 %.0f 分钟超阈值 %d 分钟",
 			deviceID, gap.Minutes(), e.WearInterruptMinutes),
+	}
+}
+
+// EvaluateWearDurationShort 佩戴时长不足判定（T257 2.6 新增第四类，定时扫描器 API）。
+//
+// 口径（PM 2026-09-20 裁定 Q1=方案A）：设计稿文案为「当日累计佩戴时长 < dailyWearMinHours」，
+// 按**自然日**算，阈值复用 2.2 的 wear_target_hours 键（不另设）。
+// 判定对象由调用方给定（扫描器传「上一个完整自然日」）——不按「今天到此刻」判，
+// 否则每天 00:00–阈值时刻之间人人不达标，等于天天误报。
+//
+// wearMinutes < 0 = 当日无 daily_wear_stats 行（当天没有任何上报），与 0 同义按不足处理；
+// targetHours <= 0 = 规则未启用（与其他规则「零值即关闭」口径一致）。
+func (e *RuleEvaluator) EvaluateWearDurationShort(patientID string, bizDay time.Time,
+	wearMinutes float64, targetHours float64) *AlertResult {
+	if targetHours <= 0 {
+		return nil
+	}
+	need := targetHours * 60
+	if wearMinutes >= need {
+		return nil // 边界（=目标）不触发，与其他规则一致采用严格大于/小于
+	}
+	return &AlertResult{
+		ShouldAlert:    true,
+		AlertType:      TypeWearDurationShort,
+		ThresholdValue: need,
+		ActualValue:    wearMinutes,
+		Severity:       "medium",
+		Message: fmt.Sprintf("佩戴时长不足：%s 于 %s 累计佩戴 %.1f 小时，低于目标 %.1f 小时",
+			patientID, bizDay.Format("2006-01-02"), wearMinutes/60, targetHours),
 	}
 }
 

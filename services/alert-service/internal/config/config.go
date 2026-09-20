@@ -22,6 +22,10 @@ const (
 	KeySensorDrift     = "threshold_sensor_drift"
 	KeyWearingN        = "wearing_pressure_threshold"
 	KeyCollectInterval = "collect_interval_minutes"
+	// KeyWearTargetHours 每日佩戴目标小时数：T257 2.6「佩戴时长不足」的阈值来源。
+	// 与 §7D.12 系统配置页 dailyWearTargetHours、2.2 告警规则页 dailyWearMinHours、
+	// msg-service 佩戴提醒同源同键（PM 裁定不另设第三键）。
+	KeyWearTargetHours = "wear_target_hours"
 )
 
 // ErrCodeThresholdLinkage 阈值联动校验失败错误码（架构 §3.5 错误码分段：9xxxx 系统级）
@@ -39,23 +43,25 @@ func (e *ValidationError) Error() string { return e.Message }
 // 🔴 T173：压力量纲阈值均为占位值（原值基于已作废的 N×100 量纲估算，待按 mN/÷1000 量级重定），
 // 配置文件（sys_configs）驱动、不硬编码，远期后台运营可调、调参不改代码。
 type Thresholds struct {
-	PressureHighN          float64 // 压力偏高阈值 (N)，默认 45（占位）
-	FluctuationPct         float64 // 压力波动幅度阈值 (%)，默认 30
+	PressureHighN          float64 // 压力偏高阈值 (N)，T203 ÷10 后默认 5
+	FluctuationPct         float64 // 压力波动幅度阈值 (%)，默认 30；T257 2.6 起引擎不再读取
 	WearInterruptMinutes   int     // 佩戴中断判定（分钟），默认 60
-	SensorDriftN           float64 // 传感器漂移阈值 (N)，默认 2.8（占位）
-	WearingN               float64 // 佩戴判定阈值 (N)，默认 0.5（占位；判定统一用减偏移后值，T173）
+	SensorDriftN           float64 // 传感器漂移阈值 (N)，T203 ÷10 后默认 0.3
+	WearingN               float64 // 佩戴判定阈值 (N)，T203 ÷10 后默认 0.05
 	CollectIntervalMinutes int     // 采集间隔（分钟），默认 30
+	WearTargetHours        float64 // 每日佩戴目标 (h)，默认 22；T257 2.6 佩戴时长不足阈值
 }
 
 // DefaultThresholds PRD 默认阈值口径（与 engine.NewDefaultRuleEvaluator 一致）
 func DefaultThresholds() Thresholds {
 	return Thresholds{
-		PressureHighN:          45,
+		PressureHighN:          5,     // T203: 45 → 5
 		FluctuationPct:         30,
 		WearInterruptMinutes:   60,
-		SensorDriftN:           2.8,
-		WearingN:               0.5,
+		SensorDriftN:           0.3,   // T203: 2.8 → 0.3
+		WearingN:               0.05,  // T203: 0.5 → 0.05
 		CollectIntervalMinutes: 30,
+		WearTargetHours:        22, // 与 msg-service WEAR_TARGET_HOURS 默认、§7D.12 默认一致
 	}
 }
 
@@ -68,6 +74,7 @@ func Keys() []string {
 		KeySensorDrift,
 		KeyWearingN,
 		KeyCollectInterval,
+		KeyWearTargetHours,
 	}
 }
 
@@ -118,10 +125,15 @@ func ParseThresholds(raw map[string]string) Thresholds {
 	if v, ok := parsePositiveInt(raw[KeyCollectInterval]); ok {
 		th.CollectIntervalMinutes = v
 	}
+	if v, ok := parsePositiveFloat(raw[KeyWearTargetHours]); ok {
+		th.WearTargetHours = v
+	}
 	return th
 }
 
-// ToValues 阈值快照反解为 sys_configs 键值（写入用）
+// ToValues 阈值快照反解为 sys_configs 键值（写入用）。
+// 🔴 不含 KeyWearTargetHours：该键写权限在 §7D.12 系统配置页（user-service），
+// 本服务只读 —— 列进来会让任一内部补丁顺带覆写运营后台刚改的目标时长。
 func (t Thresholds) ToValues() map[string]string {
 	return map[string]string{
 		KeyPressureHigh:    strconv.FormatFloat(t.PressureHighN, 'f', -1, 64),

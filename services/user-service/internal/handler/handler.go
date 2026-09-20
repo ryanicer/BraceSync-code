@@ -27,6 +27,8 @@
 //	POST /api/v1/admin/roles                            T252 11.2 新建角色
 //	PUT  /api/v1/admin/roles/:roleId                    T252 11.2 改角色（预置改名 400）
 //	DELETE /api/v1/admin/roles/:roleId                  T252 11.2 删除角色（被引用 409）
+//	GET  /api/v1/admin/permissions/catalog              T257 11.5 子权限目录（9 组 23 项）
+//	GET  /api/v1/admin/me/permissions                   T257 11.5 当前用户有效权限（前端渲染用）
 //	GET  /api/v1/admin/settings                          系统参数读
 //	PUT  /api/v1/admin/settings                          系统参数写
 //	GET  /api/v1/admin/alert-rules                      T252 2.2 告警规则聚合视图
@@ -265,6 +267,9 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/admin/roles", h.createAdminRole)
 		v1.PUT("/admin/roles/:roleId", h.updateAdminRole)
 		v1.DELETE("/admin/roles/:roleId", h.deleteAdminRole)
+		// T257 11.5 子权限目录 + 当前用户有效权限（前端渲染菜单/按钮用，不参与鉴权）
+		v1.GET("/admin/permissions/catalog", h.getPermissionCatalog)
+		v1.GET("/admin/me/permissions", h.getMyPermissions)
 
 		v1.GET("/admin/settings", h.getSettings)
 		v1.PUT("/admin/settings", h.updateSettings)
@@ -1491,6 +1496,11 @@ func (h *Handler) getPermissions(c *gin.Context) {
 		fail(c, model.ErrInternal("invalid permissions_json for role %s", row.RoleID))
 		return
 	}
+	// T257 11.5：items 缺省（老角色 / seed 预置三个）⇒ 按目录物化为「modules 下全部子权限」，
+	// 前端只有一条规则：照 items 渲染勾选，不用自己判 null
+	if perms.Items == nil {
+		perms.Items = materializeItems(perms.Modules)
+	}
 	ok(c, perms)
 }
 
@@ -1509,6 +1519,13 @@ func (h *Handler) updatePermissions(c *gin.Context) {
 	if len(req.Modules) == 0 {
 		fail(c, model.ErrInvalidParam("modules must not be empty"))
 		return
+	}
+	// T257 11.5：items 为 nil = 不细化（读时按目录物化）；给了就必须在目录内且模块已勾
+	if req.Items != nil {
+		if appErr := validatePermissionItems(req.Items, req.Modules); appErr != nil {
+			fail(c, appErr)
+			return
+		}
 	}
 	payload, err := json.Marshal(req)
 	if err != nil {
@@ -1545,13 +1562,13 @@ const (
 	keyMaxPatients            = "max_patients"             // T256 #4：最大患者数
 )
 
-// 缺失键默认值（PRD §7D.12，与 @bracesync/constants DEFAULT_THRESHOLDS 对齐）
+// 缺失键默认值（PRD §7D.12 + T203 ÷10，与 @bracesync/constants DEFAULT_THRESHOLDS 对齐）
 var settingsDefaults = model.SystemSettingsDTO{
 	DailyWearTargetHours:   22,
-	PressureHighThresholdN: 45,
+	PressureHighThresholdN: 5,     // T203: 45 → 5
 	PressureFluctuationPct: 30,
 	WearInterruptMinutes:   60,
-	SensorDriftN:           2.8,
+	SensorDriftN:           0.3,   // T203: 2.8 → 0.3
 	WifiPresets:            []model.WifiPresetDTO{},
 	CollectIntervalSeconds: 1800,  // 默认 30 分钟 = 1800 秒
 	RetentionDays:          365,   // 默认保留 365 天
@@ -1597,15 +1614,17 @@ func maskWifiPasswords(list []model.WifiPresetDTO) []model.WifiPresetDTO {
 // T256 #4：collectIntervalSeconds 直接读 collect_interval_seconds（设计稿秒口径）；
 // 内部分钟键 collect_interval_minutes 由写入端点同步维护，供 device/alert 服务消费。
 func (h *Handler) getSettings(c *gin.Context) {
-	keys := []string{keyWearTarget, keyPressureHigh, keyFluctuationPct, keyWearInterrupt, keySensorDrift, keyWifiPresets, keyCollectIntervalSeconds, keyRetentionDays, keyMaxPatients}
+	keys := []string{keyWearTarget, keyPressureHigh, keyPressureLow, keyFluctuationPct, keyWearInterrupt, keySensorDrift, keyWifiPresets, keyCollectIntervalSeconds, keyRetentionDays, keyMaxPatients}
 	kvs, err := h.store.GetConfigs(c.Request.Context(), keys)
 	if err != nil {
 		fail(c, model.ErrInternal("read settings failed"))
 		return
 	}
+	pressureLow := numOr(kvs[keyPressureLow], defaultUnifiedLowerN)
 	dto := model.SystemSettingsDTO{
 		DailyWearTargetHours:   numOr(kvs[keyWearTarget], settingsDefaults.DailyWearTargetHours),
 		PressureHighThresholdN: numOr(kvs[keyPressureHigh], settingsDefaults.PressureHighThresholdN),
+		PressureLowThresholdN:  &pressureLow, // T257 12.4：GET 恒回数值，前端不用判缺失
 		PressureFluctuationPct: numOr(kvs[keyFluctuationPct], settingsDefaults.PressureFluctuationPct),
 		WearInterruptMinutes:   numOr(kvs[keyWearInterrupt], settingsDefaults.WearInterruptMinutes),
 		SensorDriftN:           numOr(kvs[keySensorDrift], settingsDefaults.SensorDriftN),
@@ -1619,12 +1638,21 @@ func (h *Handler) getSettings(c *gin.Context) {
 
 // validateSettings 参数范围校验（对齐前端表单 min/max 与 T009 阈值联动口径）
 // T256 #4：collectIntervalSeconds 需为 60 的整数倍（内部分钟存储）；retentionDays/maxPatients 正数。
-func validateSettings(s model.SystemSettingsDTO, collectInterval float64) *model.AppError {
+//
+// T257 12.4（三档合两键）：pressureLow 为**本次生效的**统一压力下限
+// （请求给了就用请求值，没给则取库里现值 threshold_pressure_low，该键由告警管理页 Tab2 维护）——
+// 上限必须严格大于下限，否则同一份配置在两个页面自相矛盾（压力偏高告警恒不触发）。
+func validateSettings(s model.SystemSettingsDTO, collectInterval, pressureLow float64) *model.AppError {
 	switch {
 	case s.DailyWearTargetHours < 1 || s.DailyWearTargetHours > 24:
 		return model.ErrInvalidParam("dailyWearTargetHours must be in [1,24]")
 	case s.PressureHighThresholdN < 1 || s.PressureHighThresholdN > 200:
 		return model.ErrInvalidParam("pressureHighThresholdN must be in [1,200]")
+	case s.PressureLowThresholdN != nil && (*s.PressureLowThresholdN < 0 || *s.PressureLowThresholdN > 200):
+		return model.ErrInvalidParam("pressureLowThresholdN must be in [0,200]")
+	case s.PressureHighThresholdN <= pressureLow:
+		return model.ErrInvalidParam("pressureHighThresholdN (%g) must be greater than threshold_pressure_low (%g)",
+			s.PressureHighThresholdN, pressureLow)
 	case s.PressureFluctuationPct < 1 || s.PressureFluctuationPct > 100:
 		return model.ErrInvalidParam("pressureFluctuationPct must be in [1,100]")
 	case s.WearInterruptMinutes < 10 || s.WearInterruptMinutes > 720:
@@ -1671,6 +1699,8 @@ func fmtNum(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 // updateSettings PUT /api/v1/admin/settings —— 校验 + UPSERT sys_configs
 // T256 #4：collectIntervalSeconds（秒）换算为 collect_interval_minutes（分钟）写入，兼容 device/alert 服务；
 // retentionDays / maxPatients 写入新键。
+// T257 12.4：pressureLowThresholdN 与告警页共用 threshold_pressure_low（三档合两键，不加第三键）；
+// 上下限做联动校验（上限必须严格大于下限）。
 func (h *Handler) updateSettings(c *gin.Context) {
 	var req model.SystemSettingsDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1681,17 +1711,24 @@ func (h *Handler) updateSettings(c *gin.Context) {
 	// 采集间隔（中断阈值联动校验用）：用请求体的秒值换算分钟
 	intervalMinutes := float64(req.CollectIntervalSeconds) / 60.0
 
-	if appErr := validateSettings(req, intervalMinutes); appErr != nil {
-		fail(c, appErr)
-		return
-	}
-
-	presetKVs, err := h.store.GetConfigs(c.Request.Context(), []string{keyWifiPresets})
+	// T257 12.4：统一压力下限与告警管理页 Tab2 同键（threshold_pressure_low）；
+	// 请求未给（nil）= 不改该键，校验时沿用库里现值
+	currentKVs, err := h.store.GetConfigs(c.Request.Context(), []string{keyWifiPresets, keyPressureLow})
 	if err != nil {
 		fail(c, model.ErrInternal("read existing settings failed"))
 		return
 	}
-	storedPresets := parseWifiPresets(presetKVs[keyWifiPresets])
+	pressureLow := numOr(currentKVs[keyPressureLow], defaultUnifiedLowerN)
+	if req.PressureLowThresholdN != nil {
+		pressureLow = *req.PressureLowThresholdN
+	}
+
+	if appErr := validateSettings(req, intervalMinutes, pressureLow); appErr != nil {
+		fail(c, appErr)
+		return
+	}
+
+	storedPresets := parseWifiPresets(currentKVs[keyWifiPresets])
 	merged := mergeWifiPasswords(req.WifiPresets, storedPresets)
 	wifiJSON, err := json.Marshal(merged)
 	if err != nil {
@@ -1711,11 +1748,16 @@ func (h *Handler) updateSettings(c *gin.Context) {
 		{Key: keyRetentionDays, Value: strconv.Itoa(req.RetentionDays)},
 		{Key: keyMaxPatients, Value: strconv.Itoa(req.MaxPatients)},
 	}
+	// 下限只在请求给出时写：nil = 保持现值（老前端不带该字段，一次保存不该把下限抹掉）
+	if req.PressureLowThresholdN != nil {
+		kvs = append(kvs, repo.ConfigKV{Key: keyPressureLow, Value: fmtNum(pressureLow)})
+	}
 	if err := h.store.UpsertConfigs(c.Request.Context(), kvs, operatorID(c, "ops")); err != nil {
 		fail(c, model.ErrInternal("save settings failed"))
 		return
 	}
 	req.WifiPresets = maskWifiPasswords(merged)
+	req.PressureLowThresholdN = &pressureLow // 响应与 GET 同形（恒回数值）
 	ok(c, req)
 }
 

@@ -111,6 +111,7 @@ func (s *fakeScanner) Scan(dest ...any) error {
 func TestScanAlertRow(t *testing.T) {
 	ts := time.Date(2026, 8, 11, 6, 0, 0, 0, time.UTC)
 	resolvedAt := ts.Add(time.Hour)
+	inProgressAt := ts.Add(30 * time.Minute)
 	by := "tech01"
 	processedAt := ts.Add(2 * time.Hour)
 	note := "ok"
@@ -119,7 +120,7 @@ func TestScanAlertRow(t *testing.T) {
 		int64(7), "P001", "林小雨", "DEV01", "sensor_drift",
 		"漂移", "P07", 2.8, 3.5,
 		ts, "read", "processed", "resolved",
-		&resolvedAt, &by, &processedAt, &note,
+		&resolvedAt, &inProgressAt, &by, &processedAt, &note,
 	}}
 	var row AlertRow
 	require.NoError(t, scanAlertRow(s, &row))
@@ -138,6 +139,8 @@ func TestScanAlertRow(t *testing.T) {
 	assert.Equal(t, "resolved", row.ResolvedStatus)
 	require.NotNil(t, row.ResolvedAt)
 	assert.True(t, row.ResolvedAt.Equal(resolvedAt))
+	require.NotNil(t, row.InProgressAt)
+	assert.True(t, row.InProgressAt.Equal(inProgressAt))
 	require.NotNil(t, row.ProcessedBy)
 	assert.Equal(t, "tech01", *row.ProcessedBy)
 	require.NotNil(t, row.ProcessedAt)
@@ -150,11 +153,12 @@ func TestScanAlertRow_NullablesNil(t *testing.T) {
 		int64(8), "P002", "", "DEV02", "wear_interrupt",
 		"", "", 0.0, 0.0,
 		time.Unix(0, 0).UTC(), "unread", "pending", "active",
-		(*time.Time)(nil), (*string)(nil), (*time.Time)(nil), (*string)(nil),
+		(*time.Time)(nil), (*time.Time)(nil), (*string)(nil), (*time.Time)(nil), (*string)(nil),
 	}}
 	var row AlertRow
 	require.NoError(t, scanAlertRow(s, &row))
 	assert.Nil(t, row.ResolvedAt)
+	assert.Nil(t, row.InProgressAt)
 	assert.Nil(t, row.ProcessedBy)
 	assert.Nil(t, row.ProcessedAt)
 	assert.Nil(t, row.ProcessNote)
@@ -169,7 +173,7 @@ func TestScanAlertRow_Error(t *testing.T) {
 // alertSelectColumns 列数与 scanAlertRow 目标数一致性（防 schema 漂移；
 // 仅计括号外的逗号，COALESCE 内逗号不算列分隔）
 func TestSelectColumnsCount(t *testing.T) {
-	const want = 17 // scanAlertRow 的 Scan 目标个数
+	const want = 18 // scanAlertRow 的 Scan 目标个数（T257 2.7 起含 in_progress_at）
 	count, depth := 1, 0
 	for _, c := range alertSelectColumns {
 		switch c {

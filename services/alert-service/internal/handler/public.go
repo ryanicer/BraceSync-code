@@ -3,6 +3,7 @@
 // 路由（Go 1.22 ServeMux 方法路由）：
 //
 //	GET  /api/v1/alerts                      分页查询（patientId/type/status 筛选）
+//	POST /api/v1/alerts/{alertId}/processing 开始处理（T257 2.7 新增，幂等）
 //	POST /api/v1/alerts/{alertId}/process    标记已处理（幂等）
 //
 // 契约：docs/ getAlerts / processAlert；
@@ -23,6 +24,7 @@ import (
 const (
 	codeNotFound  = 404
 	codeForbidden = 403
+	codeConflict  = 409 // T257 2.7：已处理的告警不允许重新进入「处理中」
 )
 
 // 身份头（gateway JWT 鉴权后注入）
@@ -47,23 +49,30 @@ func isStaffRole(role string) bool { return staffRoles[role] }
 const maxPageSize = 100
 
 // 枚举白名单（对齐 shared-types Alert；DB CHECK 约束兜底）
+//
+// T257 2.6：新增 wear_duration_short（佩戴时长不足）；pressure_fluctuation（压力波动）自本卡起
+// 引擎不再产生，但白名单**保留**——历史告警行仍需按类型筛出（000001:191-193 起即有存量行）。
+// T257 2.7：process_status 白名单由两态扩为三态（pending / processing / processed）。
 var (
 	validAlertTypes = map[string]struct{}{
 		"pressure_high":        {},
 		"pressure_fluctuation": {},
 		"wear_interrupt":       {},
 		"sensor_drift":         {},
+		"wear_duration_short":  {},
 	}
 	validProcessStatus = map[string]struct{}{
-		"pending":   {},
-		"processed": {},
+		"pending":    {},
+		"processing": {},
+		"processed":  {},
 	}
 )
 
 // PublicAlertStore 公开端点数据访问接口（repo.PGAlertRepo 实现）
 type PublicAlertStore interface {
 	ListAlerts(ctx context.Context, f repo.AlertQueryFilter) ([]repo.AlertRow, int64, error)
-	ProcessAlert(ctx context.Context, alertID int64) (exists bool, err error)
+	ProcessAlert(ctx context.Context, alertID int64, operatorID string) (exists bool, err error)
+	StartProcessing(ctx context.Context, alertID int64) (repo.ProcessState, error)
 }
 
 // AlertItem 公开查询返回的告警记录（字段名对齐 shared-types Alert）
@@ -82,6 +91,7 @@ type AlertItem struct {
 	ProcessStatus  string  `json:"processStatus"`
 	ResolvedStatus string  `json:"resolvedStatus"`
 	ResolvedAt     *string `json:"resolvedAt"`
+	InProgressAt   *string `json:"inProgressAt"` // T257 2.7：null = 从未进入过处理中（含历史行）
 	ProcessedBy    *string `json:"processedBy"`
 	ProcessedAt    *string `json:"processedAt"`
 	ProcessNote    *string `json:"processNote"`
@@ -107,6 +117,10 @@ func toAlertItem(r repo.AlertRow) AlertItem {
 	if r.ResolvedAt != nil {
 		s := r.ResolvedAt.Format(time.RFC3339)
 		item.ResolvedAt = &s
+	}
+	if r.InProgressAt != nil {
+		s := r.InProgressAt.Format(time.RFC3339)
+		item.InProgressAt = &s
 	}
 	if r.ProcessedBy != nil {
 		item.ProcessedBy = r.ProcessedBy
@@ -212,27 +226,82 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 }
 
 // processAlert POST /api/v1/alerts/{alertId}/process —— 标记已处理（幂等）。
-// 重复处理不报错；不存在返回 404。契约 processAlert 返回 ApiResponse<null>。
+// T257 2.7：pending → processed（跳级）与 processing → processed 都合法；
+// 重复处理不报错（processed_at / processed_by 以首次为准）；不存在返回 404。契约返回 ApiResponse<null>。
+// processed_by 取 gateway 注入的 X-User-Id（T257 前该列一直为空，见交件说明）。
 func (h *Handler) processAlert(w http.ResponseWriter, r *http.Request) {
 	if h.public == nil {
 		h.reject(w, codeInternalError, "public store not configured")
 		return
 	}
-	idStr := r.PathValue("alertId")
-	alertID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || alertID < 1 {
-		h.reject(w, codeInvalidParam, "invalid alertId: "+idStr)
+	alertID, ok := h.parseAlertID(w, r)
+	if !ok {
 		return
 	}
-	exists, err := h.public.ProcessAlert(r.Context(), alertID)
+	exists, err := h.public.ProcessAlert(r.Context(), alertID, r.Header.Get(headerUserID))
 	if err != nil {
 		h.log.Error().Err(err).Int64("alert_id", alertID).Msg("process alert failed")
 		h.reject(w, codeInternalError, "process alert failed")
 		return
 	}
 	if !exists {
-		h.reject(w, codeNotFound, "alert not found: "+idStr)
+		h.reject(w, codeNotFound, "alert not found: "+r.PathValue("alertId"))
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope{Code: codeSuccess, Message: "success"})
+}
+
+// startProcessingAlert POST /api/v1/alerts/{alertId}/processing —— 开始处理（T257 2.7 新增）。
+// pending → processing 并记 in_progress_at；幂等（已 processing 原样返回、**不刷新**耗时起点）；
+// 已 processed → 409（处理完的记录不允许重新打开）；不存在 404；alertId 非法 400。
+func (h *Handler) startProcessingAlert(w http.ResponseWriter, r *http.Request) {
+	if h.public == nil {
+		h.reject(w, codeInternalError, "public store not configured")
+		return
+	}
+	alertID, ok := h.parseAlertID(w, r)
+	if !ok {
+		return
+	}
+	st, err := h.public.StartProcessing(r.Context(), alertID)
+	if err != nil {
+		h.log.Error().Err(err).Int64("alert_id", alertID).Msg("start processing alert failed")
+		h.reject(w, codeInternalError, "start processing alert failed")
+		return
+	}
+	if !st.Exists {
+		h.reject(w, codeNotFound, "alert not found: "+r.PathValue("alertId"))
+		return
+	}
+	if st.Status == "processed" {
+		h.reject(w, codeConflict, "alert already processed: "+r.PathValue("alertId"))
+		return
+	}
+	inProgressAt := ""
+	if st.InProgressAt != nil {
+		inProgressAt = st.InProgressAt.Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, envelope{Code: codeSuccess, Message: "success", Data: startProcessingData{
+		AlertID:       strconv.FormatInt(alertID, 10),
+		ProcessStatus: st.Status,
+		InProgressAt:  inProgressAt,
+	}})
+}
+
+// startProcessingData POST /alerts/{alertId}/processing 的 data 字段
+type startProcessingData struct {
+	AlertID       string `json:"alertId"`
+	ProcessStatus string `json:"processStatus"`
+	InProgressAt  string `json:"inProgressAt"`
+}
+
+// parseAlertID 路径参数 alertId → int64（非数字或 <1 → 400，两处理端点同口径）
+func (h *Handler) parseAlertID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	idStr := r.PathValue("alertId")
+	alertID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || alertID < 1 {
+		h.reject(w, codeInvalidParam, "invalid alertId: "+idStr)
+		return 0, false
+	}
+	return alertID, true
 }

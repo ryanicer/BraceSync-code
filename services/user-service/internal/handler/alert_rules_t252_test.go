@@ -8,6 +8,8 @@
 //  5. 统一上限与 threshold_pressure_high 同键（不建第二份参数）；
 //  6. 恢复默认 = 清空逐点表 + 统一上下限回默认，不越界动全局规则；
 //  7. 每次写入留一条 config_change 审计（含变更点位清单），审计失败不阻断主流程。
+//
+// T257 12.4（三档合两键）追加：设备离线阈值 ≡ §7D.12 佩戴中断阈值（同键、同量程、同联动校验）。
 package handler
 
 import (
@@ -69,24 +71,24 @@ func TestT252_GetAlertRules_EmptyDBFallsBackToDefaults(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	dto := decodeRules(t, resp.Data)
 
-	assert.Equal(t, 45.0, dto.UnifiedUpperN, "统一上限默认取 §7D.12 的 45N")
-	assert.Equal(t, 10.0, dto.UnifiedLowerN)
+	assert.Equal(t, 5.0, dto.UnifiedUpperN, "统一上限默认取 T203 ÷10 后的 5N")
+	assert.Equal(t, 0.5, dto.UnifiedLowerN)
 	require.Len(t, dto.Points, alertPointCount, "恒 20 条，前端不用判缺失")
 	assert.Equal(t, "P01", dto.Points[0].PointID)
 	assert.Equal(t, "P20", dto.Points[19].PointID)
 	for _, p := range dto.Points {
 		assert.True(t, p.Monitored, "未落库 = 从未取消勾选")
 		assert.Nil(t, p.UpperN)
-		assert.InDelta(t, 45.0, p.EffectiveUpperN, 1e-9)
-		assert.InDelta(t, 10.0, p.EffectiveLowerN, 1e-9)
+		assert.InDelta(t, 5.0, p.EffectiveUpperN, 1e-9)
+		assert.InDelta(t, 0.5, p.EffectiveLowerN, 1e-9)
 	}
 	// 4×5 网格行列（P05 = 第 1 行末列，P06 = 第 2 行首列）
-	assert.Equal(t, model.AlertPointRuleDTO{PointID: "P05", Row: 1, Col: 5, Label: "R1C5", Monitored: true, EffectiveUpperN: 45, EffectiveLowerN: 10}, dto.Points[4])
+	assert.Equal(t, model.AlertPointRuleDTO{PointID: "P05", Row: 1, Col: 5, Label: "R1C5", Monitored: true, EffectiveUpperN: 5, EffectiveLowerN: 0.5}, dto.Points[4])
 	assert.Equal(t, 2, dto.Points[5].Row)
 	assert.Equal(t, 1, dto.Points[5].Col)
 	assert.Equal(t, "R2C1", dto.Points[5].Label)
 
-	assert.InDelta(t, 30, dto.GlobalRules.DeviceOfflineMinutes, 1e-9)
+	assert.InDelta(t, 60, dto.GlobalRules.DeviceOfflineMinutes, 1e-9, "T257 12.4：默认同 §7D.12 佩戴中断阈值 60 分钟")
 	assert.InDelta(t, 22, dto.GlobalRules.DailyWearMinHours, 1e-9, "佩戴下限默认复用 wear_target_hours（§7D.12），不建第二份参数")
 	assert.InDelta(t, 23, dto.GlobalRules.ContinuousWearMaxHours, 1e-9)
 	assert.InDelta(t, 5, dto.GlobalRules.ReportTimeoutMinutes, 1e-9)
@@ -96,10 +98,10 @@ func TestT252_GetAlertRules_MergesSparsePointRows(t *testing.T) {
 	e := newEnv(t, true, true)
 	upper, lower := 20.0, 5.0
 	e.store.configs = map[string]string{
-		keyPressureHigh:         "50",
-		keyPressureLow:          "12",
-		keyWearTarget:           "18",
-		keyDeviceOfflineMinutes: "45",
+		keyPressureHigh:  "50",
+		keyPressureLow:   "12",
+		keyWearTarget:    "18",
+		keyWearInterrupt: "45",
 	}
 	e.store.pointRules = []repo.AlertPointRuleRow{
 		{PointID: "P01", Monitored: false},
@@ -124,7 +126,7 @@ func TestT252_GetAlertRules_MergesSparsePointRows(t *testing.T) {
 	assert.InDelta(t, 5.0, p07.EffectiveLowerN, 1e-9)
 
 	assert.InDelta(t, 50.0, dto.Points[19].EffectiveUpperN, 1e-9)
-	assert.InDelta(t, 45, dto.GlobalRules.DeviceOfflineMinutes, 1e-9)
+	assert.InDelta(t, 45, dto.GlobalRules.DeviceOfflineMinutes, 1e-9, "T257 12.4：读的是 threshold_wear_interrupt_minutes")
 	assert.InDelta(t, 18, dto.GlobalRules.DailyWearMinHours, 1e-9)
 }
 
@@ -146,7 +148,7 @@ func TestT252_GetAlertRules_StoreErrorsReturn500(t *testing.T) {
 
 func TestT252_UpdateAlertPointRules_WritesUnifiedKVAndIncrement(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.configs = map[string]string{keyPressureHigh: "45", keyDeviceOfflineMinutes: "30"}
+	e.store.configs = map[string]string{keyPressureHigh: "45", keyWearInterrupt: "30"}
 	monitored := false
 	upper := 20.0
 	lower := 5.0
@@ -274,7 +276,7 @@ func TestT252_UpdateAlertPointRules_AuditFailureDoesNotBlockSave(t *testing.T) {
 
 func TestT252_ResetAlertPointRules(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.configs = map[string]string{keyPressureHigh: "60", keyDeviceOfflineMinutes: "90"}
+	e.store.configs = map[string]string{keyPressureHigh: "60", keyWearInterrupt: "90"}
 
 	w, resp := e.do(http.MethodPost, t252PointsResetPath, nil, t252AdminHdr())
 	require.Equal(t, http.StatusOK, w.Code, resp.Message)
@@ -283,10 +285,10 @@ func TestT252_ResetAlertPointRules(t *testing.T) {
 	require.Len(t, e.store.resetKVs, 2)
 	v, ok := kvOf(e.store.resetKVs, keyPressureHigh)
 	require.True(t, ok)
-	assert.Equal(t, "45", v, "上限回 §7D.12 默认")
+	assert.Equal(t, "5", v, "上限回 T203 ÷10 后默认")
 	v, ok = kvOf(e.store.resetKVs, keyPressureLow)
 	require.True(t, ok)
-	assert.Equal(t, "10", v)
+	assert.Equal(t, "0.5", v)
 
 	require.Len(t, e.store.auditRows, 1)
 	assert.Equal(t, "config_change", e.store.auditRows[0].Action)
@@ -301,7 +303,7 @@ func TestT252_ResetAlertPointRules(t *testing.T) {
 
 func TestT252_UpdateAlertGlobalRules_PartialWrite(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.configs = map[string]string{keyPressureHigh: "45", keyDeviceOfflineMinutes: "30", keyWearTarget: "22"}
+	e.store.configs = map[string]string{keyPressureHigh: "45", keyWearInterrupt: "30", keyWearTarget: "22"}
 
 	body := map[string]any{"reportTimeoutMinutes": 8, "dailyWearMinHours": 18}
 	w, resp := e.do(http.MethodPut, t252GlobalPath, body, t252AdminHdr())
@@ -343,5 +345,56 @@ func TestT252_UpdateAlertGlobalRules_RejectsOutOfRangeAndEmpty(t *testing.T) {
 			assert.Contains(t, resp.Message, tc.msg)
 			assert.Nil(t, e.store.savedKVs)
 		})
+	}
+}
+
+// ── T257 12.4：设备离线阈值与 §7D.12 佩戴中断阈值合键 ──
+
+func TestT257_GlobalRules_DeviceOfflineWritesWearInterruptKey(t *testing.T) {
+	e := newEnv(t, true, true)
+	e.store.configs = map[string]string{keyCollectInterval: "30"}
+
+	w, resp := e.do(http.MethodPut, t252GlobalPath, map[string]any{"deviceOfflineMinutes": 90}, t252AdminHdr())
+	require.Equal(t, http.StatusOK, w.Code, resp.Message)
+
+	require.Len(t, e.store.savedKVs, 1, "只改这一项就只写一个键")
+	assert.Equal(t, keyWearInterrupt, e.store.savedKVs[0].Key, "设备离线 ≡ 佩戴中断阈值，不建第三键")
+	assert.Equal(t, "90", e.store.savedKVs[0].Value)
+	_, hasOld := kvOf(e.store.savedKVs, "device_offline_minutes")
+	assert.False(t, hasOld, "旧键不再被写（库里的历史行保留，只是没人读）")
+
+	dto := decodeRules(t, resp.Data)
+	assert.Len(t, dto.Points, alertPointCount, "响应仍回完整聚合视图")
+
+	require.Len(t, e.store.auditRows, 1)
+	assert.Equal(t, "global", e.store.auditRows[0].TargetID)
+	assert.Contains(t, e.store.auditRows[0].Description, "设备离线 90 分钟")
+}
+
+func TestT257_GlobalRules_DeviceOfflineHonoursCollectIntervalLinkage(t *testing.T) {
+	// alert-service ValidateThresholds 要求中断阈值 ≥ 2×采集间隔；
+	// 本页若放行 50，落库后 alert-service 会拒载整份配置（引擎静默保持旧值）
+	e := newEnv(t, true, true)
+	e.store.configs = map[string]string{keyCollectInterval: "30"}
+
+	w, resp := e.do(http.MethodPut, t252GlobalPath, map[string]any{"deviceOfflineMinutes": 50}, t252AdminHdr())
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, resp.Message, "2x collect interval")
+	assert.Nil(t, e.store.savedKVs, "拒绝时不得触达写通道")
+	assert.Empty(t, e.store.auditRows)
+
+	w, resp = e.do(http.MethodPut, t252GlobalPath, map[string]any{"deviceOfflineMinutes": 60}, t252AdminHdr())
+	require.Equal(t, http.StatusOK, w.Code, resp.Message)
+	assert.Equal(t, "60", e.store.savedKVs[0].Value, "恰好 2× 采集间隔应放行")
+}
+
+func TestT257_GlobalRules_DeviceOfflineRangeMatchesSettingsPage(t *testing.T) {
+	// §7D.12 的量程是 [10,720]；合键后本页不能写出 settings 页会拒绝的值
+	for _, v := range []int{9, 721} {
+		e := newEnv(t, true, true)
+		w, resp := e.do(http.MethodPut, t252GlobalPath, map[string]any{"deviceOfflineMinutes": v}, t252AdminHdr())
+		assert.Equal(t, http.StatusBadRequest, w.Code, "deviceOfflineMinutes=%d", v)
+		assert.Contains(t, resp.Message, "deviceOfflineMinutes")
+		assert.Nil(t, e.store.savedKVs)
 	}
 }

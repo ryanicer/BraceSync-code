@@ -40,11 +40,10 @@ const (
 // PointCount 压力帧点数（与 data-service model.PointCount 契约一致）
 const PointCount = 20
 
-// DefaultWearingThresholdN 佩戴判定阈值默认值（PRD §8.1：帧 max_pressure > 0.5N 视为佩戴帧）。
-// 🔴 T173：占位值——生产生效值走 sys_configs `wearing_pressure_threshold`（config.Thresholds.WearingN，
-// SetWearingThreshold 注入），本常量仅作配置缺失兜底。注意：T173 起 data-service 传入的帧已是
-// 「减偏移后」值，佩戴判定自动基于校准后口径（PRD §7A.2）。
-const DefaultWearingThresholdN = 0.5
+// DefaultWearingThresholdN 佩戴判定阈值默认值（T203 ÷10 后 0.05N）。
+// 🔴 生产生效值走 sys_configs `wearing_pressure_threshold`（config.Thresholds.WearingN，
+// SetWearingThreshold 注入），本常量仅作配置缺失兜底。
+const DefaultWearingThresholdN = 0.05
 
 // FrameRef 帧引用（跨服务契约：与 data-service AlertEvalRequest / 队列负载 frame 字段一致）。
 // 体积小：device_id + timestamp + 20 点值，不含全量记录。
@@ -166,7 +165,7 @@ func (c *Consumer) SetStaleThreshold(d time.Duration) { c.staleThreshold = d }
 // SetNow 注入时钟（测试用）
 func (c *Consumer) SetNow(now func() time.Time) { c.now = now }
 
-// SetWearingThreshold 注入 sys_configs 热更新后的佩戴阈值（占位 0.5N，见 DefaultWearingThresholdN）
+// SetWearingThreshold 注入 sys_configs 热更新后的佩戴阈值（T203 ÷10 后默认 0.05N）
 func (c *Consumer) SetWearingThreshold(n float64) { c.wearingThresholdN = n }
 
 // Run 常驻轮询直至 ctx 取消（服务可用即排空积压，不依赖重启）

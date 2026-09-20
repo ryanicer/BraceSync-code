@@ -23,6 +23,8 @@ type AlertPointRuleDTO struct {
 
 // AlertGlobalRulesDTO 全局告警规则四项（设计稿 Tab2 第二卡）
 type AlertGlobalRulesDTO struct {
+	// DeviceOfflineMinutes T257 12.4：与 §7D.12 wearInterruptMinutes 同键
+	// （sys_configs threshold_wear_interrupt_minutes），字段名沿用设计稿不改契约
 	DeviceOfflineMinutes   float64 `json:"deviceOfflineMinutes"`
 	DailyWearMinHours      float64 `json:"dailyWearMinHours"`
 	ContinuousWearMaxHours float64 `json:"continuousWearMaxHours"`
