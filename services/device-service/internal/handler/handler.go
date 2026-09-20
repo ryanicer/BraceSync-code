@@ -110,11 +110,10 @@ func fail(c *gin.Context, appErr *model.AppError) {
 	c.JSON(appErr.HTTPStatus, jsonResp{Code: appErr.Code, Message: appErr.Message, Data: nil})
 }
 
-// operatorID 操作人：请求体显式传入优先，否则取网关注入的 X-User-Id
-func operatorID(c *gin.Context, fromBody string) string {
-	if fromBody != "" {
-		return fromBody
-	}
+// operatorID 操作人：一律取网关注入的 X-User-Id（T261 身份单一来源）。
+// 请求体中的 operatorId / calibratorId 字段保留仅为前端兼容，其值被忽略，
+// 防止客户端伪造操作人身份。
+func operatorID(c *gin.Context) string {
 	return c.GetHeader(headerUserID)
 }
 
@@ -129,11 +128,11 @@ type registerRequest struct {
 
 type bindRequest struct {
 	PatientID  string `json:"patientId"`
-	OperatorID string `json:"operatorId"`
+	OperatorID string `json:"operatorId"` // T261: 保留字段兼容前端，值被忽略，操作人一律取 X-User-Id
 }
 
 type unbindRequest struct {
-	OperatorID string `json:"operatorId"`
+	OperatorID string `json:"operatorId"` // T261: 保留字段兼容前端，值被忽略，操作人一律取 X-User-Id
 }
 
 type wifiRequest struct {
@@ -176,7 +175,7 @@ type baselineRequest struct {
 	OffsetValues []float32 `json:"offsetValues"`
 	Notes        string    `json:"notes"`
 	SignatureURL string    `json:"signatureUrl"`
-	CalibratorID string    `json:"calibratorId"` // 缺省取 X-User-Id
+	CalibratorID string    `json:"calibratorId"` // T261: 保留字段兼容前端，值被忽略，校准人一律取 X-User-Id
 }
 
 type reportRequest struct {
@@ -245,7 +244,7 @@ func (h *Handler) bind(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	result, appErr := h.svc.Bind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
+	result, appErr := h.svc.Bind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c))
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -260,7 +259,7 @@ func (h *Handler) rebind(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	result, appErr := h.svc.Rebind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c, req.OperatorID))
+	result, appErr := h.svc.Rebind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c))
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -278,7 +277,7 @@ func (h *Handler) unbind(c *gin.Context) {
 			return
 		}
 	}
-	_, appErr := h.svc.Unbind(c.Request.Context(), c.Param("deviceId"), operatorID(c, req.OperatorID))
+	_, appErr := h.svc.Unbind(c.Request.Context(), c.Param("deviceId"), operatorID(c))
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -473,7 +472,7 @@ func (h *Handler) saveBaseline(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid installId %q", req.InstallID))
 		return
 	}
-	calibrator := operatorID(c, req.CalibratorID)
+	calibrator := operatorID(c)
 	baselineID, appErr := h.svc.SaveBaseline(c.Request.Context(), installID, req.OffsetValues, calibrator)
 	if appErr != nil {
 		fail(c, appErr)

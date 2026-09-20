@@ -1299,7 +1299,7 @@ func TestListPlansAndSave(t *testing.T) {
 		PlanID: 9, PatientID: "P1", DoctorID: "D1", Content: "方案A", Version: "v1.2",
 		CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 	}}
-	w, resp := e.do(http.MethodGet, "/api/v1/patients/P1/orthosis-plans", nil, nil)
+	w, resp := e.do(http.MethodGet, "/api/v1/patients/P1/orthosis-plans", nil, map[string]string{"X-Role": roleAdmin, "X-User-Id": "A0001"})
 	assert.Equal(t, http.StatusOK, w.Code)
 	var list []model.OrthosisPlanDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &list))
@@ -1307,7 +1307,7 @@ func TestListPlansAndSave(t *testing.T) {
 	assert.Equal(t, "9", list[0].PlanID)
 
 	e.store.plansErr = errors.New("db")
-	w, _ = e.do(http.MethodGet, "/api/v1/patients/P1/orthosis-plans", nil, nil)
+	w, _ = e.do(http.MethodGet, "/api/v1/patients/P1/orthosis-plans", nil, map[string]string{"X-Role": roleAdmin, "X-User-Id": "A0001"})
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	e.store.plansErr = nil
 

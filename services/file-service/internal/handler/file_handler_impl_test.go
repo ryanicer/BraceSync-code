@@ -77,6 +77,9 @@ func (m *memStore) QueryFiles(_ context.Context, f repo.QueryFilter) ([]model.Fi
 		if f.OwnerType != "" && fm.OwnerType != f.OwnerType {
 			continue
 		}
+		if f.OwnerID != "" && fm.OwnerID != f.OwnerID {
+			continue
+		}
 		out = append(out, *fm)
 		if f.PageSize > 0 && len(out) >= f.PageSize {
 			break
@@ -89,6 +92,9 @@ func (m *memStore) CountFiles(_ context.Context, f repo.QueryFilter) (int64, err
 	var n int64
 	for _, fm := range m.files {
 		if f.OwnerType != "" && fm.OwnerType != f.OwnerType {
+			continue
+		}
+		if f.OwnerID != "" && fm.OwnerID != f.OwnerID {
 			continue
 		}
 		n++
@@ -414,4 +420,149 @@ func TestIntParam_DirectUnit(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	data := body["data"].(map[string]interface{})
 	assert.Equal(t, float64(1), data["page"])
+}
+
+// ─────────────────────────────────────────────────────────────
+// T261 身份单一来源：owner 归属校验
+// ─────────────────────────────────────────────────────────────
+
+// seedFile 向 memStore 注入一条指定 owner 的文件（用于归属校验测试）
+func seedFile(store *memStore, fileID, ownerType, ownerID string, status model.FileStatus) {
+	store.files[fileID] = &model.FileMetadata{
+		FileID:    fileID,
+		Bucket:    "test-bucket",
+		ObjectKey: ownerType + "/" + ownerID + "/" + fileID,
+		FileType:  model.FileTypeCommPhoto,
+		OwnerType: ownerType,
+		OwnerID:   ownerID,
+		Status:    status,
+	}
+}
+
+// TestT261_Presign_PatientOwnerForced patient presign 时请求体 owner 字段被忽略，
+// 落库 owner_type=patient / owner_id=X-User-Id。
+func TestT261_Presign_PatientOwnerForced(t *testing.T) {
+	store := newMemStore()
+	srv := setupTestServer(store)
+	defer srv.Close()
+
+	// patient 提交伪造的 owner（指向他人）
+	body := `{"file_type":"comm_photo","owner_type":"patient","owner_id":"P-OTHER","content_type":"image/jpeg"}`
+	code, resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/presign", "P-SELF", "patient", body)
+	require.Equal(t, http.StatusOK, code)
+	fileID := resp["data"].(map[string]interface{})["file_id"].(string)
+
+	// 落库 owner 应为调用者本人，非请求体伪造值
+	fm, err := store.GetFileByFileID(context.Background(), fileID)
+	require.NoError(t, err)
+	assert.Equal(t, "patient", fm.OwnerType)
+	assert.Equal(t, "P-SELF", fm.OwnerID, "owner_id 应被强制为 X-User-Id，忽略请求体")
+}
+
+// TestT261_Presign_StaffKeepsBodyOwner staff（technician）presign 保留请求体 owner
+// （跨 owner 场景：技师上传安装照片 owner=install_record）。
+func TestT261_Presign_StaffKeepsBodyOwner(t *testing.T) {
+	store := newMemStore()
+	srv := setupTestServer(store)
+	defer srv.Close()
+
+	body := `{"file_type":"signature","owner_type":"install_record","owner_id":"IR-999","content_type":"image/jpeg"}`
+	code, resp := doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/presign", "TECH-1", "technician", body)
+	require.Equal(t, http.StatusOK, code)
+	fileID := resp["data"].(map[string]interface{})["file_id"].(string)
+
+	fm, err := store.GetFileByFileID(context.Background(), fileID)
+	require.NoError(t, err)
+	assert.Equal(t, "install_record", fm.OwnerType)
+	assert.Equal(t, "IR-999", fm.OwnerID, "staff 应保留请求体 owner")
+}
+
+// TestT261_GetFileByID_OwnershipEnforced 非 staff 仅可访问本人文件，跨 owner → 403；staff 放行。
+func TestT261_GetFileByID_OwnershipEnforced(t *testing.T) {
+	store := newMemStore()
+	seedFile(store, "F-OWN", "patient", "P-A", model.FileStatusUploaded)
+	srv := setupTestServer(store)
+	defer srv.Close()
+
+	// 本人 → 200
+	code, _ := doGET(t, srv.URL+"/api/v1/files/F-OWN", "P-A", "patient")
+	assert.Equal(t, http.StatusOK, code, "本人应可访问")
+
+	// 他人（patient）→ 403
+	code, body := doGET(t, srv.URL+"/api/v1/files/F-OWN", "P-B", "patient")
+	assert.Equal(t, http.StatusForbidden, code, "跨 owner 应 403")
+	assert.Equal(t, float64(ErrorCodeForbidden), body["code"])
+
+	// staff（doctor）→ 200
+	code, _ = doGET(t, srv.URL+"/api/v1/files/F-OWN", "DOC-1", "ROLE_DOCTOR")
+	assert.Equal(t, http.StatusOK, code, "staff 应放行")
+}
+
+// TestT261_Download_OwnershipEnforced 下载端点同样执行归属校验。
+func TestT261_Download_OwnershipEnforced(t *testing.T) {
+	store := newMemStore()
+	seedFile(store, "F-DL", "patient", "P-A", model.FileStatusUploaded)
+	srv := setupTestServer(store)
+	defer srv.Close()
+
+	// 本人 → 200（mock COS 返回预签名 URL）
+	code, _ := doGET(t, srv.URL+"/api/v1/files/F-DL/download", "P-A", "patient")
+	assert.Equal(t, http.StatusOK, code, "本人应可下载")
+
+	// 他人 → 403
+	code, body := doGET(t, srv.URL+"/api/v1/files/F-DL/download", "P-B", "patient")
+	assert.Equal(t, http.StatusForbidden, code)
+	assert.Equal(t, float64(ErrorCodeForbidden), body["code"])
+
+	// staff → 200
+	code, _ = doGET(t, srv.URL+"/api/v1/files/F-DL/download", "DOC-1", "ROLE_DOCTOR")
+	assert.Equal(t, http.StatusOK, code, "staff 应放行下载")
+}
+
+// TestT261_Query_PatientOwnerForced patient 查询时 owner_id 查询参数被忽略，
+// 强制过滤为本人，无法枚举他人文件。
+func TestT261_Query_PatientOwnerForced(t *testing.T) {
+	store := newMemStore()
+	seedFile(store, "F-A1", "patient", "P-A", model.FileStatusUploaded)
+	seedFile(store, "F-A2", "patient", "P-A", model.FileStatusUploaded)
+	seedFile(store, "F-B1", "patient", "P-B", model.FileStatusUploaded)
+	srv := setupTestServer(store)
+	defer srv.Close()
+
+	// P-A 尝试以 owner_id=P-B 查询 → 仍只返回 P-A 自己的 2 条
+	code, body := doGET(t, srv.URL+"/api/v1/files/query?owner_type=patient&owner_id=P-B", "P-A", "patient")
+	require.Equal(t, http.StatusOK, code)
+	data := body["data"].(map[string]interface{})
+	assert.Equal(t, float64(2), data["total"], "patient 查询应被强制限定为本人 owner")
+
+	// staff 查询 P-B 的文件 → 可见 1 条
+	code, body = doGET(t, srv.URL+"/api/v1/files/query?owner_type=patient&owner_id=P-B", "DOC-1", "ROLE_DOCTOR")
+	require.Equal(t, http.StatusOK, code)
+	data = body["data"].(map[string]interface{})
+	assert.Equal(t, float64(1), data["total"], "staff 可跨 owner 查询")
+}
+
+// TestT261_UploadComplete_OwnershipEnforced 非 staff 不得为他人文件确认上传。
+func TestT261_UploadComplete_OwnershipEnforced(t *testing.T) {
+	store := newMemStore()
+	seedFile(store, "F-UP", "patient", "P-A", model.FileStatusPending)
+	srv := setupTestServer(store)
+	defer srv.Close()
+
+	// P-B 尝试为 P-A 的文件确认上传 → 403
+	code, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/upload-complete", "P-B", "patient",
+		`{"file_id":"F-UP","size":1024}`)
+	assert.Equal(t, http.StatusForbidden, code)
+	assert.Equal(t, float64(ErrorCodeForbidden), body["code"])
+
+	// P-A 本人确认 → 200
+	code, _ = doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/upload-complete", "P-A", "patient",
+		`{"file_id":"F-UP","size":1024}`)
+	assert.Equal(t, http.StatusOK, code)
+
+	// staff 为他人文件确认 → 200（放行）
+	seedFile(store, "F-STAFF", "patient", "P-A", model.FileStatusPending)
+	code, _ = doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/upload-complete", "DOC-1", "ROLE_DOCTOR",
+		`{"file_id":"F-STAFF","size":1024}`)
+	assert.Equal(t, http.StatusOK, code, "staff 应放行跨 owner 上传确认")
 }
