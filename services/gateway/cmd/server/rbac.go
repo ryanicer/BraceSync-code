@@ -24,9 +24,9 @@
 // user-service/internal/rbac），患者域水平鉴权在 handler 层 self-scope。
 // 前端 ROLE_PAGE_MATRIX 为 UX 层守卫，本网关矩阵是安全控制，两者须同步变更。
 //
-// ⚠️ roleAuthz 仍是「默认放行」：不在任一矩阵内的路径对所有已认证角色开放。
-// 新增 /admin/* 端点必须同时登记矩阵，否则等于零防护（T184 排查清单 P0-1 建议的
-// 默认拒绝尚未实施，会打断现存的 48 条未登记路径）。
+// T260：roleAuthz 已切「默认拒绝」——不在任一矩阵且不在 publicPatterns 的路径 → 403。
+// 全量登记 96 条网关路由（T184 §⑦ 差集命令重跑，2026-09-20 origin/main 实测 43 条未登记
+// 已全部归入对应矩阵）。新增端点必须同时登记矩阵，否则默认 403（fail-closed）。
 package main
 
 import (
@@ -88,6 +88,14 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/doctors"),
 	rbacOf(http.MethodGet, "/api/v1/admin/teams/stats"), // T256 #1 团队统计卡
 
+	// T260-B：团队管理写操作 —— 仅 admin（/teams 页仅 admin 可见，permissions.ts）
+	rbacOf(http.MethodPost, "/api/v1/teams"),
+	rbacOf(http.MethodPut, "/api/v1/teams/:teamId"),
+	rbacOf(http.MethodDelete, "/api/v1/teams/:teamId"),
+	rbacOf(http.MethodPost, "/api/v1/teams/:teamId/members"),
+	rbacOf(http.MethodPut, "/api/v1/teams/:teamId/members/:memberId"),
+	rbacOf(http.MethodDelete, "/api/v1/teams/:teamId/members/:memberId"),
+
 	// T185 订阅额度授予：权益写操作。患者域读端点（wear-reminder / subscription-quota /
 	// notifications）不进本矩阵——患者需自查本人，水平越权由 msg-service handler 层
 	// requireSelfScope 拦截；唯 grant 若放行 self-scope 等于患者可自行加额，故收敛为 admin-only。
@@ -144,6 +152,9 @@ func matchProvisionKeyPattern(method, path string) bool {
 // 患者/客服等 → 403。
 var doctorAdminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/admin/review-records"), // T130 创建复查记录
+	// T260-B：医生回复患者感受日志 + 保存矫形方案（admin-web orthosis-log 页，doctor/admin）
+	rbacOf(http.MethodPost, "/api/v1/feeling-logs/:logId/reply"),
+	rbacOf(http.MethodPost, "/api/v1/patients/:patientId/orthosis-plans"),
 	// T135 复查报告模板管理（合同运营后台「复查报告模板管理」；admin+doctor 均需：
 	//   admin 后台上传/替换/列表/下载；doctor 列表/下载空白模板线下填写）
 	rbacOf(http.MethodPost, "/api/v1/admin/review-templates"),                  // 上传/创建模板
@@ -172,10 +183,75 @@ var staffOnlyPatterns = []rbacPattern{
 	// T248 7.1 患者沟通统计栏：全院聚合计数（今日咨询/待回复/平均响应），后台工作台专用。
 	// 不登记即 default-allow ⇒ 患者 token 也能读全院计数。
 	rbacOf(http.MethodGet, "/api/v1/feedbacks/stats"),
+
+	// T260-A：患者沟通留言 —— 仅内部 staff 可读/处理（admin-web 沟通页 admin/cs）
+	rbacOf(http.MethodGet, "/api/v1/feedbacks"),
+	rbacOf(http.MethodPost, "/api/v1/feedbacks/:feedbackId/process"),
+	// T260-A：告警处理 —— 仅 staff（admin-web 告警页 admin/doctor + tech-miniapp 技师）
+	rbacOf(http.MethodPost, "/api/v1/alerts/:alertId/process"),
+
+	// T260-B：设备管理域 —— 列表/详情/绑定/配网/基线/安装记录（technician 安装流程 +
+	// admin/doctor 管理页）。绑定互斥/归属等业务校验由 device-service handler 层负责。
+	rbacOf(http.MethodGet, "/api/v1/devices"),
+	rbacOf(http.MethodGet, "/api/v1/devices/:deviceId"),
+	rbacOf(http.MethodGet, "/api/v1/devices/:deviceId/bindings"),
+	rbacOf(http.MethodPost, "/api/v1/devices"),
+	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/bind"),
+	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/rebind"),
+	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/unbind"),
+	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/wifi"),
+	rbacOf(http.MethodPost, "/api/v1/baselines"),
+	rbacOf(http.MethodPost, "/api/v1/install-records"),
+	rbacOf(http.MethodGet, "/api/v1/install-records"),
+	rbacOf(http.MethodGet, "/api/v1/install-records/:id"),
 }
 
 // staffRoles 内部 staff 角色集合（患者端 patient-miniapp 全仓零 /admin/* 调用，故不含 rolePatient）
 var staffRoles = []string{roleAdmin, roleDoctor, roleCS, roleTech}
+
+// publicPatterns T260：全认证角色可访问端点矩阵（patient + staff 均放行）。
+// 这些端点的水平越权防护由各服务 handler 层负责（self-scope / owner 校验），
+// 网关层只做「是否已认证」判定。不在此矩阵的未登记路径默认 403（见 roleAuthz 末尾）。
+//
+// 依据（实测调用方，非推断）：
+//   - GET /alerts              → admin-web/tech-miniapp 告警页 + patient-miniapp 异常页
+//   - /patient/profile 等       → 患者本人自查（user-service self-scope）
+//   - /patients/:id/* 患者域    → 患者自查本人 + 医生/客服查负责患者（服务侧 team 归属）
+//   - /files/*                 → 文件归属校验在 file-service handler 层
+var publicPatterns = []rbacPattern{
+	// T260-A：告警读 —— patient 异常页带 ?patientId=自己 调用，水平过滤由 alert-service 做
+	rbacOf(http.MethodGet, "/api/v1/alerts"),
+
+	// 患者本人域（self-scope 在 user-service handler 层）
+	rbacOf(http.MethodGet, "/api/v1/patient/profile"),
+	rbacOf(http.MethodPost, "/api/v1/patient/bind-phone"), // bind-scope JWT，scopeAuthz 限 bind
+	rbacOf(http.MethodPut, "/api/v1/patients/:patientId"), // T226 患者自助改本人资料
+
+	// 患者数据域（患者自查 + staff 跨患者；水平鉴权在 data/msg/user-service handler 层）
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/realtime"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/records"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/health-reports"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/daily-wear"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/feeling-logs"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/orthosis-plans"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/review-records"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/wear-reminder"),
+	rbacOf(http.MethodPut, "/api/v1/patients/:patientId/wear-reminder"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/subscription-quota"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/notifications"),
+
+	// 文件域（归属校验在 file-service handler 层；user-service 服务间调用以 ROLE_ADMIN 放行）
+	rbacOf(http.MethodPost, "/api/v1/files/presign"),
+	rbacOf(http.MethodPost, "/api/v1/files/upload-complete"),
+	rbacOf(http.MethodGet, "/api/v1/files/query"),
+	rbacOf(http.MethodGet, "/api/v1/files/:fileID"),
+	rbacOf(http.MethodGet, "/api/v1/files/:fileID/download"),
+}
+
+// matchPublicPattern 判断 method+path 是否命中「全认证角色可访问」端点矩阵
+func matchPublicPattern(method, path string) bool {
+	return matchPatterns(method, path, publicPatterns)
+}
 
 // matchStaffOnlyPattern 判断 method+path 是否命中「仅 staff 可读」端点矩阵
 func matchStaffOnlyPattern(method, path string) bool {
@@ -290,6 +366,25 @@ func roleAuthz() gin.HandlerFunc {
 				"forbidden: role not allowed for this endpoint")
 			return
 		}
-		c.Next()
+		// T260：全认证角色可访问端点（patient + staff）—— 水平鉴权由各服务 handler 层负责
+		if matchPublicPattern(c.Request.Method, c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+		// T260：已登记进角色矩阵的端点且当前角色通过校验（前面的 deny 分支未拦截）→ 放行
+		if matchProvisionKeyPattern(c.Request.Method, c.Request.URL.Path) ||
+			matchTechAdminPattern(c.Request.Method, c.Request.URL.Path) ||
+			matchDoctorAdminPattern(c.Request.Method, c.Request.URL.Path) ||
+			matchStaffOnlyPattern(c.Request.Method, c.Request.URL.Path) ||
+			matchRBACPattern(c.Request.Method, c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+		// T260：默认拒绝（fail-closed）—— 未登记进任一矩阵的路径一律 403，
+		// 防止新增端点漏登记时默认放行。log.Warn 留痕便于排查被打断的合法调用。
+		log.Warn().Str("role", role).Str("method", c.Request.Method).
+			Str("path", c.Request.URL.Path).Msg("rbac denied: endpoint not registered in any matrix (default-deny)")
+		abortJSON(c, http.StatusForbidden, http.StatusForbidden,
+			"forbidden: endpoint not registered in RBAC matrix")
 	}
 }

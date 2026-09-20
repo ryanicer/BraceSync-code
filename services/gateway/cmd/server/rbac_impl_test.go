@@ -265,3 +265,157 @@ func TestRBAC_T135_DoctorAdminOnly(t *testing.T) {
 	// 3 低角色 × 4 端点 全被拦（0 触达） + 2 高角色 × 4 端点 全转发 = 8
 	assert.Len(t, *received, 8, "high-role template 请求应转发后端，low-role 应被网关 RBAC 拦截")
 }
+
+// TestRBAC_T260_DefaultDeny_UnregisteredPattern 未登记进任一矩阵的 method+path 在
+// 所有 match* 函数中均返回 false（fail-closed 设计的单元验证）。
+// HTTP 层：gin 对未注册路由直接返 404（路由层即拒），中间件不执行；
+// 已注册但漏登记矩阵的路由才会走 roleAuthz 末尾 default-deny → 403。
+func TestRBAC_T260_DefaultDeny_UnregisteredPattern(t *testing.T) {
+	// 单元层：所有 match* 对未登记模式返回 false
+	unregistered := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/nonexistent-xyz"},
+		{http.MethodPost, "/api/v1/not-registered-abc"},
+		{http.MethodGet, "/api/v1/unknown-path-123"},
+	}
+	for _, c := range unregistered {
+		assert.False(t, matchProvisionKeyPattern(c.method, c.path), "%s %s 不应命中 provisionKey", c.method, c.path)
+		assert.False(t, matchTechAdminPattern(c.method, c.path), "%s %s 不应命中 techAdmin", c.method, c.path)
+		assert.False(t, matchDoctorAdminPattern(c.method, c.path), "%s %s 不应命中 doctorAdmin", c.method, c.path)
+		assert.False(t, matchStaffOnlyPattern(c.method, c.path), "%s %s 不应命中 staffOnly", c.method, c.path)
+		assert.False(t, matchRBACPattern(c.method, c.path), "%s %s 不应命中 adminOnly", c.method, c.path)
+		assert.False(t, matchPublicPattern(c.method, c.path), "%s %s 不应命中 public", c.method, c.path)
+	}
+
+	// HTTP 层：未注册路由 → 404（路由层拒绝，非 200 泄漏）
+	backend, _ := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+	for _, role := range []string{"ROLE_ADMIN", "ROLE_DOCTOR", "patient"} {
+		code, _ := httpDoFull(t, http.MethodGet, gw.URL+"/api/v1/nonexistent-xyz", `{}`, rbacToken(t, role))
+		assert.Equal(t, http.StatusNotFound, code, "role=%s 未注册路由应 404（路由层拒绝）", role)
+	}
+}
+
+// TestRBAC_T260_PublicPatterns_AllRoles publicPatterns 端点对所有已认证角色放行
+// （patient + staff）。水平鉴权由各服务 handler 层负责。
+// file-service 路由代理到 file-service:8085（测试环境不可达 → 502），
+// 只要不是 403 即说明 RBAC 放行；其余路由经测试后端 → 200。
+func TestRBAC_T260_PublicPatterns_AllRoles(t *testing.T) {
+	backend, _ := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	// 非 file-service 的 public 路由 → 200
+	publicOK := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/alerts"},
+		{http.MethodGet, "/api/v1/patient/profile"},
+		{http.MethodGet, "/api/v1/patients/P001/records"},
+		{http.MethodGet, "/api/v1/patients/P001/wear-reminder"},
+	}
+	// file-service 路由 → 502（后端不可达），但非 403 即 RBAC 放行
+	publicFile := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/files/presign"},
+		{http.MethodGet, "/api/v1/files/query"},
+	}
+	roles := []string{"ROLE_ADMIN", "ROLE_DOCTOR", "ROLE_CS", "technician", "patient"}
+	for _, role := range roles {
+		for _, c := range publicOK {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusOK, code, "role=%s public %s %s 应 200", role, c.method, c.path)
+		}
+		for _, c := range publicFile {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.NotEqual(t, http.StatusForbidden, code, "role=%s public file %s %s 不应被 RBAC 拦截（403）", role, c.method, c.path)
+		}
+	}
+}
+
+// TestRBAC_T260_StaffOnly_DeniedForPatient staff-only 端点（feedbacks/alerts-process/devices）
+// 对 patient 一律 403，staff 放行。
+func TestRBAC_T260_StaffOnly_DeniedForPatient(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	staffOnly := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/feedbacks"},
+		{http.MethodPost, "/api/v1/feedbacks/F001/process"},
+		{http.MethodPost, "/api/v1/alerts/A001/process"},
+		{http.MethodGet, "/api/v1/devices"},
+		{http.MethodPost, "/api/v1/devices/D001/bind"},
+		{http.MethodPost, "/api/v1/install-records"},
+	}
+	// patient → 403
+	for _, c := range staffOnly {
+		code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, "patient"))
+		assert.Equal(t, http.StatusForbidden, code, "patient %s %s 应 403", c.method, c.path)
+		assert.Contains(t, body, `"code":403`)
+	}
+	// staff（admin/doctor/cs/tech）→ 放行
+	staffCount := 0
+	for _, role := range []string{"ROLE_ADMIN", "ROLE_DOCTOR", "ROLE_CS", "technician"} {
+		for _, c := range staffOnly {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusOK, code, "role=%s staff-only %s %s 应放行", role, c.method, c.path)
+			staffCount++
+		}
+	}
+	assert.Len(t, *received, staffCount, "staff 请求应转发后端，patient 请求被网关拦截")
+}
+
+// TestRBAC_T260_DoctorAdminOnly_DeniedForOthers doctor+admin 专属（feeling-logs reply /
+// orthosis-plans save）对 cs/tech/patient 403，doctor/admin 放行。
+func TestRBAC_T260_DoctorAdminOnly_DeniedForOthers(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	cases := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/feeling-logs/L001/reply"},
+		{http.MethodPost, "/api/v1/patients/P001/orthosis-plans"},
+	}
+	// low roles → 403
+	for _, role := range []string{"ROLE_CS", "technician", "patient"} {
+		for _, c := range cases {
+			code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusForbidden, code, "role=%s %s %s 应 403", role, c.method, c.path)
+			assert.Contains(t, body, `"code":403`)
+		}
+	}
+	// doctor/admin → 放行
+	highCount := 0
+	for _, role := range []string{"ROLE_DOCTOR", "ROLE_ADMIN"} {
+		for _, c := range cases {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusOK, code, "role=%s %s %s 应放行", role, c.method, c.path)
+			highCount++
+		}
+	}
+	assert.Len(t, *received, highCount)
+}
+
+// TestRBAC_T260_AdminOnly_TeamsWrite teams 写操作仅 admin，doctor/cs/tech/patient 403。
+func TestRBAC_T260_AdminOnly_TeamsWrite(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	teamsWrite := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/teams"},
+		{http.MethodPut, "/api/v1/teams/T001"},
+		{http.MethodDelete, "/api/v1/teams/T001"},
+		{http.MethodPost, "/api/v1/teams/T001/members"},
+		{http.MethodPut, "/api/v1/teams/T001/members/M001"},
+		{http.MethodDelete, "/api/v1/teams/T001/members/M001"},
+	}
+	for _, role := range []string{"ROLE_DOCTOR", "ROLE_CS", "technician", "patient"} {
+		for _, c := range teamsWrite {
+			code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusForbidden, code, "role=%s teams 写 %s %s 应 403", role, c.method, c.path)
+			assert.Contains(t, body, `"code":403`)
+		}
+	}
+	// admin → 放行
+	adminCount := 0
+	for _, c := range teamsWrite {
+		code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, "ROLE_ADMIN"))
+		assert.Equal(t, http.StatusOK, code, "ROLE_ADMIN teams 写 %s %s 应放行", c.method, c.path)
+		adminCount++
+	}
+	assert.Len(t, *received, adminCount)
+}
