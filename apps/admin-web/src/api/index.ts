@@ -159,6 +159,33 @@ export async function fetchDevices(params: { keyword?: string }): Promise<Pagina
   return request<PaginatedResponse<Device>>({ url: '/api/v1/devices', data: params as Record<string, unknown> })
 }
 
+// T268: 设备详情 / 绑定历史 / 注册（对齐 device-service：GET /devices/:id、GET /devices/:id/bindings、POST /devices 幂等）
+export interface DeviceBindingRecord {
+  bindingId: string
+  deviceId: string
+  patientId: string
+  bindAt: string
+  unbindAt: string | null
+  reason: string | null
+  operatorId: string | null
+}
+
+export async function fetchDeviceDetail(deviceId: string): Promise<Device> {
+  if (USE_MOCK) { await delay(); return deviceMock.mockDeviceDetail(deviceId) }
+  return request<Device>({ url: `/api/v1/devices/${encodeURIComponent(deviceId)}` })
+}
+
+export async function fetchDeviceBindings(deviceId: string): Promise<DeviceBindingRecord[]> {
+  if (USE_MOCK) { await delay(); return deviceMock.mockDeviceBindings(deviceId) }
+  const res = await request<{ list: DeviceBindingRecord[] }>({ url: `/api/v1/devices/${encodeURIComponent(deviceId)}/bindings` })
+  return res.list
+}
+
+export async function registerDeviceApi(data: { deviceId: string; model?: string }): Promise<Device> {
+  if (USE_MOCK) { await delay(); return deviceMock.mockRegisterDevice(data) }
+  return request<Device>({ url: '/api/v1/devices', method: 'POST', data: data as unknown as Record<string, unknown> })
+}
+
 export async function fetchTeams(): Promise<Team[]> {
   if (USE_MOCK) { await delay(); return orgMock.mockTeams() }
   return request<Team[]>({ url: '/api/v1/teams' })
