@@ -14,8 +14,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -121,6 +121,9 @@ func TestITT252AlertPointRulesRejectsUnknownPointID(t *testing.T) {
 
 // ── 11.2 角色增删改 ──
 
+// customRoleIDRe 自定义角色 ID 的形状（`ROLE_C` + 10 位大写 hex，见 roles_write.go:31-39）。
+var customRoleIDRe = regexp.MustCompile(`^ROLE_C[0-9A-F]{10}$`)
+
 func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 	ctx := context.Background()
 	list, err := itStore.ListRoles(ctx)
@@ -159,11 +162,13 @@ func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 		assert.NotEmpty(t, perms.Modules)
 	}
 
-	// ③ 收口证明：剔除测试专用行（harness 播的 ROLE_IT + 各用例新建的 ROLE_C 前缀自定义角色）后，
+	// ③ 收口证明：剔除测试专用行（harness 播的 ROLE_IT + 各用例新建的自定义角色）后，
 	//    roles 表**恰好** 3 条，且就是上面那 3 个 —— 不许多、不许少、不许有第三个来源的预置字面量。
+	// 🔴 自定义角色 ID 必须**整串**匹配 `ROLE_C` + 10 位大写 hex（repo/roles_write.go:31-39）：
+	//    用 HasPrefix("ROLE_C") 会把预置的 **ROLE_CS** 一并吞掉（本用例首版即因此在 CI 漏判 ROLE_CS）。
 	preset := []string{}
 	for id := range byID {
-		if id == "ROLE_IT" || strings.HasPrefix(id, "ROLE_C") {
+		if id == "ROLE_IT" || customRoleIDRe.MatchString(id) {
 			continue
 		}
 		preset = append(preset, id)
