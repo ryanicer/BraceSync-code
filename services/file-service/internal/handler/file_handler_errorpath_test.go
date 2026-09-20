@@ -64,11 +64,11 @@ func TestUploadComplete_StoreFailure_500(t *testing.T) {
 	srv := setupFailServer(failStore{})
 	defer srv.Close()
 
-	// GetFileByFileID 返回非 NotFound 错误 → 500 61002
+	// T261: 归属预检查 GetFileByFileID 返回非 NotFound 错误 → 500 69999
 	code, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/upload-complete", "T0001", "technician",
 		`{"file_id": "file_x", "size": 1}`)
 	assert.Equal(t, http.StatusInternalServerError, code)
-	assert.Equal(t, float64(ErrorCodeUploadFailed), body["code"])
+	assert.Equal(t, float64(ErrorCodeInternal), body["code"])
 }
 
 func TestGetFileByID_StoreFailure_500(t *testing.T) {

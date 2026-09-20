@@ -67,6 +67,28 @@ func identity(c *gin.Context) (userID, role string, ok bool) {
 	return userID, role, userID != ""
 }
 
+// staffRoles 内部 staff 角色集合（与 gateway staffRoles 对齐；不含 patient）
+var staffRoles = map[string]bool{
+	"admin":       true,
+	"ROLE_ADMIN":  true,
+	"ROLE_DOCTOR": true,
+	"ROLE_CS":     true,
+	"technician":  true,
+}
+
+// isStaffRole 判断角色是否属于内部 staff
+func isStaffRole(role string) bool { return staffRoles[role] }
+
+// canAccessFile 文件归属校验（T261 身份单一来源）：
+//   - staff 放行（跨 owner 访问，如医生看患者复查报告、admin 管模板）
+//   - 非 staff（patient）仅可访问 owner_type=="patient" 且 owner_id==本人 的文件
+func canAccessFile(role, userID string, fm *model.FileMetadata) bool {
+	if isStaffRole(role) {
+		return true
+	}
+	return fm.OwnerType == "patient" && fm.OwnerID == userID
+}
+
 // presignRequest 签发请求体
 type presignRequest struct {
 	FileType    string `json:"file_type" binding:"required"`
@@ -120,6 +142,14 @@ func (h *FileHandler) handlePresignURL(c *gin.Context) {
 		return
 	}
 
+	// T261 身份单一来源：owner 由服务端决定——
+	//   非 staff（patient）强制 owner_type=patient / owner_id=本人，忽略请求体 owner 字段；
+	//   staff 保留请求体 owner（医生上传患者复查报告指定 owner_id=患者ID 等跨 owner 场景）。
+	if !isStaffRole(role) {
+		req.OwnerType = "patient"
+		req.OwnerID = userID
+	}
+
 	resp, err := h.presigner.GenerateUploadURL(c.Request.Context(), service.UploadRequest{
 		FileType:    fileType,
 		OwnerType:   req.OwnerType,
@@ -163,7 +193,8 @@ type uploadCompleteRequest struct {
 // pending → uploaded + uploaded_at + size + url，幂等不重复。
 // POST /api/v1/files/upload-complete
 func (h *FileHandler) handleUploadComplete(c *gin.Context) {
-	if _, _, ok := identity(c); !ok {
+	userID, role, ok := identity(c)
+	if !ok {
 		errorJSON(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "user identity missing")
 		return
 	}
@@ -174,7 +205,26 @@ func (h *FileHandler) handleUploadComplete(c *gin.Context) {
 		return
 	}
 
-	err := h.presigner.OnUploadComplete(c.Request.Context(), req.FileID, req.PublicURL, req.Size)
+	// T261 归属校验：先取文件元数据，非 staff 须本人所有方可确认上传
+	fm, err := h.store.GetFileByFileID(c.Request.Context(), req.FileID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			errorJSON(c, http.StatusNotFound, ErrorCodeFileNotFound, "file not found")
+			return
+		}
+		log.Error().Err(err).Str("file_id", req.FileID).Msg("get file for ownership check failed")
+		errorJSON(c, http.StatusInternalServerError, ErrorCodeInternal, "error retrieving file")
+		return
+	}
+	if !canAccessFile(role, userID, fm) {
+		log.Warn().Str("user_id", userID).Str("role", role).Str("file_id", req.FileID).
+			Str("owner_type", fm.OwnerType).Str("owner_id", fm.OwnerID).
+			Msg("upload-complete ownership denied")
+		errorJSON(c, http.StatusForbidden, ErrorCodeForbidden, "not allowed to complete upload for this file")
+		return
+	}
+
+	err = h.presigner.OnUploadComplete(c.Request.Context(), req.FileID, req.PublicURL, req.Size)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrFileNotFound):
@@ -196,7 +246,8 @@ func (h *FileHandler) handleUploadComplete(c *gin.Context) {
 // getFileByID 按 ID 查询文件元数据
 // GET /api/v1/files/:fileID
 func (h *FileHandler) getFileByID(c *gin.Context) {
-	if _, _, ok := identity(c); !ok {
+	userID, role, ok := identity(c)
+	if !ok {
 		errorJSON(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "user identity missing")
 		return
 	}
@@ -213,18 +264,47 @@ func (h *FileHandler) getFileByID(c *gin.Context) {
 		return
 	}
 
+	// T261 归属校验：非 staff 仅可访问本人文件
+	if !canAccessFile(role, userID, fm) {
+		log.Warn().Str("user_id", userID).Str("role", role).Str("file_id", fileID).
+			Str("owner_type", fm.OwnerType).Str("owner_id", fm.OwnerID).
+			Msg("getFileByID ownership denied")
+		errorJSON(c, http.StatusForbidden, ErrorCodeForbidden, "not allowed to access this file")
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": fm})
 }
 
 // handleDownloadURL 签发文件下载预签名 URL（T130 复查报告下载）
 // GET /api/v1/files/:fileID/download
 func (h *FileHandler) handleDownloadURL(c *gin.Context) {
-	if _, _, ok := identity(c); !ok {
+	userID, role, ok := identity(c)
+	if !ok {
 		errorJSON(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "user identity missing")
 		return
 	}
 
 	fileID := c.Param("fileID")
+	// T261 归属校验：先取文件元数据，非 staff 须本人所有方可下载
+	fm, err := h.store.GetFileByFileID(c.Request.Context(), fileID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			errorJSON(c, http.StatusNotFound, ErrorCodeFileNotFound, "file not found")
+			return
+		}
+		log.Error().Err(err).Str("file_id", fileID).Msg("get file for download ownership check failed")
+		errorJSON(c, http.StatusInternalServerError, ErrorCodeInternal, "error retrieving file")
+		return
+	}
+	if !canAccessFile(role, userID, fm) {
+		log.Warn().Str("user_id", userID).Str("role", role).Str("file_id", fileID).
+			Str("owner_type", fm.OwnerType).Str("owner_id", fm.OwnerID).
+			Msg("download ownership denied")
+		errorJSON(c, http.StatusForbidden, ErrorCodeForbidden, "not allowed to download this file")
+		return
+	}
+
 	resp, err := h.presigner.GenerateDownloadURL(c.Request.Context(), fileID)
 	if err != nil {
 		switch {
@@ -253,7 +333,8 @@ func (h *FileHandler) handleDownloadURL(c *gin.Context) {
 // queryFiles 按 owner/type/status 过滤分页查询（total 为过滤后总数）
 // GET /api/v1/files/query?owner_type=&owner_id=&file_type=&status=&page=&pageSize=
 func (h *FileHandler) queryFiles(c *gin.Context) {
-	if _, _, ok := identity(c); !ok {
+	userID, role, ok := identity(c)
+	if !ok {
 		errorJSON(c, http.StatusUnauthorized, ErrorCodeUnauthorized, "user identity missing")
 		return
 	}
@@ -265,6 +346,12 @@ func (h *FileHandler) queryFiles(c *gin.Context) {
 		Status:    model.FileStatus(c.Query("status")),
 		Page:      intParam(c, "page", 1),
 		PageSize:  intParam(c, "pageSize", 20),
+	}
+
+	// T261 身份单一来源：非 staff 查询强制 owner=本人，防止越权枚举他人文件
+	if !isStaffRole(role) {
+		filters.OwnerType = "patient"
+		filters.OwnerID = userID
 	}
 
 	ctx := c.Request.Context()
