@@ -7,10 +7,10 @@
 
 BEGIN;
 
-UPDATE sys_configs SET value = '5'    WHERE key = 'threshold_pressure_high';       -- 45 → 5
-UPDATE sys_configs SET value = '6'    WHERE key = 'heatmap_max_n';                -- 60 → 6
-UPDATE sys_configs SET value = '0.3'  WHERE key = 'threshold_sensor_drift';       -- 2.8 → 0.3
-UPDATE sys_configs SET value = '0.05' WHERE key = 'threshold_calibration_offset';  -- 0.5 → 0.05
-UPDATE sys_configs SET value = '0.05' WHERE key = 'wearing_pressure_threshold';   -- 0.5 → 0.05
+UPDATE sys_configs SET config_value = '5'    WHERE config_key = 'threshold_pressure_high';       -- 45 → 5
+UPDATE sys_configs SET config_value = '6'    WHERE config_key = 'heatmap_max_n';                -- 60 → 6
+UPDATE sys_configs SET config_value = '0.3'  WHERE config_key = 'threshold_sensor_drift';       -- 2.8 → 0.3
+UPDATE sys_configs SET config_value = '0.05' WHERE config_key = 'threshold_calibration_offset';  -- 0.5 → 0.05
+UPDATE sys_configs SET config_value = '0.05' WHERE config_key = 'wearing_pressure_threshold';   -- 0.5 → 0.05
 
 COMMIT;

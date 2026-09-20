@@ -44,8 +44,8 @@ type PressureThresholds struct {
 func DefaultPressureThresholds() PressureThresholds {
 	return PressureThresholds{
 		WearingN:      WearingThresholdN,
-		HeatmapMaxN:   6.0,    // T203: 60 → 6
-		PressureHighN: 5.0,    // T203: 45 → 5
+		HeatmapMaxN:   6.0, // T203: 60 → 6
+		PressureHighN: 5.0, // T203: 45 → 5
 	}
 }
 

@@ -19,10 +19,10 @@ import (
 type AlertType string
 
 const (
-	TypePressureHigh        AlertType = "pressure_high"
-	TypeWearInterrupt       AlertType = "wear_interrupt"
-	TypeSensorDrift         AlertType = "sensor_drift"
-	TypeWearDurationShort   AlertType = "wear_duration_short"
+	TypePressureHigh      AlertType = "pressure_high"
+	TypeWearInterrupt     AlertType = "wear_interrupt"
+	TypeSensorDrift       AlertType = "sensor_drift"
+	TypeWearDurationShort AlertType = "wear_duration_short"
 	// TypePressureFluctuation T257 2.6（方案A）：自本卡起引擎**不再产生**该类型，
 	// 常量保留是因为 DB CHECK 仍允许它（000001 起有存量行），读历史/按类型筛选要用。
 	TypePressureFluctuation AlertType = "pressure_fluctuation"

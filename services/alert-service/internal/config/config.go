@@ -55,11 +55,11 @@ type Thresholds struct {
 // DefaultThresholds PRD 默认阈值口径（与 engine.NewDefaultRuleEvaluator 一致）
 func DefaultThresholds() Thresholds {
 	return Thresholds{
-		PressureHighN:          5,     // T203: 45 → 5
+		PressureHighN:          5, // T203: 45 → 5
 		FluctuationPct:         30,
 		WearInterruptMinutes:   60,
-		SensorDriftN:           0.3,   // T203: 2.8 → 0.3
-		WearingN:               0.05,  // T203: 0.5 → 0.05
+		SensorDriftN:           0.3,  // T203: 2.8 → 0.3
+		WearingN:               0.05, // T203: 0.5 → 0.05
 		CollectIntervalMinutes: 30,
 		WearTargetHours:        22, // 与 msg-service WEAR_TARGET_HOURS 默认、§7D.12 默认一致
 	}

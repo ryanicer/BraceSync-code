@@ -1560,10 +1560,10 @@ const (
 // 缺失键默认值（PRD §7D.12 + T203 ÷10，与 @bracesync/constants DEFAULT_THRESHOLDS 对齐）
 var settingsDefaults = model.SystemSettingsDTO{
 	DailyWearTargetHours:   22,
-	PressureHighThresholdN: 5,     // T203: 45 → 5
+	PressureHighThresholdN: 5, // T203: 45 → 5
 	PressureFluctuationPct: 30,
 	WearInterruptMinutes:   60,
-	SensorDriftN:           0.3,   // T203: 2.8 → 0.3
+	SensorDriftN:           0.3, // T203: 2.8 → 0.3
 	WifiPresets:            []model.WifiPresetDTO{},
 	CollectIntervalSeconds: 1800,  // 默认 30 分钟 = 1800 秒
 	RetentionDays:          365,   // 默认保留 365 天

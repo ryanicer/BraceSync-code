@@ -289,8 +289,8 @@ type WifiPresetDTO struct {
 // T256 #4：新增 collectIntervalSeconds / retentionDays / maxPatients 三项（设计稿 系统配置.html:88-90）。
 // collectIntervalSeconds 由内部 collect_interval_minutes 换算（API 口径秒，内部存储分钟，兼容 device/alert 服务）。
 type SystemSettingsDTO struct {
-	DailyWearTargetHours   float64         `json:"dailyWearTargetHours"`
-	PressureHighThresholdN float64         `json:"pressureHighThresholdN"`
+	DailyWearTargetHours   float64 `json:"dailyWearTargetHours"`
+	PressureHighThresholdN float64 `json:"pressureHighThresholdN"`
 	// PressureLowThresholdN T257 12.4（三档合两键，PM 裁定 Q3）：设计稿 系统配置.html:96
 	// 「低压上限」≡ 告警管理页 Tab2「统一压力下限」≡ sys_configs threshold_pressure_low，
 	// 同一个键两处读写，不建第三份参数。

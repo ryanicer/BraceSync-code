@@ -53,14 +53,14 @@ func (f *fakeDevices) UpdateStatus(_ context.Context, deviceID, status string) (
 }
 
 type fakeAlerts struct {
-	mu         sync.Mutex
-	created    []NewAlert
-	active     map[string]bool      // device → 存在 active 佩戴中断告警
-	recent     map[string]bool      // device → 去重窗口内已有同类型告警
-	recentByType map[string]bool    // "device|type" → 已有同类告警（T257 2.6 日扫去重）
-	resolveAt  map[string]time.Time // device → resolve 调用时刻
-	createErr  error
-	failSince  error // T257 2.6：去重查询失败注入
+	mu           sync.Mutex
+	created      []NewAlert
+	active       map[string]bool      // device → 存在 active 佩戴中断告警
+	recent       map[string]bool      // device → 去重窗口内已有同类型告警
+	recentByType map[string]bool      // "device|type" → 已有同类告警（T257 2.6 日扫去重）
+	resolveAt    map[string]time.Time // device → resolve 调用时刻
+	createErr    error
+	failSince    error // T257 2.6：去重查询失败注入
 }
 
 func newFakeAlerts() *fakeAlerts {
@@ -463,7 +463,8 @@ func TestScan_AlertStoreErrorsTolerated(t *testing.T) {
 }
 
 // SetLogger 注入后各路径仍正常（覆盖日志分支）
-func TestScan_WithLogger(t *testing.T) {	now := time.Now()
+func TestScan_WithLogger(t *testing.T) {
+	now := time.Now()
 	devs := newFakeDevices(defaultDevice())
 	alerts := newFakeAlerts()
 	ls := newFakeLastSeen()
@@ -482,9 +483,9 @@ func TestScan_WithLogger(t *testing.T) {	now := time.Now()
 // ─────────────────────────────────────────────────────────────
 
 type fakeWear struct {
-	mu         sync.Mutex
-	minutes    map[string]int // patient|date → wear_minutes（缺失 = 无 rollup 行 = 0）
-	errFor     map[string]bool
+	mu          sync.Mutex
+	minutes     map[string]int // patient|date → wear_minutes（缺失 = 无 rollup 行 = 0）
+	errFor      map[string]bool
 	readPatient []string
 }
 
