@@ -166,17 +166,18 @@ func TestT252_CreateAdminRole_StoreFailures(t *testing.T) {
 
 func TestT252_UpdateAdminRole_PresetNameLockedOthersEditable(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.updatedRole = t252RoleRow("ROLE_SUPER_ADMIN", "超级管理员")
+	// T262：预置角色只剩 3 个（ROLE_ADMIN/ROLE_DOCTOR/ROLE_CS），改用其中之一做锁定语义用例
+	e.store.updatedRole = t252RoleRow("ROLE_ADMIN", "运营管理员")
 
 	// 预置角色改名 → 400，且不改设计稿既有语义
-	w, resp := e.do(http.MethodPut, "/api/v1/admin/roles/ROLE_SUPER_ADMIN",
+	w, resp := e.do(http.MethodPut, "/api/v1/admin/roles/ROLE_ADMIN",
 		map[string]any{"name": "万能管理员"}, t252AdminHdr())
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, resp.Message, "preset role name is locked")
 	assert.Nil(t, e.store.roleUpdDesc)
 
 	// 预置角色改描述/启停 → 放行
-	w, resp = e.do(http.MethodPut, "/api/v1/admin/roles/ROLE_SUPER_ADMIN",
+	w, resp = e.do(http.MethodPut, "/api/v1/admin/roles/ROLE_ADMIN",
 		map[string]any{"description": "IT 部门专用", "status": "disabled"}, t252AdminHdr())
 	require.Equal(t, http.StatusOK, w.Code, resp.Message)
 	require.NotNil(t, e.store.roleUpdDesc)
@@ -186,7 +187,7 @@ func TestT252_UpdateAdminRole_PresetNameLockedOthersEditable(t *testing.T) {
 	assert.Nil(t, e.store.roleUpdName)
 	require.Len(t, e.store.auditRows, 1)
 	assert.Equal(t, "permission_change", e.store.auditRows[0].Action)
-	assert.Equal(t, "ROLE_SUPER_ADMIN", e.store.auditRows[0].TargetID)
+	assert.Equal(t, "ROLE_ADMIN", e.store.auditRows[0].TargetID)
 }
 
 func TestT252_UpdateAdminRole_NonPresetRenameChecksConflict(t *testing.T) {
@@ -256,9 +257,9 @@ func TestT252_UpdateAdminRole_NotFoundAndFailure(t *testing.T) {
 // ── 删除 ──
 
 func TestT252_DeleteAdminRole(t *testing.T) {
-	// 预置角色禁删
+	// 预置角色禁删（T262：预置集收敛为 3 个，用 ROLE_CS 做用例）
 	e := newEnv(t, true, true)
-	w, resp := e.do(http.MethodDelete, "/api/v1/admin/roles/ROLE_NURSE", nil, t252AdminHdr())
+	w, resp := e.do(http.MethodDelete, "/api/v1/admin/roles/ROLE_CS", nil, t252AdminHdr())
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Equal(t, model.CodeForbidden, resp.Code)
 	assert.Contains(t, resp.Message, "preset role cannot be deleted")

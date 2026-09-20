@@ -135,11 +135,164 @@ test.describe('系统配置', () => {
 
   test('发送记录 tab：4 条记录与状态 tag', async ({ page }) => {
     await page.getByRole('tab', { name: '发送记录' }).click()
-    // el-tabs 三个 pane 同时挂载，仅可见 pane 的表格参与断言
+    // el-tabs 各 pane 同时挂载，仅可见 pane 的表格参与断言
     const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
     await expect(rows).toHaveCount(4)
     await expect(rows.filter({ hasText: 'NTF-001' })).toContainText('已发送')
     await expect(rows.filter({ hasText: 'NTF-002' })).toContainText('失败')
     await expect(rows.filter({ hasText: 'NTF-003' })).toContainText('降级短信')
+  })
+})
+
+test.describe('操作日志（T253-12.3）', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.settings)
+    await page.getByRole('tab', { name: '操作日志' }).click()
+  })
+
+  test('渲染 6 条日志与操作类型 tag、总数', async ({ page }) => {
+    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
+    await expect(rows).toHaveCount(6)
+    await expect(page.locator('.pagination')).toContainText('共 6 条')
+    await expect(rows.filter({ hasText: '配置变更' })).toHaveCount(2)
+    await expect(rows.filter({ hasText: '权限变更' })).toHaveCount(1)
+    await expect(rows.filter({ hasText: '数据查看' })).toHaveCount(1)
+    const loginRow = rows.filter({ hasText: '登录成功' })
+    await expect(loginRow).toContainText('张建国')
+    await expect(loginRow.locator('.el-tag--success')).toContainText('登录')
+  })
+
+  test('操作类型筛选：登录 → 1 条', async ({ page }) => {
+    await pickSelectOption(page, page.locator('.audit-action'), '登录')
+    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('张建国')
+  })
+
+  test('操作人员搜索：张建国 → 2 条（回车触发）', async ({ page }) => {
+    await page.locator('.audit-operator input').fill('张建国')
+    await page.locator('.audit-operator input').press('Enter')
+    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.filter({ hasText: '数据查看' })).toContainText('PT-001')
+    await expect(rows.filter({ hasText: '登录成功' })).toHaveCount(1)
+  })
+
+  test('日期筛选：2026-09-19 → 1 条配置变更', async ({ page }) => {
+    await page.locator('.audit-date input').fill('2026-09-19')
+    await page.locator('.audit-date input').press('Enter')
+    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('写入系统参数')
+  })
+})
+
+test.describe('设备管理 T268（注册入口 + 列表列 + 详情）', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.devices)
+  })
+
+  test('列表列头对齐设计稿且顶栏有注册设备按钮', async ({ page }) => {
+    for (const head of ['设备ID', '型号', '患者', '绑定时间', '固件版本', '连接的WiFi', '状态', '操作']) {
+      await expect(page.locator('.el-table__header-wrapper th', { hasText: head })).toBeVisible()
+    }
+    await expect(page.getByRole('button', { name: '注册设备' })).toBeVisible()
+    // 操作列「详情」
+    await expect(tableRows(page).first().getByRole('button', { name: '详情' })).toBeVisible()
+  })
+
+  test('注册设备：非法设备ID前端拦截', async ({ page }) => {
+    await page.getByRole('button', { name: '注册设备' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('AB')
+    await dialog.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('4-48 位')
+    await expect(tableRows(page).filter({ hasText: 'AB' })).toHaveCount(0)
+    await dialog.getByRole('button', { name: '取消' }).click()
+  })
+
+  test('注册设备：合法ID注册成功出现在列表（未绑定）', async ({ page }) => {
+    await page.getByRole('button', { name: '注册设备' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('E2E-DEV-001')
+    await dialog.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('设备已注册')
+    const row = tableRows(page).filter({ hasText: 'E2E-DEV-001' })
+    await expect(row).toHaveCount(1)
+    await expect(row).toContainText('未绑定')
+    await expect(row).toContainText('PRS-ML05-RC')
+  })
+
+  test('详情抽屉：设备信息 + 绑定历史', async ({ page }) => {
+    await tableRows(page).filter({ hasText: 'DEV-A3F312' }).getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.el-drawer')
+    await expect(drawer).toContainText('设备详情')
+    await expect(drawer).toContainText('DEV-A3F312')
+    await expect(drawer).toContainText('绑定历史')
+    await expect(drawer.locator('.binding-table tbody tr').first()).toContainText('PT-001')
+  })
+})
+
+test.describe('角色管理（T253-11.2）', () => {
+  // 页面同时有 角色列表 + 权限矩阵 两张表，断言须圈定在角色列表卡内
+  function listRows(page: import('@playwright/test').Page) {
+    return tableRows(page, page.locator('.page-card').filter({ hasText: '角色列表' }))
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.roles)
+  })
+
+  test('渲染角色列表（按后端返回）与操作列，预置角色删除禁用', async ({ page }) => {
+    const rows = listRows(page)
+    await expect(rows).toHaveCount(3) // mock = 3 个预置登录角色
+    await expect(rows.filter({ hasText: '运营管理员' })).toContainText('启用')
+    await expect(rows.filter({ hasText: '运营管理员' }).getByRole('button', { name: '删除' })).toBeDisabled()
+    await expect(rows.first().getByRole('button', { name: '编辑' })).toBeVisible()
+  })
+
+  test('新增角色（模板）→ 编辑描述 → popconfirm 删除，全链路', async ({ page }) => {
+    await page.getByRole('button', { name: '+ 新增角色' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('E2E巡检角色')
+    await pickSelectOption(page, dialog.locator('.role-template'), '康复师')
+    await dialog.getByRole('button', { name: '保存角色' }).click()
+    await expect(adminMessage(page)).toContainText('角色已创建')
+
+    const row = listRows(page).filter({ hasText: 'E2E巡检角色' })
+    await expect(row).toHaveCount(1)
+    await row.getByRole('button', { name: '编辑' }).click()
+    await dialog.locator('input').nth(1).fill('巡检用自定义角色描述')
+    await dialog.getByRole('button', { name: '保存角色' }).click()
+    await expect(adminMessage(page)).toContainText('角色已保存')
+    await expect(row).toContainText('巡检用自定义角色描述')
+
+    await row.getByRole('button', { name: '删除' }).click()
+    await page.locator('.el-popconfirm').getByRole('button', { name: '确定' }).click()
+    await expect(adminMessage(page)).toContainText('角色已删除')
+    await expect(listRows(page).filter({ hasText: 'E2E巡检角色' })).toHaveCount(0)
+  })
+
+  test('新增角色（自定义）未勾选模块提示且不提交', async ({ page }) => {
+    await page.getByRole('button', { name: '+ 新增角色' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('E2E空模块角色')
+    await dialog.getByRole('button', { name: '保存角色' }).click()
+    await expect(adminMessage(page)).toContainText('至少勾选一个功能模块')
+    await expect(listRows(page).filter({ hasText: 'E2E空模块角色' })).toHaveCount(0)
+    await dialog.getByRole('button', { name: '取消' }).click()
+  })
+
+  test('编辑预置角色：名称锁定仅描述可改', async ({ page }) => {
+    const row = listRows(page).filter({ hasText: '运营管理员' })
+    await row.getByRole('button', { name: '编辑' }).click()
+    const dialog = page.locator('.el-dialog')
+    await expect(dialog.locator('input').first()).toBeDisabled()
+    await dialog.locator('input').nth(1).fill('系统全部权限（运营 / 配置 / 权限管理）')
+    await dialog.getByRole('button', { name: '保存角色' }).click()
+    await expect(adminMessage(page)).toContainText('角色已保存')
   })
 })

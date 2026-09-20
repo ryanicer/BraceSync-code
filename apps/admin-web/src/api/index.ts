@@ -159,6 +159,33 @@ export async function fetchDevices(params: { keyword?: string }): Promise<Pagina
   return request<PaginatedResponse<Device>>({ url: '/api/v1/devices', data: params as Record<string, unknown> })
 }
 
+// T268: 设备详情 / 绑定历史 / 注册（对齐 device-service：GET /devices/:id、GET /devices/:id/bindings、POST /devices 幂等）
+export interface DeviceBindingRecord {
+  bindingId: string
+  deviceId: string
+  patientId: string
+  bindAt: string
+  unbindAt: string | null
+  reason: string | null
+  operatorId: string | null
+}
+
+export async function fetchDeviceDetail(deviceId: string): Promise<Device> {
+  if (USE_MOCK) { await delay(); return deviceMock.mockDeviceDetail(deviceId) }
+  return request<Device>({ url: `/api/v1/devices/${encodeURIComponent(deviceId)}` })
+}
+
+export async function fetchDeviceBindings(deviceId: string): Promise<DeviceBindingRecord[]> {
+  if (USE_MOCK) { await delay(); return deviceMock.mockDeviceBindings(deviceId) }
+  const res = await request<{ list: DeviceBindingRecord[] }>({ url: `/api/v1/devices/${encodeURIComponent(deviceId)}/bindings` })
+  return res.list
+}
+
+export async function registerDeviceApi(data: { deviceId: string; model?: string }): Promise<Device> {
+  if (USE_MOCK) { await delay(); return deviceMock.mockRegisterDevice(data) }
+  return request<Device>({ url: '/api/v1/devices', method: 'POST', data: data as unknown as Record<string, unknown> })
+}
+
 export async function fetchTeams(): Promise<Team[]> {
   if (USE_MOCK) { await delay(); return orgMock.mockTeams() }
   return request<Team[]>({ url: '/api/v1/teams' })
@@ -304,6 +331,43 @@ export async function updateRolePermissionsApi(roleId: string, permissions: stri
   await request<null>({ url: `/api/v1/admin/roles/${roleId}/permissions`, method: 'PUT', data: { permissions } })
 }
 
+// T253-11.2: 角色增删改 + 模板（对齐 T252 契约 api-contracts.ts createAdminRole/updateAdminRole/deleteAdminRole）
+export interface RoleTemplateItem {
+  key: string
+  name: string
+  description: string
+  permissions: { scope: string; modules: string[] }
+}
+
+export async function fetchRoleTemplates(): Promise<RoleTemplateItem[]> {
+  if (USE_MOCK) { await delay(); return systemMock.mockRoleTemplates() }
+  return request<RoleTemplateItem[]>({ url: '/api/v1/admin/role-templates' })
+}
+
+export async function createRoleApi(data: {
+  name: string
+  description?: string
+  template?: string
+  permissions?: { scope: string; modules: string[] }
+}): Promise<AdminRoleRow> {
+  if (USE_MOCK) { await delay(); return systemMock.mockCreateRole(data) }
+  return request<AdminRoleRow>({ url: '/api/v1/admin/roles', method: 'POST', data: data as unknown as Record<string, unknown> })
+}
+
+export async function updateRoleApi(roleId: string, data: {
+  name?: string
+  description?: string
+  status?: 'enabled' | 'disabled'
+}): Promise<AdminRoleRow> {
+  if (USE_MOCK) { await delay(); return systemMock.mockUpdateRole(roleId, data) }
+  return request<AdminRoleRow>({ url: `/api/v1/admin/roles/${roleId}`, method: 'PUT', data: data as unknown as Record<string, unknown> })
+}
+
+export async function deleteRoleApi(roleId: string): Promise<void> {
+  if (USE_MOCK) { await delay(); systemMock.mockDeleteRole(roleId); return }
+  await request<null>({ url: `/api/v1/admin/roles/${roleId}`, method: 'DELETE' })
+}
+
 export async function fetchSystemSettings(): Promise<SystemSettings> {
   if (USE_MOCK) { await delay(); return systemMock.mockSystemSettings() }
   return request<SystemSettings>({ url: '/api/v1/admin/settings' })
@@ -329,6 +393,23 @@ export async function fetchNotificationLogs(params: { patientId?: string; channe
   if (USE_MOCK) { await delay(); return systemMock.mockNotificationLogs(params) }
   // 契约已定（api-contracts.ts getNotificationLogs，msg-service）
   return request<PaginatedResponse<NotificationRecord>>({ url: '/api/v1/admin/notification-logs', data: params as Record<string, unknown> })
+}
+
+// ========== 操作日志（T253-12.3，契约 docs/api/api-contracts.ts getAuditLogs，T252 后端） ==========
+
+export async function fetchAuditLogsApi(params: {
+  date?: string
+  from?: string
+  to?: string
+  action?: string
+  operator?: string
+  targetType?: string
+  targetId?: string
+  page?: number
+  pageSize?: number
+}): Promise<PaginatedResponse<systemMock.AuditLog>> {
+  if (USE_MOCK) { await delay(); return systemMock.mockAuditLogs(params) }
+  return request<PaginatedResponse<systemMock.AuditLog>>({ url: '/api/v1/admin/audit-logs', data: params as Record<string, unknown> })
 }
 
 // ========== 展示辅助（mock 期姓名映射，真实模式后端 join 返回后可移除） ==========

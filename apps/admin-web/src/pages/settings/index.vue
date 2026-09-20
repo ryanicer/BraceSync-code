@@ -107,6 +107,63 @@
           </el-table>
         </div>
       </el-tab-pane>
+
+      <!-- 操作日志（T253-12.3，设计稿 系统配置.html:168-193 Tab3） -->
+      <el-tab-pane label="操作日志" name="audit-logs">
+        <div class="page-card">
+          <div class="audit-toolbar">
+            <el-date-picker
+              v-model="auditDate"
+              type="date"
+              placeholder="全部日期"
+              value-format="YYYY-MM-DD"
+              clearable
+              class="audit-date"
+              @change="handleAuditSearch"
+            />
+            <el-select v-model="auditAction" placeholder="全部操作" clearable class="audit-action" @change="handleAuditSearch">
+              <el-option label="登录" value="login" />
+              <el-option label="数据修改" value="data_modify" />
+              <el-option label="配置变更" value="config_change" />
+              <el-option label="权限变更" value="permission_change" />
+            </el-select>
+            <el-input
+              v-model="auditOperator"
+              placeholder="搜索操作人员..."
+              clearable
+              class="audit-operator"
+              @keyup.enter="handleAuditSearch"
+              @clear="handleAuditSearch"
+            />
+            <el-button type="primary" @click="handleAuditSearch">查询</el-button>
+          </div>
+          <el-table :data="auditLogs" size="small" v-loading="loadingAudit">
+            <el-table-column label="时间" width="170">
+              <template #default="{ row }">{{ formatAuditTime(row.ts) }}</template>
+            </el-table-column>
+            <el-table-column label="操作人员" width="140">
+              <template #default="{ row }">{{ row.operatorName || row.operatorId || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="IP地址" width="140">
+              <template #default="{ row }">{{ row.ip || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="操作类型" width="110">
+              <template #default="{ row }">
+                <el-tag :type="auditActionType(row.action)" size="small">{{ row.actionLabel || row.action }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="description" label="操作描述" min-width="280" show-overflow-tooltip />
+          </el-table>
+          <el-pagination
+            class="pagination"
+            v-model:current-page="auditPage"
+            :total="auditTotal"
+            :page-size="auditPageSize"
+            layout="total, prev, pager, next"
+            @current-change="loadAuditLogs"
+          />
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -117,9 +174,9 @@ import { ElMessage } from 'element-plus'
 import type { NotifyRule, NotificationRecord, NotifyChannel, NotifyTarget, AlertType } from '@bracesync/shared-types'
 import {
   fetchSystemSettings, saveSystemSettingsApi, fetchNotifyRules,
-  updateNotifyRuleApi, fetchNotificationLogs, patientNameOf,
+  updateNotifyRuleApi, fetchNotificationLogs, patientNameOf, fetchAuditLogsApi,
 } from '../../api'
-import type { SystemSettings } from '../../mock/system'
+import type { SystemSettings, AuditLog } from '../../mock/system'
 
 const activeTab = ref('thresholds')
 const loading = ref(false)
@@ -165,6 +222,58 @@ function logStatusType(status: NotificationRecord['status']): 'info' | 'success'
 
 function formatTime(iso: string): string {
   return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`
+}
+
+// ===== 操作日志（T253-12.3） =====
+const auditLogs = ref<AuditLog[]>([])
+const auditTotal = ref(0)
+const auditPage = ref(1)
+const auditPageSize = ref(20)
+const auditDate = ref('')
+const auditAction = ref('')
+const auditOperator = ref('')
+const loadingAudit = ref(false)
+
+function formatAuditTime(ts: string): string {
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ts
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+function auditActionType(action: string): 'primary' | 'warning' | 'success' | 'danger' | 'info' {
+  const map: Record<string, 'primary' | 'warning' | 'success' | 'danger' | 'info'> = {
+    data_modify: 'primary',
+    config_change: 'warning',
+    login: 'success',
+    permission_change: 'danger',
+    data_read: 'info',
+  }
+  return map[action] ?? 'info'
+}
+
+async function loadAuditLogs() {
+  loadingAudit.value = true
+  try {
+    const res = await fetchAuditLogsApi({
+      date: auditDate.value || undefined,
+      action: auditAction.value || undefined,
+      operator: auditOperator.value || undefined,
+      page: auditPage.value,
+      pageSize: auditPageSize.value,
+    })
+    auditLogs.value = res.list
+    auditTotal.value = res.total
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载操作日志失败')
+  } finally {
+    loadingAudit.value = false
+  }
+}
+
+function handleAuditSearch() {
+  auditPage.value = 1
+  loadAuditLogs()
 }
 
 async function saveSettings() {
@@ -228,6 +337,8 @@ onMounted(async () => {
   } finally {
     loadingLogs.value = false
   }
+
+  loadAuditLogs()
 })
 </script>
 
@@ -239,5 +350,24 @@ onMounted(async () => {
   font-size: 12px;
   color: #999;
   margin-left: 12px;
+}
+.audit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.audit-date {
+  width: 150px;
+}
+.audit-action {
+  width: 140px;
+}
+.audit-operator {
+  width: 200px;
+}
+.pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
 }
 </style>

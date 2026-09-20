@@ -118,20 +118,15 @@ func stripScopeBindPrefix(sub string) string {
 }
 
 // 预置角色（PRD §7D.11，权限系统锁定标识）
-// T252 11.4：后 5 条是设计稿 admin/权限控制.html:100-104 的预置角色（migration 000016 播种）。
+// T262：Boss 2026-09-20 裁定登录角色只 3 个 —— 运营管理员 / 医生 / 客服；
+// 主任医师 / 主治医师 / 康复师 / 护士是**医护职称**，走 doctors.title，不是角色
+// （000016 误播的 5 条已由 migration 000017 删除）。
 // 命中本表的锁定语义见 11.2：禁删除（403）、禁改名（400），描述与启停仍可改。
-// 🔴 网关 RBAC / 登录签发链路按字面量匹配的只有前 3 条；后 5 条尚无登录身份，
-//
-//	能否真登进去取决于网关矩阵，已登记 T252 交件待裁。
+// 网关 RBAC / 登录签发链路按字面量匹配的也正是这 3 条（services/gateway/cmd/server/rbac.go:42-44）。
 var presetRoles = map[string]struct{}{
-	"ROLE_ADMIN":            {},
-	"ROLE_DOCTOR":           {},
-	"ROLE_CS":               {},
-	"ROLE_SUPER_ADMIN":      {},
-	"ROLE_CHIEF_DOCTOR":     {},
-	"ROLE_ATTENDING_DOCTOR": {},
-	"ROLE_REHAB_THERAPIST":  {},
-	"ROLE_NURSE":            {},
+	"ROLE_ADMIN":  {},
+	"ROLE_DOCTOR": {},
+	"ROLE_CS":     {},
 }
 
 // Handler HTTP 处理器（signer/phoneCipher 允许为 nil：对应登录/技师写入返回 500 配置错误；
