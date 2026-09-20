@@ -95,3 +95,63 @@ test.describe('处理流程', () => {
     await expect(row).toContainText('待处理')
   })
 })
+
+test.describe('告警规则配置（T253-2.2）', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.alerts)
+    await page.getByRole('tab', { name: '告警规则配置' }).click()
+  })
+
+  test('渲染 4×5 网格 20 点 + 两张规则卡', async ({ page }) => {
+    await expect(page.locator('.alert-grid .grid-cell')).toHaveCount(20)
+    await expect(page.locator('.card-title').filter({ hasText: '按采集点设置告警阈值' })).toBeVisible()
+    await expect(page.locator('.card-title').filter({ hasText: '全局告警规则' })).toBeVisible()
+    // 首格 P01/R1C1 默认全选：已选 20 / 20
+    await expect(page.locator('.selected-count')).toContainText('已选: 20 / 20')
+  })
+
+  test('点击格子切换勾选并更新已选计数', async ({ page }) => {
+    const firstCell = page.locator('.alert-grid .grid-cell').first()
+    await expect(firstCell).toHaveClass(/monitored/)
+    await firstCell.click()
+    // 单击 250ms 延迟分派（与双击编辑区分）
+    await expect(firstCell).not.toHaveClass(/monitored/, { timeout: 3000 })
+    await expect(page.locator('.selected-count')).toContainText('已选: 19 / 20')
+  })
+
+  test('全不选 → 已选 0，全选恢复 20', async ({ page }) => {
+    await page.getByRole('button', { name: '全不选' }).click()
+    await expect(page.locator('.selected-count')).toContainText('已选: 0 / 20')
+    await page.getByRole('button', { name: '全选 (20点)' }).click()
+    await expect(page.locator('.selected-count')).toContainText('已选: 20 / 20')
+  })
+
+  test('双击格子打开独立阈值编辑弹窗并保存', async ({ page }) => {
+    const firstCell = page.locator('.alert-grid .grid-cell').first()
+    await firstCell.dblclick()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '独立阈值' })
+    await expect(dialog).toBeVisible()
+    // 上限留空 = 跟随统一；下限独立 8N
+    await dialog.locator('.el-form-item').nth(1).locator('input').fill('8')
+    await dialog.getByRole('button', { name: '保存' }).click()
+    await expect(dialog).toBeHidden()
+    // 首格 chip 显示生效值 45/8N（统一上限 45 / 独立下限 8）
+    await expect(page.locator('.point-chips .point-chip').first()).toContainText('P01 45/8N')
+  })
+
+  test('保存规则成功', async ({ page }) => {
+    await page.getByRole('button', { name: '保存规则' }).click()
+    await expect(adminMessage(page)).toContainText('保存成功')
+  })
+
+  test('恢复默认成功', async ({ page }) => {
+    await page.getByRole('button', { name: '恢复默认' }).click()
+    await expect(adminMessage(page)).toContainText('已恢复默认')
+  })
+
+  test('保存全局规则成功', async ({ page }) => {
+    await page.getByRole('button', { name: '保存全局规则' }).click()
+    await expect(adminMessage(page)).toContainText('全局规则保存成功')
+  })
+})
