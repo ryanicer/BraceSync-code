@@ -331,6 +331,43 @@ export async function updateRolePermissionsApi(roleId: string, permissions: stri
   await request<null>({ url: `/api/v1/admin/roles/${roleId}/permissions`, method: 'PUT', data: { permissions } })
 }
 
+// T253-11.2: 角色增删改 + 模板（对齐 T252 契约 api-contracts.ts createAdminRole/updateAdminRole/deleteAdminRole）
+export interface RoleTemplateItem {
+  key: string
+  name: string
+  description: string
+  permissions: { scope: string; modules: string[] }
+}
+
+export async function fetchRoleTemplates(): Promise<RoleTemplateItem[]> {
+  if (USE_MOCK) { await delay(); return systemMock.mockRoleTemplates() }
+  return request<RoleTemplateItem[]>({ url: '/api/v1/admin/role-templates' })
+}
+
+export async function createRoleApi(data: {
+  name: string
+  description?: string
+  template?: string
+  permissions?: { scope: string; modules: string[] }
+}): Promise<AdminRoleRow> {
+  if (USE_MOCK) { await delay(); return systemMock.mockCreateRole(data) }
+  return request<AdminRoleRow>({ url: '/api/v1/admin/roles', method: 'POST', data: data as unknown as Record<string, unknown> })
+}
+
+export async function updateRoleApi(roleId: string, data: {
+  name?: string
+  description?: string
+  status?: 'enabled' | 'disabled'
+}): Promise<AdminRoleRow> {
+  if (USE_MOCK) { await delay(); return systemMock.mockUpdateRole(roleId, data) }
+  return request<AdminRoleRow>({ url: `/api/v1/admin/roles/${roleId}`, method: 'PUT', data: data as unknown as Record<string, unknown> })
+}
+
+export async function deleteRoleApi(roleId: string): Promise<void> {
+  if (USE_MOCK) { await delay(); systemMock.mockDeleteRole(roleId); return }
+  await request<null>({ url: `/api/v1/admin/roles/${roleId}`, method: 'DELETE' })
+}
+
 export async function fetchSystemSettings(): Promise<SystemSettings> {
   if (USE_MOCK) { await delay(); return systemMock.mockSystemSettings() }
   return request<SystemSettings>({ url: '/api/v1/admin/settings' })
