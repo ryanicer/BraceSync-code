@@ -259,25 +259,26 @@ func TestUploadBatch_TooManyFrames(t *testing.T) {
 
 func TestGetHistory_PaginationClamp(t *testing.T) {
 	srv := newTestServer(nil)
+	staffHdr := map[string]string{headerRole: roleAdmin} // T264：staff 身份放行
 
 	// 缺 date → 30001
-	w := doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/records?period=day", "", nil)
+	w := doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/records?period=day", "", staffHdr)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	code, _ := decodeBody(t, w)
 	assert.Equal(t, model.CodeQueryParam, code)
 
 	// 非法 page → 30001
-	w = doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/records?date=2026-08-08&page=0", "", nil)
+	w = doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/records?date=2026-08-08&page=0", "", staffHdr)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// pageSize 超上限截断为 100（架构 §3.5）
-	w = doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/records?date=2026-08-08&pageSize=500", "", nil)
+	w = doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/records?date=2026-08-08&pageSize=500", "", staffHdr)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, 100, srv.records.lastPageSize)
 	assert.Equal(t, 1, srv.records.lastPage)
 
 	// 默认分页 page=1 pageSize=20
-	w = doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/records?date=2026-08-08", "", nil)
+	w = doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/records?date=2026-08-08", "", staffHdr)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, 20, srv.records.lastPageSize)
 	code, data := decodeBody(t, w)
@@ -287,7 +288,7 @@ func TestGetHistory_PaginationClamp(t *testing.T) {
 
 func TestGetRealtime_OK(t *testing.T) {
 	srv := newTestServer(nil)
-	w := doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/realtime", "", nil)
+	w := doReq(t, srv, http.MethodGet, "/api/v1/patients/"+hPatient+"/realtime", "", map[string]string{headerRole: roleAdmin})
 	require.Equal(t, http.StatusOK, w.Code)
 	code, data := decodeBody(t, w)
 	assert.Equal(t, 0, code)
