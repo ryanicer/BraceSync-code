@@ -174,3 +174,44 @@ export function mockNotificationLogs(params: { patientId?: string; channel?: str
   const start = (page - 1) * pageSize
   return { list: list.slice(start, start + pageSize), total: list.length, page, pageSize }
 }
+
+// ========== T253-12.3 操作日志 mock（契约：docs/api/api-contracts.ts AuditLog/getAuditLogs，T252 后端同形） ==========
+
+/** 审计日志行（对齐 DB audit_logs，PRD §8.2） */
+export interface AuditLog {
+  logId: number
+  operatorId: string | null
+  operatorName: string | null
+  operatorRole: string | null // ROLE_ADMIN / ROLE_DOCTOR / ROLE_CS / patient / technician
+  action: string // login / data_modify / config_change / permission_change / data_read
+  actionLabel: string
+  targetType: string | null
+  targetId: string | null
+  description: string
+  detail: Record<string, unknown> | null
+  ip: string | null
+  ts: string
+}
+
+const AUDIT_LOGS: AuditLog[] = [
+  { logId: 6, operatorId: 'ops_admin', operatorName: '运营小张', operatorRole: 'ROLE_ADMIN', action: 'config_change', actionLabel: '配置变更', targetType: 'alert_rule', targetId: 'points', description: '保存告警规则：统一上限 45N / 下限 10N，逐点变更 20 个', detail: null, ip: '192.168.1.10', ts: '2026-09-20T19:58:10+08:00' },
+  { logId: 5, operatorId: 'ops_admin', operatorName: '运营小张', operatorRole: 'ROLE_ADMIN', action: 'permission_change', actionLabel: '权限变更', targetType: 'role', targetId: 'ROLE-DOCTOR', description: '写入角色 ROLE-DOCTOR 的权限矩阵', detail: null, ip: '192.168.1.10', ts: '2026-09-20T18:20:08+08:00' },
+  { logId: 4, operatorId: 'DOC-001', operatorName: '张建国', operatorRole: 'ROLE_DOCTOR', action: 'data_read', actionLabel: '数据查看', targetType: 'patient', targetId: 'PT-001', description: '查看患者档案 PT-001（等保 §9.2a 读留痕）', detail: null, ip: '192.168.1.55', ts: '2026-09-20T16:35:21+08:00' },
+  { logId: 3, operatorId: 'ops_admin', operatorName: '运营小张', operatorRole: 'ROLE_ADMIN', action: 'data_modify', actionLabel: '数据修改', targetType: 'technician', targetId: 'TEC-002', description: '创建技师账号', detail: null, ip: '192.168.1.10', ts: '2026-09-20T14:12:33+08:00' },
+  { logId: 2, operatorId: 'DOC-001', operatorName: '张建国', operatorRole: 'ROLE_DOCTOR', action: 'login', actionLabel: '登录', targetType: null, targetId: null, description: '登录成功', detail: null, ip: '192.168.1.55', ts: '2026-09-20T08:55:42+08:00' },
+  { logId: 1, operatorId: 'ops_admin', operatorName: '运营小张', operatorRole: 'ROLE_ADMIN', action: 'config_change', actionLabel: '配置变更', targetType: 'sys_config', targetId: null, description: '写入系统参数（§7D.12）', detail: null, ip: '192.168.1.10', ts: '2026-09-19T17:45:02+08:00' },
+]
+
+export function mockAuditLogs(params: { date?: string; action?: string; operator?: string; page?: number; pageSize?: number }): { list: AuditLog[]; total: number; page: number; pageSize: number } {
+  const page = params.page ?? 1
+  const pageSize = params.pageSize ?? 20
+  let list = AUDIT_LOGS.map((r) => ({ ...r }))
+  if (params.date) list = list.filter((r) => r.ts.slice(0, 10) === params.date)
+  if (params.action) list = list.filter((r) => r.action === params.action)
+  if (params.operator) {
+    const kw = params.operator.toLowerCase()
+    list = list.filter((r) => (r.operatorId ?? '').toLowerCase().includes(kw) || (r.operatorName ?? '').toLowerCase().includes(kw))
+  }
+  const start = (page - 1) * pageSize
+  return { list: list.slice(start, start + pageSize), total: list.length, page, pageSize }
+}

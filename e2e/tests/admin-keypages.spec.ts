@@ -135,12 +135,56 @@ test.describe('系统配置', () => {
 
   test('发送记录 tab：4 条记录与状态 tag', async ({ page }) => {
     await page.getByRole('tab', { name: '发送记录' }).click()
-    // el-tabs 三个 pane 同时挂载，仅可见 pane 的表格参与断言
+    // el-tabs 各 pane 同时挂载，仅可见 pane 的表格参与断言
     const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
     await expect(rows).toHaveCount(4)
     await expect(rows.filter({ hasText: 'NTF-001' })).toContainText('已发送')
     await expect(rows.filter({ hasText: 'NTF-002' })).toContainText('失败')
     await expect(rows.filter({ hasText: 'NTF-003' })).toContainText('降级短信')
+  })
+})
+
+test.describe('操作日志（T253-12.3）', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.settings)
+    await page.getByRole('tab', { name: '操作日志' }).click()
+  })
+
+  test('渲染 6 条日志与操作类型 tag、总数', async ({ page }) => {
+    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
+    await expect(rows).toHaveCount(6)
+    await expect(page.locator('.pagination')).toContainText('共 6 条')
+    await expect(rows.filter({ hasText: '配置变更' })).toHaveCount(2)
+    await expect(rows.filter({ hasText: '权限变更' })).toHaveCount(1)
+    await expect(rows.filter({ hasText: '数据查看' })).toHaveCount(1)
+    const loginRow = rows.filter({ hasText: '登录成功' })
+    await expect(loginRow).toContainText('张建国')
+    await expect(loginRow.locator('.el-tag--success')).toContainText('登录')
+  })
+
+  test('操作类型筛选：登录 → 1 条', async ({ page }) => {
+    await pickSelectOption(page, page.locator('.audit-action'), '登录')
+    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('张建国')
+  })
+
+  test('操作人员搜索：张建国 → 2 条（回车触发）', async ({ page }) => {
+    await page.locator('.audit-operator input').fill('张建国')
+    await page.locator('.audit-operator input').press('Enter')
+    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.filter({ hasText: '数据查看' })).toContainText('PT-001')
+    await expect(rows.filter({ hasText: '登录成功' })).toHaveCount(1)
+  })
+
+  test('日期筛选：2026-09-19 → 1 条配置变更', async ({ page }) => {
+    await page.locator('.audit-date input').fill('2026-09-19')
+    await page.locator('.audit-date input').press('Enter')
+    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('写入系统参数')
   })
 })
 
