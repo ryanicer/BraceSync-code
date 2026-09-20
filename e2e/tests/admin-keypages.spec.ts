@@ -92,11 +92,16 @@ test.describe('系统配置', () => {
 
   test('阈值表单加载默认值（对齐 DEFAULT_THRESHOLDS）', async ({ page }) => {
     await expect(page.getByText('全局系统参数')).toBeVisible()
+    await expect(page.locator('.settings-form')).toContainText('数据采集间隔')
     await expect(page.locator('.settings-form')).toContainText('每日佩戴目标时长')
     await expect(page.locator('.settings-form')).toContainText('压力偏高阈值')
     await expect(page.locator('.settings-form')).toContainText('佩戴中断判定时间')
-    // mock 默认每日佩戴目标 22h（el-input-number 值在 input value 上，非文本节点）
-    await expect(page.locator('.settings-form .el-input-number').first().locator('input')).toHaveValue('22')
+    // T247 新增采集间隔为第一项；定位"每日佩戴目标时长"对应的 el-input-number
+    const formItem = page.locator('.el-form-item', { hasText: '每日佩戴目标时长' })
+    await expect(formItem.locator('.el-input-number input')).toHaveValue('22')
+    // 采集间隔默认 60s
+    const intervalItem = page.locator('.el-form-item', { hasText: '数据采集间隔' })
+    await expect(intervalItem.locator('.el-input-number input')).toHaveValue('60')
   })
 
   test('保存配置成功提示', async ({ page }) => {

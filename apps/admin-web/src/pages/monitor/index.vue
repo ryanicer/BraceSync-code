@@ -38,34 +38,34 @@
       </div>
     </div>
 
-    <!-- 今日峰值卡片 -->
+    <!-- 患者摘要卡片（设计稿 实时监控.html:133-150） -->
     <div class="page-card peak-card">
       <div class="card-title">
-        今日峰值
+        患者摘要
         <span class="realtime-tag small">
           <span class="realtime-dot" />
           实时累计
         </span>
       </div>
       <div class="peak-grid">
+        <div class="peak-cell">
+          <div class="peak-label">今日累计佩戴时长</div>
+          <div class="peak-num">{{ snapshot?.todayHours != null ? snapshot.todayHours.toFixed(1) + ' h' : '--' }}</div>
+        </div>
         <div class="peak-cell peak-value">
-          <div class="peak-label">峰值压力</div>
-          <div class="peak-num" :style="{ color: hmColor(todayPeak?.value ?? 0, HM_MAX_N) }">
-            {{ todayPeak ? todayPeak.value.toFixed(2) + ' N' : '--' }}
+          <div class="peak-label">当前最大压力</div>
+          <div class="peak-num" :style="{ color: hmColor(curFrameValue, HM_MAX_N) }">
+            {{ curFrameValue.toFixed(1) }} N
           </div>
         </div>
         <div class="peak-cell">
-          <div class="peak-label">最大点位</div>
+          <div class="peak-label">最大压力采集点</div>
           <div class="peak-text">{{ todayPeak ? todayPeak.pointId + ' (' + todayPeak.label + ')' : '--' }}</div>
         </div>
         <div class="peak-cell">
-          <div class="peak-label">发生时间</div>
-          <div class="peak-text">{{ todayPeak?.time ?? '--' }}</div>
-        </div>
-        <div class="peak-cell">
-          <div class="peak-label">当前帧值</div>
-          <div class="peak-text" :style="{ color: hmColor(curFrameValue, HM_MAX_N) }">
-            {{ curFrameValue.toFixed(2) }} N
+          <div class="peak-label">今日异常事件</div>
+          <div class="peak-num" :style="{ color: (snapshot?.events ?? 0) > 0 ? '#ee5a24' : '#10ac84' }">
+            {{ snapshot?.events ?? 0 }}
           </div>
         </div>
       </div>
@@ -110,11 +110,11 @@
                 :key="pt.pointId"
                 :class="['hm-cell', { 'hm-cell-max': pt.isMax, 'hm-cell-pulse': pt.isMax }]"
                 :style="{ background: hmColor(pt.pressureValue, HM_MAX_N) }"
-                :title="`${pt.pointId} (${pt.label}): ${pt.pressureValue.toFixed(2)} N`"
+                :title="`${pt.pointId} (${pt.label}): ${pt.pressureValue.toFixed(1)} N`"
                 @click="selectHeatmapPoint(pt)"
               >
                 <span class="hm-cell-id">{{ pt.pointId }}</span>
-                <span class="hm-cell-val">{{ pt.pressureValue.toFixed(2) }}</span>
+                <span class="hm-cell-val">{{ pt.pressureValue.toFixed(0) }}</span>
               </div>
             </div>
           </div>
@@ -125,6 +125,68 @@
             <span class="hm-lg-item"><span class="hm-swatch" style="background: #ef4444" />高压</span>
           </div>
           <div class="hm-detail">{{ heatmapDetail }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 采集点实时数值表 + 近期异常事件（设计稿 实时监控.html:151-170） -->
+    <div class="bottom-row">
+      <!-- 采集点表 -->
+      <div class="page-card">
+        <div class="card-title">采集点实时数值表</div>
+        <div class="points-table-wrap">
+          <table class="points-table">
+            <thead>
+              <tr>
+                <th>采集点</th>
+                <th>位置</th>
+                <th>当前压力 (N)</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="pt in flatHeatmap" :key="pt.pointId" :class="{ 'point-max': pt.isMax }">
+                <td>{{ pt.pointId }}</td>
+                <td>{{ pt.label }}</td>
+                <td :style="{ color: hmColor(pt.pressureValue, HM_MAX_N) }">{{ pt.pressureValue.toFixed(1) }}</td>
+                <td>
+                  <span class="status-dot" :class="pointStatus(pt.pressureValue)" />
+                  {{ pointStatusLabel(pt.pressureValue) }}
+                </td>
+              </tr>
+              <tr v-if="flatHeatmap.length === 0">
+                <td colspan="4" class="empty-cell">—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 近期异常事件 -->
+      <div class="page-card">
+        <div class="card-title">近期异常事件</div>
+        <div class="events-table-wrap">
+          <table class="events-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>类型</th>
+                <th>详情</th>
+                <th>采集点</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="ev in snapshot?.alerts ?? []" :key="ev.alertId">
+                <td>{{ fmtTime(ev.timestamp) }}</td>
+                <td><span class="event-type" :class="eventTypeClass(ev.type)">{{ alertTypeLabel(ev.type) }}</span></td>
+                <td>{{ ev.detail }}</td>
+                <td>{{ ev.sensorPoint || '—' }}</td>
+              </tr>
+              <tr v-if="(snapshot?.alerts ?? []).length === 0">
+                <td colspan="4" class="empty-cell">无异常事件</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -227,6 +289,66 @@ const heatmapDetail = computed(() => {
   return '点击热力图格子查看点位数值'
 })
 
+// 扁平化的 20 个采集点（设计稿 3.2 采集点表）
+const flatHeatmap = computed<PressureHeatmapPoint[]>(() => {
+  const pts = snapshot.value?.pressureHeatmap ?? []
+  if (pts.length === 20) return pts
+  return Array.from({ length: 20 }, (_, i) => ({
+    pointId: `P${String(i + 1).padStart(2, '0')}`,
+    row: Math.floor(i / 5) + 1,
+    col: (i % 5) + 1,
+    label: `R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`,
+    pressureValue: 0,
+    isMax: false,
+  }))
+})
+
+// 采集点压力状态（设计稿 3.2）
+function pointStatus(v: number): string {
+  if (v <= 0) return 'status-offline'
+  if (v > 45) return 'status-danger'
+  if (v > 30) return 'status-warn'
+  return 'status-ok'
+}
+function pointStatusLabel(v: number): string {
+  if (v <= 0) return '无信号'
+  if (v > 45) return '偏高'
+  if (v > 30) return '关注'
+  return '正常'
+}
+
+// 时间格式化（HH:mm）
+function fmtTime(iso: string): string {
+  try {
+    const d = new Date(iso)
+    const h = String(d.getHours()).padStart(2, '0')
+    const m = String(d.getMinutes()).padStart(2, '0')
+    return `${h}:${m}`
+  } catch {
+    return iso
+  }
+}
+
+// 告警类型标签 & 样式（设计稿 3.3）
+function alertTypeLabel(type: string): string {
+  const map: Record<string, string> = {
+    pressure_high: '压力偏高',
+    wear_interrupt: '佩戴中断',
+    pressure_fluctuation: '压力波动',
+    sensor_drift: '传感器漂移',
+  }
+  return map[type] ?? type
+}
+function eventTypeClass(type: string): string {
+  const map: Record<string, string> = {
+    pressure_high: 'ev-danger',
+    wear_interrupt: 'ev-warn',
+    pressure_fluctuation: 'ev-warn',
+    sensor_drift: 'ev-info',
+  }
+  return map[type] ?? 'ev-info'
+}
+
 // ====== Chart.js 配置 ======
 const chartData = computed<ChartData<'line'>>(() => ({
   labels: pressureHistory.value.map((d) => d.t),
@@ -254,7 +376,7 @@ const chartOptions: ChartOptions<'line'> = {
       mode: 'index',
       intersect: false,
       callbacks: {
-        label: (c) => `压力：${Number(c.parsed.y).toFixed(2)} N`,
+        label: (c) => `压力：${Number(c.parsed.y).toFixed(1)} N`,
       },
     },
   },
@@ -661,4 +783,72 @@ void h
   background: linear-gradient(135deg, #f8fafc 0%, #eef5ff 100%);
   border-color: #dbeafe;
 }
+
+/* ====== 底部：采集点表 + 异常事件 ====== */
+.bottom-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 992px) {
+  .bottom-row { grid-template-columns: 1fr; }
+}
+.points-table-wrap, .events-table-wrap {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.points-table, .events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.points-table th, .points-table td,
+.events-table th, .events-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid #f0f2f5;
+}
+.points-table thead th, .events-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  color: #64748b;
+  font-weight: 600;
+  font-size: 12px;
+  z-index: 1;
+}
+.points-table tbody tr:hover, .events-table tbody tr:hover {
+  background: #f8fafc;
+}
+.points-table tbody tr.point-max {
+  background: #fef3c7;
+  font-weight: 600;
+}
+.empty-cell {
+  text-align: center;
+  color: #cbd5e1;
+  padding: 24px 0;
+}
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.status-ok { background: #10ac84; }
+.status-warn { background: #facc15; }
+.status-danger { background: #ef4444; }
+.status-offline { background: #cbd5e1; }
+.event-type {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.ev-danger { background: #fee2e2; color: #b91c1c; }
+.ev-warn { background: #fef3c7; color: #92400e; }
+.ev-info { background: #dbeafe; color: #1e40af; }
 </style>

@@ -76,19 +76,20 @@ test('客服工作链路：登录 → 患者沟通 → 标记处理', async ({ p
   await expect(page).toHaveURL(/\/communication/)
   await expect(page.locator('.role-hint')).toBeVisible()
 
-  // 反馈列表 4 条，待处理可标记
+  // 反馈列表 4 条，待处理可标记（T247: 左右布局，点击行在右侧操作）
   const rows = tableRows(page)
   await expect(rows).toHaveCount(4)
   const pendingRow = rows.filter({ hasText: 'FB-001' })
   await expect(pendingRow).toContainText('待处理')
-  await pendingRow.getByRole('button', { name: '标记已处理' }).click()
+  await pendingRow.click()
+
+  // 右侧面板点"仅标记已处理"
+  const rightPane = page.locator('.right-pane')
+  await rightPane.getByRole('button', { name: '仅标记已处理' }).click()
   await expect(adminMessage(page)).toContainText('已标记处理')
   await expect(pendingRow).toContainText('已解决')
 
-  // 详情对话框可查看已回复反馈
-  await rows.filter({ hasText: 'FB-002' }).getByRole('button', { name: '详情' }).click()
-  const dialog = page.locator('.el-dialog').filter({ hasText: '反馈 FB-002' })
-  await expect(dialog).toBeVisible()
-  await expect(dialog).toContainText('已核查，昨夜数据完整补传成功')
-  await dialog.locator('.el-dialog__close').click()
+  // 查看已回复反馈 FB-002（点击行，右侧面板显示回复内容）
+  await rows.filter({ hasText: 'FB-002' }).click()
+  await expect(rightPane).toContainText('已核查，昨夜数据完整补传成功')
 })
