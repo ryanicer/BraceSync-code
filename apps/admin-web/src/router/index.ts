@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouterHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { canAccess } from './permissions'
+import { canAccess, landingPathFor } from './permissions'
 
 // 12 页路由（对齐架构 §5.4 / PRD §7D，meta.title 用于顶栏与菜单）
 export const pageRoutes: RouteRecordRaw[] = [
@@ -20,6 +20,15 @@ export const pageRoutes: RouteRecordRaw[] = [
   { path: '/settings', name: 'Settings', component: () => import('../pages/settings/index.vue'), meta: { title: '系统配置', icon: '⚙️' } },
 ]
 
+/**
+ * 登录态下的落地页（T269 D3）。未登录时沿用 /dashboard，由守卫改跳 /login 并带 redirect。
+ */
+export function authLandingPath(): string {
+  const auth = useAuthStore()
+  if (!auth.isLoggedIn) return '/dashboard'
+  return landingPathFor(auth.role)
+}
+
 export const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'Login', component: () => import('../pages/login/index.vue'), meta: { title: '登录' } },
   { path: '/403', name: 'Forbidden', component: () => import('../pages/forbidden/index.vue'), meta: { title: '无权限' } },
@@ -27,11 +36,11 @@ export const routes: RouteRecordRaw[] = [
     path: '/',
     component: () => import('../layout/MainLayout.vue'),
     children: [
-      { path: '', redirect: '/dashboard' },
+      { path: '', redirect: () => authLandingPath() },
       ...pageRoutes,
     ],
   },
-  { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
+  { path: '/:pathMatch(.*)*', redirect: () => authLandingPath() },
 ]
 
 // 权限路由守卫：未登录跳登录；已登录但无页面权限跳 403（PRD §7D.11 权限矩阵）

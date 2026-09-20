@@ -46,7 +46,9 @@ export async function request<T>(options: RequestOptions): Promise<T> {
     body: !isGet && options.data ? JSON.stringify(options.data) : undefined,
   })
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`)
+    // 后端校验失败以 HTTP 4xx + 信封返回，文案（如「collectIntervalSeconds must be...」）要透出给用户
+    const errBody = (await res.json().catch(() => null)) as ApiResponse<unknown> | null
+    throw new Error(errBody?.message || `HTTP ${res.status}`)
   }
   const body = (await res.json()) as ApiResponse<T>
   if (body.code === 0) {

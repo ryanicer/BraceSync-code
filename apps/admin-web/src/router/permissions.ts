@@ -61,3 +61,19 @@ export function canAccess(role: RoleKey | string, path: string): boolean {
   if (!pages) return false
   return pages.includes(path)
 }
+
+/**
+ * 各角色登录 / 「返回首页」的落地页（T269 D3）。
+ * 写死 /dashboard 会让无 dashboard 权限的客服落 403 后点不回有权页，形成死循环。
+ * 必须落在该角色有权访问的页面内（由 permissions.spec.ts 断言防漂移）。
+ */
+export const ROLE_HOME_PAGE: Record<RoleKey, string> = {
+  admin: '/dashboard',
+  doctor: '/dashboard',
+  cs: '/communication',
+}
+
+/** 未知角色（roleId 映射失败，role=null）→ 无落地页，交守卫 fail-closed 落 403 */
+export function landingPathFor(role: RoleKey | string | null | undefined): string {
+  return role ? ROLE_HOME_PAGE[role as RoleKey] ?? '/403' : '/403'
+}

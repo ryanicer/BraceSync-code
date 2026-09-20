@@ -7,6 +7,7 @@ import type {
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
 } from '@bracesync/shared-types'
 import { USE_MOCK, request } from '../utils/request'
+import { reactive } from 'vue'
 import * as dashboardMock from '../mock/dashboard'
 import * as patientMock from '../mock/patients'
 import * as alertMock from '../mock/alerts'
@@ -121,9 +122,10 @@ export async function fetchAlerts(params: { patientId?: string; type?: string; s
   return request<PaginatedResponse<Alert>>({ url: '/api/v1/alerts', data: params as Record<string, unknown> })
 }
 
-export async function processAlertApi(alertId: string): Promise<void> {
+/** 处理备注随体提交：后端 alerts.process_note 列已存在但写路径未落库（T269 D4 已报 PM） */
+export async function processAlertApi(alertId: string, note?: string | null): Promise<void> {
   if (USE_MOCK) { await delay(); return }
-  await request<null>({ url: `/api/v1/alerts/${alertId}/process`, method: 'POST' })
+  await request<null>({ url: `/api/v1/alerts/${alertId}/process`, method: 'POST', data: note ? { note } : undefined })
 }
 
 // ========== 告警规则配置（T253-2.2，契约 docs/api/api-contracts.ts AlertRules，T252 后端） ==========
@@ -188,7 +190,9 @@ export async function registerDeviceApi(data: { deviceId: string; model?: string
 
 export async function fetchTeams(): Promise<Team[]> {
   if (USE_MOCK) { await delay(); return orgMock.mockTeams() }
-  return request<Team[]>({ url: '/api/v1/teams' })
+  const teams = await request<Team[]>({ url: '/api/v1/teams' })
+  for (const t of teams) orgNames.teams[t.teamId] = t.name
+  return teams
 }
 
 // T059 团队管理写功能（6 写端点 + 1 成员明细读端点）
@@ -230,7 +234,9 @@ export async function removeTeamMemberApi(teamId: string, memberId: string, memb
 
 export async function fetchDoctors(): Promise<Doctor[]> {
   if (USE_MOCK) { await delay(); return orgMock.mockDoctors() }
-  return request<Doctor[]>({ url: '/api/v1/doctors' })
+  const doctors = await request<Doctor[]>({ url: '/api/v1/doctors' })
+  for (const d of doctors) orgNames.doctors[d.doctorId] = d.name
+  return doctors
 }
 
 export async function fetchTechnicians(params: { page?: number; pageSize?: number }): Promise<PaginatedResponse<Technician>> {
@@ -414,6 +420,17 @@ export async function fetchAuditLogsApi(params: {
 
 // ========== 展示辅助（mock 期姓名映射，真实模式后端 join 返回后可移除） ==========
 
+/**
+ * T269 D1：真实模式组织名字典，由 fetchTeams / fetchDoctors 用后端全量列表填充。
+ * mock 查表的 ID 命名空间是 TEAM-001/DOC-001，与后端 TEAM01/D0001 不通，
+ * 真实模式继续查 mock 表只会回落成原始编号。
+ * reactive 存储：字典到货前显示原始 ID，到货后模板自动重渲染。
+ */
+const orgNames = reactive<{ teams: Record<string, string>; doctors: Record<string, string> }>({
+  teams: {},
+  doctors: {},
+})
+
 export function patientNameOf(patientId: string | null): string {
   if (USE_MOCK) {
     return deviceMock.mockPatientName(patientId)
@@ -423,15 +440,21 @@ export function patientNameOf(patientId: string | null): string {
 }
 
 export function teamNameOf(teamId: string | null): string {
-  return orgMock.mockTeamName(teamId)
+  if (USE_MOCK) return orgMock.mockTeamName(teamId)
+  if (!teamId) return '-'
+  return orgNames.teams[teamId] ?? teamId
 }
 
 export function doctorNameOf(doctorId: string | null): string {
-  return orgMock.mockDoctorName(doctorId)
+  if (USE_MOCK) return orgMock.mockDoctorName(doctorId)
+  if (!doctorId) return '-'
+  return orgNames.doctors[doctorId] ?? doctorId
 }
 
 export function techNameOf(techId: string): string {
-  return orgMock.mockTechName(techId)
+  if (USE_MOCK) return orgMock.mockTechName(techId)
+  // /technicians 分页返回，无全量字典可建 ⇒ 回落原始编号
+  return techId
 }
 
 // ========== T130 复查报告（文件上传 + 复查记录） ==========

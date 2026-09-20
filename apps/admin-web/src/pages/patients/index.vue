@@ -33,10 +33,10 @@
           <template #default="{ row }">{{ row.cobbAngle ? row.cobbAngle + '°' : '-' }}</template>
         </el-table-column>
         <el-table-column label="团队" width="130">
-          <template #default="{ row }">{{ teamNameOf(row.teamId) }}</template>
+          <template #default="{ row }">{{ row.teamName || teamNameOf(row.teamId) }}</template>
         </el-table-column>
         <el-table-column label="主治医生" width="110">
-          <template #default="{ row }">{{ doctorNameOf(row.doctorId) }}</template>
+          <template #default="{ row }">{{ row.doctorName || doctorNameOf(row.doctorId) }}</template>
         </el-table-column>
         <el-table-column label="设备" width="130">
           <template #default="{ row }">{{ row.deviceId || '未绑定' }}</template>
@@ -66,8 +66,8 @@
         <el-descriptions-item label="年龄">{{ detail.age ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="诊断">{{ detail.diagnosis || '-' }}</el-descriptions-item>
         <el-descriptions-item label="Cobb角">{{ detail.cobbAngle ? detail.cobbAngle + '°' : '-' }}</el-descriptions-item>
-        <el-descriptions-item label="所属团队">{{ teamNameOf(detail.teamId) }}</el-descriptions-item>
-        <el-descriptions-item label="主治医生">{{ doctorNameOf(detail.doctorId) }}</el-descriptions-item>
+        <el-descriptions-item label="所属团队">{{ detail.teamName || teamNameOf(detail.teamId) }}</el-descriptions-item>
+        <el-descriptions-item label="主治医生">{{ detail.doctorName || doctorNameOf(detail.doctorId) }}</el-descriptions-item>
         <el-descriptions-item label="绑定设备">{{ detail.deviceId || '未绑定' }}</el-descriptions-item>
         <el-descriptions-item label="建档时间">{{ formatDate(detail.createdAt) }}</el-descriptions-item>
       </el-descriptions>
@@ -160,7 +160,10 @@ import {
   createPatientApi, assignPatientTeamApi, batchBindPatientsApi,
 } from '../../api'
 
-const list = ref<Patient[]>([])
+/** T269 D1：后端 /admin/patients 已 join 出团队名与医生名，优先用返回值显示 */
+type PatientRow = Patient & { teamName?: string | null; doctorName?: string | null }
+
+const list = ref<PatientRow[]>([])
 const teams = ref<Team[]>([])
 const doctors = ref<Doctor[]>([])
 const total = ref(0)
@@ -170,8 +173,8 @@ const keyword = ref('')
 const teamFilter = ref('')
 const loading = ref(false)
 const drawerVisible = ref(false)
-const detail = ref<Patient | null>(null)
-const selectedRows = ref<Patient[]>([])
+const detail = ref<PatientRow | null>(null)
+const selectedRows = ref<PatientRow[]>([])
 
 // 新建患者
 const createVisible = ref(false)
@@ -229,14 +232,14 @@ function handleSearch() {
   loadData()
 }
 
-function viewDetail(row: Patient, column?: { type?: string }) {
+function viewDetail(row: PatientRow, column?: { type?: string }) {
   // 点击 selection 列的 checkbox 不触发详情抽屉
   if (column?.type === 'selection') return
   detail.value = row
   drawerVisible.value = true
 }
 
-function onSelectionChange(rows: Patient[]) {
+function onSelectionChange(rows: PatientRow[]) {
   selectedRows.value = rows
 }
 

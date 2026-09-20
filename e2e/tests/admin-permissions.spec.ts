@@ -71,9 +71,10 @@ test.describe('doctor 受限权限', () => {
 })
 
 test.describe('cs 受限权限', () => {
-  test('侧边栏仅显示 1 个菜单（患者沟通）', async ({ page }) => {
+  test('客服登录后停在患者沟通，侧边栏仅 1 个菜单（T269 D3）', async ({ page }) => {
     await adminLogin(page, 'cs')
-    await page.goto(adminRoutes.communication)
+    // 不再需要手敲地址栏：落地页即有权页，菜单可直接点进患者沟通
+    await expect(page).toHaveURL(/\/communication/)
     await expect(menuItems(page)).toHaveCount(1)
     await expect(menuItems(page).first()).toContainText('患者沟通')
   })
@@ -90,9 +91,10 @@ test.describe('cs 受限权限', () => {
     }
   })
 
-  test('未知路径重定向到 /dashboard（cs 则再被守卫拦到 403）', async ({ page }) => {
+  test('未知路径按角色落地（cs → 患者沟通，不再被弹进 403）（T269 D3）', async ({ page }) => {
     await adminLogin(page, 'cs')
     await page.goto('/not-exist-page')
-    await expect(page).toHaveURL(/\/403/)
+    await expect(page).toHaveURL(/\/communication/)
+    await expect(page.locator('.forbidden-card')).toHaveCount(0)
   })
 })

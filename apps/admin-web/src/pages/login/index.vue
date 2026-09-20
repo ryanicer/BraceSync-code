@@ -65,6 +65,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import { PRESET_ROLES, type RoleKey } from '../../router/permissions'
+import { authLandingPath } from '../../router'
 import { USE_MOCK } from '../../utils/request'
 
 const router = useRouter()
@@ -88,7 +89,7 @@ const rules: FormRules = {
 
 function redirectAfterLogin() {
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
-  router.push(redirect || '/dashboard')
+  router.push(redirect || authLandingPath())
 }
 
 async function handleLogin() {
