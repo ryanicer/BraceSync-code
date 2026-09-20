@@ -149,8 +149,20 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/admin/roles"},                // T030 #7
 	{http.MethodGet, "/admin/roles/:roleId/permissions"},
 	{http.MethodPut, "/admin/roles/:roleId/permissions"},
+	// T252 11.2/11.4 角色增删改 + 角色模板下拉
+	{http.MethodGet, "/admin/role-templates"},
+	{http.MethodPost, "/admin/roles"},
+	{http.MethodPut, "/admin/roles/:roleId"},
+	{http.MethodDelete, "/admin/roles/:roleId"},
 	{http.MethodGet, "/admin/settings"}, // T030 #8
 	{http.MethodPut, "/admin/settings"},
+	// T252 2.2 告警规则配置（告警页 Tab2：逐采集点阈值 + 全局规则）
+	{http.MethodGet, "/admin/alert-rules"},
+	{http.MethodPut, "/admin/alert-rules/points"},
+	{http.MethodPost, "/admin/alert-rules/points/reset"},
+	{http.MethodPut, "/admin/alert-rules/global"},
+	// T252 12.3 操作日志（系统配置页 Tab3）
+	{http.MethodGet, "/admin/audit-logs"},
 
 	// T130 复查记录（合同患者端「复查管理」）
 	{http.MethodPost, "/admin/review-records"},              // 医生/管理员创建复查记录

@@ -30,30 +30,41 @@ func sensorPointName(index int) string {
 
 // checkPressureHigh 压力偏高：任一采集点压力严格大于阈值（A1/A2）。
 // 多点超阈值时报告压力最大的点（A1-Edge）。
+// T252 2.2：逐点规则可关闭某点监控（monitored=false 跳过）或覆盖其上限（upperN>0）；
+// 未注入逐点规则时全部点位跟随统一上限，判定与 A1/A2 契约完全一致。
 func (e *RuleEvaluator) checkPressureHigh(frame PressureFrame, _ *PressureFrame) *AlertResult {
 	if e.PressureHighThreshold <= 0 {
 		return nil // 阈值零值：规则未启用
 	}
 	maxIdx := -1
+	var maxVal, maxThr float64
 	for i, p := range frame.Pressures {
-		if p > e.PressureHighThreshold && (maxIdx < 0 || p > frame.Pressures[maxIdx]) {
-			maxIdx = i
+		thr := e.PressureHighThreshold
+		if rule, ok := e.pointRule(sensorPointName(i)); ok {
+			if !rule.Monitored {
+				continue // 该采集点已在 admin 告警规则配置里取消勾选
+			}
+			if rule.UpperN > 0 {
+				thr = rule.UpperN
+			}
+		}
+		if p > thr && (maxIdx < 0 || p > maxVal) {
+			maxIdx, maxVal, maxThr = i, p, thr
 		}
 	}
 	if maxIdx < 0 {
 		return nil
 	}
 	point := sensorPointName(maxIdx)
-	actual := frame.Pressures[maxIdx]
 	return &AlertResult{
 		ShouldAlert:    true,
 		AlertType:      TypePressureHigh,
 		SensorPoint:    point,
-		ThresholdValue: e.PressureHighThreshold,
-		ActualValue:    actual,
+		ThresholdValue: maxThr,
+		ActualValue:    maxVal,
 		Severity:       "high",
 		Message: fmt.Sprintf("压力偏高：采集点 %s 压力 %.1fN 超阈值 %.1fN",
-			point, actual, e.PressureHighThreshold),
+			point, maxVal, maxThr),
 	}
 }
 
