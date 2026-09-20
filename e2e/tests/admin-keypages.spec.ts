@@ -188,6 +188,53 @@ test.describe('操作日志（T253-12.3）', () => {
   })
 })
 
+test.describe('设备管理 T268（注册入口 + 列表列 + 详情）', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.devices)
+  })
+
+  test('列表列头对齐设计稿且顶栏有注册设备按钮', async ({ page }) => {
+    for (const head of ['设备ID', '型号', '患者', '绑定时间', '固件版本', '连接的WiFi', '状态', '操作']) {
+      await expect(page.locator('.el-table__header-wrapper th', { hasText: head })).toBeVisible()
+    }
+    await expect(page.getByRole('button', { name: '注册设备' })).toBeVisible()
+    // 操作列「详情」
+    await expect(tableRows(page).first().getByRole('button', { name: '详情' })).toBeVisible()
+  })
+
+  test('注册设备：非法设备ID前端拦截', async ({ page }) => {
+    await page.getByRole('button', { name: '注册设备' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('AB')
+    await dialog.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('4-48 位')
+    await expect(tableRows(page).filter({ hasText: 'AB' })).toHaveCount(0)
+    await dialog.getByRole('button', { name: '取消' }).click()
+  })
+
+  test('注册设备：合法ID注册成功出现在列表（未绑定）', async ({ page }) => {
+    await page.getByRole('button', { name: '注册设备' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('E2E-DEV-001')
+    await dialog.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('设备已注册')
+    const row = tableRows(page).filter({ hasText: 'E2E-DEV-001' })
+    await expect(row).toHaveCount(1)
+    await expect(row).toContainText('未绑定')
+    await expect(row).toContainText('PRS-ML05-RC')
+  })
+
+  test('详情抽屉：设备信息 + 绑定历史', async ({ page }) => {
+    await tableRows(page).filter({ hasText: 'DEV-A3F312' }).getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.el-drawer')
+    await expect(drawer).toContainText('设备详情')
+    await expect(drawer).toContainText('DEV-A3F312')
+    await expect(drawer).toContainText('绑定历史')
+    await expect(drawer.locator('.binding-table tbody tr').first()).toContainText('PT-001')
+  })
+})
+
 test.describe('角色管理（T253-11.2）', () => {
   // 页面同时有 角色列表 + 权限矩阵 两张表，断言须圈定在角色列表卡内
   function listRows(page: import('@playwright/test').Page) {

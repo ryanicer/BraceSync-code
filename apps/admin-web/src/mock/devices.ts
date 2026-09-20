@@ -27,3 +27,54 @@ export function mockPatientName(patientId: string | null): string {
   }
   return names[patientId] ?? patientId
 }
+
+// T268: 设备详情 / 绑定历史 / 注册（语义对齐 device-service：register 幂等、
+// deviceId 4-48 位 alnum/-/_；bindings 含历史解绑记录）
+export interface DeviceBindingRecord {
+  bindingId: string
+  deviceId: string
+  patientId: string
+  bindAt: string
+  unbindAt: string | null
+  reason: string | null
+  operatorId: string | null
+}
+
+const BINDINGS: DeviceBindingRecord[] = [
+  { bindingId: 'B-001', deviceId: 'DEV-A3F312', patientId: 'PT-001', bindAt: '2026-03-12T10:00:00+08:00', unbindAt: null, reason: null, operatorId: 'A0001' },
+  { bindingId: 'B-002', deviceId: 'DEV-C9D789', patientId: 'PT-003', bindAt: '2026-05-18T15:30:00+08:00', unbindAt: '2026-06-01T09:00:00+08:00', reason: 'rebind', operatorId: 'A0001' },
+  { bindingId: 'B-003', deviceId: 'DEV-C9D789', patientId: 'PT-003', bindAt: '2026-06-01T09:30:00+08:00', unbindAt: null, reason: null, operatorId: 'A0001' },
+]
+
+export function mockDeviceDetail(deviceId: string): Device {
+  const dev = DEVICES.find((d) => d.deviceId === deviceId)
+  if (!dev) throw new Error(`设备不存在: ${deviceId}`)
+  return { ...dev }
+}
+
+export function mockDeviceBindings(deviceId: string): DeviceBindingRecord[] {
+  return BINDINGS.filter((b) => b.deviceId === deviceId).map((b) => ({ ...b }))
+}
+
+const DEVICE_ID_RE = /^[A-Za-z0-9_-]{4,48}$/
+
+export function mockRegisterDevice(input: { deviceId: string; model?: string }): Device {
+  const deviceId = input.deviceId.trim()
+  if (!DEVICE_ID_RE.test(deviceId)) {
+    throw new Error(`无效设备ID: ${deviceId}（4-48 位，字母/数字/-/_）`)
+  }
+  const existing = DEVICES.find((d) => d.deviceId === deviceId)
+  if (existing) return { ...existing }
+  const dev: Device = {
+    deviceId,
+    model: 'PRS-ML05-RC',
+    firmwareVersion: '',
+    patientId: null,
+    wifiSsid: null,
+    bindTime: null,
+    status: 'unbound',
+    lastReportAt: null,
+  }
+  DEVICES.push(dev)
+  return { ...dev }
+}
