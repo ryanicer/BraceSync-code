@@ -5,6 +5,8 @@
 //
 // 本地无 Docker 时由 CI 的 go-integration job 执行（harness 顺序 apply scripts/db/migrations/*.up.sql，
 // 因此本文件同时是 000016 SQL 的落地验证）。
+// T262：预置角色口径按 Boss 2026-09-20 裁定收敛为 3 个，000017 的落地验证见
+// TestITT262PresetRolesCollapsedToThree。
 // 只使用本文件私有的 ID/键值域，避免与 seedITData 及既有用例互污染。
 package repo
 
@@ -12,6 +14,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +121,7 @@ func TestITT252AlertPointRulesRejectsUnknownPointID(t *testing.T) {
 
 // ── 11.2 角色增删改 ──
 
-func TestITT252PresetRolesSeeded(t *testing.T) {
+func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 	ctx := context.Background()
 	list, err := itStore.ListRoles(ctx)
 	require.NoError(t, err)
@@ -125,15 +129,25 @@ func TestITT252PresetRolesSeeded(t *testing.T) {
 	for _, r := range list {
 		byID[r.RoleID] = r
 	}
+
+	// ① 000016 误播的 5 个必须已被 000017 删除
+	//    （Boss 2026-09-20 裁定：主任医师/主治医师/康复师/护士是**职称**，走 doctors.title；
+	//      超级管理员与 ROLE_ADMIN 功能重复）
+	for _, gone := range []string{"ROLE_SUPER_ADMIN", "ROLE_CHIEF_DOCTOR", "ROLE_ATTENDING_DOCTOR",
+		"ROLE_REHAB_THERAPIST", "ROLE_NURSE"} {
+		_, ok := byID[gone]
+		assert.False(t, ok, "000017 应删除误播角色 %s", gone)
+	}
+
+	// ② 预置登录角色 = 3 个，name/scope 与 scripts/db/seed/seed.sql 同源
+	//    （000017 幂等补播这 3 条，故 harness 只跑 migrations、不跑 seed.sql 也成立）
 	for _, want := range []struct{ id, name, scope string }{
-		{"ROLE_SUPER_ADMIN", "超级管理员", "all"},
-		{"ROLE_CHIEF_DOCTOR", "主任医师", "all"},
-		{"ROLE_ATTENDING_DOCTOR", "主治医师", "team"},
-		{"ROLE_REHAB_THERAPIST", "康复师", "team"},
-		{"ROLE_NURSE", "护士", "team"},
+		{"ROLE_ADMIN", "运营管理员", "all"},
+		{"ROLE_DOCTOR", "医生", "team"},
+		{"ROLE_CS", "客服", "all_patients"},
 	} {
 		row, ok := byID[want.id]
-		require.True(t, ok, "000016 应播预置角色 %s", want.id)
+		require.True(t, ok, "预置登录角色 %s 应存在", want.id)
 		assert.Equal(t, want.name, row.Name)
 		assert.Equal(t, "enabled", row.Status)
 		var perms struct {
@@ -144,9 +158,19 @@ func TestITT252PresetRolesSeeded(t *testing.T) {
 		assert.Equal(t, want.scope, perms.Scope)
 		assert.NotEmpty(t, perms.Modules)
 	}
-	// 注：旧 3 个登录角色（ROLE_ADMIN/ROLE_DOCTOR/ROLE_CS）由 seed.sql 播，集成 harness 只跑
-	// migrations，故此处不断言其存在；000016 只做 INSERT ... ON CONFLICT DO NOTHING，
-	// 不删不改既有角色（admins.role_id 外键 + gateway RBAC 字面量依赖，见迁移注释）。
+
+	// ③ 收口证明：剔除测试专用行（harness 播的 ROLE_IT + 各用例新建的 ROLE_C 前缀自定义角色）后，
+	//    roles 表**恰好** 3 条，且就是上面那 3 个 —— 不许多、不许少、不许有第三个来源的预置字面量。
+	preset := []string{}
+	for id := range byID {
+		if id == "ROLE_IT" || strings.HasPrefix(id, "ROLE_C") {
+			continue
+		}
+		preset = append(preset, id)
+	}
+	sort.Strings(preset)
+	assert.Equal(t, []string{"ROLE_ADMIN", "ROLE_CS", "ROLE_DOCTOR"}, preset,
+		"预置角色集应恰好为 3 个登录角色")
 }
 
 func TestITT252RoleCRUD(t *testing.T) {
