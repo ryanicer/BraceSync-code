@@ -358,7 +358,7 @@ func TestBindHTTP_OperatorFromBody(t *testing.T) {
 	_, resp := env.do(t, http.MethodPost, "/api/v1/devices", map[string]string{"deviceId": "DEV-H-007"}, nil)
 	require.Equal(t, model.CodeOK, resp.Code)
 
-	// body.operatorId 优先于 X-User-Id
+	// T261 身份单一来源：body.operatorId 被忽略，操作人一律取 X-User-Id
 	status, resp := env.do(t, http.MethodPost, "/api/v1/devices/DEV-H-007/bind",
 		map[string]string{"patientId": "P-400", "operatorId": "TECH-BODY"},
 		map[string]string{"X-User-Id": "TECH-HEADER"})
@@ -366,5 +366,6 @@ func TestBindHTTP_OperatorFromBody(t *testing.T) {
 
 	status, resp = env.do(t, http.MethodGet, "/api/v1/devices/DEV-H-007/bindings", nil, nil)
 	require.Equal(t, http.StatusOK, status)
-	assert.Contains(t, string(resp.Data), `"operatorId":"TECH-BODY"`)
+	assert.Contains(t, string(resp.Data), `"operatorId":"TECH-HEADER"`)
+	assert.NotContains(t, string(resp.Data), `"operatorId":"TECH-BODY"`)
 }
