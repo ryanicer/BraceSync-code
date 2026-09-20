@@ -104,9 +104,20 @@ test.describe('系统配置', () => {
     await expect(intervalItem.locator('.el-input-number input')).toHaveValue('60')
   })
 
-  test('保存配置成功提示', async ({ page }) => {
+  /**
+   * T270 假绿 #2 订正（README §5 第二类）：
+   * mock 模式下 saveSettingsApi 走 mockSaveSystemSettings（只 resolve，不发 HTTP），
+   * 所以本条**证明不了「配置落库」**，能证明的只是「前端把成功提示接对了」。
+   * 原用例只 toContainText('配置已保存') —— 连保存失败时误弹的 error 提示都可能被放过，
+   * 这里补上「必须是 success 型 + 不得有 error 型」这条真断言。
+   * 落库判据（PUT 后 GET 回读）只能在真实模式补：e2e-real 目前无 settings 用例，见交件评论。
+   */
+  test('保存配置：success 型提示（仅前端语义，不含落库）', async ({ page }) => {
     await page.locator('.settings-form').getByRole('button', { name: '保存配置' }).click()
-    await expect(adminMessage(page)).toContainText('配置已保存')
+    const msg = adminMessage(page)
+    await expect(msg).toContainText('配置已保存')
+    await expect(msg).toHaveClass(/el-message--success/)
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
 
   test('WiFi 预设列表展示脱敏密码', async ({ page }) => {
@@ -133,14 +144,58 @@ test.describe('系统配置', () => {
     await expect(adminMessage(page)).toContainText('通知渠道已更新')
   })
 
-  test('发送记录 tab：4 条记录与状态 tag', async ({ page }) => {
+  /**
+   * T270 假绿 #6 订正（README §5 第二类 / A-SET-08）：
+   * 原用例「发送记录 tab：4 条记录与状态 tag」断的是 **mock 常量**（mockNotificationLogs
+   * 硬编码 4 条），真实后端 total=28 → 条数断言在 mock 下没有信息量，且完全没碰
+   * A-SET-08 的判据（表头七列、渠道中文化、状态文案↔颜色、时间格式、内容 tooltip）。
+   * 这里换成**逐行格式契约**：行数只要求 >0，每行按列验语义，换一批数据依然成立。
+   *
+   * 登记（不在本卡边界内修）：该 Tab **无分页控件**（pages/settings/index.vue:85-109 未放
+   * el-pagination，onMounted 固定拉 page=1,pageSize=20）⇒ 真实 28 条只能看前 20 条、无法翻页；
+   * 另「患者」列真实模式显示患者 ID（api/index.ts 回落 patientId，即 D1 同族）。
+   */
+  test('发送记录 tab：七列表头 + 逐行格式契约（T270 假绿#6 / A-SET-08）', async ({ page }) => {
     await page.getByRole('tab', { name: '发送记录' }).click()
     // el-tabs 各 pane 同时挂载，仅可见 pane 的表格参与断言
-    const rows = page.locator('.el-table:visible .el-table__body-wrapper tbody tr')
-    await expect(rows).toHaveCount(4)
-    await expect(rows.filter({ hasText: 'NTF-001' })).toContainText('已发送')
-    await expect(rows.filter({ hasText: 'NTF-002' })).toContainText('失败')
-    await expect(rows.filter({ hasText: 'NTF-003' })).toContainText('降级短信')
+    const table = page.locator('.el-table:visible')
+    const rows = table.locator('.el-table__body-wrapper tbody tr')
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 })
+
+    const headers = await table.locator('.el-table__header-wrapper thead th').evaluateAll((ths) =>
+      ths.map((th) => (th.textContent ?? '').trim()),
+    )
+    expect(headers, '表头七列（顺序即契约）').toEqual(['记录ID', '患者', '告警类型', '渠道', '内容', '状态', '发送时间'])
+
+    const count = await rows.count()
+    expect(count, '应有数据行（条数不作常量断言：mock 4 / 真实 total=28）').toBeGreaterThan(0)
+
+    for (let i = 0; i < count; i++) {
+      const cells = await rows.nth(i).evaluate((el) =>
+        Array.from(el.querySelectorAll('td')).map((td) => ({
+          text: (td.textContent ?? '').trim(),
+          cls: (td.querySelector('.cell') ?? td).className,
+          tag: td.querySelector('.el-tag')?.className ?? '',
+        })),
+      )
+      expect(cells, `第 ${i + 1} 行应有 7 列`).toHaveLength(7)
+      const [recordId, patient, alertType, channel, content, status, sentAt] = cells.map((c) => c.text)
+      const where = `第 ${i + 1} 行（${recordId || '(空)'}）`
+
+      expect(recordId, `${where} 记录ID 非空`).not.toBe('')
+      expect(patient, `${where} 患者列不得漏 undefined/NaN`).not.toMatch(/undefined|NaN/)
+      expect(['压力偏高', '压力波动', '佩戴中断', '传感器漂移', '非告警'], `${where} 告警类型须中文枚举`).toContain(alertType)
+      expect(['微信', '短信'], `${where} 渠道须中文，不得漏 wechat/sms 原文`).toContain(channel)
+      expect(content, `${where} 内容非空`).not.toBe('')
+      // 内容列 show-overflow-tooltip：EP 会给单元格加 .el-tooltip（悬停出全文的前提）
+      expect(cells[4].cls, `${where} 内容列应可悬停 tooltip`).toContain('el-tooltip')
+      expect(['待发送', '已发送', '失败', '降级短信'], `${where} 状态文案`).toContain(status)
+      // 状态必须是带颜色 tag，且颜色与文案对应（logStatusType 的契约）
+      const wantClass = { 待发送: 'el-tag--info', 已发送: 'el-tag--success', 失败: 'el-tag--danger', 降级短信: 'el-tag--warning' }[status]!
+      expect(cells[5].tag, `${where} 状态应为 tag 且颜色与文案对应`).toContain(wantClass)
+      // 发送时间：未发送显示 '-'，否则 MM-DD HH:mm（formatTime 的契约，不是原始 ISO）
+      expect(sentAt, `${where} 发送时间格式`).toMatch(/^-|\d{2}-\d{2} \d{2}:\d{2}$/)
+    }
   })
 })
 

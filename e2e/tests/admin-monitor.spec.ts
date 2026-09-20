@@ -122,3 +122,225 @@ test.describe('交互与刷新', () => {
     await expect(page.locator('.update-time')).not.toHaveText(before, { timeout: 15_000 })
   })
 })
+
+/* ============================================================================
+ * T270 补口：A-MON-03 / A-MON-05 / A-MON-07 / A-MON-08（README §5 第一类）
+ *            + 假绿 #4（自动轮询）/ #5（曲线刻度与 tooltip）（README §5 第二类）
+ *
+ * 🔴 本页每 2s 轮询一次，且每次轮询会把热力图选中态重置（monitor/index.vue refreshTick
+ *    里 heatmapSelected.value = null）。因此凡是「一次交互的结果要在多处之间比对」的断言，
+ *    必须在**同一次页面求值内**把相关 DOM 一起读出来，再用 expect.poll 重试整个原子读取，
+ *    否则会撞在轮询边界上产生假红。下面 summary / points / 热力图详情都按这个写法来。
+ * ========================================================================== */
+
+/** 一次原子读取患者摘要四格（label/value 成对返回） */
+function readPeakGrid(page: import('@playwright/test').Page) {
+  return page.locator('.peak-card .peak-grid').evaluate((grid) =>
+    Array.from(grid.querySelectorAll<HTMLElement>('.peak-cell')).map((cell) => ({
+      label: cell.querySelector('.peak-label')?.textContent?.trim() ?? '',
+      value: (cell.querySelector('.peak-num') ?? cell.querySelector('.peak-text'))?.textContent?.trim() ?? '',
+    })),
+  )
+}
+
+test.describe('患者摘要与点位（T270 A-MON-03/05/07/08）', () => {
+  test('A-MON-03 患者摘要四项：标签顺序 + 数值格式 + 无 undefined/NaN/空', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    await expect
+      .poll(
+        async () => {
+          const cells = await readPeakGrid(page)
+          return JSON.stringify({
+            labels: cells.map((c) => c.label),
+            hours: /^\d+\.\d h$/.test(cells[0]?.value ?? '') ? 'ok' : cells[0]?.value,
+            pressure: /^\d+\.\d N$/.test(cells[1]?.value ?? '') ? 'ok' : cells[1]?.value,
+            peakPoint: /^(P\d{2} \(R\dC\d\)|--)$/.test(cells[2]?.value ?? '') ? 'ok' : cells[2]?.value,
+            events: /^\d+$/.test(cells[3]?.value ?? '') ? 'ok' : cells[3]?.value,
+          })
+        },
+        { message: '患者摘要四项需在某一轮快照内同时成立', timeout: 20_000 },
+      )
+      .toBe(
+        JSON.stringify({
+          labels: ['今日累计佩戴时长', '当前最大压力', '最大压力采集点', '今日异常事件'],
+          hours: 'ok',
+          pressure: 'ok',
+          peakPoint: 'ok',
+          events: 'ok',
+        }),
+      )
+    // 四项均不得出现脏值（用例硬判据；正则成立即排除 undefined/NaN/空白）
+    await expect(page.locator('.peak-card')).not.toContainText(/undefined|NaN/)
+  })
+
+  test('A-MON-05 点击热力图格子：详情行跟随所点点位', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    const read = (pointId: string) =>
+      page.evaluate((pid) => {
+        const cell = Array.from(document.querySelectorAll<HTMLElement>('.hm-cell')).find(
+          (el) => el.querySelector('.hm-cell-id')?.textContent?.trim() === pid,
+        )
+        cell?.click()
+        const detail = document.querySelector('.hm-detail')?.textContent?.trim() ?? ''
+        const cellVal = Number(cell?.querySelector('.hm-cell-val')?.textContent?.trim())
+        const detailVal = Number(detail.match(/·\s*([\d.]+)\s*N/)?.[1] ?? NaN)
+        return {
+          hit: detail.includes(`当前选中：${pid} (R`) && !Number.isNaN(cellVal) && !Number.isNaN(detailVal) &&
+            Math.abs(cellVal - detailVal) < 1,
+        }
+      }, pointId)
+
+    // 第 2 行第 1 格 = P06；再点 P15，详情行须随点位切换
+    await expect.poll(() => read('P06'), { message: '点 P06 后详情行应回显 P06 (R2C1)', timeout: 20_000 }).toEqual({ hit: true })
+    await expect.poll(() => read('P15'), { message: '点 P15 后详情行应回显 P15 (R3C5)', timeout: 20_000 }).toEqual({ hit: true })
+
+    // 点击不得产生错误提示或跳转
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
+    await expect(page).toHaveURL(/\/monitor/)
+  })
+
+  test('A-MON-07 采集点实时数值表：四列表头 + 20 行 P01…P20 / R1C1…R4C5 + 状态四选一', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    const card = page.locator('.page-card').filter({ hasText: '采集点实时数值表' })
+    const headers = card.locator('.points-table thead th')
+    await expect(headers).toHaveText(['采集点', '位置', '当前压力 (N)', '状态'])
+
+    await expect
+      .poll(
+        () =>
+          card.locator('.points-table tbody').evaluate((tbody) => {
+            const rows = Array.from(tbody.querySelectorAll('tr'))
+            const ids = rows.map((r) => r.children[0]?.textContent?.trim() ?? '')
+            const labels = rows.map((r) => r.children[1]?.textContent?.trim() ?? '')
+            const pressures = rows.map((r) => r.children[2]?.textContent?.trim() ?? '')
+            const statuses = rows.map((r) => r.children[3]?.textContent?.trim() ?? '')
+            const expectIds = Array.from({ length: 20 }, (_, i) => `P${String(i + 1).padStart(2, '0')}`)
+            const expectLabels = Array.from({ length: 20 }, (_, i) => `R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`)
+            return {
+              rowCount: rows.length,
+              idSeqOk: JSON.stringify(ids) === JSON.stringify(expectIds),
+              labelSeqOk: JSON.stringify(labels) === JSON.stringify(expectLabels),
+              // 压力保留 1 位小数且非 NaN（0.0 = 无信号点位，属实现口径）
+              pressureFmtOk: pressures.every((p) => /^\d+\.\d$/.test(p)),
+              statusFmtOk: statuses.every((s) => /^(正常|关注|偏高|无信号)$/.test(s)),
+              dotPerRow: rows.every((r) => !!r.children[3]?.querySelector('.status-dot')),
+            }
+          }),
+        {
+          message: '采集点表 20 行 / P01-P20 / R1C1-R4C5 / 压力 1 位小数 / 状态四选一',
+          timeout: 20_000,
+        },
+      )
+      .toEqual({
+        rowCount: 20,
+        idSeqOk: true,
+        labelSeqOk: true,
+        pressureFmtOk: true,
+        statusFmtOk: true,
+        dotPerRow: true,
+      })
+  })
+
+  test('A-MON-08 近期异常事件：卡标题 + 四列表头 + mock 空态「无异常事件」', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    const card = page.locator('.page-card').filter({ hasText: '近期异常事件' })
+    await expect(card.locator('.card-title')).toContainText('近期异常事件')
+    await expect(card.locator('.events-table thead th')).toHaveText(['时间', '类型', '详情', '采集点'])
+    // mock 快照的 alerts 恒为空数组（mock/patients.ts:135）→ 只能验空态；
+    // 有数据分支（时间 HH:mm / 类型中文徽章 / 采集点缺省 -）结构性不可达，留在点击 Agent 用例集。
+    await expect(card.locator('.events-table tbody td.empty-cell')).toHaveText('无异常事件')
+    await expect(card).not.toContainText(/undefined|NaN/)
+  })
+})
+
+test.describe('自动刷新与曲线细节（T270 假绿 #4/#5）', () => {
+  test('假绿#4 A-MON-09 自动轮询：什么都不点，时间戳应在 2s 轮询下自行变化', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    const before = await page.locator('.update-time').innerText()
+    // 不做任何点击，仅等待轮询自己推进时间戳（旧 e2e 只测了手动「立即刷新」）
+    await expect(page.locator('.update-time')).not.toHaveText(before, { timeout: 10_000 })
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
+    // 轮询期间页面不得白屏：曲线与热力图仍各自在位
+    await expect(page.locator('.chart-container canvas')).toBeVisible()
+    await expect(page.locator('.hm-cell')).toHaveCount(20)
+  })
+
+  test('假绿#5 A-MON-06 曲线：蓝色折线 + 浅蓝填充 + 纵/横轴刻度 + 悬停出 tooltip', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    const canvas = page.locator('.chart-container canvas')
+    await expect(canvas).toBeVisible({ timeout: 15_000 })
+    await page.waitForTimeout(400) // 等入场动画画完，避免采样到半帧
+
+    /**
+     * Chart.js 把曲线、填充、坐标轴刻度与 tooltip 全画进 canvas（既无 DOM 也无 a11y 文本），
+     * 旧 e2e 只断言「canvas 可见」= 假绿。这里按像素判定：
+     *  - 线：不透明 #1a6db5；填充：rgba(26,109,181,.08)（透明底 canvas，实测 alpha≈20）
+     *  - 刻度文字：Chart.js 默认 ticks.color #666（灰）→ 左侧 x<42 的列是 y 轴「0N/20N/…」，
+     *    底部 y>height-27 的行是 x 轴时间刻度
+     *  - tooltip：默认底色 rgba(0,0,0,.8)；限定绘图区（排除左右上下的刻度文字带）
+     * 阈值取实测量级（线 ≈850px / 填充 ≈81kpx / y 刻度 ≈284px / x 刻度 ≈1k px / tooltip ≈3.6kpx）
+     * 留 2–4 倍余量，防渲染差异。
+     */
+    const sample = (kind: 'line' | 'fill' | 'dark' | 'tick', area?: { x0: number; x1: number; y0: number; y1: number }) =>
+      canvas.evaluate(
+        (el, arg) => {
+          const c = el as HTMLCanvasElement
+          const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data
+          const hit = (r: number, g: number, b: number, a: number): boolean => {
+            if (arg.kind === 'line') return a > 150 && Math.abs(r - 26) < 12 && Math.abs(g - 109) < 12 && Math.abs(b - 181) < 12
+            if (arg.kind === 'fill') return a > 10 && a < 60 && r < 40 && g > 100 && g < 130 && b > 165
+            if (arg.kind === 'tick') return a > 120 && Math.abs(r - 102) < 26 && Math.abs(g - 102) < 26 && Math.abs(b - 102) < 26
+            return a > 150 && r < 60 && g < 60 && b < 60 // dark：tooltip 底色
+          }
+          let points = 0
+          let maxRowHits = 0
+          const rows = new Map<number, number>()
+          for (let i = 0; i < d.length; i += 4) {
+            const x = (i / 4) % c.width
+            const y = Math.floor(i / 4 / c.width)
+            if (arg.area && (x < arg.area.x0 || x > arg.area.x1 || y < arg.area.y0 || y > arg.area.y1)) continue
+            if (hit(d[i], d[i + 1], d[i + 2], d[i + 3])) {
+              points++
+              const n = (rows.get(y) ?? 0) + 1
+              rows.set(y, n)
+              maxRowHits = Math.max(maxRowHits, n)
+            }
+          }
+          return { points, maxRowHits }
+        },
+        { kind, area },
+      )
+
+    // 曲线本体
+    expect((await sample('line')).points).toBeGreaterThan(200)
+    // 曲线下方浅蓝填充
+    expect((await sample('fill')).points).toBeGreaterThan(10_000)
+
+    // 绘图区矩形（canvas 像素坐标）：左侧留出 y 轴刻度、底部留出 x 轴刻度
+    const box = await canvas.boundingBox()
+    expect(box).not.toBeNull()
+    const plot = { x0: 42, x1: Math.floor(box!.width) - 2, y0: 6, y1: Math.floor(box!.height) - 28 }
+
+    // A-MON-06「纵轴刻度 / 横轴刻度」：刻度文字同样只存在于位图里
+    // 实测（本机 chromium，dpr=1）：y 轴文字列 ≈284 px、x 轴文字行 ≈1007 px → 阈值留 2 倍以上余量
+    const yAxisGutter = { x0: 0, x1: 41, y0: 0, y1: Math.floor(box!.height) - 30 }
+    const xAxisBand = { x0: 42, x1: Math.floor(box!.width) - 2, y0: Math.floor(box!.height) - 26, y1: Math.floor(box!.height) - 1 }
+    expect((await sample('tick', yAxisGutter)).points, '纵轴应画出「0N/20N/…」刻度文字').toBeGreaterThan(120)
+    expect((await sample('tick', xAxisBand)).points, '横轴应画出时间刻度文字').toBeGreaterThan(400)
+
+    // 基线：未悬停时绘图区内不应有任何深色像素，否则下面的断言毫无意义
+    expect((await sample('dark', plot)).points, '绘图区基线不该有深色块').toBe(0)
+
+    // 悬停曲线中部 → tooltip 出现（实心块：总像素 + 单行连续宽度双判据）
+    await page.mouse.move(box!.x + box!.width * 0.5, box!.y + box!.height * 0.5)
+    await page.waitForTimeout(600) // tooltip 淡入动画
+    const shown = await sample('dark', plot)
+    expect(shown.points).toBeGreaterThan(1000)
+    expect(shown.maxRowHits).toBeGreaterThan(40)
+
+    // 移出图表 → tooltip 消失（证明深色块由悬停触发，而非页面常驻绘制）
+    await page.mouse.move(box!.x + box!.width * 0.5, box!.y + box!.height + 80)
+    await page.waitForTimeout(600)
+    expect((await sample('dark', plot)).points).toBeLessThan(50)
+  })
+})
