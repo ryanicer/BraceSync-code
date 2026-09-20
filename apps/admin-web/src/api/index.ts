@@ -331,6 +331,23 @@ export async function fetchNotificationLogs(params: { patientId?: string; channe
   return request<PaginatedResponse<NotificationRecord>>({ url: '/api/v1/admin/notification-logs', data: params as Record<string, unknown> })
 }
 
+// ========== 操作日志（T253-12.3，契约 docs/api/api-contracts.ts getAuditLogs，T252 后端） ==========
+
+export async function fetchAuditLogsApi(params: {
+  date?: string
+  from?: string
+  to?: string
+  action?: string
+  operator?: string
+  targetType?: string
+  targetId?: string
+  page?: number
+  pageSize?: number
+}): Promise<PaginatedResponse<systemMock.AuditLog>> {
+  if (USE_MOCK) { await delay(); return systemMock.mockAuditLogs(params) }
+  return request<PaginatedResponse<systemMock.AuditLog>>({ url: '/api/v1/admin/audit-logs', data: params as Record<string, unknown> })
+}
+
 // ========== 展示辅助（mock 期姓名映射，真实模式后端 join 返回后可移除） ==========
 
 export function patientNameOf(patientId: string | null): string {
