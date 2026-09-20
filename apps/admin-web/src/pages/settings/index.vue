@@ -7,7 +7,7 @@
           <div class="page-card-title">全局系统参数（PRD §7D.12，默认值对齐 @bracesync/constants）</div>
           <el-form label-width="220px" class="settings-form">
             <el-form-item label="数据采集间隔（秒）">
-              <el-input-number v-model="form.collectIntervalSeconds" :min="60" :max="3600" :step="60" />
+              <el-input-number v-model="form.collectIntervalSeconds" :min="60" :max="3600" :step="60" :step-strictly="true" />
               <span class="form-hint">须为 60 的整数倍</span>
             </el-form-item>
             <el-form-item label="数据保留天数">
