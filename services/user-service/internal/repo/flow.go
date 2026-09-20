@@ -342,8 +342,12 @@ func (s *PGStore) CreateFlowInstance(ctx context.Context, templateID string, ale
 		`INSERT INTO flow_instance (instance_id, template_id, alert_id, current_node_id)
 		 VALUES ($1, $2, $3, NULL)`, id, templateID, alertID); err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23503" { // alerts 外键：告警不存在
-			return nil, ErrFlowAlertNotFound
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			// 本条 INSERT 挂两个外键，按约束名区分：把「模板刚被删除」报成「告警不存在」会误导前端
+			if pgErr.ConstraintName == "flow_instance_alert_id_fkey" {
+				return nil, ErrFlowAlertNotFound
+			}
+			return nil, ErrFlowTemplateNotFound
 		}
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // alert_id UNIQUE：已有实例
 			// 🔴 语句失败后 PG 事务进入 aborted 态（25P02），必须先用 Rollback 结束它，

@@ -295,6 +295,17 @@ func TestT274_FlowInstance_Start_AlertNotFound400(t *testing.T) {
 	assert.Contains(t, resp.Message, "alert not found")
 }
 
+func TestT274_FlowInstance_Start_TemplateNotFound404(t *testing.T) {
+	// 防回归：本端点没有 :templateId 路径参数，文案里的 ID 必须取自请求体，
+	// 否则 404 会打成 "flow template not found: "（空串，前端无从排查）。
+	e := flowEnv(t)
+	e.store.flow.tplErr = repo.ErrFlowTemplateNotFound
+	w, resp := e.do(http.MethodPost, "/api/v1/admin/flow/instances",
+		map[string]string{"templateId": "FLOW_T_NOT_EXIST", "alertId": "9527"}, hdr(flowRoleAdmin, "A0001"))
+	assert.Equal(t, http.StatusNotFound, w.Code, resp.Message)
+	assert.Contains(t, resp.Message, "FLOW_T_NOT_EXIST")
+}
+
 func TestT274_FlowInstance_Start_AlreadyExists409(t *testing.T) {
 	e := flowEnv(t)
 	e.store.flow.createInstEr = &repo.ErrFlowInstanceExists{Existing: fixFlowInstanceRow()}

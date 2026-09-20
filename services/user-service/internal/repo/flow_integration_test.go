@@ -232,6 +232,12 @@ func TestITT274InstanceStartGeneratesStates(t *testing.T) {
 	_, err = itStore.CreateFlowInstance(ctx, fx.templateID, 999999999, []string{"N1"}, []string{"N1"})
 	assert.True(t, errors.Is(err, ErrFlowAlertNotFound), "应返回 ErrFlowAlertNotFound，实际 %v", err)
 
+	// 不存在的模板（告警合法）→ 同一条 INSERT 的另一个外键，必须按约束名区分，
+	// 否则「模板刚被并发删除」会被报成「告警不存在」，前端排查方向整个错掉
+	_, err = itStore.CreateFlowInstance(ctx, "FLOW_T_NOT_EXIST", fx.alertID, []string{"N1"}, []string{"N1"})
+	assert.True(t, errors.Is(err, ErrFlowTemplateNotFound), "应返回 ErrFlowTemplateNotFound，实际 %v", err)
+	assert.NotErrorIs(t, err, ErrFlowAlertNotFound)
+
 	// 按告警反查
 	list, err := itStore.ListFlowInstancesByAlert(ctx, fx.alertID)
 	require.NoError(t, err)

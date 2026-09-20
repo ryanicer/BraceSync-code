@@ -547,7 +547,12 @@ func (h *Handler) startFlowInstance(c *gin.Context) {
 	ctx := c.Request.Context()
 	tpl, err := h.store.GetFlowTemplate(ctx, req.TemplateID)
 	if err != nil {
-		failFlowTemplateErr(c, "get flow template failed", err)
+		if errors.Is(err, repo.ErrFlowTemplateNotFound) {
+			// 本端点没有 :templateId 路径参数，不能用 failFlowTemplateErr（它读 param 会打出空 ID）
+			fail(c, model.ErrNotFound("flow template not found: %s", req.TemplateID))
+		} else {
+			fail(c, model.ErrInternal("get flow template failed"))
+		}
 		return
 	}
 	g, appErr := parseFlowGraph(tpl.Nodes, tpl.Edges)
