@@ -238,7 +238,7 @@ func TestScopeFull_DefaultEndpoints_Allowed(t *testing.T) {
 
 	req := testRequest{
 		Method:       http.MethodGet,
-		Path:         "/api/v1/patients/P20260013/orthosis-plans",
+		Path:         "/api/v1/patients/P20260013/daily-wear",
 		Headers:      map[string]string{"Authorization": "Bearer " + fullToken},
 		ExpectedCode: http.StatusOK,
 	}
@@ -246,7 +246,7 @@ func TestScopeFull_DefaultEndpoints_Allowed(t *testing.T) {
 	code, _ := doTestRequest(t, gw, req)
 	assert.Equal(t, req.ExpectedCode, code, "全态 JWT 可访问默认 patient 端点")
 
-	got := findBackendRequest(received, http.MethodGet, "/api/v1/patients/P20260013/orthosis-plans")
+	got := findBackendRequest(received, http.MethodGet, "/api/v1/patients/P20260013/daily-wear")
 	require.NotNil(t, got, "请求必须触达后端")
 	assert.Equal(t, "P20260013", got.UserID, "X-User-Id 应等于 PatientID")
 	assert.Equal(t, "patient", got.Role, "X-Role 应为 patient")
