@@ -190,14 +190,6 @@ var staffOnlyPatterns = []rbacPattern{
 	// T260-A：告警处理 —— 仅 staff（admin-web 告警页 admin/doctor + tech-miniapp 技师）
 	rbacOf(http.MethodPost, "/api/v1/alerts/:alertId/process"),
 
-	// T260 方案 B：以下 5 条暂归 staff-only（服务层缺 admin-or-self 水平鉴权，患者暂 403；
-	// 待 T264 补齐服务层鉴权后移回 publicPatterns）。
-	rbacOf(http.MethodGet, "/api/v1/alerts"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/records"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/realtime"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/health-reports"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/orthosis-plans"),
-
 	// T260-B：设备管理域 —— 列表/详情/绑定/配网/基线/安装记录（technician 安装流程 +
 	// admin/doctor 管理页）。绑定互斥/归属等业务校验由 device-service handler 层负责。
 	rbacOf(http.MethodGet, "/api/v1/devices"),
@@ -237,6 +229,12 @@ var publicPatterns = []rbacPattern{
 	rbacOf(http.MethodPut, "/api/v1/patients/:patientId/wear-reminder"),      // msg-service requireSelfScope
 	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/subscription-quota"), // msg-service requireSelfScope
 	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/notifications"),      // msg-service requireSelfScope
+	// T264 已合：以下 5 条服务层补齐 admin-or-self / 患者身份绑定，患者端恢复可用
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/records"),        // data-service getHistory: assertAdminOrSelf
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/realtime"),       // data-service getRealtime: assertAdminOrSelf
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/health-reports"), // data-service getHealthReports: assertAdminOrSelf
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/orthosis-plans"), // user-service listPlans: assertAdminOrSelf
+	rbacOf(http.MethodGet, "/api/v1/alerts"),                             // alert-service listAlerts: 患者强制 patientId=X-User-Id
 
 	// 文件域（file-service T261 已加 owner 归属校验：非 staff 仅本人文件可读写）
 	rbacOf(http.MethodPost, "/api/v1/files/presign"),
