@@ -46,29 +46,29 @@ func (env *testEnv) withBaselines(rows map[string]calibration.Baseline) *fakeBas
 
 func TestCalibration_UploadSingle_WearingJudgedOnCalibrated(t *testing.T) {
 	env := newTestEnv()
-	// P01 偏移 0.3N：raw 0.6N > 0.5N，减偏移后 0.3N ≤ 0.5N → 非佩戴帧
+	// P01 偏移 0.3N：raw 0.34N > 0.05N，减偏移后 0.04N ≤ 0.05N → 非佩戴帧（T203 ÷10）
 	env.withBaselines(map[string]calibration.Baseline{
 		testDevice: {BaselineID: 7, Offsets: mustOffsets(0.3)},
 	})
 
-	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.6)))
+	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.34)))
 	require.Nil(t, appErr)
 	assert.False(t, resp.Duplicated)
 
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 0, st.wear, "佩戴判定用减偏移后值：0.3N ≤ 0.5N 不计佩戴")
-	assert.InDelta(t, 0.3, st.max, 0.001, "stat:today max 记校准后值")
+	assert.Equal(t, 0, st.wear, "佩戴判定用减偏移后值：0.04N ≤ 0.05N 不计佩戴")
+	assert.InDelta(t, 0.04, st.max, 0.001, "stat:today max 记校准后值")
 
 	// rt:frame 存入口 ÷1000 后的 raw（N），偏移减法只发生在读侧
 	var frame realtimeFrame
 	require.NoError(t, json.Unmarshal([]byte(env.cache.rtFrame[testDevice]), &frame))
 	require.Len(t, frame.Points, model.PointCount)
-	assert.InDelta(t, 0.6, frame.Points[0], 0.0001, "rt:frame 保留 raw 值（原始真值）")
+	assert.InDelta(t, 0.34, frame.Points[0], 0.0001, "rt:frame 保留 raw 值（原始真值）")
 
 	// 告警入参同样用校准后帧
 	require.Equal(t, 1, env.alerts.calls)
-	assert.InDelta(t, 0.3, env.alerts.reqs[0].Points[0], 0.0001)
+	assert.InDelta(t, 0.04, env.alerts.reqs[0].Points[0], 0.0001)
 }
 
 func TestCalibration_GetRealtime_FullCalibratedSnapshot(t *testing.T) {
