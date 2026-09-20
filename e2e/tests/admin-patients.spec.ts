@@ -89,6 +89,58 @@ test.describe('详情抽屉', () => {
     await expect(drawer).toContainText('建档时间')
   })
 
+  /**
+   * T270 A-FLOW-10（核心流程.md）：把「抽屉能打开」升级成抽屉的**字段契约**。
+   * 逐格值一律与「所点那一行」的列交叉核对（行↔详情同源），不写死 mock 里的具体患者，
+   * 所以换一批数据依然成立，也不是「把现状当期望」。
+   *
+   * ⚠️ 受 D1 影响的只有「所属团队 / 主治医生」两格的**取值**（真实模式下
+   * api/index.ts 的 teamNameOf/doctorNameOf 回落 mock 表 ⇒ 显示 TEAM01/D0001），
+   * 那两格的**值级**判据随 T269 一起改，本条只断两侧同源一致 —— 抓不住 D1 本身。
+   */
+  test('A-FLOW-10 抽屉字段契约：标题=所点行 + 8 项逐格对齐列表 + 底部动作 + 关闭后列表不变', async ({ page }) => {
+    const rows = tableRows(page)
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 })
+    const rowCount = await rows.count()
+    expect(rowCount, '列表需至少 2 行才能取非首行验证').toBeGreaterThan(1)
+
+    // 取第 2 行（避开上一条用例钉死的首行）
+    const target = rows.nth(1)
+    const cells = await target.evaluate((el) => Array.from(el.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim()))
+    const [, patientId, name, gender, age, diagnosis, cobb, team, doctor, device] = cells
+
+    await target.locator('td').nth(2).click() // 点姓名单元格，避开首列复选框
+    const drawer = page.locator('.el-drawer')
+    await expect(drawer).toBeVisible()
+    await expect(drawer.locator('.el-drawer__title')).toHaveText(`${name}（${patientId}）`)
+
+    const fields = await drawer.evaluate((el) =>
+      Array.from(el.querySelectorAll('.el-descriptions__label')).map((th) => ({
+        label: (th.textContent ?? '').trim(),
+        value: (th.nextElementSibling?.textContent ?? '').trim(),
+      })),
+    )
+    expect(fields.map((f) => f.label), '抽屉 8 项字段名与顺序').toEqual([
+      '性别', '年龄', '诊断', 'Cobb角', '所属团队', '主治医生', '绑定设备', '建档时间',
+    ])
+    const shown = Object.fromEntries(fields.map((f) => [f.label, f.value]))
+    expect(shown['性别'], '性别须中文化（male→男）').toBe(gender)
+    expect(shown['年龄']).toBe(age)
+    expect(shown['诊断']).toBe(diagnosis)
+    expect(shown['Cobb角']).toBe(cobb)
+    expect(shown['所属团队']).toBe(team)
+    expect(shown['主治医生']).toBe(doctor)
+    expect(shown['绑定设备'], '无设备显示「未绑定」').toBe(device)
+    expect(shown['建档时间'], '建档时间渲染成日期，不是原始 ISO / undefined').toMatch(/^\d{4}-\d{2}-\d{2}$|^—$|^－$|^-$|^\/$/)
+    for (const f of fields) expect(f.value, `字段「${f.label}」不得是 undefined/NaN`).not.toMatch(/undefined|NaN|\[object/)
+
+    await expect(drawer.getByRole('button', { name: '分配团队' })).toBeVisible()
+
+    await drawer.locator('.el-drawer__close-btn').click()
+    await expect(drawer).toBeHidden()
+    await expect(tableRows(page)).toHaveCount(rowCount) // 关抽屉不改变列表（未触发筛选/翻页）
+  })
+
   test('抽屉可关闭', async ({ page }) => {
     await tableRows(page).filter({ hasText: '陈子航' }).click()
     const drawer = page.locator('.el-drawer')
