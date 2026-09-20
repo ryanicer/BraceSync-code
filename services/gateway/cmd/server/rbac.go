@@ -190,6 +190,14 @@ var staffOnlyPatterns = []rbacPattern{
 	// T260-A：告警处理 —— 仅 staff（admin-web 告警页 admin/doctor + tech-miniapp 技师）
 	rbacOf(http.MethodPost, "/api/v1/alerts/:alertId/process"),
 
+	// T260 方案 B：以下 5 条暂归 staff-only（服务层缺 admin-or-self 水平鉴权，患者暂 403；
+	// 待 T264 补齐服务层鉴权后移回 publicPatterns）。
+	rbacOf(http.MethodGet, "/api/v1/alerts"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/records"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/realtime"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/health-reports"),
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/orthosis-plans"),
+
 	// T260-B：设备管理域 —— 列表/详情/绑定/配网/基线/安装记录（technician 安装流程 +
 	// admin/doctor 管理页）。绑定互斥/归属等业务校验由 device-service handler 层负责。
 	rbacOf(http.MethodGet, "/api/v1/devices"),
@@ -210,37 +218,27 @@ var staffOnlyPatterns = []rbacPattern{
 var staffRoles = []string{roleAdmin, roleDoctor, roleCS, roleTech}
 
 // publicPatterns T260：全认证角色可访问端点矩阵（patient + staff 均放行）。
-// 这些端点的水平越权防护由各服务 handler 层负责（self-scope / owner 校验），
-// 网关层只做「是否已认证」判定。不在此矩阵的未登记路径默认 403（见 roleAuthz 末尾）。
-//
-// 依据（实测调用方，非推断）：
-//   - GET /alerts              → admin-web/tech-miniapp 告警页 + patient-miniapp 异常页
-//   - /patient/profile 等       → 患者本人自查（user-service self-scope）
-//   - /patients/:id/* 患者域    → 患者自查本人 + 医生/客服查负责患者（服务侧 team 归属）
-//   - /files/*                 → 文件归属校验在 file-service handler 层
+// 网关层只做「是否已认证」判定；每条均须有服务层鉴权依据（self-scope / admin-or-self /
+// owner 校验 / scope 限制），无依据的端点不得列入——缺失服务层鉴权的端点须放 staffOnlyPatterns，
+// 待 T264 补齐服务层 admin-or-self 后再移回 public。不在此矩阵的未登记路径默认 403（见 roleAuthz 末尾）。
 var publicPatterns = []rbacPattern{
-	// T260-A：告警读 —— patient 异常页带 ?patientId=自己 调用，水平过滤由 alert-service 做
-	rbacOf(http.MethodGet, "/api/v1/alerts"),
-
-	// 患者本人域（self-scope 在 user-service handler 层）
+	// 患者本人域（user-service 按 X-User-Id 取本人，天然 self-scope）
 	rbacOf(http.MethodGet, "/api/v1/patient/profile"),
-	rbacOf(http.MethodPost, "/api/v1/patient/bind-phone"), // bind-scope JWT，scopeAuthz 限 bind
-	rbacOf(http.MethodPut, "/api/v1/patients/:patientId"), // T226 患者自助改本人资料
+	// bind-scope JWT 专属，gateway scopeAuthz 中间件限 scope=bind，非 bind 令牌一律 403
+	rbacOf(http.MethodPost, "/api/v1/patient/bind-phone"),
+	// T226 患者自助改本人资料：user-service 校验 X-User-Id == :patientId
+	rbacOf(http.MethodPut, "/api/v1/patients/:patientId"),
 
-	// 患者数据域（患者自查 + staff 跨患者；水平鉴权在 data/msg/user-service handler 层）
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/realtime"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/records"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/health-reports"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/daily-wear"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/feeling-logs"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/orthosis-plans"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/review-records"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/wear-reminder"),
-	rbacOf(http.MethodPut, "/api/v1/patients/:patientId/wear-reminder"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/subscription-quota"),
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/notifications"),
+	// 患者数据域（各服务 handler 层均已实现 admin-or-self 水平鉴权）
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/daily-wear"),         // data-service getDailyWear
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/feeling-logs"),       // user-service listFeelingLogs
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/review-records"),     // user-service listReviewRecords
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/wear-reminder"),      // msg-service requireSelfScope
+	rbacOf(http.MethodPut, "/api/v1/patients/:patientId/wear-reminder"),      // msg-service requireSelfScope
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/subscription-quota"), // msg-service requireSelfScope
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/notifications"),      // msg-service requireSelfScope
 
-	// 文件域（归属校验在 file-service handler 层；user-service 服务间调用以 ROLE_ADMIN 放行）
+	// 文件域（file-service T261 已加 owner 归属校验：非 staff 仅本人文件可读写）
 	rbacOf(http.MethodPost, "/api/v1/files/presign"),
 	rbacOf(http.MethodPost, "/api/v1/files/upload-complete"),
 	rbacOf(http.MethodGet, "/api/v1/files/query"),
@@ -366,7 +364,7 @@ func roleAuthz() gin.HandlerFunc {
 				"forbidden: role not allowed for this endpoint")
 			return
 		}
-		// T260：全认证角色可访问端点（patient + staff）—— 水平鉴权由各服务 handler 层负责
+		// T260：publicPatterns 端点（每条均有服务层 self-scope / admin-or-self / owner 校验依据）
 		if matchPublicPattern(c.Request.Method, c.Request.URL.Path) {
 			c.Next()
 			return

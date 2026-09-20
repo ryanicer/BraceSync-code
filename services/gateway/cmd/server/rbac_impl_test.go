@@ -114,7 +114,6 @@ func TestRBAC_LowRoleNonAdminEndpointsAllowed(t *testing.T) {
 		{"ROLE_CS", http.MethodPost, "/api/v1/feedbacks/F001/process"},
 		{"technician", http.MethodPost, "/api/v1/devices"},
 		{"technician", http.MethodPost, "/api/v1/devices/D001/bind"},
-		{"patient", http.MethodGet, "/api/v1/alerts"},
 	}
 	for _, c := range cases {
 		code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, c.role))
@@ -296,19 +295,20 @@ func TestRBAC_T260_DefaultDeny_UnregisteredPattern(t *testing.T) {
 }
 
 // TestRBAC_T260_PublicPatterns_AllRoles publicPatterns 端点对所有已认证角色放行
-// （patient + staff）。水平鉴权由各服务 handler 层负责。
+// （patient + staff）。每条均有服务层 self-scope / admin-or-self / owner 校验依据。
 // file-service 路由代理到 file-service:8085（测试环境不可达 → 502），
 // 只要不是 403 即说明 RBAC 放行；其余路由经测试后端 → 200。
 func TestRBAC_T260_PublicPatterns_AllRoles(t *testing.T) {
 	backend, _ := captureBackend(t)
 	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
 
-	// 非 file-service 的 public 路由 → 200
+	// 非 file-service 的 public 路由 → 200（均有服务层鉴权依据）
 	publicOK := []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/alerts"},
 		{http.MethodGet, "/api/v1/patient/profile"},
-		{http.MethodGet, "/api/v1/patients/P001/records"},
 		{http.MethodGet, "/api/v1/patients/P001/wear-reminder"},
+		{http.MethodGet, "/api/v1/patients/P001/daily-wear"},
+		{http.MethodGet, "/api/v1/patients/P001/feeling-logs"},
+		{http.MethodGet, "/api/v1/patients/P001/review-records"},
 	}
 	// file-service 路由 → 502（后端不可达），但非 403 即 RBAC 放行
 	publicFile := []struct{ method, path string }{
@@ -328,8 +328,9 @@ func TestRBAC_T260_PublicPatterns_AllRoles(t *testing.T) {
 	}
 }
 
-// TestRBAC_T260_StaffOnly_DeniedForPatient staff-only 端点（feedbacks/alerts-process/devices）
-// 对 patient 一律 403，staff 放行。
+// TestRBAC_T260_StaffOnly_DeniedForPatient staff-only 端点对 patient 一律 403，staff 放行。
+// 含 T260 方案 B 暂归 staff-only 的 5 条（alerts/records/realtime/health-reports/orthosis-plans，
+// 服务层缺 admin-or-self，待 T264 补齐后移回 public）。
 func TestRBAC_T260_StaffOnly_DeniedForPatient(t *testing.T) {
 	backend, received := captureBackend(t)
 	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
@@ -341,6 +342,12 @@ func TestRBAC_T260_StaffOnly_DeniedForPatient(t *testing.T) {
 		{http.MethodGet, "/api/v1/devices"},
 		{http.MethodPost, "/api/v1/devices/D001/bind"},
 		{http.MethodPost, "/api/v1/install-records"},
+		// T260 方案 B：暂归 staff-only 的 5 条
+		{http.MethodGet, "/api/v1/alerts"},
+		{http.MethodGet, "/api/v1/patients/P001/records"},
+		{http.MethodGet, "/api/v1/patients/P001/realtime"},
+		{http.MethodGet, "/api/v1/patients/P001/health-reports"},
+		{http.MethodGet, "/api/v1/patients/P001/orthosis-plans"},
 	}
 	// patient → 403
 	for _, c := range staffOnly {
