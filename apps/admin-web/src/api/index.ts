@@ -126,6 +126,32 @@ export async function processAlertApi(alertId: string): Promise<void> {
   await request<null>({ url: `/api/v1/alerts/${alertId}/process`, method: 'POST' })
 }
 
+// ========== 告警规则配置（T253-2.2，契约 docs/api/api-contracts.ts AlertRules，T252 后端） ==========
+
+export async function fetchAlertRules(): Promise<alertMock.AlertRules> {
+  if (USE_MOCK) { await delay(); return alertMock.mockAlertRules() }
+  return request<alertMock.AlertRules>({ url: '/api/v1/admin/alert-rules' })
+}
+
+export async function saveAlertPointRulesApi(input: {
+  unifiedUpperN?: number
+  unifiedLowerN?: number
+  points?: alertMock.AlertPointRuleUpdate[]
+}): Promise<alertMock.AlertRules> {
+  if (USE_MOCK) { await delay(); return alertMock.mockSaveAlertPointRules(input) }
+  return request<alertMock.AlertRules>({ url: '/api/v1/admin/alert-rules/points', method: 'PUT', data: input as unknown as Record<string, unknown> })
+}
+
+export async function resetAlertPointRulesApi(): Promise<alertMock.AlertRules> {
+  if (USE_MOCK) { await delay(); return alertMock.mockResetAlertPointRules() }
+  return request<alertMock.AlertRules>({ url: '/api/v1/admin/alert-rules/points/reset', method: 'POST' })
+}
+
+export async function saveAlertGlobalRulesApi(input: Partial<alertMock.AlertGlobalRules>): Promise<alertMock.AlertRules> {
+  if (USE_MOCK) { await delay(); return alertMock.mockSaveAlertGlobalRules(input) }
+  return request<alertMock.AlertRules>({ url: '/api/v1/admin/alert-rules/global', method: 'PUT', data: input as unknown as Record<string, unknown> })
+}
+
 // ========== Device / Team / Doctor / Technician / Install ==========
 
 export async function fetchDevices(params: { keyword?: string }): Promise<PaginatedResponse<Device>> {
