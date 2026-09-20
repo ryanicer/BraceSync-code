@@ -164,6 +164,18 @@ var userServiceRoutes = []proxyRoute{
 	// T252 12.3 操作日志（系统配置页 Tab3）
 	{http.MethodGet, "/admin/audit-logs"},
 
+	// T274 告警流程画布：2.4 模板设计器 + 2.3 运行态（数据面 owner: user-service）
+	{http.MethodGet, "/admin/flow/templates"},
+	{http.MethodPost, "/admin/flow/templates"},
+	{http.MethodGet, "/admin/flow/templates/:templateId"},
+	{http.MethodPut, "/admin/flow/templates/:templateId"},
+	{http.MethodDelete, "/admin/flow/templates/:templateId"},
+	{http.MethodPost, "/admin/flow/instances"},
+	{http.MethodGet, "/admin/flow/instances"},
+	{http.MethodGet, "/admin/flow/instances/:instanceId/nodes"},
+	{http.MethodPost, "/admin/flow/instances/:instanceId/nodes/:nodeId/actions"},
+	{http.MethodGet, "/admin/flow/instances/:instanceId/actions"},
+
 	// T130 复查记录（合同患者端「复查管理」）
 	{http.MethodPost, "/admin/review-records"},              // 医生/管理员创建复查记录
 	{http.MethodGet, "/patients/:patientId/review-records"}, // 患者复查记录列表（含报告下载URL）

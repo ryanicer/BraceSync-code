@@ -133,6 +133,9 @@ type fakeStore struct {
 	auditLogErr     error
 	lastAuditFilter repo.AuditFilter
 
+	// T274 流程画布：状态与断言字段集中在 flow_t274_test.go 的 fakeFlowState
+	flow fakeFlowState
+
 	lastUpsert       []repo.ConfigKV
 	lastUpsertBy     string
 	lastFilter       repo.PatientFilter

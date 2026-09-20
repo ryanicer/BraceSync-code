@@ -273,6 +273,19 @@ func (h *Handler) Router() *gin.Engine {
 		// T252 12.3 操作日志（系统配置页 Tab3）
 		v1.GET("/admin/audit-logs", h.getAuditLogs)
 
+		// T274 告警流程画布（2.4 设计器 = 模板 CRUD；2.3 运行态 = 实例/节点状态/操作/时间线）
+		// 契约：docs/api/api-contracts.ts。RBAC 在 gateway rbac.go 登记，本处另有 handler 兜底。
+		v1.GET("/admin/flow/templates", h.listFlowTemplates)
+		v1.POST("/admin/flow/templates", h.createFlowTemplate)
+		v1.GET("/admin/flow/templates/:templateId", h.getFlowTemplate)
+		v1.PUT("/admin/flow/templates/:templateId", h.updateFlowTemplate)
+		v1.DELETE("/admin/flow/templates/:templateId", h.deleteFlowTemplate)
+		v1.POST("/admin/flow/instances", h.startFlowInstance)
+		v1.GET("/admin/flow/instances", h.getFlowInstances)
+		v1.GET("/admin/flow/instances/:instanceId/nodes", h.getFlowNodeStates)
+		v1.POST("/admin/flow/instances/:instanceId/nodes/:nodeId/actions", h.submitFlowNodeAction)
+		v1.GET("/admin/flow/instances/:instanceId/actions", h.getFlowInstanceActions)
+
 		// T130 复查记录（合同患者端「复查管理」）
 		v1.POST("/admin/review-records", h.createReviewRecord)
 		v1.GET("/patients/:patientId/review-records", h.listReviewRecords)
