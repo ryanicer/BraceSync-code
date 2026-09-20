@@ -15,11 +15,91 @@ export interface AdminRoleRow {
 }
 
 export function mockAdminRoles(): AdminRoleRow[] {
+  if (roleCrudStore.length === 0) roleCrudStore.push(...mockAdminRoleSeeds())
+  return roleCrudStore.map((r) => ({ ...r }))
+}
+
+function mockAdminRoleSeeds(): AdminRoleRow[] {
   return [
     { roleId: 'ROLE-ADMIN', name: PRESET_ROLES[0].name, description: PRESET_ROLES[0].description, memberCount: 3, createdAt: '2026-01-01T00:00:00+08:00', status: 'enabled', preset: true },
     { roleId: 'ROLE-DOCTOR', name: PRESET_ROLES[1].name, description: PRESET_ROLES[1].description, memberCount: 5, createdAt: '2026-01-01T00:00:00+08:00', status: 'enabled', preset: true },
     { roleId: 'ROLE-CS', name: PRESET_ROLES[2].name, description: PRESET_ROLES[2].description, memberCount: 2, createdAt: '2026-01-01T00:00:00+08:00', status: 'enabled', preset: true },
   ]
+}
+
+// T253-11.2: 角色 CRUD mock（可变存储，对齐 T252 后端 roles_t252.go 语义：
+// 重名 409 / 预置角色锁定改名、不可删 / 被账号引用不可删）
+const roleCrudStore: AdminRoleRow[] = []
+
+/** 角色模板（对齐后端 GET /admin/role-templates 的 5 条，key 同契约 RoleTemplate.key） */
+export interface RoleTemplateItem {
+  key: string
+  name: string
+  description: string
+  permissions: { scope: string; modules: string[] }
+}
+
+export function mockRoleTemplates(): RoleTemplateItem[] {
+  return [
+    { key: 'admin', name: '超级管理员', description: '系统全部权限', permissions: { scope: 'all', modules: ['dashboard', 'realtime', 'patients', 'teams', 'devices', 'alerts', 'comm', 'orthosis', 'install', 'tech', 'perm', 'config'] } },
+    { key: 'director', name: '主任医师', description: '患者管理+数据分析+团队管理', permissions: { scope: 'all', modules: ['dashboard', 'realtime', 'patients', 'teams', 'alerts', 'orthosis', 'install'] } },
+    { key: 'doctor', name: '主治医师', description: '患者数据+告警处理+沟通', permissions: { scope: 'team', modules: ['dashboard', 'realtime', 'patients', 'alerts', 'comm', 'orthosis'] } },
+    { key: 'therapist', name: '康复师', description: '患者数据查看+矫形日志+沟通', permissions: { scope: 'team', modules: ['realtime', 'patients', 'alerts', 'comm', 'orthosis'] } },
+    { key: 'nurse', name: '护士', description: '患者列表查看+基本沟通', permissions: { scope: 'team', modules: ['patients', 'comm'] } },
+  ]
+}
+
+export interface CreateRoleInput {
+  name: string
+  description?: string
+  template?: string
+  permissions?: { scope: string; modules: string[] }
+}
+
+export function mockCreateRole(input: CreateRoleInput): AdminRoleRow {
+  const name = input.name.trim()
+  if (roleCrudStore.some((r) => r.name === name)) {
+    throw new Error(`角色名已存在: ${name}`)
+  }
+  const hex = Array.from({ length: 10 }, () => '0123456789ABCDEF'[Math.floor(Math.random() * 16)]).join('')
+  const row: AdminRoleRow = {
+    roleId: `ROLE_C${hex}`,
+    name,
+    description: input.description?.trim() ?? '',
+    memberCount: 0,
+    createdAt: new Date().toISOString(),
+    status: 'enabled',
+    preset: false,
+  }
+  roleCrudStore.push(row)
+  return { ...row }
+}
+
+export function mockUpdateRole(roleId: string, input: { name?: string; description?: string; status?: 'enabled' | 'disabled' }): AdminRoleRow {
+  const row = roleCrudStore.find((r) => r.roleId === roleId)
+  if (!row) throw new Error(`角色不存在: ${roleId}`)
+  if (input.name !== undefined) {
+    if (row.preset) throw new Error(`预置角色名称不可修改: ${roleId}`)
+    const name = input.name.trim()
+    if (roleCrudStore.some((r) => r.roleId !== roleId && r.name === name)) {
+      throw new Error(`角色名已存在: ${name}`)
+    }
+    row.name = name
+  }
+  if (input.description !== undefined) row.description = input.description.trim()
+  if (input.status !== undefined) row.status = input.status
+  return { ...row }
+}
+
+export function mockDeleteRole(roleId: string): void {
+  const idx = roleCrudStore.findIndex((r) => r.roleId === roleId)
+  if (idx === -1) throw new Error(`角色不存在: ${roleId}`)
+  const row = roleCrudStore[idx]
+  if (row.preset) throw new Error(`预置角色不可删除: ${roleId}`)
+  if (row.memberCount > 0) {
+    throw new Error(`角色仍被 ${row.memberCount} 个运营账号使用，请先转移成员`)
+  }
+  roleCrudStore.splice(idx, 1)
 }
 
 // T247: 角色权限 mock（基于 ROLE_PAGE_MATRIX，预置角色不可编辑权限但可读）

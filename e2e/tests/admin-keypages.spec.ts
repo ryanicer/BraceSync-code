@@ -143,3 +143,65 @@ test.describe('系统配置', () => {
     await expect(rows.filter({ hasText: 'NTF-003' })).toContainText('降级短信')
   })
 })
+
+test.describe('角色管理（T253-11.2）', () => {
+  // 页面同时有 角色列表 + 权限矩阵 两张表，断言须圈定在角色列表卡内
+  function listRows(page: import('@playwright/test').Page) {
+    return tableRows(page, page.locator('.page-card').filter({ hasText: '角色列表' }))
+  }
+
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.roles)
+  })
+
+  test('渲染角色列表（按后端返回）与操作列，预置角色删除禁用', async ({ page }) => {
+    const rows = listRows(page)
+    await expect(rows).toHaveCount(3) // mock = 3 个预置登录角色
+    await expect(rows.filter({ hasText: '运营管理员' })).toContainText('启用')
+    await expect(rows.filter({ hasText: '运营管理员' }).getByRole('button', { name: '删除' })).toBeDisabled()
+    await expect(rows.first().getByRole('button', { name: '编辑' })).toBeVisible()
+  })
+
+  test('新增角色（模板）→ 编辑描述 → popconfirm 删除，全链路', async ({ page }) => {
+    await page.getByRole('button', { name: '+ 新增角色' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('E2E巡检角色')
+    await pickSelectOption(page, dialog.locator('.role-template'), '康复师')
+    await dialog.getByRole('button', { name: '保存角色' }).click()
+    await expect(adminMessage(page)).toContainText('角色已创建')
+
+    const row = listRows(page).filter({ hasText: 'E2E巡检角色' })
+    await expect(row).toHaveCount(1)
+    await row.getByRole('button', { name: '编辑' }).click()
+    await dialog.locator('input').nth(1).fill('巡检用自定义角色描述')
+    await dialog.getByRole('button', { name: '保存角色' }).click()
+    await expect(adminMessage(page)).toContainText('角色已保存')
+    await expect(row).toContainText('巡检用自定义角色描述')
+
+    await row.getByRole('button', { name: '删除' }).click()
+    await page.locator('.el-popconfirm').getByRole('button', { name: '确定' }).click()
+    await expect(adminMessage(page)).toContainText('角色已删除')
+    await expect(listRows(page).filter({ hasText: 'E2E巡检角色' })).toHaveCount(0)
+  })
+
+  test('新增角色（自定义）未勾选模块提示且不提交', async ({ page }) => {
+    await page.getByRole('button', { name: '+ 新增角色' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('E2E空模块角色')
+    await dialog.getByRole('button', { name: '保存角色' }).click()
+    await expect(adminMessage(page)).toContainText('至少勾选一个功能模块')
+    await expect(listRows(page).filter({ hasText: 'E2E空模块角色' })).toHaveCount(0)
+    await dialog.getByRole('button', { name: '取消' }).click()
+  })
+
+  test('编辑预置角色：名称锁定仅描述可改', async ({ page }) => {
+    const row = listRows(page).filter({ hasText: '运营管理员' })
+    await row.getByRole('button', { name: '编辑' }).click()
+    const dialog = page.locator('.el-dialog')
+    await expect(dialog.locator('input').first()).toBeDisabled()
+    await dialog.locator('input').nth(1).fill('系统全部权限（运营 / 配置 / 权限管理）')
+    await dialog.getByRole('button', { name: '保存角色' }).click()
+    await expect(adminMessage(page)).toContainText('角色已保存')
+  })
+})
