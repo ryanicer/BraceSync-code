@@ -326,6 +326,9 @@ func TestIT_Install_Baseline(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rec.BaselineID)
 	assert.Equal(t, baselineID, *rec.BaselineID)
+	// T248 9.1：GetInstall LEFT JOIN baselines 回读定长 20 点偏移值
+	assert.Len(t, rec.OffsetValues, model.PointCount)
+	assert.Equal(t, offsets, rec.OffsetValues)
 
 	// 基线落库校验：读回 offset_values 完整
 	var got []float32

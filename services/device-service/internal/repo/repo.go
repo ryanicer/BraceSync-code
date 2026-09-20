@@ -398,15 +398,19 @@ func (r *PGStore) CreateInstall(ctx context.Context, rec *model.InstallRecord) (
 	return id, nil
 }
 
-// GetInstall 查安装记录
+// GetInstall 查安装记录（T248 9.1：LEFT JOIN baselines 一并取出 20 点偏移值）
 func (r *PGStore) GetInstall(ctx context.Context, installID int64) (*model.InstallRecord, error) {
 	rec := &model.InstallRecord{}
 	err := r.pool.QueryRow(ctx,
-		`SELECT install_id, device_id, patient_id, tech_id, calibrate_time,
-		        baseline_id, notes, signature_url, wifi_status, created_at
-		 FROM install_records WHERE install_id = $1`, installID,
+		`SELECT i.install_id, i.device_id, i.patient_id, i.tech_id, i.calibrate_time,
+		        i.baseline_id, i.notes, i.signature_url, i.wifi_status, i.created_at,
+		        COALESCE(b.offset_values, '{}'::real[])
+		 FROM install_records i
+		 LEFT JOIN baselines b ON b.baseline_id = i.baseline_id
+		 WHERE i.install_id = $1`, installID,
 	).Scan(&rec.InstallID, &rec.DeviceID, &rec.PatientID, &rec.TechID, &rec.CalibrateTime,
-		&rec.BaselineID, &rec.Notes, &rec.SignatureURL, &rec.WifiStatus, &rec.CreatedAt)
+		&rec.BaselineID, &rec.Notes, &rec.SignatureURL, &rec.WifiStatus, &rec.CreatedAt,
+		&rec.OffsetValues)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

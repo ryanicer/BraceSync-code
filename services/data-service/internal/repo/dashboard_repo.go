@@ -26,6 +26,17 @@ type KPIRow struct {
 	MonthNewPatients int64   // 本自然月新增患者
 }
 
+// KPICompareRow 上一周期对比基准投影（T248 1.1 · PRD §7D.1 KPI 表「对比基准」列）。
+// 窗口 = 与当前 period 等长、紧邻在前的一段（[prevFromDate, fromDate)）。
+// 🔴 不含设备在线率：devices.status 为当前态快照、无历史表，昨日在线率无从取（见 service 层注释）。
+type KPICompareRow struct {
+	ActiveWear           int64   // 上一周期有佩戴的去重患者数
+	AlertCount           int64   // 上一周期告警数
+	AvgWearMinutes       float64 // 上一周期平均佩戴分钟
+	TotalPatientsAtMonth int64   // 上月末累计患者（created_at < 本月起点）
+	PrevMonthNewPatients int64   // 上月新增患者
+}
+
 // TrendRow 日趋势投影（wear：平均佩戴分钟；alert：告警条数）
 type TrendRow struct {
 	Date  time.Time
@@ -45,6 +56,9 @@ type RankingRow struct {
 type DashboardStore interface {
 	// KPI 六指标单趟查询；fromDate 为窗口起始日（YYYY-MM-DD），alertFrom 为告警时间窗起点
 	KPI(ctx context.Context, fromDate string, alertFrom, monthStart time.Time) (*KPIRow, error)
+	// KPICompare 上一等长周期的对比基准（T248 1.1）。prevFromDate/fromDate 为半开区间两端（YYYY-MM-DD），
+	// prevAlertFrom/alertFrom 为同一区间的 timestamptz 表达，monthStart/prevMonthStart 为自然月起点。
+	KPICompare(ctx context.Context, prevFromDate, fromDate string, prevAlertFrom, alertFrom, monthStart, prevMonthStart time.Time) (*KPICompareRow, error)
 	// WearTrend 按日平均佩戴分钟（fromDate/toDate 闭区间，YYYY-MM-DD）
 	WearTrend(ctx context.Context, fromDate, toDate string) ([]TrendRow, error)
 	// AlertTrend 按业务时区（Asia/Shanghai）切日的告警日计数
@@ -91,6 +105,32 @@ func (r *DashboardRepo) KPI(ctx context.Context, fromDate string, alertFrom, mon
 		return nil, fmt.Errorf("query dashboard kpi: %w", err)
 	}
 	return &row, nil
+}
+
+// kpiCompareSQL 上一等长周期的对比基准（T248 1.1）。日期口径与 kpiSQL 一致：
+// 文本传参 + 显式 ::date，规避容器 timezone 隐式转换（业务切日 = Asia/Shanghai）。
+const kpiCompareSQL = `
+SELECT
+  (SELECT COUNT(DISTINCT patient_id) FROM daily_wear_stats
+     WHERE stat_date >= $1::date AND stat_date < $2::date AND wear_minutes > 0)      AS active_wear,
+  (SELECT COUNT(*) FROM alerts WHERE ts >= $3 AND ts < $4)                           AS alert_count,
+  (SELECT COALESCE(AVG(wear_minutes), 0) FROM daily_wear_stats
+     WHERE stat_date >= $1::date AND stat_date < $2::date)                           AS avg_wear_minutes,
+  (SELECT COUNT(*) FROM patients WHERE created_at < $5)                             AS total_patients_at_month,
+  (SELECT COUNT(*) FROM patients WHERE created_at >= $6 AND created_at < $5)        AS prev_month_new_patients`
+
+// KPICompare 上一等长周期对比基准查询
+func (r *DashboardRepo) KPICompare(ctx context.Context, prevFromDate, fromDate string,
+	prevAlertFrom, alertFrom, monthStart, prevMonthStart time.Time) (*KPICompareRow, error) {
+	row := &KPICompareRow{}
+	err := r.pool.QueryRow(ctx, kpiCompareSQL,
+		prevFromDate, fromDate, prevAlertFrom, alertFrom, monthStart, prevMonthStart,
+	).Scan(&row.ActiveWear, &row.AlertCount, &row.AvgWearMinutes,
+		&row.TotalPatientsAtMonth, &row.PrevMonthNewPatients)
+	if err != nil {
+		return nil, fmt.Errorf("query dashboard kpi compare: %w", err)
+	}
+	return row, nil
 }
 
 const wearTrendSQL = `

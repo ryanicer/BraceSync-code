@@ -9,6 +9,7 @@ package model
 import (
 	"encoding/hex"
 	"fmt"
+	"math"
 	"regexp"
 	"time"
 )
@@ -176,10 +177,13 @@ type InstallRecord struct {
 	TechID        string
 	CalibrateTime time.Time
 	BaselineID    *int64 // 校准完成后回填（P0-3 UNIQUE，1:1）
-	Notes         *string
-	SignatureURL  *string
-	WifiStatus    string // connected / unconfigured
-	CreatedAt     time.Time
+	// OffsetValues 基线 20 点偏移值（T248 9.1）。仅 GetInstall LEFT JOIN baselines 填充；
+	// 未校准 / 列表投影为 nil。
+	OffsetValues []float32
+	Notes        *string
+	SignatureURL *string
+	WifiStatus   string // connected / unconfigured
+	CreatedAt    time.Time
 }
 
 // Baseline baselines 表行
@@ -190,6 +194,34 @@ type Baseline struct {
 	OffsetValues []float32 // 定长 20（CHECK 约束兜底）
 	CalibratorID string
 	CreatedAt    time.Time
+}
+
+// ─────────────────────────────────────────────────────────────
+// 校准状态（T248 9.3 · 设计稿 安装记录.html:106,173「校准」列）
+// ─────────────────────────────────────────────────────────────
+
+// 校准状态枚举（install_records 读侧派生，不落库）
+const (
+	CalibStatusUncalibrated = "uncalibrated" // 无基线（baseline_id IS NULL）
+	CalibStatusNormal       = "normal"       // 20 点偏移均在阈值内 → 设计稿「校准正常」
+	CalibStatusAbnormal     = "abnormal"     // 存在越界点 → 设计稿「校准异常」
+)
+
+// CalibStatus 由基线偏移值派生校准状态。thresholdN <= 0 时不判定越界（阈值未配置 ⇒ 只区分已/未校准，
+// 避免以占位值冒充业务口径）；越界按偏移绝对值比较（偏移可为负）。
+func CalibStatus(baselineID *int64, offsets []float32, thresholdN float32) string {
+	if baselineID == nil {
+		return CalibStatusUncalibrated
+	}
+	if thresholdN <= 0 {
+		return CalibStatusNormal
+	}
+	for _, v := range offsets {
+		if float32(math.Abs(float64(v))) > thresholdN {
+			return CalibStatusAbnormal
+		}
+	}
+	return CalibStatusNormal
 }
 
 // ─────────────────────────────────────────────────────────────
