@@ -397,6 +397,20 @@ const chartData = computed<ChartData<'line'>>(() => ({
 }))
 
 // 曲线纵轴与色阶共用快照下发的上界（写死会让亚牛顿真机数据整条线贴底，T296）
+/** 纵轴刻度步长：向上取整到 1/2/5×10^k，避免出现 19.33N 这种刻度 */
+function niceStep(span: number): number {
+  const raw = span / 3
+  const mag = 10 ** Math.floor(Math.log10(raw || 1))
+  return Math.ceil(raw / mag) * mag
+}
+
+// 数据超出下发量程时抬高纵轴，否则曲线会被裁到画布外（Chart.js 不画越界段）
+const chartYMax = computed(() => {
+  const dataMax = pressureHistory.value.reduce((m, d) => Math.max(m, d.v), 0)
+  const ceil = Math.max(hmMaxN.value, dataMax)
+  return niceStep(ceil) * 3
+})
+
 const chartOptions = computed<ChartOptions<'line'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
@@ -414,8 +428,8 @@ const chartOptions = computed<ChartOptions<'line'>>(() => ({
   scales: {
     y: {
       min: 0,
-      max: hmMaxN.value,
-      ticks: { stepSize: hmMaxN.value / 3, callback: (v) => `${fmtN(Number(v))}N` },
+      max: chartYMax.value,
+      ticks: { stepSize: niceStep(chartYMax.value), callback: (v) => `${fmtN(Number(v))}N` },
       grid: { color: '#f0f0f0' },
     },
     x: {
