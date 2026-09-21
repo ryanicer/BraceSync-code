@@ -21,6 +21,9 @@
 //
 // 用法：node e2e-miniapp/tech-bind.spec.js
 //     TECH_DEVICE_ID=... TECH_PATIENT_ID=... TECH_TECH_ID=...   （TECH_TECH_ID 缺省 T0001）
+//     TECH_CONFLICT_DEVICE_ID=...（可选）先带意图把这台设备绑给同一患者，造出确定的占用状态，
+//       用来逼出 409 换绑分支；不给则该分支只在「患者本来就已占用别的设备」时才走到。
+//       预置那台在换绑里会被重新释放，跑完回到解绑态（起点若是解绑态）。
 //     需先起微信开发者工具自动化端口（9420），外壳在连接端口之前不会执行任何业务断言。
 const cfg = require('./real-miniapp.config')
 /* global getCurrentPages */
@@ -31,6 +34,9 @@ const PASSWORD = process.env.TECH_PASSWORD || 'test123456'
 const DEVICE_ID = process.env.TECH_DEVICE_ID
 const PATIENT_ID = process.env.TECH_PATIENT_ID
 const TECH_ID = process.env.TECH_TECH_ID || 'T0001'
+// 可选：先把这台设备绑给同一患者，制造确定性的「患者已占用设备」状态，逼出 409 换绑分支。
+// 不给该变量时行为不变（患者空闲则走幂等/直通分支）。跑完那台设备会回到解绑态，与预置前一致。
+const CONFLICT_DEVICE_ID = process.env.TECH_CONFLICT_DEVICE_ID
 
 helpers.runSpec(cfg, {
   name: 'tech-bind',
@@ -65,11 +71,39 @@ helpers.runSpec(cfg, {
     //               不重试、不猜），再带 confirmSwap=true 重试，并回查那台设备确已被解除归属。
     const suffix = uniqueName(cfg.prefix) // e.g. T054测试-<ts>-00
     const bindPath = `/api/v1/devices/${encodeURIComponent(DEVICE_ID)}/bind`
+
+    // [3a] 可选预置占用：把另一台设备先绑给同一患者，下面的无意图 bind 就必须撞 409。
+    //      带 confirmSwap 预置，是因为患者此刻可能正占着本次要绑的这台（staging 现状即如此），
+    //      无意图预置会被本卡自己的规则拒掉；预置换掉的设备在下面的换绑里会再被释放，跑完回到起点。
+    //      不给 TECH_CONFLICT_DEVICE_ID 时本步整体跳过，行为与改动前一致。
+    let expectConflict = false
+    if (CONFLICT_DEVICE_ID && CONFLICT_DEVICE_ID !== DEVICE_ID) {
+      let pre
+      try {
+        pre = await apiCall(cfg.staging, `/api/v1/devices/${encodeURIComponent(CONFLICT_DEVICE_ID)}/bind`, {
+          method: 'POST', token, body: { patientId: PATIENT_ID, confirmSwap: true },
+        })
+      } catch (e) { logStep(result, 'api-preseed-conflict-device', false, e.message); return false }
+      expectConflict = pre.status === 200
+      logStep(result, 'api-preseed-conflict-device', pre.status === 200, {
+        deviceId: CONFLICT_DEVICE_ID, httpStatus: pre.status, code: pre.body && pre.body.code,
+      })
+      if (pre.status !== 200) return false
+    }
+
     let bindResp, instResp, swapFrom = null
     try {
       bindResp = await apiCall(cfg.staging, bindPath, {
         method: 'POST', token, body: { patientId: PATIENT_ID },
       })
+      if (expectConflict && bindResp.status !== 409) {
+        // 已预置占用却拿不到 409：staging 上跑的还是 T299 之前的构建，患者占用被静默改绑吞掉了。
+        // 这正是要抓的情形，判 FAIL；被静默解绑的那台需人工重新 bind 回去。
+        logStep(result, 'api-bind-expects-409', false, {
+          httpStatus: bindResp.status, preseededDevice: CONFLICT_DEVICE_ID,
+        })
+        return false
+      }
       if (bindResp.status === 409) {
         const bd = bindResp.body && bindResp.body.data
         swapFrom = bd && bd.occupiedDeviceId
