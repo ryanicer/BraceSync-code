@@ -96,8 +96,12 @@ test.describe('07-患者沟通', () => {
 
   test.describe('回复并标记处理（写）', () => {
     test('7.3 找到 pending 反馈 → 详情 → 填回复（T053回复-xxx）→ 提交成功 + 状态变更', async ({ page }) => {
-      // T279 复跑停跑（PM 口径）：回复对象是 seed 反馈，POST /feedbacks/:id/process 单向、退不回待处理。
-      test.skip(true, '会把共享 seed 反馈置为已回复且无回退端点，T279 起停跑')
+      // T279 复跑停跑：回复对象是 seed 反馈，POST /feedbacks/:id/process 单向、退不回待处理。
+      //   ⚠️ PM 裁定（本卡 2026-09-21 13:00）把 7.3 列入「跑（自建唯一命名数据、跑完删除）」，
+      //      但后台没有「新建反馈」入口/端点 —— 反馈只能由患者端提交 ⇒ 7.3 的对象必然是共享 seed 反馈，
+      //      与同一条裁定的判定「共享 seed 数据默认只读，要动必须先报 PM」直接冲突，已回报待重裁。
+      //      （与 3.4 同类：单向、无 un-process 端点、不可回滚 —— 正是 PM 否决 3.4 的那条硬理由。）
+      test.skip(true, '反馈只能由患者端产生，后台无新建端点 ⇒ 7.3 只能改共享 seed 反馈且无回退端点，与「seed 默认只读」判定冲突；已报 PM 待重裁')
       // 第一步：先找第一行 pending 反馈（tag 含「待处理」）
       const rows = tableRows(page)
       let pendingIdx = -1

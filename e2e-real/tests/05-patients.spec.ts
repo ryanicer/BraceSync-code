@@ -150,7 +150,10 @@ test.describe('05-患者管理', () => {
       // T279 停跑：后端无 DELETE /admin/patients/{id}（user-service 路由表与 proxy_admin.go 均无），
       //   患者页也无删除入口 ⇒ afterAll 的 API 清理是结构性空转，跑一次永久留一条脏数据
       //   （staging 遗留 P20264360f30837c4 / T053测试-672410 即证）。补删除端点后再恢复。
-      test.skip(true, '无 DELETE /admin/patients 端点，afterAll 清理失效，会永久污染共享 staging seed')
+      //   ⚠️ PM 裁定（本卡 2026-09-21 13:00）把 5.4 列入「跑（自建唯一命名数据、跑完删除）」，
+      //      但「跑完删除」这一步在 staging 没有端点可做 ⇒ 前提不成立，已回报 PM 待重裁；
+      //      PM 若确认「可留一条脏患者」，删掉下面这行 test.skip 即可放开，不需其他改动。
+      test.skip(true, '无 DELETE /admin/patients 端点，afterAll 清理失效 ⇒ 「跑完删除」前提不成立，会永久留脏数据；已报 PM 待重裁')
       const patientName = uniqueName(E2E_PATIENT_NAME_PREFIX)
 
       // 找"添加患者"/"新建患者"按钮

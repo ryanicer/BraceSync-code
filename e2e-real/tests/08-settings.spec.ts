@@ -16,6 +16,10 @@ import { realLogin, gotoMenu, adminMessage, getAuthToken } from '../real-helpers
  *      threshold_pressure_low=10，两键一倒挂，validateSettings 就恒不通过，
  *      于是 staging 上「保存配置」点不动。用例按此写成条件跳过（不改 staging 数据去凑绿），
  *      seed 修好后自动恢复真跑，无需改本文件。
+ *
+ *   PM 裁定（T279 卡内 2026-09-21 13:00）：采纳「条件跳过 + 登记缺陷」，确认是真缺陷，
+ *   已另立 **T281 [Winner]** 用新迁移把 threshold_pressure_low 10 改为 1。
+ *   ⇒ 本用例 **阻塞于 T281**：T281 合并并部署到 staging 后即自动恢复真跑。
  */
 
 const SETTINGS_API = '/api/v1/admin/settings'
@@ -123,7 +127,9 @@ test.describe('08-系统配置（真实模式）', () => {
       test.skip(
         true,
         `staging 系统配置存值不满足后端不变量，PUT 被拒（HTTP ${probe.status()}）：${msg}。` +
-          `此时任何一次保存都还原不回改前值，故跳过；修 seed（threshold_pressure_low 应 < high）后本用例自动恢复真跑。`,
+          `此时任何一次保存都还原不回改前值，故跳过。` +
+          `🔴 等 T281（新迁移把 threshold_pressure_low 10 改为 1）修复并部署到 staging 后再跑本用例；` +
+          `seed 修好后本条自动恢复真跑，无需改本文件。`,
       )
     }
 
