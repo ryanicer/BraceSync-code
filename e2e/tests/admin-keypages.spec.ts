@@ -142,7 +142,8 @@ test.describe('系统配置', () => {
   test('通知规则切换勾选后提示更新成功', async ({ page }) => {
     await page.getByRole('tab', { name: '通知规则' }).click()
     const card = page.locator('.page-card').filter({ hasText: '告警通知规则' })
-    const wearRow = card.locator('tbody tr').filter({ hasText: '佩戴中断' })
+    // T289 2.6：wear_interrupt 的显示术语全站收口为「设备离线」（shared-utils ALERT_TYPE_LABELS）
+    const wearRow = card.locator('tbody tr').filter({ hasText: '设备离线' })
     // 佩戴中断默认仅微信 + 患者；追加勾选短信渠道
     await wearRow.locator('.el-checkbox').filter({ hasText: '短信' }).click()
     await expect(adminMessage(page)).toContainText('通知渠道已更新')
@@ -188,7 +189,8 @@ test.describe('系统配置', () => {
 
       expect(recordId, `${where} 记录ID 非空`).not.toBe('')
       expect(patient, `${where} 患者列不得漏 undefined/NaN`).not.toMatch(/undefined|NaN/)
-      expect(['压力偏高', '压力波动', '佩戴中断', '传感器漂移', '非告警'], `${where} 告警类型须中文枚举`).toContain(alertType)
+      // T289 2.6：告警类型术语收口（shared-utils ALERT_TYPE_LABELS），「佩戴中断/传感器漂移」已作废
+      expect(['压力偏高', '压力波动', '设备离线', '佩戴时长不足', '传感器标定异常', '非告警'], `${where} 告警类型须中文枚举`).toContain(alertType)
       expect(['微信', '短信'], `${where} 渠道须中文，不得漏 wechat/sms 原文`).toContain(channel)
       expect(content, `${where} 内容非空`).not.toBe('')
       // 内容列 show-overflow-tooltip：EP 会给单元格加 .el-tooltip（悬停出全文的前提）

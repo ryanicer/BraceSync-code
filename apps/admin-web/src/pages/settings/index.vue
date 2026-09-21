@@ -172,6 +172,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { NotifyRule, NotificationRecord, NotifyChannel, NotifyTarget, AlertType } from '@bracesync/shared-types'
+import { alertTypeLabel } from '@bracesync/shared-utils'
 import {
   fetchSystemSettings, saveSystemSettingsApi, fetchNotifyRules,
   updateNotifyRuleApi, fetchNotificationLogs, patientNameOf, fetchAuditLogsApi,
@@ -197,16 +198,6 @@ const form = reactive<SystemSettings>({
   sensorDriftN: 2.8,
   wifiPresets: [],
 })
-
-function alertTypeLabel(type: string): string {
-  const map: Record<string, string> = {
-    pressure_high: '压力偏高',
-    wear_interrupt: '佩戴中断',
-    pressure_fluctuation: '压力波动',
-    sensor_drift: '传感器漂移',
-  }
-  return map[type] || type
-}
 
 function logStatusLabel(status: NotificationRecord['status']): string {
   const map: Record<NotificationRecord['status'], string> = { pending: '待发送', sent: '已发送', failed: '失败', degraded: '降级短信' }

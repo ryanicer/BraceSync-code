@@ -128,6 +128,18 @@ export async function processAlertApi(alertId: string, note?: string | null): Pr
   await request<null>({ url: `/api/v1/alerts/${alertId}/process`, method: 'POST', data: note ? { note } : undefined })
 }
 
+/** T289 2.7：开始处理（pending→processing，后端幂等；已 processed 返回 409） */
+export interface AlertStartProcessingResult {
+  alertId: string
+  processStatus: string
+  inProgressAt: string
+}
+
+export async function startProcessingAlertApi(alertId: string): Promise<AlertStartProcessingResult> {
+  if (USE_MOCK) { await delay(); return alertMock.mockStartProcessing(alertId) }
+  return request<AlertStartProcessingResult>({ url: `/api/v1/alerts/${alertId}/processing`, method: 'POST' })
+}
+
 // ========== 告警规则配置（T253-2.2，契约 docs/api/api-contracts.ts AlertRules，T252 后端） ==========
 
 export async function fetchAlertRules(): Promise<alertMock.AlertRules> {

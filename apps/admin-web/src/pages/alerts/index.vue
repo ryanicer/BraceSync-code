@@ -3,14 +3,19 @@
     <el-tabs v-model="activeTab" class="alerts-tabs">
       <el-tab-pane label="告警列表" name="list">
         <div class="page-toolbar">
+          <!-- 2.6（T289，PM 09-21 23:53 答复）：类型术语按设计稿 告警管理.html:248-251 显示映射，
+               🔴 码值不动（改码要动 DB CHECK 与多处映射面）。压力波动 = 仅历史行（T257 2.6 起引擎不再产生）。 -->
           <el-select v-model="typeFilter" placeholder="全部类型" clearable class="filter-select" @change="handleSearch">
             <el-option label="压力偏高" value="pressure_high" />
-            <el-option label="佩戴中断" value="wear_interrupt" />
+            <el-option label="设备离线" value="wear_interrupt" />
+            <el-option label="佩戴时长不足" value="wear_duration_short" />
+            <el-option label="传感器标定异常" value="sensor_drift" />
             <el-option label="压力波动" value="pressure_fluctuation" />
-            <el-option label="传感器漂移" value="sensor_drift" />
           </el-select>
+          <!-- 2.7：设计稿 告警管理.html:240 状态筛选本就是四档（全部/待处理/处理中/已处理） -->
           <el-select v-model="statusFilter" placeholder="全部状态" clearable class="filter-select" @change="handleSearch">
             <el-option label="待处理" value="pending" />
+            <el-option label="处理中" value="processing" />
             <el-option label="已处理" value="processed" />
           </el-select>
           <el-button type="primary" @click="handleSearch">查询</el-button>
@@ -44,8 +49,9 @@
             <el-table-column prop="detail" label="详情" min-width="240" show-overflow-tooltip />
             <el-table-column label="状态" width="90">
               <template #default="{ row }">
-                <el-tag :type="row.processStatus === 'pending' ? 'warning' : 'primary'" size="small">
-                  {{ row.processStatus === 'pending' ? '待处理' : '已处理' }}
+                <!-- 2.7：三态文案；已处理用绿标对齐设计稿 告警管理.html:250 的 badge green -->
+                <el-tag :type="processStatusType(row.processStatus)" size="small">
+                  {{ processStatusLabel(row.processStatus) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -56,16 +62,25 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="130" fixed="right">
+            <el-table-column label="操作" width="180" fixed="right">
               <template #default="{ row }">
+                <!-- 2.7：pending 才有「开始处理」（POST /alerts/:id/processing，幂等）；
+                     已处理行不允许重开（后端 409），故处理中/待处理才给「处理」入口。 -->
                 <el-button
                   v-if="row.processStatus === 'pending'"
+                  size="small"
+                  link
+                  :loading="startingId === row.alertId"
+                  @click="startProcessing(row)"
+                >开始处理</el-button>
+                <el-button
+                  v-if="row.processStatus !== 'processed'"
                   size="small"
                   link
                   type="primary"
                   @click="openProcess(row)"
                 >处理</el-button>
-                <span v-else class="processed-by">{{ row.processedBy || '-' }}</span>
+                <span v-if="row.processStatus === 'processed'" class="processed-by">{{ row.processedBy || '-' }}</span>
                 <el-button size="small" link type="primary" @click="openFlow(row)">流程</el-button>
               </template>
             </el-table-column>
@@ -213,9 +228,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Alert } from '@bracesync/shared-types'
-import { formatAlertValue } from '@bracesync/shared-utils'
+import { formatAlertValue, alertTypeLabel } from '@bracesync/shared-utils'
 import {
-  fetchAlerts, processAlertApi, patientNameOf,
+  fetchAlerts, processAlertApi, startProcessingAlertApi, patientNameOf,
   fetchAlertRules, saveAlertPointRulesApi, resetAlertPointRulesApi, saveAlertGlobalRulesApi,
 } from '../../api'
 import type { AlertPointRule, AlertGlobalRules } from '../../mock/alerts'
@@ -234,18 +249,19 @@ const statusFilter = ref('')
 const loading = ref(false)
 const processVisible = ref(false)
 const processing = ref(false)
+const startingId = ref('')
 const processNote = ref('')
 const current = ref<Alert | null>(null)
 const currentAlert = ref<Alert | null>(null)
 
-function alertTypeLabel(type: string): string {
-  const map: Record<string, string> = {
-    pressure_high: '压力偏高',
-    wear_interrupt: '佩戴中断',
-    pressure_fluctuation: '压力波动',
-    sensor_drift: '传感器漂移',
-  }
-  return map[type] || type
+/** 2.7：处理侧三态（后端 000018 扩 pending/processing/processed） */
+function processStatusLabel(status: string): string {
+  return { pending: '待处理', processing: '处理中', processed: '已处理' }[status] || status
+}
+
+function processStatusType(status: string): 'warning' | 'primary' | 'success' {
+  if (status === 'processed') return 'success'
+  return status === 'processing' ? 'primary' : 'warning'
 }
 
 function severityType(type: string): 'danger' | 'warning' {
@@ -285,6 +301,20 @@ function openProcess(alert: Alert) {
   current.value = alert
   processNote.value = ''
   processVisible.value = true
+}
+
+/** 2.7：pending → processing（后端幂等，重复点不刷新耗时起点） */
+async function startProcessing(alert: Alert) {
+  startingId.value = alert.alertId
+  try {
+    await startProcessingAlertApi(alert.alertId)
+    ElMessage.success('已开始处理')
+    loadData()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '开始处理失败')
+  } finally {
+    startingId.value = ''
+  }
 }
 
 /** 设计稿 showProcess()：列表「流程」按钮跳到 Tab3 处理流程 */

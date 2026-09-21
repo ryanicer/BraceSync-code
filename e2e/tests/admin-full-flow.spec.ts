@@ -24,7 +24,7 @@ test('登录 → Dashboard → 告警处理 → 患者管理 → 退出', async 
   await expect(page).toHaveURL(/\/alerts/)
   const alertRow = tableRows(page).filter({ hasText: 'P10 压力持续偏高' })
   await expect(alertRow).toContainText('待处理')
-  await alertRow.getByRole('button', { name: '处理' }).click()
+  await alertRow.getByRole('button', { name: '处理', exact: true }).click()
   const dialog = page.locator('.el-dialog').filter({ hasText: '处理告警' })
   await dialog.locator('textarea').fill('全链路：已通知患者调整佩戴位置')
   await dialog.getByRole('button', { name: '确认处理' }).click()
@@ -57,7 +57,7 @@ test('医生工作链路：登录 → Dashboard → 告警查看 → 实时监�
   // 医生可见菜单仅 4 项，告警管理在其中
   await gotoMenu(page, '告警管理')
   await expect(page).toHaveURL(/\/alerts/)
-  await expect(tableRows(page)).toHaveCount(6)
+  await expect(tableRows(page)).toHaveCount(7) // T289 2.6/2.7：mock 告警补到 7 条（新增 wear_duration_short + processing 行）
 
   await gotoMenu(page, '实时监控')
   await expect(page).toHaveURL(/\/monitor/)
