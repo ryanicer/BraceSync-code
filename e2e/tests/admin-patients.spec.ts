@@ -405,14 +405,11 @@ test.describe('T300 异常报告入口', () => {
   })
 
   /**
-   * 已知缺陷（T301 发现，登记 G13）：清空日期区间后点「查询汇总」/「导出 CSV」
-   * 抛 TypeError: object null is not iterable —— `patients/index.vue` 的 reportQueryOrNull()
-   * 先解构 reportRange.value（#154 合入后在该文件第 371 行），EP 清空时该值是 null，
-   * 于是紧随其后的「请选择日期范围」分支永远走不到。
-   * 用 test.fail 标注：修好后这条会意外通过并判红，提醒我们把标注摘掉。
+   * G13（本卡在 §9.3 发现的缺陷）已由 Winner 在 code #161 修复：`patients/index.vue` 的
+   * reportQueryOrNull() 解构前补了 null 兜底 ⇒ 原先的 test.fail 标注已摘掉，本条转真绿。
+   * 保留理由：清空区间后必须出提示且不得有未捕获异常，这是「空区间不崩」验收项唯一的 E2E 判据。
    */
   test('清空日期区间：应提示「请选择日期范围」而不是抛异常', async ({ page }) => {
-    test.fail() // G13：当前实现解构 null 直接抛异常，本条按已知失败入库
     const errors: string[] = []
     page.on('pageerror', (e) => errors.push(String(e)))
     await listRows(page).filter({ hasText: '林小雨' }).click()
