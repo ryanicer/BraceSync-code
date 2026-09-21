@@ -531,4 +531,24 @@ type Store interface {
 	ListActiveReviewTemplates(ctx context.Context) ([]ReviewTemplateRow, error)
 	// GetReviewTemplateGroup 按组查当前 active 版本；组不存在或无非active返回 ErrTemplateNotFound。
 	GetReviewTemplateGroup(ctx context.Context, groupID string) (*ReviewTemplateRow, error)
+
+	// T274 告警流程画布（flow_template / flow_instance / flow_node_state / flow_node_action）
+	// sentinel：ErrFlowTemplateNotFound / *ErrFlowTemplateInUse / ErrFlowInstanceNotFound /
+	// *ErrFlowInstanceExists / ErrFlowAlertNotFound / ErrFlowNodeNotFound /
+	// *ErrFlowNodeNotCurrent / ErrFlowInstanceCompleted
+	ListFlowTemplates(ctx context.Context, keyword string, page, pageSize int) ([]FlowTemplateRow, int64, error)
+	GetFlowTemplate(ctx context.Context, templateID string) (*FlowTemplateRow, error)
+	FlowTemplateNameTaken(ctx context.Context, name, excludeID string) (bool, error)
+	CreateFlowTemplate(ctx context.Context, name, nodesJSON, edgesJSON, creator string) (*FlowTemplateRow, error)
+	// UpdateFlowTemplate 全量覆盖语义：nil 字段不改；任一字段变更 → version+1。
+	UpdateFlowTemplate(ctx context.Context, templateID string, name, nodesJSON, edgesJSON *string) (*FlowTemplateRow, error)
+	DeleteFlowTemplate(ctx context.Context, templateID string) error
+
+	CreateFlowInstance(ctx context.Context, templateID string, alertID int64, nodeIDs, entryNodeIDs []string) (*FlowInstanceRow, error)
+	GetFlowInstance(ctx context.Context, instanceID string) (*FlowInstanceRow, error)
+	ListFlowInstancesByAlert(ctx context.Context, alertID int64) ([]FlowInstanceRow, error)
+	ListNodeStates(ctx context.Context, instanceID string) ([]FlowNodeStateRow, error)
+	// ApplyFlowNodeAction 状态机唯一写入点（图遍历结果由 handler 传入，repo 不读模板 JSON）。
+	ApplyFlowNodeAction(ctx context.Context, in FlowActionWrite) (*FlowNodeActionRow, error)
+	ListFlowNodeActions(ctx context.Context, instanceID string) ([]FlowNodeActionRow, error)
 }

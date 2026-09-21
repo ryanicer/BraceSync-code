@@ -73,6 +73,13 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/admin/alert-rules/points/reset"),
 	rbacOf(http.MethodPut, "/api/v1/admin/alert-rules/global"),
 	rbacOf(http.MethodGet, "/api/v1/admin/audit-logs"),
+	// T274 2.4 流程模板设计器：模板是可被任意告警实例化的流程定义，改一条即改全部在途/未来
+	// 流程 ⇒ 与 sys_config / alert_rules 同级的「配置变更」，收口 admin-only（设计稿 流程模板 页仅 admin 可见）。
+	rbacOf(http.MethodGet, "/api/v1/admin/flow/templates"),
+	rbacOf(http.MethodPost, "/api/v1/admin/flow/templates"),
+	rbacOf(http.MethodGet, "/api/v1/admin/flow/templates/:templateId"),
+	rbacOf(http.MethodPut, "/api/v1/admin/flow/templates/:templateId"),
+	rbacOf(http.MethodDelete, "/api/v1/admin/flow/templates/:templateId"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notify-rules"),
 	rbacOf(http.MethodPut, "/api/v1/admin/notify-rules/:type"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notification-logs"),
@@ -196,6 +203,13 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/alerts/:alertId/process"),
 	// T257 2.7：开始处理（pending → processing）—— 同为 staff 专属写端点
 	rbacOf(http.MethodPost, "/api/v1/alerts/:alertId/processing"),
+	// T274 2.3 运行态画布：与上面告警处理同域同口径（告警详情内发起流程、点节点按钮、看时间线）。
+	// 患者不得访问——流程节点里含处理人姓名/意见/附件，属内部处置信息。
+	rbacOf(http.MethodPost, "/api/v1/admin/flow/instances"),
+	rbacOf(http.MethodGet, "/api/v1/admin/flow/instances"),
+	rbacOf(http.MethodGet, "/api/v1/admin/flow/instances/:instanceId/nodes"),
+	rbacOf(http.MethodPost, "/api/v1/admin/flow/instances/:instanceId/nodes/:nodeId/actions"),
+	rbacOf(http.MethodGet, "/api/v1/admin/flow/instances/:instanceId/actions"),
 
 	// T260-B：设备管理域 —— 列表/详情/绑定/配网/基线/安装记录（technician 安装流程 +
 	// admin/doctor 管理页）。绑定互斥/归属等业务校验由 device-service handler 层负责。
