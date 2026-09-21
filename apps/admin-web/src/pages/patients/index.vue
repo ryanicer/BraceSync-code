@@ -233,8 +233,32 @@ const unassignedList = ref<PatientRow[]>([])
 const batchSelected = ref<PatientRow[]>([])
 const batchTargetTeam = ref<Record<string, string>>({})
 
-/** 后端未分配患者可能超过一屏；扫描上限内取全量后前端过滤，超出需后端补 unassigned 参数（已登记） */
-const UNASSIGNED_SCAN_SIZE = 200
+/**
+ * 契约 api-contracts.ts:53 明写 patients 分页 pageSize 上限 100（超限 400 code=10400；
+ * staging 实测 101 即拒），所以只能按页扫，不能一次要 200。
+ * 扫描上限 10 页 = 1000 人；再要更大范围得后端补 unassigned 过滤参数（已登记契约偏差清单）。
+ */
+const UNASSIGNED_SCAN_PAGE_SIZE = 100
+const UNASSIGNED_SCAN_MAX_PAGES = 10
+
+async function loadUnassigned() {
+  batchLoading.value = true
+  try {
+    const acc: PatientRow[] = []
+    let totalCount = 0
+    for (let p = 1; p <= UNASSIGNED_SCAN_MAX_PAGES; p++) {
+      const res = await fetchPatients({ page: p, pageSize: UNASSIGNED_SCAN_PAGE_SIZE })
+      totalCount = res.total
+      acc.push(...res.list)
+      if (res.list.length === 0 || acc.length >= totalCount) break
+    }
+    unassignedList.value = acc.filter((x) => !x.teamId)
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '未分配患者加载失败')
+  } finally {
+    batchLoading.value = false
+  }
+}
 
 const canConfirmBatch = computed(
   () =>
@@ -261,18 +285,6 @@ async function loadData() {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   } finally {
     loading.value = false
-  }
-}
-
-async function loadUnassigned() {
-  batchLoading.value = true
-  try {
-    const res = await fetchPatients({ page: 1, pageSize: UNASSIGNED_SCAN_SIZE })
-    unassignedList.value = res.list.filter((p) => !p.teamId)
-  } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '未分配患者加载失败')
-  } finally {
-    batchLoading.value = false
   }
 }
 

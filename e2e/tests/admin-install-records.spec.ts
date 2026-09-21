@@ -85,6 +85,21 @@ test.describe('详情抽屉（T289 9.1/9.2）', () => {
     await expect(drawerBody(page).locator('.offset-cell')).toHaveCount(0)
     await expect(drawerBody(page).getByText('尚未保存基线，无偏移值')).toBeVisible()
   })
+
+  /**
+   * 真实模式截图（T289-截图/real-18）暴露：installDetailDTO 不回 patientName/techName，
+   * 而 patientNameOf 在真实模式按设计就是「返回 ID 兜底」（api/index.ts:475）⇒ 抽屉里显示
+   * P20260005 / T0001。修法是用被点行的姓名兜底（列表 DTO 有 join）。
+   * mock 侧走的是字典分支，本条只能守住「抽屉显示姓名而不是 ID」这个结果，真实模式的
+   * join 兜底链靠截图取证。
+   */
+  test('详情抽屉患者/技师显示姓名而非 ID（T289 9.1 兜底链）', async ({ page }) => {
+    await openDetail(page, 'INS-001')
+    await expect(drawerBody(page)).toContainText('林小雨')
+    await expect(drawerBody(page)).toContainText('周师傅')
+    await expect(drawerBody(page)).not.toContainText('PT-001')
+    await expect(drawerBody(page)).not.toContainText('TECH-001')
+  })
 })
 
 /**

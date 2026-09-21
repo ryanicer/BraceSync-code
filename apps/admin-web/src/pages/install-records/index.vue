@@ -52,7 +52,7 @@
         <el-table-column prop="notes" label="备注" min-width="180" show-overflow-tooltip />
         <el-table-column label="操作" width="90">
           <template #default="{ row }">
-            <el-button size="small" link type="primary" @click="openDetail(row.installId)">详情</el-button>
+            <el-button size="small" link type="primary" @click="openDetail(row)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -170,11 +170,18 @@ function handleSearch() {
   loadData()
 }
 
-async function openDetail(installId: string) {
+async function openDetail(row: InstallRecordRow) {
   detail.value = null
   drawerVisible.value = true
   try {
-    detail.value = await fetchInstallRecordDetail(installId)
+    const d = await fetchInstallRecordDetail(row.installId)
+    // 真实模式 installDetailDTO 不回 patientName/techName（只有列表 DTO join 了姓名），
+    // 而从列表页直接点详情时本地姓名字典也可能还没灌过 ⇒ 用被点行的姓名兜底，否则抽屉里显示 ID
+    detail.value = {
+      ...d,
+      patientName: d.patientName || row.patientName,
+      techName: d.techName || row.techName,
+    }
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '详情加载失败')
     drawerVisible.value = false
