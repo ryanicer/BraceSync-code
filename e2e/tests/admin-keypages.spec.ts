@@ -56,6 +56,9 @@ test.describe('技师管理', () => {
     await expect(rows.filter({ hasText: '周师傅' })).toContainText('已认证')
     await expect(rows.filter({ hasText: '郑师傅' })).toContainText('未认证')
     await expect(rows.filter({ hasText: '冯师傅' })).toContainText('禁用')
+    // 所属团队显示名字而非编号（T269 D1；⚠️ mock 模式取 mock 字典，真实模式的后端 ID 命名空间
+    // 由 contract-drift-gate.spec.ts 用后端 ID（TEAM01/D0001）建夹具守）
+    await expect(rows.filter({ hasText: '周师傅' })).toContainText('脊柱侧弯一组')
   })
 
   test('禁用技师：popconfirm 确认后状态翻转', async ({ page }) => {
@@ -111,6 +114,7 @@ test.describe('系统配置', () => {
    * 原用例只 toContainText('配置已保存') —— 连保存失败时误弹的 error 提示都可能被放过，
    * 这里补上「必须是 success 型 + 不得有 error 型」这条真断言。
    * 落库判据（PUT 后 GET 回读）只能在真实模式补：e2e-real 目前无 settings 用例，见交件评论。
+   * T269 D2 补：真实模式字段名守卫见 contract-drift-gate.spec.ts。
    */
   test('保存配置：success 型提示（仅前端语义，不含落库）', async ({ page }) => {
     await page.locator('.settings-form').getByRole('button', { name: '保存配置' }).click()

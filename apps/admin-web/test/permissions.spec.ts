@@ -1,6 +1,9 @@
 // 权限矩阵单测（PRD §7D.11 预置角色权限矩阵）
 import { describe, it, expect } from 'vitest'
-import { ROLE_PAGE_MATRIX, canAccess, roleName, PRESET_ROLES, roleKeyFromRoleId } from '../src/router/permissions'
+import {
+  ROLE_PAGE_MATRIX, ROLE_HOME_PAGE, canAccess, landingPathFor,
+  roleName, PRESET_ROLES, roleKeyFromRoleId,
+} from '../src/router/permissions'
 import { pageRoutes } from '../src/router'
 
 describe('ROLE_PAGE_MATRIX（PRD §7D.11）', () => {
@@ -46,5 +49,25 @@ describe('roleKeyFromRoleId（T046 真实登录 roleId 映射）', () => {
     expect(roleKeyFromRoleId('ROLE_X')).toBeNull()
     expect(roleKeyFromRoleId('')).toBeNull()
     expect(roleKeyFromRoleId('admin')).toBeNull()
+  })
+})
+
+describe('ROLE_HOME_PAGE 落地页（T269 D3 客服 403 死循环）', () => {
+  it('每个角色的落地页必须是该角色有权访问的页面', () => {
+    for (const [role, home] of Object.entries(ROLE_HOME_PAGE)) {
+      expect(canAccess(role, home), `${role} 落地页 ${home} 越权`).toBe(true)
+    }
+  })
+
+  it('客服落地到患者沟通，不是 dashboard', () => {
+    expect(landingPathFor('cs')).toBe('/communication')
+    expect(landingPathFor('admin')).toBe('/dashboard')
+    expect(landingPathFor('doctor')).toBe('/dashboard')
+  })
+
+  it('未知角色 / role=null → /403（守卫 fail-closed 口径不变）', () => {
+    expect(landingPathFor('ninja')).toBe('/403')
+    expect(landingPathFor(null)).toBe('/403')
+    expect(landingPathFor(undefined)).toBe('/403')
   })
 })

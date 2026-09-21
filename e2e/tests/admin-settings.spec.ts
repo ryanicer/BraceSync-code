@@ -93,7 +93,10 @@ test.describe('系统配置 · 输入框上下限与步进（T270 A-SET-03）', 
 
   test('越下限：失焦后夹到各字段 min', async ({ page }) => {
     const under: Partial<Record<FieldKey, [string, string]>> = {
-      interval: ['0', '1'],
+      // 断言更新（T269 D2）：采集间隔 min 由 1 改 60 —— 后端 validateSettings 要求
+      // collectIntervalSeconds ≥ 60 且为 60 的整数倍，前端 min/step/step-strictly 同口径，
+      // 免得把必然 400 的值留给后端拒。
+      interval: ['0', '60'],
       retention: ['-5', '1'],
       maxPatients: ['0', '1'],
       wearHours: ['0', '1'],

@@ -16,6 +16,8 @@ import type {
   Alert,
   InstallRecord,
   ReviewRecord,
+  Team,
+  Doctor,
 } from '@bracesync/shared-types'
 import {
   fetchPatients,
@@ -23,6 +25,13 @@ import {
   fetchAlerts,
   fetchInstallRecords,
   fetchReviewRecords,
+  fetchTeams,
+  fetchDoctors,
+  fetchSystemSettings,
+  saveSystemSettingsApi,
+  processAlertApi,
+  teamNameOf,
+  doctorNameOf,
 } from '../src/api'
 
 // vi.mock 会被提升到文件顶部；在 factory 内创建 mock 函数并导出，
@@ -158,5 +167,73 @@ describe('T144 契约漂移门禁（admin-web）', () => {
     const res = await fetchReviewRecords('P00001')
     expect(res.length).toBeGreaterThanOrEqual(1)
     expect(res[0].reviewId).toBe(reviewRow.reviewId)
+  })
+})
+
+// ===== T269 admin 缺陷真实模式守卫 =====
+// 本文件恒以 USE_MOCK=false 运行（vi.mock utils/request），故能拦住「mock e2e 结构性看不见」的一类缺陷。
+// 夹具刻意用后端 ID 命名空间（TEAM01 / D0001），而非 mock 表的 TEAM-001 / DOC-001。
+
+/** request 只收单个 options 对象，取最近一次调用的入参 */
+function lastRequest(): { url: string; method?: string; data?: Record<string, unknown> } {
+  const calls = requestMock.mock.calls as unknown as [{ url: string; method?: string; data?: Record<string, unknown> }][]
+  return calls[calls.length - 1][0]
+}
+
+const backendTeamRow: Team = { teamId: 'TEAM01', name: '脊柱矫形一组', memberCount: 3, patientCount: 12 }
+const backendDoctorRow: Doctor = {
+  doctorId: 'D0001', name: '李医师', title: '主治医师', department: '脊柱外科',
+  teamId: 'TEAM01', phoneMasked: '138****0001', patientCount: 5, status: 'enabled',
+}
+
+/** 后端 SystemSettingsDTO 字段名（services/user-service/internal/model/model.go） */
+const BACKEND_SETTINGS_KEYS = [
+  'collectIntervalSeconds', 'dailyWearTargetHours', 'maxPatients', 'pressureFluctuationPct',
+  'pressureHighThresholdN', 'retentionDays', 'sensorDriftN', 'wearInterruptMinutes', 'wifiPresets',
+]
+
+describe('T269 真实模式契约守卫', () => {
+  it('D1 团队名/医生名取自后端字典，mock 查表不再串到真实模式', async () => {
+    requestMock.mockResolvedValueOnce([backendTeamRow])
+    await fetchTeams()
+    requestMock.mockResolvedValueOnce([backendDoctorRow])
+    await fetchDoctors()
+
+    expect(teamNameOf('TEAM01')).toBe('脊柱矫形一组')
+    expect(doctorNameOf('D0001')).toBe('李医师')
+    // 字典查不到时回落原始编号（不得伪装成 mock 表里的名字）
+    expect(teamNameOf('TEAM99')).toBe('TEAM99')
+    expect(doctorNameOf('D9999')).toBe('D9999')
+    expect(teamNameOf(null)).toBe('-')
+  })
+
+  it('D2 系统配置读写按后端 DTO 字段名透传', async () => {
+    requestMock.mockResolvedValueOnce({
+      dailyWearTargetHours: 22, pressureHighThresholdN: 45, pressureFluctuationPct: 30,
+      wearInterruptMinutes: 60, sensorDriftN: 2.8, wifiPresets: [],
+      collectIntervalSeconds: 1800, retentionDays: 365, maxPatients: 10000,
+    })
+    const settings = await fetchSystemSettings()
+    // 页面表单直接消费该返回值 ⇒ 字段名错一个就显示写死默认值 + 保存 400
+    expect(settings.collectIntervalSeconds).toBe(1800)
+    expect(settings.retentionDays).toBe(365)
+
+    await saveSystemSettingsApi(settings)
+    const req = lastRequest()
+    expect(req.method).toBe('PUT')
+    expect(Object.keys(req.data ?? {}).sort()).toEqual(BACKEND_SETTINGS_KEYS)
+    expect(req.data?.collectIntervalSeconds).toBe(1800)
+  })
+
+  it('D4 处理告警把备注随体提交', async () => {
+    requestMock.mockResolvedValue(null)
+    await processAlertApi('205', '已电话指导患者调整佩戴位置')
+    const req = lastRequest()
+    expect(req.url).toBe('/api/v1/alerts/205/process')
+    expect(req.method).toBe('POST')
+    expect(req.data).toEqual({ note: '已电话指导患者调整佩戴位置' })
+
+    await processAlertApi('206')
+    expect(lastRequest().data).toBeUndefined()
   })
 })

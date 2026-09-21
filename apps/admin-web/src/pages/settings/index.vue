@@ -7,11 +7,11 @@
           <div class="page-card-title">全局系统参数（PRD §7D.12，默认值对齐 @bracesync/constants）</div>
           <el-form label-width="220px" class="settings-form">
             <el-form-item label="数据采集间隔（秒）">
-              <el-input-number v-model="form.collectionIntervalSec" :min="1" :max="3600" />
-              <span class="form-hint">设备上报间隔；佩戴中断判定时间须 ≥ 2× 采集间隔</span>
+              <el-input-number v-model="form.collectIntervalSeconds" :min="60" :max="3600" :step="60" :step-strictly="true" />
+              <span class="form-hint">须为 60 的整数倍</span>
             </el-form-item>
             <el-form-item label="数据保留天数">
-              <el-input-number v-model="form.dataRetentionDays" :min="1" :max="3650" />
+              <el-input-number v-model="form.retentionDays" :min="1" :max="3650" />
             </el-form-item>
             <el-form-item label="最大患者数">
               <el-input-number v-model="form.maxPatients" :min="1" :max="1000000" />
@@ -187,8 +187,8 @@ const notifyRules = ref<NotifyRule[]>([])
 const notificationLogs = ref<NotificationRecord[]>([])
 
 const form = reactive<SystemSettings>({
-  collectionIntervalSec: 60,
-  dataRetentionDays: 365,
+  collectIntervalSeconds: 60,
+  retentionDays: 365,
   maxPatients: 10000,
   dailyWearTargetHours: 22,
   pressureHighThresholdN: 45,

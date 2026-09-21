@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { createRouter, createMemoryHistory, type RouteRecordRaw } from 'vue-router'
 import { defineComponent } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
-import { registerPermissionGuard, pageRoutes } from '../src/router'
+import { registerPermissionGuard, pageRoutes, authLandingPath } from '../src/router'
 import { useAuthStore } from '../src/stores/auth'
 
 const Stub = defineComponent({ render: () => null })
@@ -16,7 +16,8 @@ function buildRouter() {
     routes: [
       { path: '/login', component: Stub },
       { path: '/403', component: Stub },
-      { path: '/', component: Stub, children: [{ path: '', redirect: '/dashboard' }, ...children] },
+      { path: '/', component: Stub, children: [{ path: '', redirect: () => authLandingPath() }, ...children] },
+      { path: '/:pathMatch(.*)*', redirect: () => authLandingPath() },
     ],
   })
   registerPermissionGuard(router)
@@ -79,5 +80,16 @@ describe('权限路由守卫', () => {
     await router.push('/')
     await router.isReady()
     expect(router.currentRoute.value.path).toBe('/login')
+  })
+
+  it('各角色访问根路径落到自己的有权首页（T269 D3）', async () => {
+    expect(await navigateAs('admin', '/')).toBe('/dashboard')
+    expect(await navigateAs('doctor', '/')).toBe('/dashboard')
+    expect(await navigateAs('cs', '/')).toBe('/communication')
+  })
+
+  it('未知路径同样按角色落地，客服不再被弹进 403 死循环（T269 D3）', async () => {
+    expect(await navigateAs('cs', '/not-exist-page')).toBe('/communication')
+    expect(await navigateAs('admin', '/not-exist-page')).toBe('/dashboard')
   })
 })

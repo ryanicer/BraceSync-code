@@ -275,7 +275,7 @@ async function confirmProcess() {
   if (!current.value) return
   processing.value = true
   try {
-    await processAlertApi(current.value.alertId)
+    await processAlertApi(current.value.alertId, processNote.value.trim() || null)
     // mock 模式本地更新；真实模式由后端落库后列表刷新
     current.value.processStatus = 'processed'
     current.value.processedAt = new Date().toISOString()

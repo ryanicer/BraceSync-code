@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { adminRoutes, adminLogin, adminLogout, adminMessage, topBarUserName, pickSelectOption } from '../admin-helpers'
+import { adminRoutes, adminLogin, adminLogout, adminMessage, menuItems, topBarUserName, pickSelectOption } from '../admin-helpers'
 
 /**
  * admin-web 登录：三角色 mock 预置账号登录 + 未登录守卫 + 退出
@@ -42,13 +42,21 @@ test.describe('三角色登录', () => {
     await expect(page.locator('.top-nav-right .el-tag')).toContainText('医生')
   })
 
-  test('客服登录后默认落地 403（无 dashboard 权限，唯一可见页为患者沟通）', async ({ page }) => {
+  test('客服登录直达患者沟通（T269 D3 订正：旧断言把「落 403」当期望，等于给缺陷盖章）', async ({ page }) => {
     await adminLogin(page, 'cs')
+    // 客服无 dashboard 权限 ⇒ 落地页须是其矩阵内首页，而非 403
+    await expect(page).toHaveURL(/\/communication/)
+    await expect(page.locator('.forbidden-card')).toHaveCount(0)
+    // 侧边栏只列有权页，且可从菜单进入患者沟通（A-FLOW-22 硬判据）
+    await expect(menuItems(page)).toHaveCount(1)
+    await expect(menuItems(page).first()).toContainText('患者沟通')
+    // 越权直达 /dashboard 才落 403，且 403 页给出可达路径
+    await page.goto(adminRoutes.dashboard)
     await expect(page).toHaveURL(/\/403/)
     await expect(page.locator('.forbidden-card')).toContainText('403 · 无访问权限')
     await expect(page.locator('.forbidden-card')).toContainText('客服')
-    // 客服手动进入唯一授权页正常
-    await page.goto(adminRoutes.communication)
+    await expect(page.locator('.forbidden-card .reachable')).toContainText('患者沟通')
+    await page.locator('.forbidden-card .reachable-link').first().click()
     await expect(page).toHaveURL(/\/communication/)
     await expect(page.locator('.role-hint')).toContainText('客服角色：仅可查看反馈与标记处理状态')
   })

@@ -126,9 +126,9 @@ export interface SystemSettings {
   wearInterruptMinutes: number
   sensorDriftN: number
   wifiPresets: { ssid: string; password: string }[]
-  // T247 12.5: 设计稿系统参数三项（系统配置.html:88-90）
-  collectionIntervalSec: number
-  dataRetentionDays: number
+  // T247 12.5: 设计稿系统参数三项（系统配置.html:88-90）；字段名对齐后端 SystemSettingsDTO（T269 D2）
+  collectIntervalSeconds: number
+  retentionDays: number
   maxPatients: number
 }
 
@@ -143,8 +143,8 @@ export function mockSystemSettings(): SystemSettings {
       { ssid: 'Hospital-WiFi', password: '********' },
       { ssid: 'Brace-Clinic', password: '********' },
     ],
-    collectionIntervalSec: 60,
-    dataRetentionDays: 365,
+    collectIntervalSeconds: 60,
+    retentionDays: 365,
     maxPatients: 10000,
   }
 }
