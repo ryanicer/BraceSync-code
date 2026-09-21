@@ -452,6 +452,10 @@ type RealtimeSnapshot struct {
 	PressureRecords []PressureRecordDTO `json:"pressureRecords"`
 	Alerts          []any               `json:"alerts"`          // 今日告警摘要，明细由 alert-service 提供
 	PressureHeatmap []HeatmapPoint      `json:"pressureHeatmap"` // 热力图 20 点（独立数据源，有 seed 兜底）
+	// HeatmapMaxN / PressureHighN 展示口径（T296）：与告警引擎同源的可配置阈值，
+	// 供前端色阶上界与分级渲染用——写死常量会与 sys_configs 漂移（T203 前端即因写死 60/45 滞后一个量级）。
+	HeatmapMaxN   float64 `json:"heatmapMaxN"`
+	PressureHighN float64 `json:"pressureHighN"`
 }
 
 // Dashboard 常量 (shared between service + integration tests)

@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
-import { adminRoutes, adminLogin, pickSelectOption, tableRows } from '../admin-helpers'
+import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
  * admin-web 矫形日志（T289 批次三 B 批 8.1 跨患者视图 + 8.2 佩戴感受两档）
@@ -100,5 +100,164 @@ test.describe('患者工作台（PM 裁定 ⑤ 并存保留）', () => {
     const rows = tableRows(page, workspace.locator('.workspace-feelings-card'))
     await expect(rows).toHaveCount(2)
     await expect(rows.first()).toContainText('贴合')
+  })
+})
+
+/**
+ * T301 G1 内容级用例（origin/main PR #156 带入，合并时按 8.1 改版重定位）
+ *
+ * 🔴 判据一条没删，只改了三处定位：
+ *  - 工作台不再是页面默认视图 ⇒ 每条用例先点「患者工作台」页签；
+ *  - 外层 el-tabs 也在 DOM 里 ⇒ 页签数 / 空态 / 表格一律 scope 到 .view-workspace；
+ *  - 感受表新增「佩戴感受」列 ⇒ 不适部位从 td[2] 变成 td[3]。
+ * mock 对齐 apps/admin-web/src/mock/orthosis.ts（PT-001 林小雨）：
+ *  方案 2 条（v2.1 / v1.0，保存新方案 mock 固定前插 v2.2）；
+ *  感受 2 条 FL-001（胸段、未回复）/ FL-002（无不适部位、已回复）；
+ *  报告 周报 92.5% / 38.2N、月报 88.1%。
+ * 写操作只改浏览器内存里的 mock，每条用例新开 context，不碰共享 seed。
+ */
+async function openWorkspace(page: Page): Promise<Locator> {
+  await adminLogin(page, 'admin')
+  await page.goto(adminRoutes.orthosisLog)
+  await expect(listRows(page).first()).toBeVisible({ timeout: 15_000 })
+  await page.getByRole('tab', { name: '患者工作台' }).click()
+  const ws = page.locator('.view-workspace')
+  await expect(ws).toBeVisible()
+  return ws
+}
+
+test.describe('工作台 · 未选患者与角色差异（T301 G1）', () => {
+  test('未选患者只有占位空态，不渲染三 Tab', async ({ page }) => {
+    const ws = await openWorkspace(page)
+    await expect(ws.locator('.empty-placeholder')).toContainText('请选择患者开始诊断评估')
+    await expect(ws.locator('.el-tabs__item')).toHaveCount(0)
+  })
+
+  test('医生角色显示「仅本团队患者」提示，运营管理员不显示', async ({ page }) => {
+    await adminLogin(page, 'doctor')
+    await page.goto(adminRoutes.orthosisLog)
+    await page.getByRole('tab', { name: '患者工作台' }).click()
+    await expect(page.locator('.view-workspace .page-toolbar .el-tag')).toContainText('医生工作台：仅本团队患者')
+
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.orthosisLog)
+    await page.getByRole('tab', { name: '患者工作台' }).click()
+    await expect(page.locator('.view-workspace .page-toolbar .el-tag')).toHaveCount(0)
+  })
+})
+
+test.describe('工作台 · 矫形方案 Tab（T301 G1）', () => {
+  let ws: Locator
+
+  test.beforeEach(async ({ page }) => {
+    ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+  })
+
+  test('历史方案 2 条，时间线含版本号', async () => {
+    await expect(ws.locator('.page-card-title').filter({ hasText: '历史方案' })).toHaveText('历史方案（2）')
+    const stamps = ws.locator('.el-timeline-item__timestamp')
+    await expect(stamps).toHaveCount(2)
+    await expect(stamps.first()).toContainText('v2.1')
+    await expect(stamps.nth(1)).toContainText('v1.0')
+    await expect(ws.locator('.el-timeline-item').first()).toContainText('T7-T9')
+  })
+
+  test('方案内容为空时「保存新方案」禁用', async () => {
+    await expect(ws.getByRole('button', { name: '保存新方案' })).toBeDisabled()
+  })
+
+  test('保存新方案后前插 v2.2，输入框清空', async ({ page }) => {
+    await ws.locator('.page-card textarea').first().fill('T301 用例：夜间佩戴目标调整')
+    await ws.getByRole('button', { name: '保存新方案' }).click()
+    await expect(adminMessage(page)).toContainText('方案已保存')
+    await expect(ws.locator('.page-card-title').filter({ hasText: '历史方案' })).toHaveText('历史方案（3）')
+    const stamps = ws.locator('.el-timeline-item__timestamp')
+    await expect(stamps.first()).toContainText('v2.2')
+    await expect(ws.locator('.el-timeline-item').first()).toContainText('T301 用例：夜间佩戴目标调整')
+    await expect(ws.locator('.page-card textarea').first()).toHaveValue('')
+  })
+})
+
+test.describe('工作台 · 佩戴感受 Tab（T301 G1）', () => {
+  let ws: Locator
+  let rows: Locator
+
+  test.beforeEach(async ({ page }) => {
+    ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+    await ws.getByRole('tab', { name: '佩戴感受' }).click()
+    rows = tableRows(page, ws.locator('.workspace-feelings-card'))
+  })
+
+  test('2 条日志：感受两档、不适部位中文映射、无部位显示 -', async () => {
+    await expect(rows).toHaveCount(2)
+    // 列序：0 日期 1 佩戴感受 2 舒适度 3 不适部位 4 患者备注 5 医生回复
+    const d11 = rows.filter({ hasText: '2026-08-11' })
+    await expect(d11).toContainText('贴合')
+    await expect(d11.locator('td').nth(3)).toHaveText('胸段')
+    await expect(d11).toContainText('上午有点闷')
+    await expect(rows.filter({ hasText: '2026-08-10' }).locator('td').nth(3)).toHaveText('-')
+  })
+
+  test('已回复日志展示回复文本，未回复日志展示输入框', async () => {
+    await expect(rows.filter({ hasText: '2026-08-10' }).locator('.reply-content')).toHaveText('继续保持，注意睡姿')
+    const pending = rows.filter({ hasText: '2026-08-11' })
+    await expect(pending.locator('.reply-content')).toHaveCount(0)
+    await expect(pending.locator('textarea')).toHaveCount(1)
+  })
+
+  test('医生回复未回复日志：提交后行内出现回复内容', async ({ page }) => {
+    const row = rows.filter({ hasText: '2026-08-11' })
+    await expect(row.getByRole('button', { name: '回复' })).toBeDisabled()
+    await row.locator('textarea').fill('已阅，注意调整肩带松紧')
+    await row.getByRole('button', { name: '回复' }).click()
+    await expect(adminMessage(page)).toContainText('回复成功')
+    await expect(row.locator('.reply-content')).toHaveText('已阅，注意调整肩带松紧')
+    await expect(row.locator('textarea')).toHaveCount(0)
+  })
+})
+
+test.describe('工作台 · 健康报告 Tab（T301 G1）', () => {
+  let ws: Locator
+
+  test.beforeEach(async ({ page }) => {
+    ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+    await ws.getByRole('tab', { name: '健康报告' }).click()
+  })
+
+  test('周报/月报标题与周期正确', async () => {
+    const titles = ws.locator('.report-title')
+    await expect(titles).toHaveCount(2)
+    await expect(titles.first()).toContainText('周报：2026-08-04 ~ 2026-08-10')
+    await expect(titles.nth(1)).toContainText('月报：2026-07-01 ~ 2026-07-31')
+  })
+
+  test('指标渲染：佩戴达标率、平均压力带单位', async () => {
+    const first = ws.locator('.report-desc').first()
+    await expect(first).toContainText('92.5%')
+    await expect(first).toContainText('38.2N')
+    await expect(first).toContainText('佩戴依从性良好')
+  })
+
+  test('趋势判定着色：向好=success，平稳=info', async () => {
+    const tags = ws.locator('.report-header .el-tag')
+    await expect(tags.first()).toHaveText('趋势向好')
+    await expect(tags.first()).toHaveClass(/el-tag--success/)
+    await expect(tags.nth(1)).toHaveText('保持平稳')
+    await expect(tags.nth(1)).toHaveClass(/el-tag--info/)
+  })
+
+  test('切换到无数据患者（PT-005 赵欣然）三个 Tab 均为空态', async ({ page }) => {
+    // el-tab-pane 切走后仍在 DOM 内（display:none），空态断言须限定当前可见面板
+    const activeEmpty = ws.locator('.el-tab-pane:visible .el-empty')
+    await pickSelectOption(page, ws.locator('.patient-select'), '赵欣然')
+    await ws.getByRole('tab', { name: '矫形方案' }).click()
+    await expect(activeEmpty.first()).toContainText('暂无方案记录')
+    await ws.getByRole('tab', { name: '佩戴感受' }).click()
+    await expect(activeEmpty.first()).toContainText('暂无感受日志')
+    await ws.getByRole('tab', { name: '健康报告' }).click()
+    await expect(activeEmpty.first()).toContainText('暂无健康报告')
   })
 })

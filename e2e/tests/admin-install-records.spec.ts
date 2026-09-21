@@ -86,3 +86,73 @@ test.describe('详情抽屉（T289 9.1/9.2）', () => {
     await expect(drawerBody(page).getByText('尚未保存基线，无偏移值')).toBeVisible()
   })
 })
+
+/**
+ * T301 G1 内容级用例（origin/main PR #156 带入，合并时按 9.x 改版后的页面重定位）：
+ * 基线 / WiFi / 安装时间三列 + 关键词搜索与分页汇总。
+ *
+ * 🔴 与 T301 原稿的两处口径差（不是删用例，是随设计稿改版）：
+ *  - 原「校准时间」列已按 PM 裁定 ④ 换成「校准状态」（设计稿 :108 无校准时间列）；
+ *    同列位改成断言「安装时间」（:108/:181，值暂由 calibrate_time 承载）。
+ *  - WiFi 标签文案按设计稿 :132-133「已连接 / 未连接」，非原稿的「已配网 / 未配网」。
+ */
+test.describe('列表列内容与搜索（T301 G1）', () => {
+  const cellTag = (page: Page, installId: string, col: number): Locator =>
+    listRows(page).filter({ hasText: installId }).locator('td').nth(col).locator('.el-tag')
+
+  test('患者/技师列显示姓名而非 ID（join 反证）', async ({ page }) => {
+    const first = listRows(page).filter({ hasText: 'INS-001' })
+    await expect(listRows(page)).toHaveCount(5)
+    await expect(first).toContainText('DEV-A3F312')
+    await expect(first).toContainText('林小雨')
+    await expect(first).toContainText('周师傅')
+    await expect(first).not.toContainText('PT-001')
+  })
+
+  test('安装时间渲染为「日期 时:分」（设计稿 :108）', async ({ page }) => {
+    await expect(listRows(page).filter({ hasText: 'INS-003' }).locator('td').nth(4)).toHaveText('2026-05-18 15:30')
+  })
+
+  test('基线列：有 baselineId 显示已保存，INS-005 显示待保存', async ({ page }) => {
+    await expect(cellTag(page, 'INS-001', 5)).toHaveClass(/el-tag--success/)
+    await expect(cellTag(page, 'INS-001', 5)).toHaveText('已保存')
+    await expect(cellTag(page, 'INS-005', 5)).toHaveClass(/el-tag--warning/)
+    await expect(cellTag(page, 'INS-005', 5)).toHaveText('待保存')
+  })
+
+  test('WiFi 列：未连接的两条标 info，其余标 success（设计稿 :132-133）', async ({ page }) => {
+    await expect(cellTag(page, 'INS-003', 6)).toHaveText('未连接')
+    await expect(cellTag(page, 'INS-003', 6)).toHaveClass(/el-tag--info/)
+    await expect(cellTag(page, 'INS-002', 6)).toHaveText('已连接')
+    await expect(cellTag(page, 'INS-002', 6)).toHaveClass(/el-tag--success/)
+  })
+
+  test('关键词搜索设备 ID → 只剩 1 条', async ({ page }) => {
+    const search = page.locator('.search-input input')
+    await search.fill('DEV-B7E456')
+    await search.press('Enter')
+    const rows = listRows(page)
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('INS-002')
+  })
+
+  test('关键词搜索安装 ID 大小写不敏感', async ({ page }) => {
+    const search = page.locator('.search-input input')
+    await search.fill('ins-004')
+    await search.press('Enter')
+    const rows = listRows(page)
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText('DEV-D2A012')
+  })
+
+  test('清空关键词恢复全量，分页汇总显示共 5 条', async ({ page }) => {
+    const search = page.locator('.search-input input')
+    await expect(page.locator('.el-pagination__total')).toHaveText('共 5 条')
+    await search.fill('INS-005')
+    await search.press('Enter')
+    await expect(listRows(page)).toHaveCount(1)
+    await search.fill('')
+    await search.press('Enter')
+    await expect(listRows(page)).toHaveCount(5)
+  })
+})
