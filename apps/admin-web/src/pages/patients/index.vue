@@ -311,7 +311,7 @@ const canConfirmBatch = computed(
 )
 
 // T300 异常报告（详情抽屉内）
-const reportRange = ref<[string, string]>(defaultReportRange())
+const reportRange = ref<[string, string] | null>(defaultReportRange())
 const report = ref<AbnormalReport | null>(null)
 const reportLoading = ref(false)
 const exporting = ref(false)
@@ -368,7 +368,8 @@ function onBatchSelectionChange(rows: PatientRow[]) {
 
 // T300 异常报告
 function reportQueryOrNull() {
-  const [start, end] = reportRange.value
+  // Element Plus 清空 daterange 会把 v-model 置为 null，必须先兜底再解构，否则下面的空值提示永远走不到
+  const [start, end] = reportRange.value ?? []
   if (!detail.value) return null
   if (!start || !end) {
     ElMessage.warning('请选择日期范围')
