@@ -201,6 +201,16 @@ export interface FeelingLog {
   notes: string;
   replyContent: string | null;   // 医生回复
   replyTime: string | null;
+  /**
+   * T289 8.1（T278 遗留项 L2）：跨患者流 GET /api/v1/admin/feeling-logs 由 patients.name join 带出；
+   * 单患者端点不 join ⇒ 恒 null，前端回落 patientId。
+   */
+  patientName?: string | null;
+  /**
+   * 设计稿 矫形日志.html:127「提交时间」列。DB feeling_logs.created_at 有列，
+   * 但 model.FeelingLogDTO 未下发 ⇒ 待后端补字段，缺失时前端显示占位而非造假时间。
+   */
+  createdAt?: string | null;
 }
 
 export interface OrthosisPlan {

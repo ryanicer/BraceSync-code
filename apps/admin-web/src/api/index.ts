@@ -327,6 +327,19 @@ export async function fetchFeelingLogs(patientId: string): Promise<FeelingLog[]>
   return request<FeelingLog[]>({ url: `/api/v1/patients/${patientId}/feeling-logs` })
 }
 
+/** T289 8.1：跨患者佩戴感受日志流（契约 getFeelingLogsAdmin，T256 #2 端点，staffOnly） */
+export async function fetchFeelingLogsAdmin(params: {
+  keyword?: string
+  startDate?: string
+  endDate?: string
+  feeling?: 'fitted' | 'discomfort'
+  page?: number
+  pageSize?: number
+}): Promise<PaginatedResponse<FeelingLog>> {
+  if (USE_MOCK) { await delay(); return orthosisMock.mockFeelingLogsAdmin(params) }
+  return request<PaginatedResponse<FeelingLog>>({ url: '/api/v1/admin/feeling-logs', data: params as Record<string, unknown> })
+}
+
 // T247: 医生回复感受日志（后端已放行，网关 proxy_admin.go:144）
 export async function replyFeelingLogApi(logId: string, replyContent: string): Promise<void> {
   if (USE_MOCK) { await delay(); orthosisMock.mockReplyFeelingLog(logId, replyContent); return }
