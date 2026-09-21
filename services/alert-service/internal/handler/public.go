@@ -78,6 +78,9 @@ type PublicAlertStore interface {
 	ListAlerts(ctx context.Context, f repo.AlertQueryFilter) ([]repo.AlertRow, int64, error)
 	ProcessAlert(ctx context.Context, alertID int64, operatorID, note string) (exists bool, err error)
 	StartProcessing(ctx context.Context, alertID int64) (repo.ProcessState, error)
+	// T300 异常报告汇总/导出（GET /admin/abnormal-reports[/export]）
+	SummarizeAlerts(ctx context.Context, f repo.AlertQueryFilter) ([]repo.AlertSummaryRow, error)
+	ListAlertsForExport(ctx context.Context, f repo.AlertQueryFilter, limit int) ([]repo.AlertRow, bool, error)
 }
 
 // AlertItem 公开查询返回的告警记录（字段名对齐 shared-types Alert）

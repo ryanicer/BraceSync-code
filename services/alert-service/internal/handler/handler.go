@@ -6,6 +6,8 @@
 //	GET  /api/v1/alerts      公开分页查询（T028，经 gateway 代理 + 统一鉴权）
 //	POST /api/v1/alerts/{alertId}/process  标记已处理（T028，幂等）
 //	POST /api/v1/alerts/{alertId}/processing  开始处理（T257 2.7，幂等；已处理 409）
+//	GET  /api/v1/admin/abnormal-reports       患者异常报告汇总（T300，staff-only）
+//	GET  /api/v1/admin/abnormal-reports/export 同上口径 CSV 导出（T300）
 //	GET  /metrics            Prometheus 采集端点（架构 §6.1）
 //	GET  /healthz            存活探针
 //
@@ -75,9 +77,11 @@ func (h *Handler) SetLogger(l zerolog.Logger) { h.log = l }
 func (h *Handler) Router() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/evaluate", h.evaluate)
-	mux.HandleFunc("GET /api/v1/alerts", h.listAlerts)                                 // T028
-	mux.HandleFunc("POST /api/v1/alerts/{alertId}/process", h.processAlert)            // T028
-	mux.HandleFunc("POST /api/v1/alerts/{alertId}/processing", h.startProcessingAlert) // T257 2.7
+	mux.HandleFunc("GET /api/v1/alerts", h.listAlerts)                                  // T028
+	mux.HandleFunc("POST /api/v1/alerts/{alertId}/process", h.processAlert)             // T028
+	mux.HandleFunc("POST /api/v1/alerts/{alertId}/processing", h.startProcessingAlert)  // T257 2.7
+	mux.HandleFunc("GET /api/v1/admin/abnormal-reports", h.abnormalReport)              // T300 汇总
+	mux.HandleFunc("GET /api/v1/admin/abnormal-reports/export", h.exportAbnormalReport) // T300 CSV 导出
 	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, envelope{Code: codeSuccess, Message: "success", Data: map[string]string{"status": "ok"}})

@@ -43,6 +43,18 @@ type fakePublicStore struct {
 	startErr  error
 	startID   int64
 	startHits int
+
+	// T300 异常报告汇总/导出
+	summaryRows []repo.AlertSummaryRow
+	sumFilter   repo.AlertQueryFilter
+	sumErr      error
+	sumHits     int
+	exportRows  []repo.AlertRow
+	exportFilt  repo.AlertQueryFilter
+	exportTrunc bool
+	exportErr   error
+	exportLimit int
+	exportHits  int
 }
 
 func (s *fakePublicStore) ListAlerts(_ context.Context, f repo.AlertQueryFilter) ([]repo.AlertRow, int64, error) {
@@ -68,6 +80,20 @@ func (s *fakePublicStore) StartProcessing(_ context.Context, alertID int64) (rep
 	st := s.state
 	st.Exists = s.exists
 	return st, nil
+}
+
+// T300 fake 汇总/导出
+func (s *fakePublicStore) SummarizeAlerts(_ context.Context, f repo.AlertQueryFilter) ([]repo.AlertSummaryRow, error) {
+	s.sumFilter = f
+	s.sumHits++
+	return s.summaryRows, s.sumErr
+}
+
+func (s *fakePublicStore) ListAlertsForExport(_ context.Context, f repo.AlertQueryFilter, limit int) ([]repo.AlertRow, bool, error) {
+	s.exportFilt = f
+	s.exportLimit = limit
+	s.exportHits++
+	return s.exportRows, s.exportTrunc, s.exportErr
 }
 
 // newPublicHandler 组装挂 fake store 的 Handler（evaluate 依赖用 nil 安全的最小装配）
