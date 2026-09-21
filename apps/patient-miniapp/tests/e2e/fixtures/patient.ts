@@ -157,15 +157,18 @@ export function wearing15(): WearingFixtureRow[] {
   ]
 }
 
-// ---------- alerts 压力异常 7 组（date 降序） 前 3 组 3+2+1 = 6 条 p-item ----------
-//  - 组 1：2026-07-12 (3 条)：error, warn, warn  → 含"持续偏高 6h 峰值..."(断言 detail 含 "持续偏高")
-//  - 组 2：2026-07-11 (2 条)：warn, warn
-//  - 组 3：2026-07-10 (1 条)：error
-//  - 组 4：2026-07-09 (2 条)：warn, warn
-//  - 组 5：2026-07-08 (2 条)：error, error
-//  - 组 6：2026-07-07 (1 条)：warn
-//  - 组 7：2026-07-05 (1 条)：warn
+// ---------- alerts 异常事件 7 组（date 降序，T298 起按后端 4 类口径造行） ----------
+//  T298：detail 一律用 alert-service engine.go 的自述句格式（前端不再拼数、设计稿无「偏低」类型）；
+//  佩戴时长不足的 thresholdValue/actualValue 按引擎实况写**分钟**（18h → 1080）。
+//  - 组 1：2026-07-12 (3 条)：压力偏高 error + 压力偏高 warn + 佩戴时长不足 warn
+//  - 组 2：2026-07-11 (2 条)：压力偏高 warn + 传感器标定异常 warn
+//  - 组 3：2026-07-10 (1 条)：压力偏高 error
+//  - 组 4：2026-07-09 (2 条)：压力偏高 warn + 压力波动 warn（历史类型）
+//  - 组 5：2026-07-08 (2 条)：压力偏高 error + 佩戴时长不足 warn
+//  - 组 6：2026-07-07 (1 条)：压力偏高 warn
+//  - 组 7：2026-07-05 (2 条)：压力偏高 warn + 传感器标定异常 warn
 // level 映射(pressure_high + actualValue>=60 或 threshold>=60 → error，其余 warn)
+// 日期集合与改前一致（05/07/08/09/10/11/12），故日历圆点仍是 3 红 6 橙
 let alertSeq = 0
 const mk = (patch: Partial<Alert>): Alert => ({
   alertId: `ALR-E2E-${String(++alertSeq).padStart(3, '0')}`,
@@ -192,35 +195,41 @@ export function pressureAlerts7groups(): Alert[] {
   return [
     // group 1 2026-07-12 (3)
     mk({ type: 'pressure_high', sensorPoint: 'P10', thresholdValue: 60, actualValue: 63.8,
-      detail: 'P10 压力持续偏高 6h，峰值 63.8N，建议立即调整', timestamp: '2026-07-12T22:10:00+08:00', resolvedStatus: 'active' }),
+      detail: '压力偏高：采集点 P10 压力 63.8N 超阈值 60.0N', timestamp: '2026-07-12T22:10:00+08:00', resolvedStatus: 'active' }),
     mk({ type: 'pressure_high', sensorPoint: 'P07', thresholdValue: 40, actualValue: 52.1,
-      detail: 'P07 持续偏高 4h，峰值 52.1N', timestamp: '2026-07-12T18:00:00+08:00', resolvedStatus: 'resolved' }),
-    mk({ type: 'pressure_high', sensorPoint: 'P03', thresholdValue: 20, actualValue: 12.3,
-      detail: 'P03 持续偏低 8h，最低 12.3N', timestamp: '2026-07-12T10:00:00+08:00', resolvedStatus: 'active' }),
+      detail: '压力偏高：采集点 P07 压力 52.1N 超阈值 40.0N', timestamp: '2026-07-12T18:00:00+08:00', resolvedStatus: 'resolved' }),
+    mk({ type: 'wear_duration_short', sensorPoint: '', thresholdValue: 1080, actualValue: 612,
+      detail: `佩戴时长不足：${E2E_PATIENT_ID} 于 2026-07-12 累计佩戴 10.2 小时，低于目标 18.0 小时`,
+      timestamp: '2026-07-12T23:59:59+08:00' }),
     // group 2 2026-07-11 (2)
     mk({ type: 'pressure_high', sensorPoint: 'P11', thresholdValue: 40, actualValue: 55.6,
-      detail: 'P11 持续偏高 5h，峰值 55.6N', timestamp: '2026-07-11T14:00:00+08:00' }),
-    mk({ type: 'pressure_high', sensorPoint: 'P08', thresholdValue: 20, actualValue: 16.5,
-      detail: 'P08 持续偏低 3h，最低 16.5N', timestamp: '2026-07-11T09:00:00+08:00', resolvedStatus: 'resolved' }),
+      detail: '压力偏高：采集点 P11 压力 55.6N 超阈值 40.0N', timestamp: '2026-07-11T14:00:00+08:00' }),
+    mk({ type: 'sensor_drift', sensorPoint: 'P08', thresholdValue: 15, actualValue: 21.4,
+      detail: '传感器漂移：空载采集点 P08 读数 21.4N 异常（阈值 15.0N），通知技师+运营',
+      timestamp: '2026-07-11T09:00:00+08:00', resolvedStatus: 'resolved' }),
     // group 3 2026-07-10 (1)
     mk({ type: 'pressure_high', sensorPoint: 'P12', thresholdValue: 60, actualValue: 71.2,
-      detail: 'P12 压力持续偏高 8h，峰值 71.2N', timestamp: '2026-07-10T20:00:00+08:00', resolvedStatus: 'active' }),
+      detail: '压力偏高：采集点 P12 压力 71.2N 超阈值 60.0N', timestamp: '2026-07-10T20:00:00+08:00', resolvedStatus: 'active' }),
     // group 4 2026-07-09 (2)
-    mk({ type: 'pressure_high', sensorPoint: 'P04', thresholdValue: 20, actualValue: 11.8,
-      detail: 'P04 持续偏低 5h，最低 11.8N', timestamp: '2026-07-09T08:00:00+08:00', resolvedStatus: 'resolved' }),
+    mk({ type: 'pressure_high', sensorPoint: 'P04', thresholdValue: 20, actualValue: 24.6,
+      detail: '压力偏高：采集点 P04 压力 24.6N 超阈值 20.0N', timestamp: '2026-07-09T08:00:00+08:00', resolvedStatus: 'resolved' }),
     mk({ type: 'pressure_fluctuation', sensorPoint: 'P09', thresholdValue: 40, actualValue: 47.2,
-      detail: 'P09 持续偏高 3h，峰值 47.2N', timestamp: '2026-07-09T16:00:00+08:00' }),
+      detail: '压力波动：采集点 P09 波动率 47.2% 超阈值 40.0%（历史规则，引擎已不再产生）', timestamp: '2026-07-09T16:00:00+08:00' }),
     // group 5 2026-07-08 (2)
     mk({ type: 'pressure_high', sensorPoint: 'P10', thresholdValue: 60, actualValue: 69.5,
-      detail: 'P10 压力持续偏高 10h，峰值 69.5N', timestamp: '2026-07-08T22:00:00+08:00', resolvedStatus: 'active' }),
-    mk({ type: 'pressure_high', sensorPoint: 'P02', thresholdValue: 20, actualValue: 7.2,
-      detail: 'P02 持续偏低 12h，最低 7.2N', timestamp: '2026-07-08T10:00:00+08:00', resolvedStatus: 'active' }),
+      detail: '压力偏高：采集点 P10 压力 69.5N 超阈值 60.0N', timestamp: '2026-07-08T22:00:00+08:00', resolvedStatus: 'active' }),
+    mk({ type: 'wear_duration_short', sensorPoint: '', thresholdValue: 1080, actualValue: 186,
+      detail: `佩戴时长不足：${E2E_PATIENT_ID} 于 2026-07-08 累计佩戴 3.1 小时，低于目标 18.0 小时`,
+      timestamp: '2026-07-08T23:59:59+08:00', resolvedStatus: 'resolved' }),
     // group 6 2026-07-07 (1)
     mk({ type: 'pressure_high', sensorPoint: 'P05', thresholdValue: 40, actualValue: 44.1,
-      detail: 'P05 持续偏高 3h，峰值 44.1N', timestamp: '2026-07-07T15:00:00+08:00', resolvedStatus: 'resolved' }),
-    // group 7 2026-07-05 (1)
-    mk({ type: 'pressure_high', sensorPoint: 'P01', thresholdValue: 20, actualValue: 14.2,
-      detail: 'P01 持续偏低 4h，最低 14.2N', timestamp: '2026-07-05T11:00:00+08:00' }),
+      detail: '压力偏高：采集点 P05 压力 44.1N 超阈值 40.0N', timestamp: '2026-07-07T15:00:00+08:00', resolvedStatus: 'resolved' }),
+    // group 7 2026-07-05 (2)
+    mk({ type: 'pressure_high', sensorPoint: 'P01', thresholdValue: 20, actualValue: 22.6,
+      detail: '压力偏高：采集点 P01 压力 22.6N 超阈值 20.0N', timestamp: '2026-07-05T11:00:00+08:00' }),
+    mk({ type: 'sensor_drift', sensorPoint: 'P06', thresholdValue: 15, actualValue: 18.9,
+      detail: '传感器漂移：空载采集点 P06 读数 18.9N 异常（阈值 15.0N），通知技师+运营',
+      timestamp: '2026-07-05T16:00:00+08:00', resolvedStatus: 'resolved' }),
   ]
 }
 

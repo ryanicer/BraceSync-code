@@ -70,9 +70,9 @@
           <view v-if="pressureDetail.length > 0">
             <view v-for="(item, ii) in pressureDetail" :key="ii" :class="['ap-item', 'ap-item-' + item.level]">
               <view class="ap-item-head">
-                <view :class="['ap-item-point', 'ap-point-' + item.level]"><text>{{ item.point }}</text></view>
+                <view v-if="item.point" :class="['ap-item-point', 'ap-point-' + item.level]"><text>{{ item.point }}</text></view>
                 <text :class="['ap-item-type', 'ap-type-' + item.level]">{{ item.type }}</text>
-                <text class="ap-item-threshold">阈值{{ item.threshold }}</text>
+                <text v-if="item.threshold" class="ap-item-threshold">阈值{{ item.threshold }}</text>
               </view>
               <text class="ap-item-detail">{{ item.detail }}</text>
               <text class="ap-item-meta">{{ item.meta }}</text>
@@ -90,7 +90,7 @@ import { ref, computed, onMounted } from 'vue'
 import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
-import { formatAlertValue } from '../../utils/format'
+import { alertsToPressureMap, type PressureAnomalyItem } from '../../utils/anomaly'
 
 // 佩戴记录：后端 data-service DailyWearDayDTO（GET /patients/:patientId/daily-wear，T076）
 // 真机教训：DTO 只有 wearMinutes，hours/status 必须前端派生，不可直接消费
@@ -118,15 +118,6 @@ function toWearingRecord(d: DailyWearDay): WearingRecord {
   const hours = Math.round(d.wearMinutes / 6) / 10
   const status: WearingRecord['status'] = hours >= WEAR_TARGET_H ? 'ok' : hours >= 4 ? 'warn' : 'error'
   return { date: d.date, hours, status }
-}
-
-export interface PressureAnomalyItem {
-  point: string
-  type: string
-  level: 'warn' | 'error'
-  detail: string
-  threshold: string
-  meta: string
 }
 
 const authStore = useAuthStore()
@@ -247,37 +238,7 @@ const pressureHeaderColor = computed(() =>
   pressureDetail.value.some((it) => it.level === 'error') ? '#dc2626' : '#d97706'
 )
 
-// 将 alert-service Alert 转为按日期分组的压力异常（过滤 wear_interrupt）
-function alertsToPressureMap(alerts: Alert[]): Map<string, PressureAnomalyItem[]> {
-  const byDate = new Map<string, PressureAnomalyItem[]>()
-  for (const a of alerts) {
-    if (a.type === 'wear_interrupt') continue
-    const date = a.timestamp ? a.timestamp.slice(0, 10) : new Date().toISOString().slice(0, 10)
-    const thresholdTxt = a.thresholdValue != null ? formatAlertValue(a.type, a.thresholdValue, { prefix: '>' }) : '阈值'
-    const actualTxt = a.actualValue != null ? formatAlertValue(a.type, a.actualValue) : ''
-    // Alert 没有 severity/message（shared-types 用 type + actualValue + thresholdValue + resolvedStatus 表达）
-    // level：pressure_high + actualValue/thresholdValue >= 60 → error；其余 warn
-    const level: PressureAnomalyItem['level'] =
-      a.type === 'pressure_high' && (a.actualValue >= 60 || a.thresholdValue >= 60) ? 'error' : 'warn'
-    const item: PressureAnomalyItem = {
-      point: a.sensorPoint || 'P??',
-      type: a.type === 'pressure_high' ? '偏高' : a.type === 'pressure_fluctuation' ? '压力波动' : a.type,
-      level,
-      detail: a.detail || (actualTxt ? `峰值 ${actualTxt}` : '压力异常'),
-      threshold: thresholdTxt,
-      meta: actualTxt
-        ? `实际值 ${actualTxt} · ${a.processNote ? a.processNote : a.resolvedStatus === 'resolved' ? '已恢复' : '关注'}`
-        : a.resolvedStatus === 'resolved'
-          ? '已恢复'
-          : '关注中',
-    }
-    if (!byDate.has(date)) byDate.set(date, [])
-    byDate.get(date)!.push(item)
-  }
-  return byDate
-}
-
-// 加载真实压力异常：GET /api/v1/alerts?patientId=xxx
+// 加载真实告警：GET /api/v1/alerts?patientId=xxx（文本化规则见 utils/anomaly.ts）
 async function loadPressure() {
   pressureError.value = ''
   try {
