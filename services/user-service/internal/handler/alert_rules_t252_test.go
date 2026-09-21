@@ -72,7 +72,7 @@ func TestT252_GetAlertRules_EmptyDBFallsBackToDefaults(t *testing.T) {
 	dto := decodeRules(t, resp.Data)
 
 	assert.Equal(t, 5.0, dto.UnifiedUpperN, "统一上限默认取 T203 ÷10 后的 5N")
-	assert.Equal(t, 0.5, dto.UnifiedLowerN)
+	assert.Equal(t, 1.0, dto.UnifiedLowerN, "统一下限默认与迁移 000021 / seed 的 threshold_pressure_low = 1 同值（T287）")
 	require.Len(t, dto.Points, alertPointCount, "恒 20 条，前端不用判缺失")
 	assert.Equal(t, "P01", dto.Points[0].PointID)
 	assert.Equal(t, "P20", dto.Points[19].PointID)
@@ -80,10 +80,10 @@ func TestT252_GetAlertRules_EmptyDBFallsBackToDefaults(t *testing.T) {
 		assert.True(t, p.Monitored, "未落库 = 从未取消勾选")
 		assert.Nil(t, p.UpperN)
 		assert.InDelta(t, 5.0, p.EffectiveUpperN, 1e-9)
-		assert.InDelta(t, 0.5, p.EffectiveLowerN, 1e-9)
+		assert.InDelta(t, 1.0, p.EffectiveLowerN, 1e-9)
 	}
 	// 4×5 网格行列（P05 = 第 1 行末列，P06 = 第 2 行首列）
-	assert.Equal(t, model.AlertPointRuleDTO{PointID: "P05", Row: 1, Col: 5, Label: "R1C5", Monitored: true, EffectiveUpperN: 5, EffectiveLowerN: 0.5}, dto.Points[4])
+	assert.Equal(t, model.AlertPointRuleDTO{PointID: "P05", Row: 1, Col: 5, Label: "R1C5", Monitored: true, EffectiveUpperN: 5, EffectiveLowerN: 1}, dto.Points[4])
 	assert.Equal(t, 2, dto.Points[5].Row)
 	assert.Equal(t, 1, dto.Points[5].Col)
 	assert.Equal(t, "R2C1", dto.Points[5].Label)
@@ -288,7 +288,7 @@ func TestT252_ResetAlertPointRules(t *testing.T) {
 	assert.Equal(t, "5", v, "上限回 T203 ÷10 后默认")
 	v, ok = kvOf(e.store.resetKVs, keyPressureLow)
 	require.True(t, ok)
-	assert.Equal(t, "0.5", v)
+	assert.Equal(t, "1", v, "T287：恢复默认写回的下限必须 = 迁移 000021 / seed 的 1，不能把库里正确值抹成 0.5")
 
 	require.Len(t, e.store.auditRows, 1)
 	assert.Equal(t, "config_change", e.store.auditRows[0].Action)
