@@ -193,17 +193,18 @@ type WearReminderSettings struct {
 
 // NotificationRecord 通知发送记录（notification_records 表行）
 type NotificationRecord struct {
-	RecordID   int64
-	PatientID  string
-	AlertID    *string    // 关联告警 ID（提醒类为 NULL）
-	AlertType  *AlertType // 提醒类为 NULL
-	Kind       string     // alert / wear_reminder
-	Channel    string     // wechat / sms
-	Status     string     // pending / sent / failed / degraded
-	Content    string
-	RetryCount int
-	SentAt     *time.Time
-	CreatedAt  time.Time
+	RecordID    int64
+	PatientID   string
+	PatientName *string    // T278-③：LEFT JOIN patients 带出（表里只有 patient_id）；NULL = 患者行已不在
+	AlertID     *string    // 关联告警 ID（提醒类为 NULL）
+	AlertType   *AlertType // 提醒类为 NULL
+	Kind        string     // alert / wear_reminder
+	Channel     string     // wechat / sms
+	Status      string     // pending / sent / failed / degraded
+	Content     string
+	RetryCount  int
+	SentAt      *time.Time
+	CreatedAt   time.Time
 }
 
 // RetryQueueItem 本地重试队列项（notification_retry_queue 表行，对齐 T010 降级队列模式）
@@ -305,31 +306,35 @@ func (w *WearReminderSettings) ToDTO() WearReminderDTO {
 }
 
 // NotificationRecordDTO 对齐 shared-types NotificationRecord
+// patientName：T278-③ 后端 join 带出，后台列表患者列不再只显示编号；
+// NULL = 患者行缺失（前端可回落 patientId，口径同 Alert.patientName）
 type NotificationRecordDTO struct {
-	RecordID   string     `json:"recordId"`
-	PatientID  string     `json:"patientId"`
-	AlertID    *string    `json:"alertId,omitempty"`
-	AlertType  *AlertType `json:"alertType,omitempty"`
-	Channel    string     `json:"channel"`
-	Status     string     `json:"status"`
-	Content    string     `json:"content"`
-	RetryCount int        `json:"retryCount"`
-	SentAt     *string    `json:"sentAt"`
-	CreatedAt  string     `json:"createdAt"`
+	RecordID    string     `json:"recordId"`
+	PatientID   string     `json:"patientId"`
+	PatientName *string    `json:"patientName"`
+	AlertID     *string    `json:"alertId,omitempty"`
+	AlertType   *AlertType `json:"alertType,omitempty"`
+	Channel     string     `json:"channel"`
+	Status      string     `json:"status"`
+	Content     string     `json:"content"`
+	RetryCount  int        `json:"retryCount"`
+	SentAt      *string    `json:"sentAt"`
+	CreatedAt   string     `json:"createdAt"`
 }
 
 // ToDTO NotificationRecord → DTO
 func (n *NotificationRecord) ToDTO() NotificationRecordDTO {
 	return NotificationRecordDTO{
-		RecordID:   fmt.Sprintf("%d", n.RecordID),
-		PatientID:  n.PatientID,
-		AlertID:    n.AlertID,
-		AlertType:  n.AlertType,
-		Channel:    n.Channel,
-		Status:     n.Status,
-		Content:    n.Content,
-		RetryCount: n.RetryCount,
-		SentAt:     fmtTs(n.SentAt),
-		CreatedAt:  n.CreatedAt.UTC().Format(time.RFC3339),
+		RecordID:    fmt.Sprintf("%d", n.RecordID),
+		PatientID:   n.PatientID,
+		PatientName: n.PatientName,
+		AlertID:     n.AlertID,
+		AlertType:   n.AlertType,
+		Channel:     n.Channel,
+		Status:      n.Status,
+		Content:     n.Content,
+		RetryCount:  n.RetryCount,
+		SentAt:      fmtTs(n.SentAt),
+		CreatedAt:   n.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
