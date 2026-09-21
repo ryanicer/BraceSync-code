@@ -88,7 +88,7 @@ func TestBind_FirstBind_StateTransition(t *testing.T) {
 	registerAndPatient(t, svc, store, "DEV-B-001", "P-001")
 	ctx := context.Background()
 
-	res, appErr := svc.Bind(ctx, "DEV-B-001", "P-001", "TECH-1")
+	res, appErr := svc.Bind(ctx, "DEV-B-001", "P-001", "TECH-1", false)
 	require.Nil(t, appErr)
 	assert.False(t, res.Rebound, "首绑非换绑")
 	assert.Equal(t, model.StatusOffline, res.Device.Status, "unbound→offline（绑定未上报）")
@@ -104,7 +104,7 @@ func TestBind_FirstBind_StateTransition(t *testing.T) {
 	assert.Equal(t, model.ReasonInstall, *bindings[0].Reason)
 
 	// 同患者重复绑定幂等
-	res2, appErr := svc.Bind(ctx, "DEV-B-001", "P-001", "TECH-1")
+	res2, appErr := svc.Bind(ctx, "DEV-B-001", "P-001", "TECH-1", false)
 	require.Nil(t, appErr)
 	assert.False(t, res2.Rebound)
 	bindings, _ = svc.ListBindings(ctx, "DEV-B-001")
@@ -117,11 +117,11 @@ func TestBind_Rebind_HistoryTraceable(t *testing.T) {
 	store.AddPatient("P-002")
 	ctx := context.Background()
 
-	_, appErr := svc.Bind(ctx, "DEV-B-002", "P-001", "TECH-1")
+	_, appErr := svc.Bind(ctx, "DEV-B-002", "P-001", "TECH-1", false)
 	require.Nil(t, appErr)
 
 	// 换绑到 P-002（Bind 自动换绑，对齐 Ella H6 契约；旧行关闭 reason=rebind）
-	res, appErr := svc.Bind(ctx, "DEV-B-002", "P-002", "TECH-2")
+	res, appErr := svc.Bind(ctx, "DEV-B-002", "P-002", "TECH-2", false)
 	require.Nil(t, appErr)
 	assert.True(t, res.Rebound)
 	require.NotNil(t, res.Device.PatientID)
@@ -149,7 +149,7 @@ func TestBind_Rebind_HistoryTraceable(t *testing.T) {
 	// 无 active binding 时 Rebind 拒绝（应先走 Bind）
 	_, appErr = svc.Unbind(ctx, "DEV-B-002", "TECH-2")
 	require.Nil(t, appErr)
-	_, appErr = svc.Rebind(ctx, "DEV-B-002", "P-001", "TECH-1")
+	_, appErr = svc.Rebind(ctx, "DEV-B-002", "P-001", "TECH-1", false)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeConflict, appErr.Code)
 }
@@ -161,29 +161,29 @@ func TestRebind_ValidationErrors(t *testing.T) {
 	ctx := context.Background()
 
 	// 设备不存在
-	_, appErr := svc.Rebind(ctx, "DEV-NONE", "P-001", "")
+	_, appErr := svc.Rebind(ctx, "DEV-NONE", "P-001", "", false)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeNotFound, appErr.Code)
 
 	// 患者不存在
-	_, appErr = svc.Rebind(ctx, "DEV-R-001", "P-NONE", "")
+	_, appErr = svc.Rebind(ctx, "DEV-R-001", "P-NONE", "", false)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeUserResNotFound, appErr.Code)
 
 	// 参数缺失
-	_, appErr = svc.Rebind(ctx, "", "P-001", "")
+	_, appErr = svc.Rebind(ctx, "", "P-001", "", false)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeInvalidParam, appErr.Code)
 
 	// 无 active binding → 409
-	_, appErr = svc.Rebind(ctx, "DEV-R-001", "P-002", "")
+	_, appErr = svc.Rebind(ctx, "DEV-R-001", "P-002", "", false)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeConflict, appErr.Code)
 
 	// 换绑到同患者幂等（不视为换绑）
-	_, appErr = svc.Bind(ctx, "DEV-R-001", "P-001", "")
+	_, appErr = svc.Bind(ctx, "DEV-R-001", "P-001", "", false)
 	require.Nil(t, appErr)
-	res, appErr := svc.Rebind(ctx, "DEV-R-001", "P-001", "")
+	res, appErr := svc.Rebind(ctx, "DEV-R-001", "P-001", "", false)
 	require.Nil(t, appErr)
 	assert.False(t, res.Rebound, "同患者重复换绑幂等")
 }
@@ -194,17 +194,17 @@ func TestBind_ValidationErrors(t *testing.T) {
 	registerAndPatient(t, svc, store, "DEV-B-003", "P-001")
 
 	// 设备不存在
-	_, appErr := svc.Bind(ctx, "DEV-NONE", "P-001", "")
+	_, appErr := svc.Bind(ctx, "DEV-NONE", "P-001", "", false)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeNotFound, appErr.Code)
 
 	// 患者不存在
-	_, appErr = svc.Bind(ctx, "DEV-B-003", "P-NONE", "")
+	_, appErr = svc.Bind(ctx, "DEV-B-003", "P-NONE", "", false)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeUserResNotFound, appErr.Code)
 
 	// 参数缺失
-	_, appErr = svc.Bind(ctx, "", "P-001", "")
+	_, appErr = svc.Bind(ctx, "", "P-001", "", false)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeInvalidParam, appErr.Code)
 }
@@ -213,7 +213,7 @@ func TestUnbind_AndIdempotent(t *testing.T) {
 	svc, store := newTestSvc(t)
 	registerAndPatient(t, svc, store, "DEV-U-001", "P-001")
 	ctx := context.Background()
-	_, appErr := svc.Bind(ctx, "DEV-U-001", "P-001", "TECH-1")
+	_, appErr := svc.Bind(ctx, "DEV-U-001", "P-001", "TECH-1", false)
 	require.Nil(t, appErr)
 
 	already, appErr := svc.Unbind(ctx, "DEV-U-001", "OP-9")
@@ -252,7 +252,7 @@ func TestTouch_StateMachineAndMonotonic(t *testing.T) {
 	svc, store := newTestSvc(t)
 	registerAndPatient(t, svc, store, "DEV-T-001", "P-001")
 	ctx := context.Background()
-	_, appErr := svc.Bind(ctx, "DEV-T-001", "P-001", "")
+	_, appErr := svc.Bind(ctx, "DEV-T-001", "P-001", "", false)
 	require.Nil(t, appErr)
 
 	now := time.Now()
@@ -306,7 +306,7 @@ func TestCreateInstall_Flow(t *testing.T) {
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeConflict, appErr.Code)
 
-	_, appErr = svc.Bind(ctx, "DEV-I-001", "P-001", "TECH-1")
+	_, appErr = svc.Bind(ctx, "DEV-I-001", "P-001", "TECH-1", false)
 	require.Nil(t, appErr)
 
 	rec, appErr := svc.CreateInstall(ctx, &CreateInstallRequest{DeviceID: "DEV-I-001", PatientID: "P-001", TechID: "TECH-1"})
@@ -331,7 +331,7 @@ func TestSaveBaseline_LengthValidationAndConflict(t *testing.T) {
 	registerAndPatient(t, svc, store, "DEV-I-002", "P-001")
 	store.AddTech("TECH-1")
 	ctx := context.Background()
-	_, appErr := svc.Bind(ctx, "DEV-I-002", "P-001", "TECH-1")
+	_, appErr := svc.Bind(ctx, "DEV-I-002", "P-001", "TECH-1", false)
 	require.Nil(t, appErr)
 	rec, appErr := svc.CreateInstall(ctx, &CreateInstallRequest{DeviceID: "DEV-I-002", PatientID: "P-001", TechID: "TECH-1"})
 	require.Nil(t, appErr)
@@ -379,7 +379,7 @@ func TestUpdateInstallMeta(t *testing.T) {
 	registerAndPatient(t, svc, store, "DEV-I-003", "P-001")
 	store.AddTech("TECH-1")
 	ctx := context.Background()
-	_, appErr := svc.Bind(ctx, "DEV-I-003", "P-001", "TECH-1")
+	_, appErr := svc.Bind(ctx, "DEV-I-003", "P-001", "TECH-1", false)
 	require.Nil(t, appErr)
 	rec, appErr := svc.CreateInstall(ctx, &CreateInstallRequest{DeviceID: "DEV-I-003", PatientID: "P-001", TechID: "TECH-1"})
 	require.Nil(t, appErr)

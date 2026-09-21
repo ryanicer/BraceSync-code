@@ -46,6 +46,7 @@ export function isPressureHigh(value: number, threshold: number): boolean {
  *   pressure_fluctuation → 百分比（后端 engine.go 明确用 %%）
  *   sensor_drift         → 空载读数（N，可能负，显示层归零）
  *   wear_interrupt       → 分钟数
+ *   wear_duration_short  → 小时数（设计稿 告警管理.html:250「18h / 6.5h」）
  *   未知 type            → 原样数字，不硬编码单位
  *
  * @param type Alert.type
@@ -66,7 +67,26 @@ export function formatAlertValue(
       return `${prefix}${value.toFixed(1)}%`
     case 'wear_interrupt':
       return `${prefix}${Math.max(0, Math.round(value))}min`
+    case 'wear_duration_short':
+      return `${prefix}${value}h`
     default:
       return `${prefix}${value}`
   }
+}
+
+/**
+ * T289 2.6：告警类型中文术语（跨页唯一来源，设计稿 告警管理.html:248-251 + PRD §7D.6/§10）
+ * 码值不改，只统一显示；pressure_fluctuation 仅历史行（T257 2.6 起引擎不再产生）。
+ */
+export const ALERT_TYPE_LABELS: Record<string, string> = {
+  pressure_high: '压力偏高',
+  wear_interrupt: '设备离线',
+  wear_duration_short: '佩戴时长不足',
+  sensor_drift: '传感器标定异常',
+  pressure_fluctuation: '压力波动',
+}
+
+export function alertTypeLabel(type?: string | null): string {
+  if (!type) return '-'
+  return ALERT_TYPE_LABELS[type] ?? type
 }

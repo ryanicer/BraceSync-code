@@ -122,6 +122,8 @@ export function mockUpdateRolePermissions(roleId: string, permissions: string[])
 export interface SystemSettings {
   dailyWearTargetHours: number
   pressureHighThresholdN: number
+  /** T257 12.4 / T289 12.4：≡ 告警页 Tab2 的 threshold_pressure_low；后端 GET 恒回数值 */
+  pressureLowThresholdN?: number | null
   pressureFluctuationPct: number
   wearInterruptMinutes: number
   sensorDriftN: number
@@ -136,6 +138,8 @@ export function mockSystemSettings(): SystemSettings {
   return {
     dailyWearTargetHours: 22,
     pressureHighThresholdN: DEFAULT_THRESHOLDS.PRESSURE_HIGH_N,
+    // 后端 defaultUnifiedLowerN（seed threshold_pressure_low，迁移 000021）同值
+    pressureLowThresholdN: 1,
     pressureFluctuationPct: DEFAULT_THRESHOLDS.PRESSURE_FLUCTUATION_PCT,
     wearInterruptMinutes: DEFAULT_THRESHOLDS.WEAR_INTERRUPT_MINUTES,
     sensorDriftN: DEFAULT_THRESHOLDS.SENSOR_DRIFT_N,

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { adminRoutes, adminLogin } from '../admin-helpers'
+import { adminRoutes, adminLogin, pickSelectOption } from '../admin-helpers'
 
 /**
  * admin-web Dashboard（数据概览）：6 KPI + 4 图 + 2 排行 + 周期切换
@@ -65,16 +65,23 @@ test.describe('图表与排行', () => {
   })
 })
 
-test.describe('周期切换', () => {
+test.describe('周期切换（T289 1.2 按设计稿改下拉）', () => {
+  test('控件是 el-select 下拉而非按钮组', async ({ page }) => {
+    const select = page.locator('.page-toolbar .el-select')
+    await expect(select).toHaveCount(1)
+    await expect(page.locator('.page-toolbar .el-radio-group')).toHaveCount(0)
+    await expect(select).toContainText('今日')
+  })
+
   test('切换到本周后 KPI 数值变化（告警 47 → 312）', async ({ page }) => {
-    await page.locator('.page-toolbar').getByText('本周').click()
+    await pickSelectOption(page, page.locator('.page-toolbar .el-select'), '本周')
     const card = page.locator('.kpi-card').filter({ hasText: '今日告警次数' })
     await expect(card.locator('.kpi-value')).toHaveText('312')
     await expect(page.locator('.kpi-card').filter({ hasText: '今日活跃佩戴' }).locator('.kpi-value')).toHaveText('905')
   })
 
   test('切换到本月后 KPI 数值变化（告警 → 1287）', async ({ page }) => {
-    await page.locator('.page-toolbar').getByText('本月').click()
+    await pickSelectOption(page, page.locator('.page-toolbar .el-select'), '本月')
     const card = page.locator('.kpi-card').filter({ hasText: '今日告警次数' })
     await expect(card.locator('.kpi-value')).toHaveText('1287')
   })

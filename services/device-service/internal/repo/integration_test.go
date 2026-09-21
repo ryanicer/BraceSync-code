@@ -190,7 +190,8 @@ func TestIT_Bind_Rebind_Unbind(t *testing.T) {
 	prev, err = store.Bind(ctx, BindParams{DeviceID: deviceID, PatientID: itPatient2, OperatorID: itTech})
 	require.NoError(t, err)
 	require.NotNil(t, prev)
-	assert.Equal(t, itPatient, prev.PatientID)
+	require.NotNil(t, prev.PrevActive)
+	assert.Equal(t, itPatient, prev.PrevActive.PatientID)
 	bindings, err = store.ListBindings(ctx, deviceID)
 	require.NoError(t, err)
 	require.Len(t, bindings, 2)
@@ -248,6 +249,10 @@ func TestIT_Bind_Rebind_Unbind(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 2, closedCount, "两条已关闭绑定历史完整")
+
+	// 收尾释放患者占用：T299 后一患者至多一台生效设备，残留绑定会让后续用例的 Bind 被拒
+	_, err = store.Unbind(ctx, deviceID, itTech)
+	require.NoError(t, err)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -348,6 +353,10 @@ func TestIT_Install_Baseline(t *testing.T) {
 	assert.Equal(t, notes, *rec.Notes)
 	require.NotNil(t, rec.SignatureURL)
 	assert.Equal(t, sig, *rec.SignatureURL)
+
+	// 收尾释放患者占用（T299 后残留绑定会让后续用例的 Bind 被拒）
+	_, err = store.Unbind(ctx, deviceID, itTech)
+	require.NoError(t, err)
 }
 
 // ─────────────────────────────────────────────────────────────

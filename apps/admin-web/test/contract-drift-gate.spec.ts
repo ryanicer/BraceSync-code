@@ -14,7 +14,7 @@ import type {
   Patient,
   Device,
   Alert,
-  InstallRecord,
+  InstallRecordRow,
   ReviewRecord,
   Team,
   Doctor,
@@ -95,7 +95,7 @@ const alertRow: Alert = {
   processNote: null,
 }
 
-const installRow: InstallRecord = {
+const installRow: InstallRecordRow = {
   installId: 'INS001',
   deviceId: 'D00001',
   patientId: 'P00001',
@@ -105,6 +105,7 @@ const installRow: InstallRecord = {
   notes: '',
   signatureUrl: '',
   wifiStatus: 'connected',
+  calibStatus: 'normal',
 }
 
 const reviewRow: ReviewRecord = {
@@ -128,7 +129,7 @@ const reviewRow: ReviewRecord = {
 const patientPage: PaginatedResponse<Patient> = { list: [patientRow], total: 1, page: 1, pageSize: 10 }
 const devicePage: PaginatedResponse<Device> = { list: [deviceRow], total: 1, page: 1, pageSize: 10 }
 const alertPage: PaginatedResponse<Alert> = { list: [alertRow], total: 1, page: 1, pageSize: 10 }
-const installPage: PaginatedResponse<InstallRecord> = { list: [installRow], total: 1, page: 1, pageSize: 10 }
+const installPage: PaginatedResponse<InstallRecordRow> = { list: [installRow], total: 1, page: 1, pageSize: 10 }
 
 describe('T144 契约漂移门禁（admin-web）', () => {
   beforeEach(() => {
@@ -188,10 +189,11 @@ const backendDoctorRow: Doctor = {
   teamId: 'TEAM01', phoneMasked: '138****0001', patientCount: 5, status: 'enabled',
 }
 
-/** 后端 SystemSettingsDTO 字段名（services/user-service/internal/model/model.go） */
+/** 后端 SystemSettingsDTO 字段名（services/user-service/internal/model/model.go；
+ *  pressureLowThresholdN 由 T257 12.4 起 GET 恒回、PUT 指针语义 nil=不改） */
 const BACKEND_SETTINGS_KEYS = [
   'collectIntervalSeconds', 'dailyWearTargetHours', 'maxPatients', 'pressureFluctuationPct',
-  'pressureHighThresholdN', 'retentionDays', 'sensorDriftN', 'wearInterruptMinutes', 'wifiPresets',
+  'pressureHighThresholdN', 'pressureLowThresholdN', 'retentionDays', 'sensorDriftN', 'wearInterruptMinutes', 'wifiPresets',
 ]
 
 describe('T269 真实模式契约守卫', () => {
@@ -211,8 +213,8 @@ describe('T269 真实模式契约守卫', () => {
 
   it('D2 系统配置读写按后端 DTO 字段名透传', async () => {
     requestMock.mockResolvedValueOnce({
-      dailyWearTargetHours: 22, pressureHighThresholdN: 45, pressureFluctuationPct: 30,
-      wearInterruptMinutes: 60, sensorDriftN: 2.8, wifiPresets: [],
+      dailyWearTargetHours: 22, pressureHighThresholdN: 45, pressureLowThresholdN: 1,
+      pressureFluctuationPct: 30, wearInterruptMinutes: 60, sensorDriftN: 2.8, wifiPresets: [],
       collectIntervalSeconds: 1800, retentionDays: 365, maxPatients: 10000,
     })
     const settings = await fetchSystemSettings()

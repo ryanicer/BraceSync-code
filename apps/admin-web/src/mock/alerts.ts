@@ -41,6 +41,15 @@ const ALERTS: Alert[] = [
     resolvedStatus: 'resolved', resolvedAt: '2026-08-10T11:00:00+08:00', processedBy: '张建国',
     processedAt: '2026-08-10T10:15:00+08:00', processNote: '患者反馈临时摘除洗澡',
   },
+  // T289 2.6/2.7：新类型（wear_duration_short）+ 第三态（processing）各一条，
+  // 否则「佩戴时长不足」与「处理中」在 mock 下没有可渲染的行。
+  {
+    alertId: 'ALR-007', patientId: 'PT-004', deviceId: 'DEV-D2A012', type: 'wear_duration_short',
+    detail: '当日佩戴 6.5 小时，低于目标 18 小时', sensorPoint: '', thresholdValue: 18, actualValue: 6.5,
+    timestamp: '2026-08-10T08:05:00+08:00', readStatus: 'unread', processStatus: 'processing',
+    resolvedStatus: 'active', resolvedAt: null, inProgressAt: '2026-08-10T08:30:00+08:00',
+    processedBy: null, processedAt: null, processNote: null,
+  },
 ]
 
 // 患者姓名映射（管理端列表展示用，真实模式由后端 join 返回）
@@ -57,6 +66,18 @@ export function mockAlerts(params: { patientId?: string; type?: string; status?:
   if (params.status) list = list.filter((a) => a.processStatus === params.status)
   const start = (page - 1) * pageSize
   return { list: list.slice(start, start + pageSize), total: list.length, page, pageSize }
+}
+
+/** T289 2.7：对齐后端 startProcessingAlert 语义（pending→processing 幂等；processed 409；不存在 404） */
+export function mockStartProcessing(alertId: string): { alertId: string; processStatus: string; inProgressAt: string } {
+  const row = ALERTS.find((a) => a.alertId === alertId)
+  if (!row) throw new Error(`告警不存在: ${alertId}`)
+  if (row.processStatus === 'processed') throw new Error('告警已处理，不允许重新打开')
+  if (row.processStatus === 'pending') {
+    row.processStatus = 'processing'
+    row.inProgressAt = new Date().toISOString()
+  }
+  return { alertId, processStatus: row.processStatus, inProgressAt: row.inProgressAt ?? '' }
 }
 
 // ========== T253-2.2 告警规则配置 mock（契约：docs/api/api-contracts.ts AlertRules，T252 后端同形） ==========

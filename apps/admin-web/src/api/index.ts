@@ -2,7 +2,7 @@
 // Dashboard 域契约对齐 api-contracts.ts（T021 聚合接口）；告警域复用 T019B 已验证端点。
 import type {
   AdminLoginResult, ApiResponse, DashboardKPI, TeamRanking, DoctorRanking, PaginatedResponse, Patient, Device,
-  Alert, InstallRecord, Technician, Team, TeamDetail, TeamMember, Doctor, Feedback, OrthosisPlan,
+  Alert, InstallRecordRow, InstallRecordDetail, Technician, Team, TeamDetail, TeamMember, TeamStats, Doctor, Feedback, OrthosisPlan,
   FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
 } from '@bracesync/shared-types'
@@ -127,6 +127,18 @@ export async function fetchAlerts(params: { patientId?: string; type?: string; s
 export async function processAlertApi(alertId: string, note?: string | null): Promise<void> {
   if (USE_MOCK) { await delay(); return }
   await request<null>({ url: `/api/v1/alerts/${alertId}/process`, method: 'POST', data: note ? { note } : undefined })
+}
+
+/** T289 2.7：开始处理（pending→processing，后端幂等；已 processed 返回 409） */
+export interface AlertStartProcessingResult {
+  alertId: string
+  processStatus: string
+  inProgressAt: string
+}
+
+export async function startProcessingAlertApi(alertId: string): Promise<AlertStartProcessingResult> {
+  if (USE_MOCK) { await delay(); return alertMock.mockStartProcessing(alertId) }
+  return request<AlertStartProcessingResult>({ url: `/api/v1/alerts/${alertId}/processing`, method: 'POST' })
 }
 
 // ========== 告警规则配置（T253-2.2，契约 docs/api/api-contracts.ts AlertRules，T252 后端） ==========
@@ -255,6 +267,12 @@ export async function fetchTeams(): Promise<Team[]> {
   return teams
 }
 
+/** T289 5.1 团队管理 4 张统计卡（T256 #1 端点，后端字段见 model.TeamStatsDTO） */
+export async function fetchTeamStats(): Promise<TeamStats> {
+  if (USE_MOCK) { await delay(); return orgMock.mockTeamStats() }
+  return request<TeamStats>({ url: '/api/v1/admin/teams/stats' })
+}
+
 // T059 团队管理写功能（6 写端点 + 1 成员明细读端点）
 export async function fetchTeamMembersApi(teamId: string): Promise<orgMock.TeamMembersView> {
   if (USE_MOCK) { await delay(); return orgMock.mockTeamMembers(teamId) }
@@ -326,9 +344,15 @@ export async function updateTechnicianApi(techId: string, input: Partial<CreateT
   return request<Technician>({ url: `/api/v1/admin/technicians/${techId}`, method: 'PUT', data: input as unknown as Record<string, unknown> })
 }
 
-export async function fetchInstallRecords(params: { keyword?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<InstallRecord>> {
+export async function fetchInstallRecords(params: { keyword?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<InstallRecordRow>> {
   if (USE_MOCK) { await delay(); return orgMock.mockInstallRecords(params) }
-  return request<PaginatedResponse<InstallRecord>>({ url: '/api/v1/install-records', data: params as Record<string, unknown> })
+  return request<PaginatedResponse<InstallRecordRow>>({ url: '/api/v1/install-records', data: params as Record<string, unknown> })
+}
+
+/** T289 9.1：单条安装记录详情（契约 getInstallDetail，网关已放行；含 20 点偏移值与校准状态） */
+export async function fetchInstallRecordDetail(installId: string): Promise<InstallRecordDetail> {
+  if (USE_MOCK) { await delay(); return orgMock.mockInstallRecordDetail(installId) }
+  return request<InstallRecordDetail>({ url: `/api/v1/install-records/${installId}` })
 }
 
 // ========== Feedback（患者沟通） ==========
@@ -361,6 +385,19 @@ export async function saveOrthosisPlanApi(patientId: string, content: string): P
 export async function fetchFeelingLogs(patientId: string): Promise<FeelingLog[]> {
   if (USE_MOCK) { await delay(); return orthosisMock.mockFeelingLogs(patientId) }
   return request<FeelingLog[]>({ url: `/api/v1/patients/${patientId}/feeling-logs` })
+}
+
+/** T289 8.1：跨患者佩戴感受日志流（契约 getFeelingLogsAdmin，T256 #2 端点，staffOnly） */
+export async function fetchFeelingLogsAdmin(params: {
+  keyword?: string
+  startDate?: string
+  endDate?: string
+  feeling?: 'fitted' | 'discomfort'
+  page?: number
+  pageSize?: number
+}): Promise<PaginatedResponse<FeelingLog>> {
+  if (USE_MOCK) { await delay(); return orthosisMock.mockFeelingLogsAdmin(params) }
+  return request<PaginatedResponse<FeelingLog>>({ url: '/api/v1/admin/feeling-logs', data: params as Record<string, unknown> })
 }
 
 // T247: 医生回复感受日志（后端已放行，网关 proxy_admin.go:144）

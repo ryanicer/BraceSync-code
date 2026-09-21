@@ -44,6 +44,9 @@ func NewDeviceService(store repo.Store, enc *crypto.Encryptor) *DeviceService {
 
 // mapRepoErr repo 哨兵错误 → AppError（其余按系统错误 90001）
 func mapRepoErr(err error, fallback *model.AppError) *model.AppError {
+	if appErr := patientBusyErr(err); appErr != nil {
+		return appErr
+	}
 	switch {
 	case errors.Is(err, repo.ErrNotFound):
 		return fallback
@@ -52,6 +55,25 @@ func mapRepoErr(err error, fallback *model.AppError) *model.AppError {
 	default:
 		return model.ErrInternal("internal error: %v", err)
 	}
+}
+
+// patientBusyErr T299「一患者一设备」冲突 → 409 加可执行文案，并在 data 里带占用设备号
+// （前端据此弹 PRD §7C.3「该患者已绑定设备 xxx，是否换绑？」，不必解析 message）；非该错误返回 nil。
+// OtherDeviceID 为空表示并发下由唯一索引拦截，占位设备未知。
+func patientBusyErr(err error) *model.AppError {
+	var phd *repo.ErrPatientHasDevice
+	if !errors.As(err, &phd) {
+		return nil
+	}
+	if phd.OtherDeviceID == "" {
+		return model.ErrConflict(
+			"patient %q already has another bound device; retry with confirmSwap to swap bindings (one device per patient)", phd.PatientID)
+	}
+	appErr := model.ErrConflict(
+		"patient %q is already bound to device %q; retry with confirmSwap to swap bindings (one device per patient)",
+		phd.PatientID, phd.OtherDeviceID)
+	appErr.Data = map[string]any{"occupiedDeviceId": phd.OtherDeviceID}
+	return appErr
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -130,7 +152,9 @@ func (s *DeviceService) ListBindings(ctx context.Context, deviceID string) ([]mo
 // BindResult 绑定结果
 type BindResult struct {
 	Device  *model.Device
-	Rebound bool // true=换绑（旧 binding 已写 unbind_at+reason=rebind）
+	Rebound bool // true=本次关闭过既有绑定（设备级自动换绑 或 T299 患者级确认换绑）
+	// PatientSwappedFrom T299 确认换绑时被解除绑定的原设备号；""=未发生患者级换绑
+	PatientSwappedFrom string
 }
 
 // Bind 绑定/自动换绑（对齐 Ella KNOWN_RED H3/H6 契约：第二绑成功即换绑）：
@@ -138,8 +162,10 @@ type BindResult struct {
 //   - 已有同患者 active binding → 幂等成功
 //   - 已有他患者 active binding → 自动换绑（旧行 unbind_at+reason=rebind，历史可追溯）
 //   - 互斥不变式：同设备同一时刻仅一个 active binding（uk_bindings_active 兜底）
+//   - 互斥不变式（T299）：一患者至多一台生效设备。患者已占用其它设备时——
+//     confirmSwap=false → 409 拒绝（不静默改绑）；true → 同事务先解旧设备再绑本机（PRD §7C.3）
 //   - bindings 写入与 devices.patient_id/status/bind_time 更新同一事务
-func (s *DeviceService) Bind(ctx context.Context, deviceID, patientID, operatorID string) (*BindResult, *model.AppError) {
+func (s *DeviceService) Bind(ctx context.Context, deviceID, patientID, operatorID string, confirmSwap bool) (*BindResult, *model.AppError) {
 	if deviceID == "" || patientID == "" {
 		return nil, model.ErrInvalidParam("device_id and patient_id are required")
 	}
@@ -154,10 +180,11 @@ func (s *DeviceService) Bind(ctx context.Context, deviceID, patientID, operatorI
 		return nil, model.ErrUserResNotFound("patient %q not found", patientID)
 	}
 
-	prev, err := s.store.Bind(ctx, repo.BindParams{
-		DeviceID:   deviceID,
-		PatientID:  patientID,
-		OperatorID: operatorID,
+	out, err := s.store.Bind(ctx, repo.BindParams{
+		DeviceID:    deviceID,
+		PatientID:   patientID,
+		OperatorID:  operatorID,
+		ConfirmSwap: confirmSwap,
 	})
 	if err != nil {
 		return nil, mapRepoErr(err, model.ErrNotFound("device %q not registered", deviceID))
@@ -167,12 +194,22 @@ func (s *DeviceService) Bind(ctx context.Context, deviceID, patientID, operatorI
 	if appErr != nil {
 		return nil, appErr
 	}
-	return &BindResult{Device: dev, Rebound: prev != nil}, nil
+	return newBindResult(dev, out), nil
+}
+
+// newBindResult Bind/Rebind 事务结果 → BindResult；out=nil 表示本次未关闭任何既有绑定
+func newBindResult(dev *model.Device, out *repo.BindOutcome) *BindResult {
+	res := &BindResult{Device: dev, Rebound: out != nil}
+	if out != nil {
+		res.PatientSwappedFrom = out.PatientSwappedFrom
+	}
+	return res
 }
 
 // Rebind 换绑（历史可追溯）：旧 binding 写 unbind_at+reason=rebind+operator，新 binding 写入，
 // 与 devices 归属更新同一事务。设备无 active binding 时返回 409（应先走 Bind）。
-func (s *DeviceService) Rebind(ctx context.Context, deviceID, patientID, operatorID string) (*BindResult, *model.AppError) {
+// 目标患者已占用其它生效设备时按 confirmSwap 决定 409 拒绝或同事务确认换绑（T299）。
+func (s *DeviceService) Rebind(ctx context.Context, deviceID, patientID, operatorID string, confirmSwap bool) (*BindResult, *model.AppError) {
 	if deviceID == "" || patientID == "" {
 		return nil, model.ErrInvalidParam("device_id and patient_id are required")
 	}
@@ -187,10 +224,11 @@ func (s *DeviceService) Rebind(ctx context.Context, deviceID, patientID, operato
 		return nil, model.ErrUserResNotFound("patient %q not found", patientID)
 	}
 
-	prev, err := s.store.Rebind(ctx, repo.BindParams{
-		DeviceID:   deviceID,
-		PatientID:  patientID,
-		OperatorID: operatorID,
+	out, err := s.store.Rebind(ctx, repo.BindParams{
+		DeviceID:    deviceID,
+		PatientID:   patientID,
+		OperatorID:  operatorID,
+		ConfirmSwap: confirmSwap,
 	})
 	if err != nil {
 		if errors.Is(err, repo.ErrConflict) {
@@ -203,7 +241,7 @@ func (s *DeviceService) Rebind(ctx context.Context, deviceID, patientID, operato
 	if appErr != nil {
 		return nil, appErr
 	}
-	return &BindResult{Device: dev, Rebound: prev != nil}, nil
+	return newBindResult(dev, out), nil
 }
 
 // Unbind 解绑（幂等：重复解绑返回成功，alreadyUnbound=true 表示本就无有效绑定）

@@ -67,8 +67,17 @@ describe('MainLayout 布局', () => {
 
   it('顶栏展示当前页面标题与退出按钮', async () => {
     const wrapper = await mountLayout('admin')
-    expect(wrapper.find('.top-nav-title').text()).toBe('数据概览')
+    // T289 G3：设计稿 数据概览.html:87 顶栏标题带 emoji 前缀（meta.icon）
+    expect(wrapper.find('.top-nav-title').text()).toBe('📊 数据概览')
     expect(wrapper.text()).toContain('退出')
+    wrapper.unmount()
+  })
+
+  it('顶栏展示当前登录人头像首字（T289 G2）', async () => {
+    const wrapper = await mountLayout('admin')
+    // mock admin 姓名「运营管理员」→ 头像取首字
+    expect(wrapper.find('.user-avatar').text()).toBe('运')
+    expect(wrapper.find('.user-name').text()).toBe('运营管理员')
     wrapper.unmount()
   })
 })

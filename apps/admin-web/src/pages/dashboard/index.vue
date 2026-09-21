@@ -1,12 +1,13 @@
 <template>
   <div class="dashboard">
-    <!-- 周期切换 -->
+    <!-- 周期切换：设计稿 数据概览.html:89-91 是原生 select 下拉（T245 §9 K10 收口），控件形态按设计稿走；
+         设计稿把它画在页内顶栏右侧，本 SPA 顶栏是 MainLayout 共用区，不为单页塞插槽，留在页面工具栏 -->
     <div class="page-toolbar">
-      <el-radio-group v-model="period" @change="loadData">
-        <el-radio-button value="today">今日</el-radio-button>
-        <el-radio-button value="week">本周</el-radio-button>
-        <el-radio-button value="month">本月</el-radio-button>
-      </el-radio-group>
+      <el-select v-model="period" class="period-select" @change="loadData">
+        <el-option label="今日" value="today" />
+        <el-option label="本周" value="week" />
+        <el-option label="本月" value="month" />
+      </el-select>
     </div>
 
     <!-- 6 KPI 卡片：自适应网格 -->
@@ -238,6 +239,10 @@ onMounted(loadData)
 </script>
 
 <style scoped>
+.period-select {
+  width: 150px;
+}
+
 /* KPI 卡片自适应网格：≥1280px 6列，768-1279px 3列，<768px 2列 */
 .kpi-grid {
   display: grid;
