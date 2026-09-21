@@ -256,6 +256,9 @@ type FeelingLogDTO struct {
 	Notes           *string  `json:"notes"`
 	ReplyContent    *string  `json:"replyContent"`
 	ReplyTime       *string  `json:"replyTime"`
+	// CreatedAt：T306 补透出 DB feeling_logs.created_at（提交时间）。列一直存在且 NOT NULL，
+	// 此前只缺 DTO 与 SELECT ⇒ 后台「矫形日志」的「提交时间」列整列回落占位符。
+	CreatedAt string `json:"createdAt"` // RFC3339，取 created_at（非 logDate，logDate 是业务日期）
 }
 
 // AdminRoleDTO RBAC 角色行（契约 getAdminRoles，对齐 shared-types AdminRole）

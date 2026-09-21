@@ -697,7 +697,7 @@ func (s *PGStore) CreatePlan(ctx context.Context, patientID, doctorID, content, 
 // ListFeelingLogs 患者感受日志（按日期倒序）
 func (s *PGStore) ListFeelingLogs(ctx context.Context, patientID string) ([]FeelingLogRow, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT log_id, patient_id, '' AS patient_name, log_date, comfort_score, comfort_level, discomfort_areas, notes, reply_content, reply_time
+		`SELECT log_id, patient_id, '' AS patient_name, log_date, comfort_score, comfort_level, discomfort_areas, notes, reply_content, reply_time, created_at
 		 FROM feeling_logs WHERE patient_id = $1 ORDER BY log_date DESC, log_id DESC`, patientID)
 	if err != nil {
 		return nil, err
@@ -707,7 +707,7 @@ func (s *PGStore) ListFeelingLogs(ctx context.Context, patientID string) ([]Feel
 	for rows.Next() {
 		var f FeelingLogRow
 		if scanErr := rows.Scan(&f.LogID, &f.PatientID, &f.PatientName, &f.LogDate, &f.ComfortScore,
-			&f.ComfortLevel, &f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime); scanErr != nil {
+			&f.ComfortLevel, &f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime, &f.CreatedAt); scanErr != nil {
 			return nil, scanErr
 		}
 		list = append(list, f)
@@ -788,7 +788,7 @@ func (s *PGStore) ListFeelingLogsAdmin(ctx context.Context, f FeelingLogAdminFil
 
 	offset := (f.Page - 1) * f.PageSize
 	listSQL := fmt.Sprintf(`
-		SELECT fl.log_id, fl.patient_id, p.name, fl.log_date, fl.comfort_score, fl.comfort_level, fl.discomfort_areas, fl.notes, fl.reply_content, fl.reply_time
+		SELECT fl.log_id, fl.patient_id, p.name, fl.log_date, fl.comfort_score, fl.comfort_level, fl.discomfort_areas, fl.notes, fl.reply_content, fl.reply_time, fl.created_at
 		FROM feeling_logs fl JOIN patients p ON p.patient_id = fl.patient_id
 		WHERE %s ORDER BY fl.log_date DESC, fl.log_id DESC LIMIT $%d OFFSET $%d`, whereSQL, idx, idx+1)
 	args = append(args, f.PageSize, offset)
@@ -802,7 +802,7 @@ func (s *PGStore) ListFeelingLogsAdmin(ctx context.Context, f FeelingLogAdminFil
 	for rows.Next() {
 		var f FeelingLogRow
 		if scanErr := rows.Scan(&f.LogID, &f.PatientID, &f.PatientName, &f.LogDate, &f.ComfortScore,
-			&f.ComfortLevel, &f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime); scanErr != nil {
+			&f.ComfortLevel, &f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime, &f.CreatedAt); scanErr != nil {
 			return nil, 0, scanErr
 		}
 		list = append(list, f)

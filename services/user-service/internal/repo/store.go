@@ -302,6 +302,7 @@ type FeelingLogRow struct {
 	Notes           *string
 	ReplyContent    *string
 	ReplyTime       *time.Time
+	CreatedAt       time.Time // T306：feeling_logs.created_at（提交时间），列 NOT NULL
 }
 
 // RoleRow roles LEFT JOIN admins 计数投影

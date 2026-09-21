@@ -145,6 +145,37 @@ func TestITListFeelingLogsAdmin_T290(t *testing.T) {
 	assert.Equal(t, "2026-09-02", rows[0].LogDate.Format("2006-01-02"))
 }
 
+// TestITListFeelingLogs_CreatedAt_T306 created_at 真库读得出：两条 SELECT 都各跑一次。
+//
+// 为什么两条都要打真库：handler 侧用例走 fake，fake 会跟着实现一起错；而这两条查询的列
+// 清单是分开写的（单患者那条不 join patients），少改一条就是「后台跨患者流有值、
+// 患者工作台仍空」这种半截修复。种子刻意不写 created_at，让它走列默认值 now()，
+// 与线上真实插入路径一致。
+func TestITListFeelingLogs_CreatedAt_T306(t *testing.T) {
+	ctx := context.Background()
+	seedT290Logs(t, ctx)
+
+	rows, _, err := itStore.ListFeelingLogsAdmin(ctx, FeelingLogAdminFilter{
+		Keyword: "T290", Page: 1, PageSize: 50,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	for _, r := range rows {
+		assert.False(t, r.CreatedAt.IsZero(), "跨患者流每行必须带 created_at（零值＝SELECT 漏列或 scan 错位）")
+		assert.True(t, r.CreatedAt.After(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)),
+			"created_at 应来自 DEFAULT now()，got %s", r.CreatedAt)
+		assert.NotEqual(t, r.LogDate.Format("2006-01-02 15:04"), r.CreatedAt.UTC().Format("2006-01-02 15:04"),
+			"提交时刻不得等于 log_date 零点（那是业务日期，不是插入时刻）")
+	}
+
+	single, err := itStore.ListFeelingLogs(ctx, t290PatientA)
+	require.NoError(t, err)
+	require.Len(t, single, 3)
+	for _, r := range single {
+		assert.False(t, r.CreatedAt.IsZero(), "单患者端点同口径，别只修跨患者那条")
+	}
+}
+
 func TestITGetTeamStats_T256(t *testing.T) {
 	ctx := context.Background()
 	seedT290Logs(t, ctx)
