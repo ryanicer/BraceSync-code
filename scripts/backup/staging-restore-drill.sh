@@ -78,13 +78,21 @@ if [ "$(echo "$BACKUP_KEYS" | wc -l)" -gt 1 ]; then
 fi
 
 BACKUP_FILENAME=$(basename "$LATEST_BACKUP")
-LOCAL_BACKUP="${BACKUP_DIR}/${BACKUP_FILENAME}"
+# 下载到演练专用子目录并带本次运行时间戳：备份目录里同名文件可能已存在（当天 pg_dump
+# 落地的副本），coscmd download 非 -f 时遇同名文件会直接报错退出。
+DRILL_DL_DIR="${BACKUP_DIR}/restore-drill"
+mkdir -p "$DRILL_DL_DIR"
+find "$DRILL_DL_DIR" -name '*.sql.gz' -mtime +3 -delete 2>/dev/null || true
+LOCAL_BACKUP="${DRILL_DL_DIR}/${NOW}-${BACKUP_FILENAME}"
 
 echo "  最新备份: $LATEST_BACKUP" | tee -a "$LOG_FILE"
 
 #---------- 下载备份 ----------
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 下载备份文件..." | tee -a "$LOG_FILE"
-coscmd download "$LATEST_BACKUP" "$LOCAL_BACKUP" 2>&1 | tee -a "$LOG_FILE"
+if ! coscmd download -f "$LATEST_BACKUP" "$LOCAL_BACKUP" 2>&1 | tee -a "$LOG_FILE"; then
+  echo "[ERROR] 从 COS 下载备份失败，中止演练（staging 未改动）" | tee -a "$LOG_FILE"
+  exit 1
+fi
 
 DOWNLOAD_SIZE=$(du -h "$LOCAL_BACKUP" | cut -f1)
 echo "  下载完成，大小: $DOWNLOAD_SIZE" | tee -a "$LOG_FILE"
