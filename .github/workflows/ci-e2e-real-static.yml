@@ -1,0 +1,54 @@
+# BraceSync E2E-Real Static Check
+# T282 F-4: e2e-real CI static check
+# PR gate (informational): static checks only, no secrets needed
+name: E2E-Real Static
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'e2e-real/**'
+      - '.github/workflows/ci-e2e-real-static.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  e2e-real-static:
+    name: E2E-Real Static Check (Type Check + Syntax)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check e2e-real exists
+        id: check
+        run: |
+          if [ -d "e2e-real" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::e2e-real dir not found, skipping"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.present == 'true'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        if: steps.check.outputs.present == 'true'
+        run: npm ci
+      - name: Type check e2e-real
+        if: steps.check.outputs.present == 'true'
+        run: |
+          if [ -f "e2e-real/tsconfig.json" ]; then
+            npx tsc --noEmit --project e2e-real/tsconfig.json
+          else
+            echo "::notice::e2e-real/tsconfig.json not found, skipping tsc"
+            npx playwright test --config=e2e-real/playwright.config.ts --list
+          fi
+      - name: Validate Playwright config
+        if: steps.check.outputs.present == 'true'
+        run: npx playwright test --config=e2e-real/playwright.config.ts --list
