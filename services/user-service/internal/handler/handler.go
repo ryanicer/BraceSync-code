@@ -1315,12 +1315,17 @@ func toFeelingDTO(r repo.FeelingLogRow) model.FeelingLogDTO {
 		replyTime = &s
 	}
 	// T256 #3：feeling 直接来自 comfort_level 列（fitted=贴合 / discomfort=不适），不再从 comfort_score 派生。
+	var patientName *string
+	if r.PatientName != "" {
+		patientName = &r.PatientName
+	}
 	return model.FeelingLogDTO{
 		LogID:           strconv.FormatInt(r.LogID, 10),
 		PatientID:       r.PatientID,
 		LogDate:         r.LogDate.Format("2006-01-02"),
 		ComfortScore:    r.ComfortScore,
 		Feeling:         r.ComfortLevel,
+		PatientName:     patientName,
 		DiscomfortAreas: areas,
 		Notes:           r.Notes,
 		ReplyContent:    r.ReplyContent,

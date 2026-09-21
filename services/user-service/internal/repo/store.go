@@ -362,7 +362,7 @@ type FeelingLogAdminFilter struct {
 	Keyword   string // 患者姓名 ILIKE
 	StartDate string // YYYY-MM-DD（含）
 	EndDate   string // YYYY-MM-DD（含）
-	Feeling   string // comfortable | uncomfortable（由 comfort_score 派生筛选）
+	Feeling   string // fitted | discomfort（T256 #3 直接比对 comfort_level 列）
 	Page      int
 	PageSize  int
 }
