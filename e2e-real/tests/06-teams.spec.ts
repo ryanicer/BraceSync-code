@@ -1,11 +1,9 @@
-import { test, expect, type Locator } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '@playwright/test'
 import {
   realLogin,
-  gotoMenu,
-  pickSelectOption,
+  gotoMenuAndWaitTable,
   tableRows,
   adminMessage,
-  realRoutes,
   E2E_TEAM_NAME_PREFIX,
   uniqueName,
   getAuthToken,
@@ -19,14 +17,35 @@ import {
 test.describe('06-团队管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await gotoMenu(page, '团队管理')
-    await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
-      timeout: 25_000,
-    })
+    // T279：先等 URL 落位再等行，避免命中上一页（数据概览）排行表
+    await gotoMenuAndWaitTable(page, '团队管理', 'teams')
   })
 
   // 本 spec 新建的团队名（用于末尾删除清理）
   let createdTeams: string[] = []
+
+  /**
+   * 在团队弹窗里选负责人（6.2 新建、6.3 编辑都要调）。
+   * 编辑也必须重选：GET /api/v1/teams 的列表项只有 teamId/name/memberCount/patientCount，
+   * 不带 leader，而 teams/index.vue:223 openEdit 用 row.leader ?? '' 回填 ⇒ 弹窗负责人恒空，
+   * 不选就点保存会被 confirmSaveTeam 的 `if (!leader) ElMessage.warning('请选择负责人')` 拦下。
+   * （已作为缺陷登记：T279 报告 F-9）
+   */
+  async function pickTeamOwner(page: Page, dialog: Locator): Promise<void> {
+    const ownerSelect = dialog
+      .locator('.el-form-item')
+      .filter({ hasText: '负责人' })
+      .locator('.el-select')
+      .first()
+    await expect(ownerSelect, '团队弹窗应有「负责人」下拉').toBeVisible({ timeout: 5_000 })
+    await ownerSelect.click()
+    const opts = page.locator('.el-select-dropdown:visible .el-select-dropdown__item')
+    await expect(opts.first(), '负责人下拉应至少有一名医生').toBeVisible({ timeout: 5_000 })
+    const ownerName = ((await opts.first().innerText()) ?? '').trim()
+    expect(ownerName, '负责人选项文案不应为空').not.toBe('')
+    await opts.first().click()
+    await expect(ownerSelect, '选完负责人后应回显所选医生').toContainText(ownerName, { timeout: 5_000 })
+  }
 
   test.afterAll(async ({ browser }) => {
     if (createdTeams.length === 0) return
@@ -84,58 +103,34 @@ test.describe('06-团队管理', () => {
 
       const dialog = page.locator('.el-dialog').filter({ hasText: /新建团队|新建/ })
       await expect(dialog).toBeVisible({ timeout: 10_000 })
-      // 团队名称输入框：第一个 input 或 placeholder 含"团队名称"
+      // 团队名称输入框（按 form-item 文案定位，避免抓到负责人下拉的内层 input）
       const nameInput = dialog
-        .locator('input, .el-input__inner')
-        .filter({ hasNot: page.locator('[type="password"]') })
+        .locator('.el-form-item')
+        .filter({ hasText: '团队名称' })
+        .locator('input')
         .first()
       await nameInput.fill(teamName)
 
-      // 负责人 select：第一个 el-select
-      const ownerSelect = dialog.locator('.el-select').first()
-      if ((await ownerSelect.count()) > 0) {
-        try {
-          await pickSelectOption(
-            page,
-            ownerSelect,
-            // 模糊：选第一个非"请选择"选项
-            (await (async () => {
-              await ownerSelect.click({ timeout: 4_000 })
-              const opts = page.locator('.el-select-dropdown:visible .el-select-dropdown__item')
-              if ((await opts.count()) >= 2) {
-                return (await opts.nth(1).textContent()) ?? ''
-              }
-              return (await opts.first().textContent()) ?? ''
-            })()),
-          )
-        } catch { /* 选不上就算了 */ }
-      }
+      // 负责人（必填，不选会被前端拦成「请选择负责人」）
+      await pickTeamOwner(page, dialog)
 
       // 保存按钮
       const saveBtn = dialog.getByRole('button', { name: /保存|确认|提交/ }).first()
       await expect(saveBtn).toBeVisible()
+      // 先把名字登记再点保存：只要发出过保存请求，afterAll 就必须去删它。
+      // T279 实跑教训：旧写法整段包在 if(visible){if(/成功/){…}} 里，一旦 ElMessage 没被抓到，
+      // 用例零断言通过、createdTeams 却为空 ⇒ staging 留下孤儿团队 T053团队-248968 无人清理。
+      createdTeams.push(teamName)
       await saveBtn.click()
 
-      const msg = adminMessage(page)
-      const visible = await msg.isVisible({ timeout: 15_000 }).catch(() => false)
-      if (visible) {
-        const t = await msg.textContent()
-        if (/成功|完成|已创建/.test(t ?? '')) {
-          createdTeams.push(teamName)
-          // 对话框关闭 + 列表出现
-          await expect(dialog).toBeHidden({ timeout: 5_000 }).catch(() => {})
-          await page.waitForTimeout(2_000)
-          const rowsAfter = tableRows(page)
-          let found = false
-          for (let i = 0; i < await rowsAfter.count(); i++) {
-            if ((await rowsAfter.nth(i).textContent())?.includes(teamName)) {
-              found = true
-              break
-            }
-          }
-          expect(found).toBe(true)
-        }
-      }
+      // 结果提示按「文案」等，不能只等「出现任意 .el-message」：
+      // 登录成功那条「欢迎，运营小张」也是 .el-message，3s 内会被先读到（T279 实跑就是这样误判的）。
+      // teams/index.vue:259 createTeamApi 成功 → ElMessage.success('创建成功')
+      await expect(adminMessage(page)).toHaveText('创建成功', { timeout: 15_000 })
+
+      // 对话框关闭 + 列表出现该唯一命名行
+      await expect(dialog).toBeHidden({ timeout: 5_000 })
+      await expect(tableRows(page).filter({ hasText: teamName })).toHaveCount(1, { timeout: 10_000 })
     })
   })
 
@@ -158,43 +153,34 @@ test.describe('06-团队管理', () => {
       const editBtn = target!.getByRole('button', { name: /编辑|修改/ }).first()
       await expect(editBtn).toBeVisible({ timeout: 5_000 })
       await editBtn.click()
-      const dialog = page.locator('.el-dialog')
-      await expect(dialog).toBeVisible({ timeout: 10_000 })
+      const dialog = page.locator('.el-dialog').filter({ hasText: '编辑团队' })
+      await expect(dialog, '点行内「编辑」应打开标题为「编辑团队」的弹窗').toBeVisible({ timeout: 10_000 })
       const nameInput = dialog
-        .locator('input:not([type="password"]), .el-input__inner')
+        .locator('.el-form-item')
+        .filter({ hasText: '团队名称' })
+        .locator('input')
         .first()
       // 在末尾加「-改」
       const newName = `${oldName}-改`
       await nameInput.fill('')
       await nameInput.fill(newName)
+      // 负责人：编辑弹窗不回显（列表 DTO 无 leader，见 pickTeamOwner 注释），不重选会被拦成「请选择负责人」
+      await pickTeamOwner(page, dialog)
       const save = dialog.getByRole('button', { name: /保存|确认|提交/ }).first()
       await save.click()
       const msg = adminMessage(page)
-      const visible = await msg.isVisible({ timeout: 15_000 }).catch(() => false)
-      if (visible) {
-        const t = await msg.textContent()
-        // 成功 → 更新记录名称
-        if (/成功|完成|已更新/.test(t ?? '')) {
-          createdTeams[createdTeams.length - 1] = newName
-          await expect(dialog).toBeHidden({ timeout: 5_000 }).catch(() => {})
-          await page.waitForTimeout(2_000)
-          const rows = tableRows(page)
-          let found = false
-          for (let i = 0; i < await rows.count(); i++) {
-            const txt = await rows.nth(i).textContent()
-            if (txt?.includes(newName)) { found = true; break }
-          }
-          expect(found).toBe(true)
-        } else if (/失败|错误|error|409|重复/.test(t ?? '')) {
-          // 如果冲突等错误，也算正常（后端返回合理）
-          expect(t).toMatch(/失败|错误|重复/)
-        }
-      }
+      // T279 收紧：旧写法「无提示 / 提示对不上 = 静默通过」；按准确文案轮询（见 6.2 注释的欢迎语抢位）
+      await expect(msg).toHaveText('更新成功', { timeout: 15_000 })
+      createdTeams[createdTeams.length - 1] = newName
+      await expect(dialog).toBeHidden({ timeout: 5_000 })
+      await expect(tableRows(page).filter({ hasText: newName })).toHaveCount(1, { timeout: 10_000 })
     })
   })
 
   test.describe('删除团队', () => {
     test('6.4 删除 seed 已有团队（被引用则拒绝或通过都 OK，不崩溃）', async ({ page }) => {
+      // T279 复跑停跑（PM 口径）：删掉的是 seed 团队本身，02.2/05/06.1 的 seed 基线会跟着塌。
+      test.skip(true, '会删除共享 seed 团队且不可恢复，T279 起停跑（自建团队由 6.5 负责删除）')
       const rows = tableRows(page)
       expect(await rows.count()).toBeGreaterThanOrEqual(3)
       // 找第一个不是我们自己创建的团队（seed 团队）
@@ -239,22 +225,10 @@ test.describe('06-团队管理', () => {
       const msgBox = page.locator('.el-message-box')
       await expect(msgBox).toBeVisible({ timeout: 10_000 })
       await msgBox.getByRole('button', { name: /确定|确认/ }).first().click()
-      const msg = adminMessage(page)
-      const visible = await msg.isVisible({ timeout: 15_000 }).catch(() => false)
-      if (visible) {
-        const t = await msg.textContent()
-        if (/成功|完成|已删除/.test(t ?? '')) {
-          // 从列表消失
-          await page.waitForTimeout(2_000)
-          const rowsAfter = tableRows(page)
-          for (let i = 0; i < await rowsAfter.count(); i++) {
-            const rt = await rowsAfter.nth(i).textContent()
-            expect(rt).not.toContain(targetName)
-          }
-          // 清理记录
-          createdTeams.pop()
-        }
-      }
+      // T279 收紧：旧写法「无提示 = 静默通过」，现在必须真删成功 + 行真的消失
+      await expect(adminMessage(page)).toHaveText('删除成功', { timeout: 15_000 })
+      await expect(tableRows(page).filter({ hasText: targetName })).toHaveCount(0, { timeout: 10_000 })
+      createdTeams.pop()
     })
   })
 })

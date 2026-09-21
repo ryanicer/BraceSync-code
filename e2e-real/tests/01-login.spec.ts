@@ -11,6 +11,9 @@ import {
 /**
  * T053 - 01 登录模块（真实模式：用户名/密码 + JWT）
  * 覆盖：登录页渲染 / 登录成功 / 错误密码拒绝 / 路由守卫与退出
+ *
+ * T279 补：1.5 = 验收卡 A-FLOW-03 步骤 4「空用户名前端拦截」（docs/tests/acceptance/admin/核心流程.md:68）。
+ *          mock 侧结构上验不了（登录页只有角色下拉，没有用户名框），故只能在真实模式补。
  */
 test.describe('01-登录模块', () => {
 
@@ -81,13 +84,53 @@ test.describe('01-登录模块', () => {
       const tokenAfter = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
       expect(tokenAfter).toBeFalsy()
       // 第四步：直接访问受保护页 → 被守卫重定向回 /login 并带 redirect 参数
-      // 注：goto('/admin/patients') 退出后无 token → Nginx strip → router /patients → 守卫重定向 /login?redirect=/admin/patients
-      // 只验证 redirect 参数存在（不绑死具体值）
+      // 只验证 redirect 参数存在（不绑死具体值——绑死就会踩到下面这条实测结论）
       await page.goto(realRoutes.patients)
       await page.waitForTimeout(1_500) // 给前端守卫跳转留时间
       const urlAfter = page.url()
       expect(urlAfter).toContain('/login')
       expect(urlAfter).toMatch(/redirect=/)
+      // ⚠️ T279 实测（headless，未登录 new context 逐个试过 /admin/patients、/patients、/admin/teams）：
+      //    三者一律落到 /login?redirect=/dashboard —— redirect 恒为 /dashboard，从不回填原目标页。
+      //    ⇒ 本用例守的是「未登录进不去 + 会跳回登录页」；「登录后回跳到原目标页」这半步在 staging
+      //    根本不可能成立，故未断言，已作为缺陷登记（T279 报告 F-2）。别把本条读成 A-FLOW-02 的回跳已覆盖。
+    })
+  })
+
+  test.describe('空用户名前端拦截（T279 补 A-FLOW-03 步骤 4）', () => {
+    test('1.5 用户名留空点登录 → 字段下方红字「请输入用户名」+ 不发任何登录请求', async ({ page }) => {
+      // 计数口径：真实网络请求（不用 page.route 改写响应，只观察）
+      const loginCalls: string[] = []
+      page.on('request', (req) => {
+        if (req.url().includes('/api/v1/auth/login')) loginCalls.push(`${req.method()} ${req.url()}`)
+      })
+
+      await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
+
+      // 只填密码，用户名保持空串（验收卡步骤 4：用户名留空 + 密码 admin123）
+      const usernameInput = page.locator('.login-form input:not([type="password"])').first()
+      await expect(usernameInput).toHaveValue('')
+      await page.locator('.login-form input[type="password"]').fill('admin123')
+      await page.locator('.login-form').getByRole('button', { name: '登 录' }).click()
+
+      // 1) 前端表单校验红字出现在「用户名」字段下方（el-form-item__error 挂在对应 item 内）
+      const usernameItem = page
+        .locator('.login-form .el-form-item')
+        .filter({ hasText: '用户名' })
+        .first()
+      await expect(usernameItem.locator('.el-form-item__error')).toHaveText('请输入用户名')
+
+      // 2) 零请求：给可能的异步发送留出观察窗口后再判定
+      await page.waitForTimeout(2_000)
+      expect(loginCalls).toEqual([])
+
+      // 3) 前端拦截 ⇒ 不该出现后端错误提示（后端原文是「invalid username or password」）
+      await expect(adminMessage(page)).toHaveCount(0)
+
+      // 4) 仍停在登录页，没有进入任何后台页
+      expect(new URL(page.url()).pathname).toBe('/login')
+      await expect(page.locator('.el-menu')).toHaveCount(0)
     })
   })
 })

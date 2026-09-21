@@ -1,11 +1,10 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import {
   realLogin,
-  gotoMenu,
+  gotoMenuAndWaitTable,
   adminMessage,
   pickSelectOption,
   tableRows,
-  realRoutes,
   E2E_REPLY_PREFIX,
   uniqueName,
   getAllTagTexts,
@@ -19,11 +18,9 @@ import {
 test.describe('03-告警管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await gotoMenu(page, '告警管理')
-    // 等待表格加载完成（至少 1 行可见）
-    await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
-      timeout: 25_000,
-    })
+    // T279：改为「先等 URL 落位再等行」——裸等 .el-table__body-wrapper tbody tr 会命中
+    //        上一页（数据概览）的两张排行表，本页还没出数就开始断言（5.1/7.1 实跑因此读到 0 行）
+    await gotoMenuAndWaitTable(page, '告警管理', 'alerts')
   })
 
   test.describe('告警列表', () => {
@@ -125,6 +122,9 @@ test.describe('03-告警管理', () => {
 
   test.describe('处理告警（写操作）', () => {
     test('3.4 待处理告警可打开处理对话框，填唯一备注并确认处理', async ({ page }) => {
+      // T279 复跑停跑（PM 口径：只跑自建自删的用例）——本条会把 staging 一条真实告警置为「已处理」，
+      // 且无回退端点，会连带改掉 03/02 的 seed 基线。恢复方式：删掉下面这行。
+      test.skip(true, '会永久改动共享 seed 告警状态（POST /alerts/:id/process 单向，无撤回端点），T279 起停跑')
       // 重置状态筛选为「待处理」（只处理 pending 行，避免影响已处理的）
       const statusSelect = page.locator('.filter-select').nth(1)
       if ((await statusSelect.count()) > 0) {
@@ -169,21 +169,10 @@ test.describe('03-告警管理', () => {
       const confirmBtn = dialog.getByRole('button', { name: /确认处理|确认/ }).first()
       await expect(confirmBtn).toBeVisible()
       await confirmBtn.click()
-      // ElMessage 成功提示（任意含"成功"或"处理完成"）
-      const msg = adminMessage(page)
-      const msgVisible = await msg.isVisible({ timeout: 15_000 }).catch(() => false)
-      if (msgVisible) {
-        const msgText = await msg.textContent()
-        // 两种结果都 OK：成功 / 失败（如果该告警已被处理）
-        if (msgText) {
-          const isError = /失败|error|无法|异常/.test(msgText)
-          if (!isError) {
-            expect(msgText).toMatch(/成功|处理|完成/)
-            // 对话框应关闭
-            await expect(dialog).toBeHidden({ timeout: 5_000 }).catch(() => {})
-          }
-        }
-      }
+      // T279 收紧：原来「没抓到提示就直接过 / 抓到含失败的也算过」= 零断言。
+      // 现在按准确文案轮询（alerts/index.vue:283 → ElMessage.success('处理成功')）。
+      await expect(adminMessage(page)).toHaveText('处理成功', { timeout: 15_000 })
+      await expect(dialog).toBeHidden({ timeout: 5_000 })
     })
   })
 })

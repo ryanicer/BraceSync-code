@@ -149,4 +149,98 @@ test.describe('04-实时监控', () => {
       await expect(page.locator('.status-indicator')).toBeVisible()
     })
   })
+
+  /**
+   * T279 补：A-MON-08「有事件」分支（docs/tests/acceptance/admin/实时监控.md:160）
+   *
+   * 为什么真实模式也要靠拦截才走得到：真实后端把快照的 alerts 写死成空数组——
+   *   services/data-service/internal/service/record.go:461  `Alerts: []any{}`
+   *   （model.go:453 注释「今日告警摘要，明细由 alert-service 提供」，实现从未接上）
+   * ⇒ staging 7 名患者逐个 GET /api/v1/patients/{id}/realtime 实测 alerts 长度全为 0，
+   *    与 mock（mock/patients.ts:135 写死 []）同一条死分支。所以这里只改写 alerts 这一个字段、
+   *    其余响应原样透传，把前端渲染分支暴露出来；后端真接上告警摘要后可删掉拦截。
+   */
+  test.describe('近期异常事件 · 有事件分支', () => {
+    const INJECTED = [
+      {
+        alertId: 'T279-EV-1',
+        timestamp: '2026-09-21T02:05:00Z',
+        type: 'pressure_high',
+        detail: 'T279 注入事件：压力峰值超过偏高阈值',
+        sensorPoint: 'R2C3',
+      },
+      {
+        alertId: 'T279-EV-2',
+        timestamp: '2026-09-20T18:40:00Z',
+        type: 'wear_interrupt',
+        detail: 'T279 注入事件：佩戴中断超过判定时长',
+        sensorPoint: '',
+      },
+      {
+        alertId: 'T279-EV-3',
+        timestamp: '2026-09-21T04:11:00Z',
+        type: 'sensor_drift',
+        detail: 'T279 注入事件：基线漂移超过告警阈值',
+        sensorPoint: 'R4C5',
+      },
+    ]
+
+    test('4.4 快照带事件时：四列表头 + 逐行时间/类型徽章/详情/采集点渲染，无 undefined/NaN', async ({ page }) => {
+      await page.route('**/api/v1/patients/*/realtime', async (route) => {
+        const res = await route.fetch()
+        let body: { data?: Record<string, unknown> }
+        try {
+          body = await res.json()
+        } catch {
+          await route.fulfill({ response: res })
+          return
+        }
+        if (body && body.data) body.data.alerts = INJECTED
+        await route.fulfill({ response: res, body: JSON.stringify(body) })
+      })
+
+      // 触发一次带拦截的刷新（页面本身 2s 轮询，点「立即刷新」把它拉到当前）
+      await page.locator('.page-toolbar').getByRole('button', { name: '立即刷新' }).click()
+
+      const card = page.locator('.page-card').filter({ hasText: '近期异常事件' })
+      await expect(card).toBeVisible()
+      await expect(card.locator('.card-title')).toHaveText('近期异常事件')
+
+      // 1) 表头四列，顺序与文案逐字对齐设计稿
+      await expect(card.locator('.events-table thead th')).toHaveText(['时间', '类型', '详情', '采集点'])
+
+      // 2) 三行事件（空态行必须消失）
+      const rows = card.locator('.events-table tbody tr')
+      await expect(rows).toHaveCount(INJECTED.length)
+      await expect(card.locator('.events-table tbody .empty-cell')).toHaveCount(0)
+
+      // 3) 逐行逐格：时间 HH:mm / 类型中文徽章 + 对应色类 / 详情原文 / 采集点缺省显示 —
+      for (let i = 0; i < INJECTED.length; i++) {
+        const ev = INJECTED[i]
+        const cells = rows.nth(i).locator('td')
+        await expect(cells).toHaveCount(4)
+
+        const timeText = (await cells.nth(0).textContent())!.trim()
+        expect(timeText, `第 ${i + 1} 行时间格式`).toMatch(/^\d{2}:\d{2}$/)
+
+        const badge = cells.nth(1).locator('.event-type')
+        const expectBadge: Record<string, { label: string; cls: string }> = {
+          pressure_high: { label: '压力偏高', cls: 'ev-danger' },
+          wear_interrupt: { label: '佩戴中断', cls: 'ev-warn' },
+          sensor_drift: { label: '传感器漂移', cls: 'ev-info' },
+        }
+        await expect(badge).toHaveText(expectBadge[ev.type].label)
+        await expect(badge).toHaveClass(new RegExp(`\\b${expectBadge[ev.type].cls}\\b`))
+
+        await expect(cells.nth(2)).toHaveText(ev.detail)
+        await expect(cells.nth(3)).toHaveText(ev.sensorPoint || '—')
+      }
+
+      // 4) 两行时间各自绑定（不是同一常量），且整卡无 undefined / NaN
+      const t1 = (await rows.nth(0).locator('td').nth(0).textContent())!.trim()
+      const t2 = (await rows.nth(1).locator('td').nth(0).textContent())!.trim()
+      expect(t1).not.toBe(t2)
+      await expect(card).not.toContainText(/undefined|NaN/)
+    })
+  })
 })

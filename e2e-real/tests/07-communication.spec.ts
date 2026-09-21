@@ -1,10 +1,9 @@
 import { test, expect, type Locator } from '@playwright/test'
 import {
   realLogin,
-  gotoMenu,
+  gotoMenuAndWaitTable,
   tableRows,
   adminMessage,
-  realRoutes,
   E2E_REPLY_PREFIX,
   uniqueName,
   getAllTagTexts,
@@ -15,13 +14,27 @@ import {
  * T051 seed：至少 17 条 feedbacks（含重复执行的历史遗留，用 ≥17 断言）。
  * 覆盖：列表渲染 / 详情对话框 / 回复处理（写操作，唯一命名）
  */
+/**
+ * 读右侧详情面板的 el-descriptions（label → value，按渲染顺序）。
+ * EP 2.14 的类名是 .el-descriptions__label（值在其 nextElementSibling），
+ * 不是 2.2 时代的 .el-descriptions-item__label —— 用后者会静默匹配 0 个节点。
+ */
+async function readDescriptions(pane: Locator): Promise<{ label: string; value: string }[]> {
+  return pane
+    .locator('.el-descriptions')
+    .evaluate((el) =>
+      Array.from(el.querySelectorAll('.el-descriptions__label')).map((th) => ({
+        label: (th.textContent ?? '').trim(),
+        value: (th.nextElementSibling?.textContent ?? '').trim(),
+      })),
+    )
+}
+
 test.describe('07-患者沟通', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await gotoMenu(page, '患者沟通')
-    await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
-      timeout: 25_000,
-    })
+    // T279：先等 URL 落位再等行，避免命中上一页（数据概览）排行表（7.1/7.2 实跑失效根因）
+    await gotoMenuAndWaitTable(page, '患者沟通', 'communication')
   })
 
   test.describe('反馈列表渲染', () => {
@@ -44,48 +57,51 @@ test.describe('07-患者沟通', () => {
     })
   })
 
-  test.describe('详情对话框', () => {
-    test('7.2 点「详情」→ 显示标题 + 患者/类型/内容/提交时间 字段', async ({ page }) => {
+  test.describe('详情面板（主从式：点行 → 右侧出详情，无对话框）', () => {
+    test('7.2 点第 3 行 → 右侧「反馈 N 详情」+ 患者/类型/内容/提交时间/状态 逐项等于该行', async ({ page }) => {
+      // T279 修：本页真实结构（apps/admin-web/src/pages/communication/index.vue）是左表右详情——
+      //   el-table @row-click="selectFeedback"，右侧 .right-pane 用 el-descriptions 渲染，
+      //   既没有「详情」按钮也没有 el-dialog。旧断言按 mock 稿的对话框写，在 staging 恒 0 命中（实跑即失败）。
+      // ⚠️ loadData() 会把 list[0] 默认塞进 current，所以必须点「非第一行」：
+      //   点第一行时「右侧显示第一行」不点也成立 → 假绿。
       const rows = tableRows(page)
-      // 找到有「详情」按钮的第一行
-      let target: Locator | null = null
-      for (let i = 0; i < Math.min(await rows.count(), 10); i++) {
-        const btn = rows.nth(i).getByRole('button', { name: '详情' })
-        if ((await btn.count()) > 0 && (await btn.isVisible().catch(() => false))) {
-          target = rows.nth(i)
-          break
-        }
-      }
-      expect(target).not.toBeNull()
-      await target!.getByRole('button', { name: '详情' }).first().click()
+      expect(await rows.count()).toBeGreaterThanOrEqual(3)
 
-      const dialog = page.locator('.el-dialog')
-      await expect(dialog).toBeVisible({ timeout: 10_000 })
-      // 对话框标题含「反馈」或「详情」
-      const title = await dialog.locator('.el-dialog__title, .el-dialog__header').first().textContent()
-      expect(title).toMatch(/反馈|详情|Detail/i)
+      const target = rows.nth(2)
+      const cellTexts = async () =>
+        Promise.all([0, 1, 2, 3, 4].map((i) => target.locator('td').nth(i).innerText().then((t) => t.trim())))
+      const [id, patient, type, content, status] = await cellTexts()
 
-      // 描述块字段（el-descriptions 或任何含关键字段的区域）
-      const content = await dialog.textContent() ?? ''
-      const expectedFields = ['患者', '类型', '内容', '提交时间']
-      const hit = expectedFields.filter((f) => content.includes(f)).length
-      // 至少命中 3 个（允许字段名微调）
-      expect(hit).toBeGreaterThanOrEqual(3)
+      await target.locator('td').nth(3).click()
 
-      // 关闭（右上 × 或按钮）
-      const closeBtn = dialog.locator('.el-dialog__close, .el-dialog__headerbtn').first()
-      if ((await closeBtn.count()) > 0) {
-        await closeBtn.click()
-      } else {
-        const cancel = dialog.getByRole('button', { name: /关闭|取消/ }).first()
-        if ((await cancel.count()) > 0) await cancel.click()
-      }
-      await expect(dialog).toBeHidden({ timeout: 5_000 }).catch(() => {})
+      const pane = page.locator('.right-pane')
+
+      await expect(pane.locator('.pane-title')).toHaveText(`反馈 ${id} 详情`, { timeout: 10_000 })
+      // 详情是行内面板，不是弹层
+      await expect(page.locator('.el-dialog')).toHaveCount(0)
+
+      const shown = await readDescriptions(pane)
+      expect(shown.map((f) => f.label), '详情字段名与顺序').toEqual([
+        '患者', '类型', '内容', '提交时间', '状态',
+      ])
+      const byLabel = Object.fromEntries(shown.map((f) => [f.label, f.value]))
+      expect(byLabel['患者'], '详情的患者 = 所点行的患者列').toBe(patient)
+      expect(byLabel['类型'], '详情的类型 = 所点行的类型列').toBe(type)
+      expect(byLabel['内容'], '详情的内容 = 所点行的内容列').toBe(content)
+      // formatTime() 口径：MM-DD HH:mm（不是完整 ISO）
+      expect(byLabel['提交时间']).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}$/)
+      expect(byLabel['状态'], '详情的状态 = 所点行的状态列').toBe(status)
     })
   })
 
   test.describe('回复并标记处理（写）', () => {
     test('7.3 找到 pending 反馈 → 详情 → 填回复（T053回复-xxx）→ 提交成功 + 状态变更', async ({ page }) => {
+      // T279 复跑停跑：回复对象是 seed 反馈，POST /feedbacks/:id/process 单向、退不回待处理。
+      //   ⚠️ PM 裁定（本卡 2026-09-21 13:00）把 7.3 列入「跑（自建唯一命名数据、跑完删除）」，
+      //      但后台没有「新建反馈」入口/端点 —— 反馈只能由患者端提交 ⇒ 7.3 的对象必然是共享 seed 反馈，
+      //      与同一条裁定的判定「共享 seed 数据默认只读，要动必须先报 PM」直接冲突，已回报待重裁。
+      //      （与 3.4 同类：单向、无 un-process 端点、不可回滚 —— 正是 PM 否决 3.4 的那条硬理由。）
+      test.skip(true, '反馈只能由患者端产生，后台无新建端点 ⇒ 7.3 只能改共享 seed 反馈且无回退端点，与「seed 默认只读」判定冲突；已报 PM 待重裁')
       // 第一步：先找第一行 pending 反馈（tag 含「待处理」）
       const rows = tableRows(page)
       let pendingIdx = -1
@@ -96,49 +112,37 @@ test.describe('07-患者沟通', () => {
           break
         }
       }
-      // 如果没有 pending，找任何一行都行（不阻塞用例）
-      let targetRow: Locator
-      if (pendingIdx >= 0) {
-        targetRow = rows.nth(pendingIdx)
-      } else {
-        targetRow = rows.first()
-      }
+      // T279 修：打开详情靠「点行」（无详情按钮/无对话框，见 7.2 注释），回复框在右侧 .reply-box
+      // 旧写法在找不到 pending 时退化成「点第一行」，然后靠 if(visible) 层层吞掉断言 —— 现在如实前置失败
+      expect(pendingIdx, 'staging seed 应存在待处理反馈').toBeGreaterThanOrEqual(0)
+      const targetRow = rows.nth(pendingIdx)
+      const rowId = (await targetRow.locator('td').nth(0).innerText()).trim()
+      await targetRow.locator('td').nth(3).click()
 
-      const detailBtn = targetRow.getByRole('button', { name: '详情' })
-      await expect(detailBtn.first()).toBeVisible({ timeout: 5_000 })
-      await detailBtn.first().click()
+      const pane = page.locator('.right-pane')
+      await expect(pane.locator('.pane-title')).toHaveText(`反馈 ${rowId} 详情`, { timeout: 10_000 })
 
-      const dialog = page.locator('.el-dialog')
-      await expect(dialog).toBeVisible({ timeout: 10_000 })
-      // 回复输入框：el-textarea 包装的 textarea（直接定位 textarea 元素，避免命中外层 div）
-      const replyInput = dialog.locator('textarea').first()
+      const replyInput = pane.locator('.reply-box textarea').first()
       await expect(replyInput).toBeVisible({ timeout: 5_000 })
       const replyText = `${uniqueName(E2E_REPLY_PREFIX)} 已安排门诊复查，跟进处理中`
       await replyInput.fill(replyText)
-      // 提交按钮：回复并标记 / 提交 / 回复
-      const submitBtn = dialog
-        .getByRole('button', { name: /回复并标记|提交回复|提交|回复|确认/ })
-        .first()
+      const submitBtn = pane.locator('.reply-actions').getByRole('button', { name: '回复并标记' })
       await expect(submitBtn).toBeVisible({ timeout: 5_000 })
       await submitBtn.click()
-      const msg = adminMessage(page)
-      const visible = await msg.isVisible({ timeout: 20_000 }).catch(() => false)
-      if (visible) {
-        const t = await msg.textContent()
-        // 成功提示
-        if (/成功|完成|已回复|已解决|已提交/.test(t ?? '')) {
-          // 对话框关闭
-          await expect(dialog).toBeHidden({ timeout: 5_000 }).catch(() => {})
-          // 列表对应行 tag 已变更
-          await page.waitForTimeout(2_000)
-          const rowsAfter = tableRows(page)
-          if (pendingIdx >= 0 && pendingIdx < await rowsAfter.count()) {
-            const tagsAfter = await rowsAfter.nth(pendingIdx).locator('.el-tag').allTextContents()
-            const changed = tagsAfter.some((x) => /已回复|已解决|处理完成|回复/i.test(x))
-            expect(changed).toBe(true)
-          }
-        }
-      }
+      // T279 收紧：旧写法「没抓到提示 = 直接过」；按准确文案轮询
+      // （communication/index.vue submitReply → ElMessage.success('回复成功')）
+      await expect(adminMessage(page)).toHaveText('回复成功', { timeout: 20_000 })
+
+      // 详情面板新增「回复」项，状态由待处理变已回复
+      const shown = await readDescriptions(pane)
+      const byLabel = Object.fromEntries(shown.map((f) => [f.label, f.value]))
+      expect(shown.map((f) => f.label), '回复后详情字段').toEqual([
+        '患者', '类型', '内容', '提交时间', '状态', '回复',
+      ])
+      expect(byLabel['状态']).toBe('已回复')
+      expect(byLabel['回复']).toBe(replyText)
+      // 列表该行 tag 同步变已回复
+      await expect(targetRow.locator('.el-tag')).toHaveText('已回复', { timeout: 10_000 })
     })
   })
 })
