@@ -745,8 +745,9 @@ func (s *PGStore) GetTeamStats(ctx context.Context) (int, int, int, int, error) 
 }
 
 // ListFeelingLogsAdmin T256 #2：跨患者感受日志流。
-// 支持 keyword（患者姓名 ILIKE）、startDate/endDate（log_date 范围）、feeling（comfortable/uncomfortable，
-// 由 comfort_score>=3/<3 派生）。按 log_date DESC 分页。
+// 支持 keyword（p.name ILIKE）、startDate/endDate（log_date 范围）、feeling（fitted|discomfort，
+// 直接比对 comfort_level 列，T256 #3 起不再由 comfort_score 派生）。按 log_date DESC 分页。
+// 与 patients 内连接 ⇒ p.name 必然带出（T290-A 在 DTO 回填 patientName）。
 func (s *PGStore) ListFeelingLogsAdmin(ctx context.Context, f FeelingLogAdminFilter) ([]FeelingLogRow, int64, error) {
 	where := []string{"1=1"}
 	args := []any{}

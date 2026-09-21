@@ -244,11 +244,14 @@ type OrthosisPlanDTO struct {
 // T256 #3：comfort_level 两档（fitted=贴合 / discomfort=不适），由 000015 迁移新增列；
 // comfort_score 保留为历史星级口径（PRD §8.2），写入口径以 comfort_level 为准。
 type FeelingLogDTO struct {
-	LogID           string   `json:"logId"`
-	PatientID       string   `json:"patientId"`
-	LogDate         string   `json:"logDate"`
-	ComfortScore    *float64 `json:"comfortScore"` // 历史 1–5 星（保留兼容）
-	Feeling         *string  `json:"feeling"`      // T256 #3：fitted | discomfort（来自 comfort_level 列）
+	LogID        string   `json:"logId"`
+	PatientID    string   `json:"patientId"`
+	LogDate      string   `json:"logDate"`
+	ComfortScore *float64 `json:"comfortScore"` // 历史 1–5 星（保留兼容）
+	Feeling      *string  `json:"feeling"`      // T256 #3：fitted | discomfort（来自 comfort_level 列）
+	// PatientName：T290-A 跨患者日志流 /admin/feeling-logs 由 patients.name join 带出，
+	// 后台「患者」列不再只显示编号；单患者端点不 join，故为 null（前端回落 patientId）。
+	PatientName     *string  `json:"patientName"`
 	DiscomfortAreas []string `json:"discomfortAreas"`
 	Notes           *string  `json:"notes"`
 	ReplyContent    *string  `json:"replyContent"`
