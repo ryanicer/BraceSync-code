@@ -84,9 +84,9 @@ test.describe('交互与刷新', () => {
     await select.click()
     const dropdown = page.locator('.el-select-dropdown:visible')
     await expect(dropdown).toBeVisible({ timeout: 5_000 })
-    // 验证至少有 3 个选项
+    // 选项数 = mock/patients.ts 患者总数（T289 4.2 补 PT-007/PT-008 两名未分配患者后为 8）
     const options = dropdown.locator('.el-select-dropdown__item')
-    await expect(options).toHaveCount(6, { timeout: 5_000 })
+    await expect(options).toHaveCount(8, { timeout: 5_000 })
     // 搜索过滤：用 pressSequentially 模拟真实键入触发 el-select filterable 过滤
     const input = page.locator('.patient-card .el-select input')
     await input.click()

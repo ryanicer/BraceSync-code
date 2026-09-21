@@ -2,22 +2,17 @@ import { test, expect } from '@playwright/test'
 import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
- * T057 患者管理写功能 E2E（KNOWN_RED）
+ * T057 患者管理写功能 E2E
  *
  * 设计源：docs/design/admin/患者管理.html
- * 覆盖 3 个写功能：添加患者 / 分配团队 / 批量绑定
+ * 覆盖 3 个写功能：添加患者 / 分配团队 / 批量分配
  *
- * 预期红态：admin-web 患者管理页当前仅列表+搜索+详情（无写操作 UI），
- * 所有 test.fail 用例因找不到"添加患者"按钮、"分配团队"入口、"批量绑定"按钮等
- * 而 FAIL。test.fail 标记使 CI 将其视为预期失败（绿信号）。
- *
- * 实现方转绿清单：
- *   1. .page-toolbar 增加添加患者 / 批量绑定按钮
- *   2. el-table 增加 selection 列（批量绑定前置）
- *   3. el-drawer 详情增加分配团队按钮 + 弹窗
- *   4. 新建 / 分配 / 批量绑定 三个 el-dialog 表单（新建表单含手机号必填字段）
- *   5. mock 层补 POST /api/v1/admin/patients、PUT .../team、POST .../batch-bind
- * 届时移除 test.fail 标记，用例转绿。
+ * T057 的四条入口（工具栏添加患者、详情抽屉分配团队、三个 el-dialog）已全部实现并转绿，
+ * 原 KNOWN_RED 标记与「实现方转绿清单」删除。
+ * T289 4.2 改版：批量分配不再是「列表勾选 + 单一目标团队弹窗」，而是设计稿 :98-108 的
+ * 独立卡片（只列未分配患者 + 逐行「分配至」下拉），所以列表已无 selection 列。
+ * mock 的 batch-bind 只对不存在的 patientId 计 failures（卡片只列真实存在的患者），
+ * 故旧「部分失败明细」用例无法再由 UI 触发，已随之删除。
  */
 
 test.beforeEach(async ({ page }) => {
@@ -140,44 +135,26 @@ test.describe('分配团队', () => {
 })
 
 // ─────────────────────────────────────────────────────────────
-// 批量绑定
+// 批量分配（T289 4.2：设计稿 患者管理.html:98-108 独立卡片，取代旧「批量绑定」弹窗）
 // ─────────────────────────────────────────────────────────────
 
-test.describe('批量绑定', () => {
-  test('选择多个患者批量绑定到团队', async ({ page }) => {
-    // el-table 应有 selection 列（当前不存在 → KNOWN_RED）
-    // 勾选前 2 行
-    const checkboxes = page.locator('.el-table__body-wrapper .el-checkbox')
-    await checkboxes.nth(0).click()
-    await checkboxes.nth(1).click()
-
-    // 点击"批量绑定"按钮
-    await page.locator('.page-toolbar').getByRole('button', { name: '批量绑定' }).click()
-    const dialog = page.locator('.el-dialog').filter({ hasText: '批量绑定' })
-    await expect(dialog).toBeVisible()
-
-    // 选择目标团队
-    await pickSelectOption(page, dialog.locator('.el-select').first(), '脊柱侧弯一组')
-    await dialog.getByRole('button', { name: '确定' }).click()
-
-    // 成功提示
-    await expect(adminMessage(page)).toContainText('成功')
+test.describe('批量分配', () => {
+  test('旧「批量绑定」工具栏入口与弹窗已撤（设计稿列表卡片无该按钮）', async ({ page }) => {
+    await expect(page.locator('.page-toolbar').getByRole('button', { name: '批量绑定' })).toHaveCount(0)
+    await expect(page.locator('.el-dialog').filter({ hasText: '批量绑定' })).toHaveCount(0)
   })
 
-  test('批量绑定部分失败显示失败明细', async ({ page }) => {
-    const checkboxes = page.locator('.el-table__body-wrapper .el-checkbox')
-    await checkboxes.nth(0).click()
-    await checkboxes.nth(1).click()
+  test('卡片内勾选未分配患者并逐行选团队，确认后 mock 落库', async ({ page }) => {
+    const card = page.locator('.batch-bind-card')
+    const row = tableRows(page, card).filter({ hasText: 'PT-007' })
+    await expect(row).toBeVisible({ timeout: 15_000 })
+    await row.locator('.el-checkbox').click()
+    await pickSelectOption(page, row.locator('.batch-team-select'), '术后康复治疗组')
+    await card.getByRole('button', { name: '确认分配' }).click()
+    await expect(adminMessage(page)).toContainText('批量分配成功 1 条')
 
-    await page.locator('.page-toolbar').getByRole('button', { name: '批量绑定' }).click()
-    const dialog = page.locator('.el-dialog').filter({ hasText: '批量绑定' })
-    await expect(dialog).toBeVisible()
-
-    await pickSelectOption(page, dialog.locator('.el-select').first(), '脊柱侧弯一组')
-    await dialog.getByRole('button', { name: '确定' }).click()
-
-    // 部分失败：提示中含失败计数或明细（mock 支撑由实现方补）
-    const msg = adminMessage(page)
-    await expect(msg).toContainText(/成功|失败/)
+    // 写通道真落库：列表行的绑定团队列取到新团队，而不是只弹个提示
+    const listRow = tableRows(page, page.locator('.patient-list-card')).filter({ hasText: '王小红' })
+    await expect(listRow).toContainText('术后康复治疗组')
   })
 })

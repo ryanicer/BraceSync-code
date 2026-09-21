@@ -35,7 +35,8 @@ test('登录 → Dashboard → 告警处理 → 患者管理 → 退出', async 
   await expect(page).toHaveURL(/\/patients/)
   await page.locator('.search-input input').fill('林小雨')
   await page.locator('.page-toolbar').getByRole('button', { name: '查询' }).click()
-  const patientRow = tableRows(page)
+  // T289 4.2：本页另有「批量患者-团队绑定」卡片（不受列表搜索影响），必须 scope 到列表卡片
+  const patientRow = tableRows(page, page.locator('.patient-list-card'))
   await expect(patientRow).toHaveCount(1)
   await patientRow.first().click()
   const drawer = page.locator('.el-drawer')
