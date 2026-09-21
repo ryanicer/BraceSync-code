@@ -186,6 +186,10 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/admin/patients"),
 	rbacOf(http.MethodGet, "/api/v1/admin/patients/:patientId"),
 	rbacOf(http.MethodGet, "/api/v1/admin/feeling-logs"), // T256 #2 跨患者感受日志流
+	// T300 患者异常报告汇总/CSV 导出（合同 §二 患者管理）：按患者 + 日期范围聚合，
+	// 且导出直出全字段明细（含处理备注），只允许后台 staff；患者走自己的 /alerts 列表。
+	rbacOf(http.MethodGet, "/api/v1/admin/abnormal-reports"),
+	rbacOf(http.MethodGet, "/api/v1/admin/abnormal-reports/export"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/kpi"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/wear-trend"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/wear-distribution"),

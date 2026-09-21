@@ -29,8 +29,13 @@ type AlertQueryFilter struct {
 	PatientID string
 	Type      string // pressure_high / wear_interrupt / sensor_drift / wear_duration_short（pressure_fluctuation 只读历史行）
 	Status    string // process_status：pending / processing / processed（T257 2.7 三态）
-	Page      int
-	PageSize  int
+	// StartTs/EndTs T300：采集时间范围，半开区间 [StartTs, EndTs)。
+	// 由 handler 把「北京日历日」换算成时刻（末日次日 00:00 为 EndTs），
+	// nil = 该端不限。与 ts 的索引序 (patient_id, ts DESC) 同向，不额外扫表。
+	StartTs  *time.Time
+	EndTs    *time.Time
+	Page     int
+	PageSize int
 }
 
 // NormalizePage 补齐/钳制分页参数：缺省 page=1 / pageSize=20，pageSize 上限 100。
@@ -66,6 +71,16 @@ func buildAlertWhere(f AlertQueryFilter) (string, []any) {
 	if f.Status != "" {
 		args = append(args, f.Status)
 		conds = append(conds, "a.process_status = $"+strconv.Itoa(len(args)))
+	}
+	// T300：日期范围为半开区间 [start, end)，end 落在「末日次日 00:00」，
+	// 用 < 而非 <= 才能既含末日 23:59:59 又不依赖 ts 的小数秒精度。
+	if f.StartTs != nil {
+		args = append(args, *f.StartTs)
+		conds = append(conds, "a.ts >= $"+strconv.Itoa(len(args)))
+	}
+	if f.EndTs != nil {
+		args = append(args, *f.EndTs)
+		conds = append(conds, "a.ts < $"+strconv.Itoa(len(args)))
 	}
 	if len(conds) == 0 {
 		return "", nil

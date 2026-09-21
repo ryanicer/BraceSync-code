@@ -30,6 +30,8 @@ import {
   fetchSystemSettings,
   saveSystemSettingsApi,
   processAlertApi,
+  fetchAbnormalReport,
+  exportAbnormalReportApi,
   teamNameOf,
   doctorNameOf,
 } from '../src/api'
@@ -235,5 +237,56 @@ describe('T269 真实模式契约守卫', () => {
 
     await processAlertApi('206')
     expect(lastRequest().data).toBeUndefined()
+  })
+
+  it('T300 异常报告汇总走 admin 端点，消费后端三视图键名', async () => {
+    requestMock.mockResolvedValue({
+      patientId: 'P00001', start: '2026-09-01', end: '2026-09-03', total: 2,
+      byStatus: [{ key: 'pending', count: 2 }, { key: 'processing', count: 0 }, { key: 'processed', count: 0 }],
+      byType: [{ key: 'pressure_high', count: 2 }],
+      byDay: [{ key: '2026-09-02', count: 2 }],
+    })
+    const res = await fetchAbnormalReport({ patientId: 'P00001', start: '2026-09-01', end: '2026-09-03' })
+    const req = lastRequest()
+    expect(req.url).toBe('/api/v1/admin/abnormal-reports')
+    expect(req.data).toEqual({ patientId: 'P00001', start: '2026-09-01', end: '2026-09-03' })
+    // 抽屉直接渲染这三组 key/count ⇒ 任一名对不上就整表空白
+    expect(res.byStatus[1]).toEqual({ key: 'processing', count: 0 })
+    expect(res.byType[0].key).toBe('pressure_high')
+    expect(res.byDay[0].count).toBe(2)
+  })
+
+  it('T300 CSV 导出带 token，失败时透出后端文案而不是落一个坏文件', async () => {
+    localStorage.setItem('admin_token', 'TOK300')
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:abnormal')
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'attachment; filename="abnormal-report-P00001-2026-09-01_2026-09-03.csv"' },
+      blob: async () => new Blob(['\ufeff告警ID\n'], { type: 'text/csv' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await exportAbnormalReportApi({ patientId: 'P00001', start: '2026-09-01', end: '2026-09-03' })
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/admin/abnormal-reports/export?patientId=P00001&start=2026-09-01&end=2026-09-03')
+    expect((fetchMock.mock.calls[0][1] as { headers: Record<string, string> }).headers.Authorization).toBe('Bearer TOK300')
+    expect(createUrl).toHaveBeenCalledTimes(1)
+    expect(revokeUrl).toHaveBeenCalledWith('blob:abnormal')
+
+    // 4xx 时后端回 JSON 信封而非 CSV
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: { get: () => null },
+      json: async () => ({ code: 403, message: 'abnormal report is staff-only', data: null }),
+    })
+    await expect(exportAbnormalReportApi({ patientId: 'P00001', start: '2026-09-01', end: '2026-09-03' }))
+      .rejects.toThrow('abnormal report is staff-only')
+    expect(createUrl).toHaveBeenCalledTimes(1)
+
+    vi.unstubAllGlobals()
+    createUrl.mockRestore()
+    revokeUrl.mockRestore()
+    localStorage.removeItem('admin_token')
   })
 })

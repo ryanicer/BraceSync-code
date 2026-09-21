@@ -4,7 +4,9 @@ import {
   fetchDashboardKPI, fetchWearTrend, fetchAlertTrend, fetchTeamRanking, fetchDoctorRanking,
   fetchWearDistribution, fetchPatients, fetchAlerts, fetchDevices, fetchTeams,
   fetchFeedbacks, fetchPatientRealtime, fetchNotifyRules, fetchNotificationLogs,
+  fetchAbnormalReport,
 } from '../src/api'
+import { mockAbnormalReport, mockAbnormalReportCsv } from '../src/mock/alerts'
 import { USE_MOCK } from '../src/utils/request'
 
 describe('API 层（USE_MOCK 模式）', () => {
@@ -77,5 +79,43 @@ describe('API 层（USE_MOCK 模式）', () => {
     expect(snapshot).toHaveProperty('events')
     expect(Array.isArray(snapshot.pressureRecords)).toBe(true)
     expect(Array.isArray(snapshot.alerts)).toBe(true)
+  })
+})
+
+// T300 异常报告（患者管理页抽屉）——mock 分支：三视图自洽 + CSV 与汇总同源
+describe('T300 异常报告', () => {
+  const range = { patientId: 'PT-001', start: '2026-09-01', end: '2026-09-10' }
+
+  it('汇总返回后端三视图，且各组计数都等于 total', async () => {
+    const res = await fetchAbnormalReport(range)
+    expect(res.patientId).toBe('PT-001')
+    expect(res.total).toBeGreaterThan(0)
+    expect(res.byStatus.map((s) => s.key)).toEqual(['pending', 'processing', 'processed'])
+    const sum = (list: { count: number }[]) => list.reduce((n, x) => n + x.count, 0)
+    expect(sum(res.byStatus)).toBe(res.total)
+    expect(sum(res.byType)).toBe(res.total)
+    expect(sum(res.byDay)).toBe(res.total)
+    expect(res.byType[0].count).toBeGreaterThanOrEqual(res.byType[res.byType.length - 1].count)
+    expect(res.byDay.every((d, i, arr) => i === 0 || arr[i - 1].key < d.key)).toBe(true)
+    expect(res.byDay.every((d) => d.key >= range.start && d.key <= range.end)).toBe(true)
+    // 计数按日铺开（不是「整段塞一天」的假数据）
+    expect(res.byDay.length).toBeGreaterThan(1)
+    expect(new Set(res.byDay.map((d) => d.count)).size).toBeGreaterThan(1)
+  })
+
+  it('CSV 表头 16 列、明细行数等于汇总 total', async () => {
+    const csv = mockAbnormalReportCsv(range)
+    expect(csv.startsWith('\ufeff')).toBe(true)
+    const lines = csv.slice(1).trim().split('\r\n')
+    expect(lines[0].split(',')).toHaveLength(16)
+    expect(lines.length - 1).toBe(mockAbnormalReport(range).total)
+  })
+
+  it('区间反向或格式非法时给空汇总，不抛错', async () => {
+    const empty = await fetchAbnormalReport({ ...range, start: range.end, end: range.start })
+    expect(empty.total).toBe(0)
+    expect(empty.byStatus.every((s) => s.count === 0)).toBe(true)
+    expect(empty.byType).toEqual([])
+    expect(empty.byDay).toEqual([])
   })
 })

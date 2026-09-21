@@ -70,6 +70,36 @@ func TestBuildAlertWhere(t *testing.T) {
 	assert.Equal(t, []any{"P001", "pressure_high", "processed"}, args)
 }
 
+// T300：日期范围两端 → 半开区间条件，参数位序必须接在既有条件之后
+// （占位符错位会把时刻绑到 patient_id 上，PG 直接类型报错，故断言完整串）
+func TestBuildAlertWhere_T300DateRange(t *testing.T) {
+	start := time.Date(2026, 8, 31, 16, 0, 0, 0, time.UTC) // 2026-09-01 00:00 北京
+	end := time.Date(2026, 9, 3, 16, 0, 0, 0, time.UTC)    // 2026-09-04 00:00 北京
+
+	where, args := buildAlertWhere(AlertQueryFilter{StartTs: &start, EndTs: &end})
+	assert.Equal(t, " WHERE a.ts >= $1 AND a.ts < $2", where)
+	assert.Equal(t, []any{start, end}, args)
+
+	where, args = buildAlertWhere(AlertQueryFilter{PatientID: "P001", StartTs: &start})
+	assert.Equal(t, " WHERE a.patient_id = $1 AND a.ts >= $2", where)
+	assert.Equal(t, []any{"P001", start}, args)
+
+	where, args = buildAlertWhere(AlertQueryFilter{PatientID: "P001", Status: "pending", EndTs: &end})
+	assert.Equal(t, " WHERE a.patient_id = $1 AND a.process_status = $2 AND a.ts < $3", where)
+	assert.Equal(t, []any{"P001", "pending", end}, args)
+}
+
+// 单侧为空不得生成另一侧条件（老调用方 /api/v1/alerts 行为不能变）
+func TestBuildAlertWhere_T300NoDateMeansNoTsClause(t *testing.T) {
+	where, _ := buildAlertWhere(AlertQueryFilter{PatientID: "P001"})
+	assert.NotContains(t, where, "a.ts")
+}
+
+// 导出上限必须显著大于分页上限：太小会让「导出」静默丢数据，太大等于不设限
+func TestMaxExportRows(t *testing.T) {
+	assert.Greater(t, MaxExportRows, maxPageSize)
+}
+
 // ─────────────────────────────────────────────────────────────
 // 行扫描（列序 = alertSelectColumns）
 // ─────────────────────────────────────────────────────────────
