@@ -83,11 +83,12 @@ test('01-entry：入口卡片 + 三项前置 + 2.4GHz 前置提示', async ({ pa
   await expect(body(page).getByText('允许位置权限')).toBeVisible()
   await expect(body(page).getByText('设备已上电')).toBeVisible()
   await expect(body(page).getByText('本设备仅支持 2.4GHz 家庭 WiFi')).toBeVisible()
-  // 设备上电无法前端探测 → 不给假绿态
-  await expect(body(page).getByText('请确认')).toBeVisible()
+  // 设备上电无法前端探测 → 不给假绿态（exact：T297 后 2.4GHz 提示里也有「请确认」三字）
+  await expect(body(page).getByText('请确认', { exact: true })).toBeVisible()
 
   // H5 无真实蓝牙：前置判定为已开启/已授权，点击直达扫描页
-  await expect(body(page).getByText('已开启')).toBeVisible()
+  // exact：T297 后 2.4GHz 提示句里也有「已开启」三字，非精确匹配会撞 strict mode
+  await expect(body(page).getByText('已开启', { exact: true })).toBeVisible()
   await expect(body(page).getByText('已授权')).toBeVisible()
   await body(page).getByText(START_BTN).click()
   await expect(body(page).getByText('正在搜索附近的监测器')).toBeVisible()
@@ -102,6 +103,9 @@ test('02-scan：扫描列表只含 BSYNC- 设备且无 RSSI 数值', async ({ pa
   await expect(body(page).locator('.device-item')).toHaveCount(1)
   await expect(item).toContainText('信号良好')
   await expect(body(page).locator('.scan')).not.toContainText(/-?\d+\s*dBm/)
+  // T297：扫描页前置提示只给能力口径，不教用户凭网络名判断频段（PRD §7A.9.1 ④）
+  await expect(body(page).locator('.notice-2g')).toContainText('本设备仅支持 2.4GHz 家庭 WiFi')
+  await expect(body(page).locator('.notice-2g')).not.toContainText(/名称带|字样/)
 })
 
 test('逐页导航标题随视图切换（设计稿 01/02/03/04 标题）', async ({ page }) => {
@@ -147,6 +151,9 @@ test('03-connect：WiFi 名称引导弹窗四步', async ({ page }) => {
   await body(page).getByText('WiFi 名称怎么找？').click()
   await expect(page.locator('.modal-head')).toContainText('WiFi 名称怎么找？')
   await expect(page.locator('.modal-step')).toHaveCount(4)
+  // T297：第 3 步原为「选择带 "2.4G" 字样的网络」，属凭名字判断频段，已改为路由器能力口径
+  await expect(page.locator('.modal-step').nth(2)).toContainText('请确认路由器已开启 2.4GHz 网络')
+  await expect(page.locator('.modal-body')).not.toContainText(/名称带|字样/)
   await body(page).getByText('我知道了').click()
   await expect(page.locator('.modal-head')).toHaveCount(0)
 })
