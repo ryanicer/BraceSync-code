@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import {
   realLogin,
   realLogout,
@@ -130,6 +130,45 @@ test.describe('01-登录模块', () => {
 
       // 4) 仍停在登录页，没有进入任何后台页
       expect(new URL(page.url()).pathname).toBe('/login')
+      await expect(page.locator('.el-menu')).toHaveCount(0)
+    })
+  })
+
+  test.describe('不存在的用户名（T270 收尾补 A-FLOW-03 步骤 3）', () => {
+    /** 用错凭据发一次真实登录，回读错误提示原文（不 await URL 变化：失败时本就不跳） */
+    async function tryLogin(page: Page, username: string, password: string): Promise<string> {
+      await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
+      const userInput = page.locator('.login-form input:not([type="password"])').first()
+      const passInput = page.locator('.login-form input[type="password"]')
+      await userInput.click()
+      await userInput.fill(username)
+      await passInput.fill(password)
+      await page.locator('.login-form').getByRole('button', { name: '登 录' }).click()
+      const msg = adminMessage(page)
+      await expect(msg).toBeVisible({ timeout: 10_000 })
+      const text = (await msg.textContent())?.trim() ?? ''
+      // 等这条 toast 自己消失，否则下一次抓文案会抓到同一条（adminMessage 取首个 .el-message）
+      await expect(adminMessage(page)).toHaveCount(0, { timeout: 10_000 })
+      return text
+    }
+
+    test('1.6 用户名不存在 → 与「密码错误」逐字同文案（不泄露账号是否存在）+ 停在 /login + 不签发 token', async ({
+      page,
+    }) => {
+      // A-FLOW-03 步骤 1（ops_admin + 错密码）与步骤 3（不存在的用户名 + 正确密码形状）
+      const wrongPass = await tryLogin(page, 'ops_admin', 'WrongPass123')
+      const noSuchUser = await tryLogin(page, 'no_such_user_xyz', 'admin123')
+
+      // 1) 两次必须是同一句提示 —— 后端/前端都不得区分「用户不存在」与「密码错」（枚举防护）
+      expect(noSuchUser).toBe(wrongPass)
+      expect(noSuchUser.length).toBeGreaterThan(0)
+      expect(noSuchUser).toMatch(/用户名或密码错误/)
+
+      // 2) 未签发登录态
+      expect(new URL(page.url()).pathname).toBe('/login')
+      const token = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
+      expect(token).toBeFalsy()
       await expect(page.locator('.el-menu')).toHaveCount(0)
     })
   })

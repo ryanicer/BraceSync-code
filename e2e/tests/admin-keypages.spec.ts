@@ -56,8 +56,8 @@ test.describe('技师管理', () => {
     await expect(rows.filter({ hasText: '周师傅' })).toContainText('已认证')
     await expect(rows.filter({ hasText: '郑师傅' })).toContainText('未认证')
     await expect(rows.filter({ hasText: '冯师傅' })).toContainText('禁用')
-    // 所属团队显示名字而非编号（T269 D1；⚠️ mock 模式取 mock 字典，真实模式的后端 ID 命名空间
-    // 由 contract-drift-gate.spec.ts 用后端 ID（TEAM01/D0001）建夹具守）
+    // 所属团队显示名字而非编号（T269 D1；mock 下取 mock 字典，真实模式的值级判据在
+    // contract-drift-gate.spec.ts（后端 ID TEAM01/D0001 夹具，API 层）+ e2e-real/tests/05-patients.spec.ts 5.6（DOM 层））
     await expect(rows.filter({ hasText: '周师傅' })).toContainText('脊柱侧弯一组')
   })
 

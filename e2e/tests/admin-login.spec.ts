@@ -47,9 +47,12 @@ test.describe('三角色登录', () => {
     // 客服无 dashboard 权限 ⇒ 落地页须是其矩阵内首页，而非 403
     await expect(page).toHaveURL(/\/communication/)
     await expect(page.locator('.forbidden-card')).toHaveCount(0)
-    // 侧边栏只列有权页，且可从菜单进入患者沟通（A-FLOW-22 硬判据）
+    // 侧边栏只列有权页，且可从菜单进入患者沟通（A-FLOW-22 硬判据：不动地址栏、只点页上的东西走得通）
     await expect(menuItems(page)).toHaveCount(1)
     await expect(menuItems(page).first()).toContainText('患者沟通')
+    await menuItems(page).filter({ hasText: '患者沟通' }).click()
+    await expect(page).toHaveURL(/\/communication/)
+    await expect(page.locator('.pane-title').first()).toHaveText('反馈列表')
     // 越权直达 /dashboard 才落 403，且 403 页给出可达路径
     await page.goto(adminRoutes.dashboard)
     await expect(page).toHaveURL(/\/403/)
@@ -59,6 +62,15 @@ test.describe('三角色登录', () => {
     await page.locator('.forbidden-card .reachable-link').first().click()
     await expect(page).toHaveURL(/\/communication/)
     await expect(page.locator('.role-hint')).toContainText('客服角色：仅可查看反馈与标记处理状态')
+    /**
+     * D3 的回环本体：旧实现 403 页「返回首页」写死跳 /dashboard，客服点一次就被守卫
+     * 弹回 /403，出不去。故必须真点这个按钮并断言落到有权页、且不再停在 403。
+     */
+    await page.goto(adminRoutes.dashboard)
+    await expect(page).toHaveURL(/\/403/)
+    await page.locator('.forbidden-card').getByRole('button', { name: '返回首页' }).click()
+    await expect(page).toHaveURL(/\/communication/)
+    await expect(page.locator('.forbidden-card')).toHaveCount(0)
   })
 
   test('切换角色下拉后登录生效', async ({ page }) => {

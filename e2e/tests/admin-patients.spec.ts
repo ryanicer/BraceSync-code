@@ -94,9 +94,10 @@ test.describe('详情抽屉', () => {
    * 逐格值一律与「所点那一行」的列交叉核对（行↔详情同源），不写死 mock 里的具体患者，
    * 所以换一批数据依然成立，也不是「把现状当期望」。
    *
-   * ⚠️ 受 D1 影响的只有「所属团队 / 主治医生」两格的**取值**（真实模式下
-   * api/index.ts 的 teamNameOf/doctorNameOf 回落 mock 表 ⇒ 显示 TEAM01/D0001），
-   * 那两格的**值级**判据随 T269 一起改，本条只断两侧同源一致 —— 抓不住 D1 本身。
+   * ⚠️ 受 D1 影响的只有「所属团队 / 主治医生」两格的**取值**：mock 下 teamNameOf/doctorNameOf
+   * 恒查 mock 表，本条只断两侧同源一致 —— 抓不住 D1 本身。值级判据已在真实模式补齐：
+   * e2e-real/tests/05-patients.spec.ts 的 5.6（逐行比对 /api/v1/teams、/doctors 字典与后端 join 出参，
+   * 并禁止回落成原始编号）+ apps/admin-web/test/contract-drift-gate.spec.ts（API 层，后端 ID 命名空间夹具）。
    */
   test('A-FLOW-10 抽屉字段契约：标题=所点行 + 8 项逐格对齐列表 + 底部动作 + 关闭后列表不变', async ({ page }) => {
     const rows = tableRows(page)
