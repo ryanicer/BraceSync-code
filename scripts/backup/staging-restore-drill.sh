@@ -106,7 +106,8 @@ if [ "$(gunzip -c "$LOCAL_BACKUP" | head -c 4)" != "PGDM" ]; then
   echo "[ERROR] 下载物不是有效的 pg_dump custom 归档（缺 PGDM 魔数），中止演练（staging 未改动）" | tee -a "$LOG_FILE"
   exit 1
 fi
-TOC_LIST=$(docker exec -i "$STAGING_CONTAINER" pg_restore --list < "$LOCAL_BACKUP" 2>>"$LOG_FILE" || true)
+# 备份外层是 gzip（pg_dump custom 归档），pg_restore 不能直接读 .gz，须先解一层
+TOC_LIST=$(gunzip -c "$LOCAL_BACKUP" | docker exec -i "$STAGING_CONTAINER" pg_restore --list 2>>"$LOG_FILE" || true)
 if [ -z "$TOC_LIST" ]; then
   echo "[ERROR] pg_restore --list 读不出归档目录，中止演练（staging 未改动）" | tee -a "$LOG_FILE"
   exit 1
