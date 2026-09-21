@@ -53,7 +53,7 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="90" fixed="right">
+            <el-table-column label="操作" width="130" fixed="right">
               <template #default="{ row }">
                 <el-button
                   v-if="row.processStatus === 'pending'"
@@ -63,6 +63,7 @@
                   @click="openProcess(row)"
                 >处理</el-button>
                 <span v-else class="processed-by">{{ row.processedBy || '-' }}</span>
+                <el-button size="small" link type="primary" @click="openFlow(row)">流程</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -163,6 +164,11 @@
           </div>
         </div>
       </el-tab-pane>
+
+      <el-tab-pane label="处理流程" name="process">
+        <div v-if="!currentAlert" class="page-card flow-empty">请先在「告警列表」点击某条告警的「流程」按钮查看其处理流程画布。</div>
+        <FlowRuntime v-else-if="activeTab === 'process'" :alert="currentAlert" />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 处理对话框（复用 T019B processAlert 流程） -->
@@ -206,6 +212,7 @@ import {
   fetchAlertRules, saveAlertPointRulesApi, resetAlertPointRulesApi, saveAlertGlobalRulesApi,
 } from '../../api'
 import type { AlertPointRule, AlertGlobalRules } from '../../mock/alerts'
+import FlowRuntime from './flow/FlowRuntime.vue'
 
 const activeTab = ref('list')
 
@@ -221,6 +228,7 @@ const processVisible = ref(false)
 const processing = ref(false)
 const processNote = ref('')
 const current = ref<Alert | null>(null)
+const currentAlert = ref<Alert | null>(null)
 
 function alertTypeLabel(type: string): string {
   const map: Record<string, string> = {
@@ -269,6 +277,12 @@ function openProcess(alert: Alert) {
   current.value = alert
   processNote.value = ''
   processVisible.value = true
+}
+
+/** 设计稿 showProcess()：列表「流程」按钮跳到 Tab3 处理流程 */
+function openFlow(alert: Alert) {
+  currentAlert.value = alert
+  activeTab.value = 'process'
 }
 
 async function confirmProcess() {
@@ -622,6 +636,10 @@ onMounted(() => {
 }
 .unit {
   font-size: 12px;
+  color: #666;
+}
+.flow-empty {
+  font-size: 13px;
   color: #666;
 }
 </style>
