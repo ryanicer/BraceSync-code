@@ -6,13 +6,15 @@
 // 本机无 Docker 时由 CI 的 go-integration job 执行（harness 顺序 apply scripts/db/migrations/*.up.sql，
 // 因此本文件同时是 000020 DDL 的落地验证：建不出表 = 全部用例 panic）。
 // 状态机的行锁串行化、jsonb 原文保真、外键/CHECK 拦截只能在真 PG 上验，故不放单测。
-// 只使用本文件私有的 ID/名称域，避免与 seedITData 及既有用例互污染。
+// 模板名/ID 只用本文件私有的「流程夹具模板-」域；患者与设备反过来复用 seedITData 的既有行，
+// 以免顶翻同包计数类用例（详见 itFlowPatient / itFlowDevice 注释）。
 package repo
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,19 +30,26 @@ const (
 		`{"id":"E2","type":"polyline","sourceNodeId":"N2","targetNodeId":"N3"}]`
 )
 
-// itFlowFixture 建一套独占的「设备 → 告警 → 模板」前置数据；alertID 由 IDENTITY 生成后回读
+// itFlowFixture 建一套独占的「告警 → 模板」前置数据（设备全夹具共用一台，见 itFlowDevice）
 //
-// 患者故意复用 seedITData 的 P-USR-IT-1：同包 TestITListPatientsJoinAndFilter 断言 patients
-// 全表行数与团队过滤计数，夹具自建患者会改掉它的期望值（CI 实测 2 → 14）。
+// 患者/设备都不按用例新建，原因都是真库实测出来的：
+//   - patients：同包 TestITListPatientsJoinAndFilter 断言全表计数，夹具自建患者会把它顶翻（2 → 14）；
+//   - devices：000012 的 uk_devices_active_patient = UNIQUE devices(patient_id) WHERE patient_id IS NOT NULL，
+//     一个患者只允许挂一台设备 ⇒ 都复用 P-USR-IT-1 后，每套夹具再插一台必撞 23505。
 type itFlowFixture struct {
 	templateID string
 	alertID    int64
-	deviceID   string
-	alertSeq   int
+	alertIDs   []int64
 }
 
-// itFlowPatient seedITData 里 status=active 的既有患者
-const itFlowPatient = "P-USR-IT-1"
+const (
+	itFlowPatient = "P-USR-IT-1" // seedITData 里 status=active 的既有患者
+	itFlowDevice  = "DEV-FX-FLOW"
+)
+
+// itFlowAlertSeq 全夹具共用的递增序号：告警们共用同一 (patient, device, type)，
+// 而 alerts 上有 uk_alerts_natural(patient_id,device_id,type,ts) ⇒ ts 必须逐条推开。
+var itFlowAlertSeq atomic.Int64
 
 func newITFlow(t *testing.T, suffix string) *itFlowFixture {
 	t.Helper()
@@ -55,23 +64,23 @@ func newITFlow(t *testing.T, suffix string) *itFlowFixture {
 		require.True(t, exists, "migration 000020 未建出表 %s", tbl)
 	}
 
-	fx := &itFlowFixture{deviceID: "DEV-FX-" + suffix}
 	if _, err := itStore.pool.Exec(ctx,
 		`INSERT INTO devices (device_id, device_secret_enc, patient_id, status)
-		 VALUES ($1, '\x00'::bytea, $2, 'online')`, fx.deviceID, itFlowPatient); err != nil {
+		 VALUES ($1, '\x00'::bytea, $2, 'online') ON CONFLICT (device_id) DO NOTHING`,
+		itFlowDevice, itFlowPatient); err != nil {
 		t.Fatalf("it: flow fixture 前置数据: %v", err)
 	}
+	fx := &itFlowFixture{}
 	fx.alertID = fx.newAlert(t, "T274 夹具告警")
 
-	// 全用例跑在同一个库上：夹具写过的行必须撤回，否则后面的计数类用例被污染
+	// 全用例跑在同一个库上：夹具写过的告警/实例必须撤回（设备是全夹具共用的一行，留着）
 	t.Cleanup(func() {
 		c := context.Background()
 		for _, s := range []string{
-			`DELETE FROM flow_instance WHERE alert_id IN (SELECT alert_id FROM alerts WHERE device_id = $1)`,
-			`DELETE FROM alerts WHERE device_id = $1`,
-			`DELETE FROM devices WHERE device_id = $1`,
+			`DELETE FROM flow_instance WHERE alert_id = ANY($1)`, // 子行由 ON DELETE CASCADE 跟上
+			`DELETE FROM alerts WHERE alert_id = ANY($1)`,
 		} {
-			if _, err := itStore.pool.Exec(c, s, fx.deviceID); err != nil {
+			if _, err := itStore.pool.Exec(c, s, fx.alertIDs); err != nil {
 				t.Errorf("it: flow fixture 清理: %v", err)
 			}
 		}
@@ -83,18 +92,15 @@ func newITFlow(t *testing.T, suffix string) *itFlowFixture {
 	return fx
 }
 
-// newAlert 在夹具设备下追加一条告警
-//
-// ts 按序号逐条错开：alerts 上有 uk_alerts_natural(patient_id,device_id,type,ts) 唯一键，
-// 同一夹具的第二条告警若与第一条同刻（now() 取事务起点）会被它拦下，报不到流程外键分支。
+// newAlert 在共用设备下追加一条告警，ts 按全局序号推开以躲开 uk_alerts_natural
 func (fx *itFlowFixture) newAlert(t *testing.T, detail string) int64 {
 	t.Helper()
-	fx.alertSeq++
 	var id int64
 	require.NoError(t, itStore.pool.QueryRow(context.Background(),
 		`INSERT INTO alerts (patient_id, device_id, type, detail, ts)
 		 VALUES ($1, $2, 'pressure_high', $3, now() + make_interval(secs => $4::int)) RETURNING alert_id`,
-		itFlowPatient, fx.deviceID, detail, fx.alertSeq).Scan(&id), "it: 夹具告警插入失败")
+		itFlowPatient, itFlowDevice, detail, int(itFlowAlertSeq.Add(1))).Scan(&id), "it: 夹具告警插入失败")
+	fx.alertIDs = append(fx.alertIDs, id)
 	return id
 }
 
