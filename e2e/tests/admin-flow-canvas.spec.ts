@@ -71,8 +71,10 @@ test.describe('处理流程画布', () => {
     await openFlowTab(page, 'P10 压力持续偏高')
     const panel = page.locator('.rp-op-panel')
     await expect(panel.locator('.rp-op-name')).toHaveText('医生确认')
-    await expect(panel.locator('.rp-op-info')).toContainText('王医生')
-    await expect(panel.locator('.rp-op-info')).toContainText('2小时内')
+    // 处理人取自模板节点的 assigneeRole（契约 :1026-1028：实例的 assignee 启动时恒 null，
+    // 初值只能前端自取）；时限由 timeLimit + timeUnit 现算，模板里没有现成文本字段
+    await expect(panel.locator('.rp-op-info')).toContainText('主治医生')
+    await expect(panel.locator('.rp-op-info')).toContainText('2小时')
     for (const label of ['确认处理', '驳回', '转派', '加急']) {
       await expect(panel.getByRole('button', { name: label })).toBeVisible()
     }

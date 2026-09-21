@@ -89,16 +89,46 @@ async function delay(ms = 150): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** 可用模板（0 实例时供操作人选择启动） */
-export async function fetchFlowTemplates(): Promise<FlowTemplate[]> {
-  if (USE_MOCK) { await delay(); return flowMock.mockListTemplates() }
-  const res = await request<{ list: FlowTemplate[]; total: number }>({ url: '/api/v1/admin/flow/templates', data: { pageSize: 100 } })
+/** 可用模板（0 实例时供操作人选择启动；T276 设计器传 keyword 做模板管理下拉的搜索） */
+export async function fetchFlowTemplates(keyword = ''): Promise<FlowTemplate[]> {
+  if (USE_MOCK) { await delay(); return flowMock.mockListTemplates(keyword) }
+  const res = await request<{ list: FlowTemplate[]; total: number }>({
+    url: '/api/v1/admin/flow/templates',
+    data: { keyword, pageSize: 100 },
+  })
   return res.list
 }
 
 export async function fetchFlowTemplate(templateId: string): Promise<FlowTemplate> {
   if (USE_MOCK) { await delay(); return flowMock.mockGetTemplate(templateId) }
   return request<FlowTemplate>({ url: `/api/v1/admin/flow/templates/${encodeURIComponent(templateId)}` })
+}
+
+// ─────────────── 模板 CRUD（T276 2.4 设计器）───────────────
+
+export interface FlowTemplateGraphPayload {
+  nodes?: unknown[]
+  edges?: unknown[]
+}
+
+export async function createFlowTemplateApi(name: string, graph: FlowTemplateGraphPayload): Promise<FlowTemplate> {
+  if (USE_MOCK) { await delay(); return flowMock.mockCreateTemplate(name, graph) }
+  return request<FlowTemplate>({ url: '/api/v1/admin/flow/templates', method: 'POST', data: { name, ...graph } })
+}
+
+/** PUT 为整体覆盖（契约：设计器保存即全量 graphData，不做增量） */
+export async function updateFlowTemplateApi(templateId: string, data: { name?: string } & FlowTemplateGraphPayload): Promise<FlowTemplate> {
+  if (USE_MOCK) { await delay(); return flowMock.mockUpdateTemplate(templateId, data) }
+  return request<FlowTemplate>({
+    url: `/api/v1/admin/flow/templates/${encodeURIComponent(templateId)}`,
+    method: 'PUT',
+    data: data as Record<string, unknown>,
+  })
+}
+
+export async function deleteFlowTemplateApi(templateId: string): Promise<void> {
+  if (USE_MOCK) { await delay(); return flowMock.mockDeleteTemplate(templateId) }
+  await request<null>({ url: `/api/v1/admin/flow/templates/${encodeURIComponent(templateId)}`, method: 'DELETE' })
 }
 
 /** 按告警查实例（正常 0 或 1 条） */

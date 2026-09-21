@@ -6,12 +6,12 @@ import type {
 } from '../api/flow'
 
 const NODES: FlowGraphNode[] = [
-  { id: 'r1', type: 'circle', x: 380, y: 60, properties: { kind: 'trigger', width: 60, height: 60 }, text: { x: 380, y: 60, value: '告警触发' } },
-  { id: 'r2', type: 'rect', x: 380, y: 160, properties: { kind: 'notice', width: 140, height: 48, assigneeName: '系统自动' }, text: { x: 380, y: 160, value: '通知推送' } },
-  { id: 'r3', type: 'rect', x: 380, y: 250, properties: { kind: 'process', width: 140, height: 48, assigneeName: '王医生', deadline: '2小时内' }, text: { x: 380, y: 250, value: '医生确认' } },
-  { id: 'r4', type: 'diamond', x: 380, y: 345, properties: { kind: 'condition', width: 100, height: 60 }, text: { x: 380, y: 345, value: '判断分支' } },
-  { id: 'r5', type: 'rect', x: 200, y: 450, properties: { kind: 'process', width: 140, height: 48, assigneeName: '王医生', deadline: '24小时内' }, text: { x: 200, y: 450, value: '常规处理' } },
-  { id: 'r6', type: 'rect', x: 540, y: 450, properties: { kind: 'delay', width: 120, height: 48 }, text: { x: 540, y: 450, value: '延时升级' } },
+  { id: 'r1', type: 'circle', x: 380, y: 60, properties: { kind: 'trigger', r: 29 }, text: { x: 380, y: 60, value: '告警触发' } },
+  { id: 'r2', type: 'rect', x: 380, y: 160, properties: { kind: 'notice', width: 140, height: 48, assigneeRole: '系统自动', channels: ['system', 'sms'] }, text: { x: 380, y: 160, value: '通知推送' } },
+  { id: 'r3', type: 'rect', x: 380, y: 250, properties: { kind: 'process', width: 140, height: 48, assigneeRole: '主治医生', timeLimit: 2, timeUnit: 'hours', channels: ['system'] }, text: { x: 380, y: 250, value: '医生确认' } },
+  { id: 'r4', type: 'diamond', x: 380, y: 345, properties: { kind: 'condition', rx: 50, ry: 28, assigneeRole: '主治医生' }, text: { x: 380, y: 345, value: '判断分支' } },
+  { id: 'r5', type: 'rect', x: 200, y: 450, properties: { kind: 'process', width: 140, height: 48, assigneeRole: '值班医生', timeLimit: 24, timeUnit: 'hours' }, text: { x: 200, y: 450, value: '常规处理' } },
+  { id: 'r6', type: 'rect', x: 540, y: 450, properties: { kind: 'delay', width: 140, height: 48, delayMinutes: 360 }, text: { x: 540, y: 450, value: '延时升级' } },
   { id: 'r7', type: 'rect', x: 380, y: 550, properties: { kind: 'archive', width: 140, height: 48 }, text: { x: 380, y: 550, value: '关闭归档' } },
 ]
 
@@ -44,10 +44,16 @@ interface MockInstance {
   actions: FlowNodeAction[]
 }
 
-function freshStates(currentIds: string[], doneIds: string[], skippedIds: string[]): FlowNodeState[] {
+function freshStates(
+  nodes: FlowGraphNode[],
+  edges: FlowGraphEdge[],
+  currentIds: string[],
+  doneIds: string[],
+  skippedIds: string[],
+): FlowNodeState[] {
   const nextMap: Record<string, string[]> = {}
-  EDGES.forEach((e) => { (nextMap[e.sourceNodeId] ||= []).push(e.targetNodeId) })
-  return NODES.map((n) => ({
+  edges.forEach((e) => { (nextMap[e.sourceNodeId] ||= []).push(e.targetNodeId) })
+  return nodes.map((n) => ({
     nodeId: n.id,
     status: skippedIds.includes(n.id) ? 'skipped' as const
       : doneIds.includes(n.id) ? 'done' as const
@@ -64,19 +70,19 @@ function freshStates(currentIds: string[], doneIds: string[], skippedIds: string
   }))
 }
 
-function seedInstance(alertId: string, instanceId: string): MockInstance {
+function seedInstance(alertId: string, instanceId: string, template: FlowTemplate): MockInstance {
   return {
     instance: {
       instanceId,
-      templateId: TEMPLATE.templateId,
-      templateName: TEMPLATE.name,
+      templateId: template.templateId,
+      templateName: template.name,
       alertId,
       currentNodeId: 'r3',
       status: 'running',
       startedAt: '2026-07-21T14:32:15+08:00',
       endedAt: null,
     },
-    states: freshStates(['r3'], ['r1', 'r2'], []),
+    states: freshStates(template.nodes, template.edges, ['r3'], ['r1', 'r2'], []),
     actions: [
       { actionId: 'ACT_1', nodeId: 'r1', nodeName: '告警触发', action: 'confirm', actionLabel: '确认处理', operator: 'system', operatorName: '系统自动', remark: '检测到 P6-右侧腰段 压力偏高 128N（阈值 60N）', attachments: [], targetOperator: null, createdAt: '2026-07-21T14:32:15+08:00' },
       { actionId: 'ACT_2', nodeId: 'r2', nodeName: '通知推送', action: 'confirm', actionLabel: '确认处理', operator: 'system', operatorName: '系统自动', remark: '已通知主治医生 王医生', attachments: [], targetOperator: null, createdAt: '2026-07-21T14:32:18+08:00' },
@@ -88,13 +94,20 @@ function seedInstance(alertId: string, instanceId: string): MockInstance {
 // ALR-001 在途（r3 current）；ALR-002 已走完且 r6 被跳过，用于验四色
 const DB = new Map<string, MockInstance>()
 
+// 模板改为可增删改的存储（T276 设计器新建/保存/切换/删除要能在 mock 下走通全流程）。
+// 🔴 默认模板被两个种子实例引用，删掉会让运行态画布空掉，故它的 instanceCount 固定 >0。
+const TEMPLATES = new Map<string, FlowTemplate>()
+TEMPLATES.set(TEMPLATE.templateId, structuredClone(TEMPLATE))
+
 function ensure(alertId: string): MockInstance | null {
   if (!DB.has(alertId)) {
-    if (alertId === 'ALR-001') DB.set(alertId, seedInstance(alertId, 'FLOW_IMOCK00001'))
+    const base = TEMPLATES.get(TEMPLATE.templateId)
+    if (!base) return null
+    if (alertId === 'ALR-001') DB.set(alertId, seedInstance(alertId, 'FLOW_IMOCK00001', base))
     else if (alertId === 'ALR-002') {
       const done = ['r1', 'r2', 'r3', 'r4', 'r5', 'r7']
-      const inst = seedInstance(alertId, 'FLOW_IMOCK00002')
-      inst.states = freshStates([], done, ['r6'])
+      const inst = seedInstance(alertId, 'FLOW_IMOCK00002', base)
+      inst.states = freshStates(base.nodes, base.edges, [], done, ['r6'])
       inst.instance.currentNodeId = null
       inst.instance.status = 'completed'
       inst.instance.endedAt = '2026-07-21T16:05:00+08:00'
@@ -106,13 +119,27 @@ function ensure(alertId: string): MockInstance | null {
 
 let seq = 100
 
-export function mockListTemplates(): FlowTemplate[] {
-  return [structuredClone(TEMPLATE)]
+/** 契约 validateFlowName：必填、去空格后 1–64 字符 */
+function assertTemplateName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('模板名称不能为空')
+  if ([...trimmed].length > 64) throw new Error('模板名称最多 64 个字符')
+  return trimmed
+}
+
+/** 契约 api-contracts.ts:1082：列表项的 nodes/edges 恒为空数组（图数据只在详情返回，防列表载荷膨胀）。
+ * mock 必须照抄这个行为，否则设计器「下拉里显示节点数」这类逻辑在 mock 下绿、在真实后端下永远是 0。 */
+export function mockListTemplates(keyword = ''): FlowTemplate[] {
+  const kw = keyword.trim().toLowerCase()
+  return [...TEMPLATES.values()]
+    .filter((t) => !kw || t.name.toLowerCase().includes(kw))
+    .map((t) => ({ ...structuredClone(t), nodes: [], edges: [] }))
 }
 
 export function mockGetTemplate(templateId: string): FlowTemplate {
-  if (templateId !== TEMPLATE.templateId) throw new Error('模板不存在（mock）')
-  return structuredClone(TEMPLATE)
+  const hit = TEMPLATES.get(templateId)
+  if (!hit) throw new Error('模板不存在（mock）')
+  return structuredClone(hit)
 }
 
 export function mockListInstances(alertId: string): FlowInstance[] {
@@ -120,22 +147,82 @@ export function mockListInstances(alertId: string): FlowInstance[] {
   return hit ? [structuredClone(hit.instance)] : []
 }
 
+export function mockCreateTemplate(name: string, graph: { nodes?: unknown[]; edges?: unknown[] }): FlowTemplate {
+  const finalName = assertTemplateName(name)
+  if ([...TEMPLATES.values()].some((t) => t.name === finalName)) throw new Error(`模板名称已存在：${finalName}`)
+  const now = new Date().toISOString()
+  const created: FlowTemplate = {
+    templateId: `FLOW_TMOCK${++seq}`,
+    name: finalName,
+    nodes: structuredClone(graph.nodes ?? []) as FlowGraphNode[],
+    edges: structuredClone(graph.edges ?? []) as FlowGraphEdge[],
+    creator: 'ops_admin',
+    creatorName: '运营管理员',
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+    instanceCount: 0,
+  }
+  TEMPLATES.set(created.templateId, created)
+  return structuredClone(created)
+}
+
+export function mockUpdateTemplate(
+  templateId: string,
+  data: { name?: string; nodes?: unknown[]; edges?: unknown[] },
+): FlowTemplate {
+  const hit = TEMPLATES.get(templateId)
+  if (!hit) throw new Error('模板不存在（mock）')
+  if (data.name !== undefined) {
+    const finalName = assertTemplateName(data.name)
+    if ([...TEMPLATES.values()].some((t) => t.name === finalName && t.templateId !== templateId)) {
+      throw new Error(`模板名称已存在：${finalName}`)
+    }
+    hit.name = finalName
+  }
+  if (data.nodes !== undefined) hit.nodes = structuredClone(data.nodes) as FlowGraphNode[]
+  if (data.edges !== undefined) hit.edges = structuredClone(data.edges) as FlowGraphEdge[]
+  const known = hit.nodes.filter((n) => n.id)
+  const badEdge = hit.edges.find((e) => !known.some((n) => n.id === e.sourceNodeId) || !known.some((n) => n.id === e.targetNodeId))
+  if (badEdge) throw new Error(`edges 指向了不存在的节点：${badEdge.sourceNodeId}→${badEdge.targetNodeId}`)
+  hit.version += 1
+  hit.updatedAt = new Date().toISOString()
+  return structuredClone(hit)
+}
+
+export function mockDeleteTemplate(templateId: string): void {
+  const hit = TEMPLATES.get(templateId)
+  if (!hit) throw new Error('模板不存在（mock）')
+  if (hit.instanceCount > 0) {
+    throw new Error(`该模板已有 ${hit.instanceCount} 个流程实例，需先清理实例（契约 409）`)
+  }
+  TEMPLATES.delete(templateId)
+}
+
+/** 无入边的第一个节点即入口（对齐后端 parseFlowGraph 的 entryNodeID 口径） */
+function entryNodeId(template: FlowTemplate): string | null {
+  const targeted = new Set(template.edges.map((e) => e.targetNodeId))
+  return template.nodes.find((n) => !targeted.has(n.id))?.id ?? null
+}
+
 export function mockStartInstance(templateId: string, alertId: string): FlowInstance {
-  if (templateId !== TEMPLATE.templateId) throw new Error('模板不存在（mock）')
+  const template = TEMPLATES.get(templateId)
+  if (!template) throw new Error('模板不存在（mock）')
   const existed = DB.get(alertId)
   if (existed) return structuredClone(existed.instance)
+  const entry = entryNodeId(template)
   const created: MockInstance = {
     instance: {
       instanceId: `FLOW_IMOCK${++seq}`,
       templateId,
-      templateName: TEMPLATE.name,
+      templateName: template.name,
       alertId,
-      currentNodeId: 'r1',
+      currentNodeId: entry,
       status: 'running',
       startedAt: new Date().toISOString(),
       endedAt: null,
     },
-    states: freshStates(['r1'], [], []),
+    states: freshStates(template.nodes, template.edges, entry ? [entry] : [], [], []),
     actions: [],
   }
   DB.set(alertId, created)
@@ -164,6 +251,13 @@ const ACTION_LABEL: Record<FlowNodeActionRequest['action'], string> = {
   confirm: '确认处理', reject: '驳回', transfer: '转派', urge: '加急',
 }
 
+/** 节点名取模板 text.value（后端同名口径：查不到给 null，前端不自行编名字） */
+function nodeNameOf(hit: MockInstance, nodeId: string): string | null {
+  const template = TEMPLATES.get(hit.instance.templateId)
+  const nodes = template?.nodes ?? NODES
+  return nodes.find((n) => n.id === nodeId)?.text?.value ?? null
+}
+
 export function mockSubmitAction(instanceId: string, nodeId: string, data: FlowNodeActionRequest): FlowNodeAction {
   const hit = findInstance(instanceId)
   if (hit.instance.status === 'completed') throw new Error('流程已结束，不可再操作')
@@ -176,7 +270,7 @@ export function mockSubmitAction(instanceId: string, nodeId: string, data: FlowN
   const action: FlowNodeAction = {
     actionId: `ACT_${++seq}`,
     nodeId,
-    nodeName: NODES.find((n) => n.id === nodeId)?.text?.value ?? null,
+    nodeName: nodeNameOf(hit, nodeId),
     action: data.action,
     actionLabel: ACTION_LABEL[data.action],
     operator: 'doctor_li',

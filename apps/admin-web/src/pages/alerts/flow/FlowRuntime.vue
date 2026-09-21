@@ -156,7 +156,7 @@ import {
 } from '../../../api/flow'
 import { fetchDoctors, presignFile, uploadFileDirect, completeUpload } from '../../../api'
 import { registerFlowElements } from './canvas'
-import { buildRuntimeGraph, FLOW_STATUS_LABEL, type FlowStatus } from './flowGraph'
+import { buildRuntimeGraph, deadlineOf, FLOW_STATUS_LABEL, type FlowStatus } from './flowGraph'
 
 const props = defineProps<{ alert: Alert | null }>()
 
@@ -207,13 +207,12 @@ const selectedTemplateNode = computed(() => template.value?.nodes.find((n) => n.
 const selectedNodeName = computed(() => selectedTemplateNode.value?.text?.value || selectedNodeId.value)
 const assigneeText = computed(() => {
   const s = selectedState.value
-  const n = selectedTemplateNode.value?.properties as { assigneeName?: string; assignee?: string } | undefined
-  return s?.assigneeName || s?.assignee || n?.assigneeName || n?.assignee || '-'
+  // 实例的 assignee 只有 transfer 之后才有值（契约 :1026-1028：后端不解析模板属性），
+  // 所以「处理人初值」必须从模板节点的 assigneeRole 自取 —— 键名与 T285 §2.3 / 契约 :1197 同口径。
+  const n = selectedTemplateNode.value?.properties as { assigneeRole?: string } | undefined
+  return s?.assigneeName || s?.assignee || n?.assigneeRole || '-'
 })
-const deadlineText = computed(() => {
-  const d = (selectedTemplateNode.value?.properties as { deadline?: string } | undefined)?.deadline
-  return d || '-'
-})
+const deadlineText = computed(() => deadlineOf(selectedTemplateNode.value?.properties))
 
 const branchOptions = computed(() => {
   const s = selectedState.value
