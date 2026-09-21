@@ -32,11 +32,13 @@ export {
 // Nginx /admin/ location strip 前缀后交根路径 router（createWebHistory() 无 base，pageRoutes 全根路径）
 // 故 realRoutes 带 /admin/ 前缀对齐浏览器 URL；登录成功 router push /dashboard → 浏览器 URL /admin/dashboard
 //
-// 🔴 T279 复跑实测（2026-09-21，staging 已换 root-base 构建）：上述 strip 已不成立——
-//   /admin/xxx 深链进不了 xxx 页（SPA 见 /admin/xxx 无匹配 → 落回 /dashboard），
-//   根路径 /xxx 又被 Nginx 302 回 /admin/。⇒ 深链只能到「登录页或数据概览」，
-//   进具体页必须登录 → 点侧边栏（见 gotoMenuAndWaitTable）。
-//   保留本常量：/admin/login 与 /admin/dashboard 仍是有效入口。
+// 🔴 T279 复跑实测（2026-09-21，staging 已换 root-base 构建）：上述结论已不成立——
+//   登录后浏览器实际停在根路径 /dashboard（不是 /admin/dashboard），
+//   而两种深链形态都进不了目标页（headless 实测，均已登录状态）：
+//     /admin/patients、/admin/settings → 回落到 /dashboard
+//     /patients、/settings            → 打回 /login?redirect=/dashboard
+//   ⇒ 深链只能到「登录页或数据概览」，进具体页必须登录 → 点侧边栏（见 gotoMenuAndWaitTable）。
+//   保留本常量：/admin/login 仍能落到登录页（SPA 会重写成 /login?redirect=/dashboard）。
 // ─────────────────────────────────────────────────────────────
 export const realRoutes = {
   login: '/admin/login',

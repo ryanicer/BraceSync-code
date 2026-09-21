@@ -84,17 +84,16 @@ test.describe('01-登录模块', () => {
       const tokenAfter = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
       expect(tokenAfter).toBeFalsy()
       // 第四步：直接访问受保护页 → 被守卫重定向回 /login 并带 redirect 参数
-      // 注：goto('/admin/patients') 退出后无 token → Nginx strip → router /patients → 守卫重定向 /login?redirect=/admin/patients
-      // 只验证 redirect 参数存在（不绑死具体值）
+      // 只验证 redirect 参数存在（不绑死具体值——绑死就会踩到下面这条实测结论）
       await page.goto(realRoutes.patients)
       await page.waitForTimeout(1_500) // 给前端守卫跳转留时间
       const urlAfter = page.url()
       expect(urlAfter).toContain('/login')
       expect(urlAfter).toMatch(/redirect=/)
-      // ⚠️ T279 实测：staging 上 redirect 参数恒为 /dashboard，不是 /patients——
-      //    Nginx 把 /admin/patients 交给 SPA 后无匹配路由，只能落回默认页（见 real-helpers 顶部说明）。
-      //    所以本用例守的是「未登录进不去 + 带 redirect 回跳」，「回跳到原目标页」这一步在 staging 无法验，
-      //    已作为缺陷登记（T279 报告 F-2），不要把它读成 A-FLOW-02 的回跳已覆盖。
+      // ⚠️ T279 实测（headless，未登录 new context 逐个试过 /admin/patients、/patients、/admin/teams）：
+      //    三者一律落到 /login?redirect=/dashboard —— redirect 恒为 /dashboard，从不回填原目标页。
+      //    ⇒ 本用例守的是「未登录进不去 + 会跳回登录页」；「登录后回跳到原目标页」这半步在 staging
+      //    根本不可能成立，故未断言，已作为缺陷登记（T279 报告 F-2）。别把本条读成 A-FLOW-02 的回跳已覆盖。
     })
   })
 
