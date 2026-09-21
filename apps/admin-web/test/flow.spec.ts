@@ -5,7 +5,7 @@ import {
   fetchFlowInstanceActions, startFlowInstanceApi, submitFlowNodeActionApi,
   type FlowNodeState,
 } from '../src/api/flow'
-import { buildRuntimeGraph } from '../src/pages/alerts/flow/canvas'
+import { buildRuntimeGraph } from '../src/pages/alerts/flow/flowGraph'
 
 function statusMap(states: FlowNodeState[]): Record<string, string> {
   return Object.fromEntries(states.map((s) => [s.nodeId, s.status]))

@@ -155,7 +155,8 @@ import {
   type FlowInstance, type FlowNodeAction, type FlowNodeState, type FlowTemplate, type FlowActionType,
 } from '../../../api/flow'
 import { fetchDoctors, presignFile, uploadFileDirect, completeUpload } from '../../../api'
-import { buildRuntimeGraph, registerFlowElements, FLOW_STATUS_LABEL, type FlowStatus } from './canvas'
+import { registerFlowElements } from './canvas'
+import { buildRuntimeGraph, FLOW_STATUS_LABEL, type FlowStatus } from './flowGraph'
 
 const props = defineProps<{ alert: Alert | null }>()
 
