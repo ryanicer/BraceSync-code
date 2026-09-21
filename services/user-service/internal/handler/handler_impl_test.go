@@ -1628,10 +1628,10 @@ func TestGetSettings(t *testing.T) {
 	var dto model.SystemSettingsDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &dto))
 	assert.Equal(t, 22.0, dto.DailyWearTargetHours)
-	assert.Equal(t, 45.0, dto.PressureHighThresholdN)
+	assert.Equal(t, 5.0, dto.PressureHighThresholdN) // T203: 45 → 5
 	assert.Equal(t, 30.0, dto.PressureFluctuationPct)
 	assert.Equal(t, 60.0, dto.WearInterruptMinutes)
-	assert.Equal(t, 2.8, dto.SensorDriftN)
+	assert.Equal(t, 0.3, dto.SensorDriftN) // T203: 2.8 → 0.3
 	assert.Empty(t, dto.WifiPresets)
 
 	// 有值 + 密码脱敏

@@ -51,7 +51,7 @@ func newPointManager(t *testing.T) (*Manager, *fakeStore, *fakePointStore, func(
 	t.Helper()
 	clock := time.Now()
 	st := newFakeStore(map[string]string{
-		KeyPressureHigh:    "45",
+		KeyPressureHigh:    "5",
 		KeyWearInterrupt:   "60",
 		KeyCollectInterval: "30",
 	})
@@ -68,7 +68,7 @@ func TestPointRules_RefreshInjectsIntoEvaluator(t *testing.T) {
 	eval := newEval()
 	th, err := m.Refresh(context.Background(), eval)
 	require.NoError(t, err)
-	assert.Equal(t, 45.0, th.PressureHighN)
+	assert.Equal(t, 5.0, th.PressureHighN)
 
 	assert.Nil(t, eval.Evaluate(pointFrameAt(2, 50), nil), "P03 未勾选应被跳过")
 	res := eval.Evaluate(pointFrameAt(4, 30), nil)
@@ -102,7 +102,7 @@ func TestPointRules_FetchFailureKeepsPreviousEffectiveConfig(t *testing.T) {
 	assert.Error(t, err)
 	res := eval.Evaluate(pointFrameAt(0, 50), nil)
 	require.NotNil(t, res)
-	assert.Equal(t, 45.0, res.ThresholdValue, "逐点规则读取失败时阈值不应半更新")
+	assert.Equal(t, 5.0, res.ThresholdValue, "逐点规则读取失败时阈值不应半更新")
 
 	// 恢复后下一轮整体生效（上限 10N + P03 重新参与监控）
 	ps.fetchErr = nil

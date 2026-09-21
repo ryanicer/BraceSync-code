@@ -24,10 +24,10 @@ func TestPointIDAndLabel(t *testing.T) {
 }
 
 func TestPointStatus(t *testing.T) {
-	th := DefaultPressureThresholds()
-	assert.Equal(t, "normal", PointStatus(10, th))
-	assert.Equal(t, "warning", PointStatus(40, th))
-	assert.Equal(t, "critical", PointStatus(46, th))
+	th := DefaultPressureThresholds() // T203: PressureHighN=5, warning=3.75, critical=5
+	assert.Equal(t, "normal", PointStatus(3, th))
+	assert.Equal(t, "warning", PointStatus(4, th))
+	assert.Equal(t, "critical", PointStatus(6, th))
 }
 
 func TestBuildSensorPoints(t *testing.T) {

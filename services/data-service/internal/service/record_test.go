@@ -517,13 +517,13 @@ func TestUploadSingle_Success(t *testing.T) {
 
 func TestUploadSingle_NotWearing(t *testing.T) {
 	env := newTestEnv()
-	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.1, 0.2)))
+	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.01, 0.04)))
 	require.Nil(t, appErr)
 	assert.False(t, resp.Duplicated)
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 0, st.wear) // ≤0.5N 非佩戴帧，不累计佩戴分钟
-	assert.InDelta(t, 0.2, st.max, 0.001)
+	assert.Equal(t, 0, st.wear) // ≤0.05N 非佩戴帧（T203 ÷10），不累计佩戴分钟
+	assert.InDelta(t, 0.04, st.max, 0.001)
 }
 
 func TestUploadSingle_IdempotentDuplicate(t *testing.T) {
@@ -992,7 +992,7 @@ func TestGetRealtime_HeatmapSeedFallback(t *testing.T) {
 		assert.NotEmpty(t, p.PointID)
 		assert.NotEmpty(t, p.Label)
 	}
-	assert.GreaterOrEqual(t, minV, 8.0) // SeedHeatmap 基础 12N，扣除误差不会太低
+	assert.GreaterOrEqual(t, minV, 2.0) // T203 ÷10：SeedHeatmap 基础值被 heatmapMaxN=6 截断到 ~4N
 
 	// IsMax 唯一
 	isMaxCount := 0

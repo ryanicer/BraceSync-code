@@ -154,6 +154,9 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/admin/roles"},
 	{http.MethodPut, "/admin/roles/:roleId"},
 	{http.MethodDelete, "/admin/roles/:roleId"},
+	// T257 11.5 子权限目录（admin）+ 当前用户有效权限（全 staff，前端渲染菜单用）
+	{http.MethodGet, "/admin/permissions/catalog"},
+	{http.MethodGet, "/admin/me/permissions"},
 	{http.MethodGet, "/admin/settings"}, // T030 #8
 	{http.MethodPut, "/admin/settings"},
 	// T252 2.2 告警规则配置（告警页 Tab2：逐采集点阈值 + 全局规则）

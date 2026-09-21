@@ -264,9 +264,19 @@ type AdminRoleDTO struct {
 }
 
 // RolePermissionsDTO 权限矩阵（契约 getRolePermissions，对齐 roles.permissions_json）
+//
+// T257 11.5：新增 Items（子权限，设计稿 权限控制.html:121-187 组内勾选项）。
+// 三态语义（Go 侧 nil 与空切片可区分，JSON 缺省/null 与 [] 一一对应）：
+//   - 缺省 / null ⇒ **未细化**：GET 按目录物化为「该角色 modules 下的全部子权限」，
+//     老角色（含 seed 预置三个）升级后不会突然全部按钮消失；
+//   - []          ⇒ 显式全不勾（模块保留但组内无任何动作）；
+//   - ["a.b",…]   ⇒ 显式清单，写入前校验 ⊆ 目录 且 前缀模块 ∈ modules。
+//
+// 🔴 仅作呈现口径（PM 裁定 Q2=(c)）：后端鉴权仍到角色级，不消费 Items。
 type RolePermissionsDTO struct {
 	Scope   string   `json:"scope"`
 	Modules []string `json:"modules"`
+	Items   []string `json:"items"`
 }
 
 // WifiPresetDTO WiFi 预设条目（sys_configs.wifi_presets JSON 元素）
@@ -279,8 +289,16 @@ type WifiPresetDTO struct {
 // T256 #4：新增 collectIntervalSeconds / retentionDays / maxPatients 三项（设计稿 系统配置.html:88-90）。
 // collectIntervalSeconds 由内部 collect_interval_minutes 换算（API 口径秒，内部存储分钟，兼容 device/alert 服务）。
 type SystemSettingsDTO struct {
-	DailyWearTargetHours   float64         `json:"dailyWearTargetHours"`
-	PressureHighThresholdN float64         `json:"pressureHighThresholdN"`
+	DailyWearTargetHours   float64 `json:"dailyWearTargetHours"`
+	PressureHighThresholdN float64 `json:"pressureHighThresholdN"`
+	// PressureLowThresholdN T257 12.4（三档合两键，PM 裁定 Q3）：设计稿 系统配置.html:96
+	// 「低压上限」≡ 告警管理页 Tab2「统一压力下限」≡ sys_configs threshold_pressure_low，
+	// 同一个键两处读写，不建第三份参数。
+	// 指针语义：GET 恒回数值（缺行按默认 10N）；PUT 省略 / null = 不改该键——
+	// 本页原先不接管下限，若按值绑定，老前端一次保存就会把已配的下限抹成 0。
+	// 🔴 设计稿第三档「正常上限（绿/黄分界）」**不落库**：两键只承载 低压/偏高 两条边界，
+	// 热力图中间档需前端派生或另议（已在 T257 交件说明中登记待裁）。
+	PressureLowThresholdN  *float64        `json:"pressureLowThresholdN,omitempty"`
 	PressureFluctuationPct float64         `json:"pressureFluctuationPct"`
 	WearInterruptMinutes   float64         `json:"wearInterruptMinutes"`
 	SensorDriftN           float64         `json:"sensorDriftN"`

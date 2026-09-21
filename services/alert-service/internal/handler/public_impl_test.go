@@ -1,7 +1,8 @@
 // Package handler — T028 公开端点实现侧测试（不与测试专家 handler_test.go 路径重叠）
 //
 // 覆盖：GET /api/v1/alerts 参数校验/分页/筛选组合/DTO 映射；
-// POST /api/v1/alerts/{alertId}/process 幂等/404/400。
+// POST /api/v1/alerts/{alertId}/process 幂等/404/400；
+// POST /api/v1/alerts/{alertId}/processing（T257 2.7）幂等/409/404/400。
 package handler
 
 import (
@@ -31,8 +32,15 @@ type fakePublicStore struct {
 	exists   bool
 	procErr  error
 	procID   int64
+	procOpID string
 	listHits int
 	procHits int
+
+	// T257 2.7 /processing
+	state     repo.ProcessState
+	startErr  error
+	startID   int64
+	startHits int
 }
 
 func (s *fakePublicStore) ListAlerts(_ context.Context, f repo.AlertQueryFilter) ([]repo.AlertRow, int64, error) {
@@ -41,10 +49,22 @@ func (s *fakePublicStore) ListAlerts(_ context.Context, f repo.AlertQueryFilter)
 	return s.rows, s.total, s.listErr
 }
 
-func (s *fakePublicStore) ProcessAlert(_ context.Context, alertID int64) (bool, error) {
+func (s *fakePublicStore) ProcessAlert(_ context.Context, alertID int64, operatorID string) (bool, error) {
 	s.procID = alertID
+	s.procOpID = operatorID
 	s.procHits++
 	return s.exists, s.procErr
+}
+
+func (s *fakePublicStore) StartProcessing(_ context.Context, alertID int64) (repo.ProcessState, error) {
+	s.startID = alertID
+	s.startHits++
+	if s.startErr != nil {
+		return repo.ProcessState{}, s.startErr
+	}
+	st := s.state
+	st.Exists = s.exists
+	return st, nil
 }
 
 // newPublicHandler 组装挂 fake store 的 Handler（evaluate 依赖用 nil 安全的最小装配）
@@ -275,6 +295,100 @@ func TestProcessAlert_NilStore(t *testing.T) {
 	h := New(nil, nil, nil)
 	rec := doProcess(h, "42")
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+// processAlert 把 gateway 注入的 X-User-Id 透传给 repo 作 processed_by（T257 2.7）
+func TestProcessAlert_PassesOperatorID(t *testing.T) {
+	store := &fakePublicStore{exists: true}
+	h := newPublicHandler(store)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/42/process", nil)
+	req.Header.Set(headerUserID, "DOCTOR-007")
+	h.Router().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "DOCTOR-007", store.procOpID)
+}
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/v1/alerts/{alertId}/processing（T257 2.7）
+// ─────────────────────────────────────────────────────────────
+
+func doStartProcessing(h *Handler, alertID string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/"+alertID+"/processing", nil)
+	req.Header.Set(headerUserID, "DOCTOR-001")
+	h.Router().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestStartProcessing_PendingToProcessing(t *testing.T) {
+	at := time.Date(2026, 9, 20, 3, 4, 5, 0, time.UTC)
+	store := &fakePublicStore{exists: true, state: repo.ProcessState{Status: "processing", InProgressAt: &at}}
+	rec := doStartProcessing(newPublicHandler(store), "42")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.EqualValues(t, 42, store.startID)
+	assert.Contains(t, rec.Body.String(), `"processStatus":"processing"`)
+	assert.Contains(t, rec.Body.String(), `"inProgressAt":"2026-09-20T03:04:05Z"`)
+}
+
+// 已 processing 再点一次：200 + 状态不变（repo 不刷新 in_progress_at，见 repo 层测试）
+func TestStartProcessing_Idempotent(t *testing.T) {
+	at := time.Date(2026, 9, 20, 3, 4, 5, 0, time.UTC)
+	store := &fakePublicStore{exists: true, state: repo.ProcessState{Status: "processing", InProgressAt: &at}}
+	h := newPublicHandler(store)
+
+	first := doStartProcessing(h, "7")
+	second := doStartProcessing(h, "7")
+	assert.Equal(t, http.StatusOK, first.Code)
+	assert.Equal(t, http.StatusOK, second.Code)
+	assert.Equal(t, 2, store.startHits)
+}
+
+func TestStartProcessing_AlreadyProcessedIsConflict(t *testing.T) {
+	store := &fakePublicStore{exists: true, state: repo.ProcessState{Status: "processed"}}
+	rec := doStartProcessing(newPublicHandler(store), "42")
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	var env envelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.Equal(t, codeConflict, env.Code)
+}
+
+func TestStartProcessing_NotFound(t *testing.T) {
+	store := &fakePublicStore{exists: false}
+	rec := doStartProcessing(newPublicHandler(store), "999")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestStartProcessing_InvalidID(t *testing.T) {
+	for _, id := range []string{"abc", "0", "-3"} {
+		store := &fakePublicStore{exists: true}
+		rec := doStartProcessing(newPublicHandler(store), id)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "alertId=%s 应 400", id)
+		assert.Zero(t, store.startHits, "非法 ID 不触达存储")
+	}
+}
+
+func TestStartProcessing_StoreError(t *testing.T) {
+	store := &fakePublicStore{startErr: errors.New("db down")}
+	rec := doStartProcessing(newPublicHandler(store), "42")
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestStartProcessing_NilStore(t *testing.T) {
+	h := New(nil, nil, nil)
+	rec := doStartProcessing(h, "42")
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+// inProgressAt 为 null（历史行从未进入处理中）时响应仍为 null 而非缺字段
+func TestStartProcessing_NullInProgressAt(t *testing.T) {
+	store := &fakePublicStore{exists: true, state: repo.ProcessState{Status: "processing"}}
+	rec := doStartProcessing(newPublicHandler(store), "42")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"inProgressAt":""`)
 }
 
 // 方法边界：GET 到 process 路由 / POST 到 list 路由均不匹配（405/404）

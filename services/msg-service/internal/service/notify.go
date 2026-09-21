@@ -475,7 +475,7 @@ func (s *NotifyService) GetNotifyRules(ctx context.Context) ([]model.NotifyRule,
 // 未知告警类型拒绝（CHECK 约束兜底）；channels/notify_targets 枚举逐项校验。
 func (s *NotifyService) UpdateNotifyRule(ctx context.Context, alertType model.AlertType, channels, notifyTargets []string, operator string) (*model.NotifyRule, error) {
 	if !model.ValidAlertType(alertType) {
-		return nil, model.ErrInvalidParam("unknown alert type %q (must be one of pressure_high/pressure_fluctuation/wear_interrupt/sensor_drift)", alertType)
+		return nil, model.ErrInvalidParam("unknown alert type %q (must be one of %s)", alertType, model.AlertTypeList())
 	}
 	if len(channels) == 0 {
 		return nil, model.ErrInvalidParam("channels must not be empty")

@@ -79,7 +79,7 @@ test.describe('安装流程 3 阶段', () => {
     await expect(cells).toHaveCount(20)
     // 真实校验（mock 空载帧 ±0.15N → 范围校验通过）
     await expect(page.getByText('数据点数：100/100（5 帧 × 20 点）')).toBeVisible()
-    await expect(page.getByText('范围校验：|偏移| ≤ 0.5N（空载偏差上限）')).toBeVisible()
+    await expect(page.getByText('范围校验：|偏移| ≤ 0.05N（空载偏差上限）')).toBeVisible()
     await expect(page.getByText('稳定性校验：占位（阈值待重定后启用）')).toBeVisible()
   })
 

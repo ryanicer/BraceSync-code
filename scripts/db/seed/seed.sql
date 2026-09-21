@@ -156,7 +156,7 @@ INSERT INTO alerts (patient_id, device_id, type, detail, sensor_point, threshold
    '采集点 P03 压力 46.8N 超阈值', 'P03', 45.0, 46.8,
    '2026-08-20 10:30:00+08', 'read', 'pending', 'active'),
   ('P20260001', 'PRS-ML05-RC-20260701001', 'wear_interrupt',
-   '佩戴中断超过 60 分钟', NULL, 60.0, 90.0,
+   '设备离线：上报间隔 90 分钟超阈值 60 分钟', NULL, 60.0, 90.0,
    '2026-08-22 14:00:00+08', 'read', 'processed', 'resolved'),
   ('P20260004', 'PRS-ML05-RC-20260701004', 'sensor_drift',
    '传感器漂移 2.9N 超阈值', 'P07', 2.8, 2.9,
@@ -164,6 +164,16 @@ INSERT INTO alerts (patient_id, device_id, type, detail, sensor_point, threshold
   ('P20260003', 'PRS-ML05-RC-20260701003', 'pressure_fluctuation',
    '压力波动幅度 35% 超阈值', 'P06', 30.0, 35.0,
    '2026-08-22 09:00:00+08', 'read', 'processed', 'resolved')
+ON CONFLICT (patient_id, device_id, type, ts) DO NOTHING;
+
+-- T257 2.6 第四类 + 2.7 第三态示例：佩戴时长不足、当前「处理中」。
+-- 单独一条 INSERT：要写 in_progress_at / processed_by，不能塞进上面的公共列表。
+-- ts = 业务日 23:59:59（与扫描器落库口径一致），sensor_point 为空（非逐点告警）。
+INSERT INTO alerts (patient_id, device_id, type, detail, sensor_point, threshold_value, actual_value,
+                    ts, read_status, process_status, resolved_status, processed_by, in_progress_at) VALUES
+  ('P20260004', 'PRS-ML05-RC-20260701004', 'wear_duration_short',
+   '佩戴时长不足：P20260004 于 2026-08-24 累计佩戴 6.5 小时，低于目标 18.0 小时', NULL, 1080.0, 390.0,
+   '2026-08-24 23:59:59+08', 'unread', 'processing', 'active', 'D0001', '2026-08-25 09:12:00+08')
 ON CONFLICT (patient_id, device_id, type, ts) DO NOTHING;
 
 -- ===== 安装记录 + 基线（3+ 安装记录，覆盖安装记录页）=====
@@ -333,13 +343,13 @@ WHERE NOT EXISTS (SELECT 1 FROM consents WHERE patient_id='P20260004' AND consen
 INSERT INTO sys_configs (config_key, config_value, description) VALUES
   ('collect_interval_minutes', '30', '采集间隔（分钟）'),
   ('wear_target_hours', '22', '每日佩戴目标时长（小时）'),
-  ('threshold_pressure_high', '45', '压力偏高阈值（N，占位值待重定 T173）'),
+  ('threshold_pressure_high', '5', '压力偏高阈值（N，T203 ÷10）'),
   ('threshold_pressure_fluctuation_pct', '30', '压力波动幅度阈值（%）'),
   ('threshold_wear_interrupt_minutes', '60', '佩戴中断判定时间（分钟，须≥2×采集间隔）'),
-  ('threshold_sensor_drift', '2.8', '传感器漂移告警阈值（N，占位值待重定 T173）'),
-  ('threshold_calibration_offset', '0.5', '空载校准偏差上限（N，占位值待重定 T173）'),
-  ('wearing_pressure_threshold', '0.5', 'wearing 佩戴判定压力阈值（N，占位值待重定 T173；判定统一用减偏移后值）'),
-  ('heatmap_max_n', '60', '热力图色阶上界（N，占位值待重定 T173；四档分界按比例法派生）'),
+  ('threshold_sensor_drift', '0.3', '传感器漂移告警阈值（N，T203 ÷10）'),
+  ('threshold_calibration_offset', '0.05', '空载校准偏差上限（N，T203 ÷10）'),
+  ('wearing_pressure_threshold', '0.05', 'wearing 佩戴判定压力阈值（N，T203 ÷10）'),
+  ('heatmap_max_n', '6', '热力图色阶上界（N，T203 ÷10）'),
   ('device_config_version', '1', '设备配置版本（设备侧上报后比对，不一致则应用新配置）'),
   -- T256 12.5（设计稿 系统配置.html:88-90）：采集间隔单位收口为「秒」（T245 §9 K9）。
   -- collect_interval_minutes 仍保留：alert-service / data-service 运行时消费分钟口径，
@@ -356,5 +366,7 @@ INSERT INTO alert_notify_rules (type, channels, notify_targets) VALUES
   ('pressure_high',         ARRAY['wechat']::varchar[],       ARRAY['doctor']::varchar[]),
   ('pressure_fluctuation',  ARRAY['wechat']::varchar[],       ARRAY['doctor']::varchar[]),
   ('wear_interrupt',        ARRAY['wechat','sms']::varchar[], ARRAY['patient','doctor']::varchar[]),
-  ('sensor_drift',          ARRAY['wechat']::varchar[],       ARRAY['tech','ops']::varchar[])
+  ('sensor_drift',          ARRAY['wechat']::varchar[],       ARRAY['tech','ops']::varchar[]),
+  -- T257 2.6 新增类型；与迁移 000018 同一份值（CI 集成测只跑 migrations 不跑 seed，两边都要有）
+  ('wear_duration_short',   ARRAY['wechat','sms']::varchar[], ARRAY['patient','doctor']::varchar[])
 ON CONFLICT (type) DO NOTHING;

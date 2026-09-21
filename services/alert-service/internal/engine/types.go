@@ -19,10 +19,13 @@ import (
 type AlertType string
 
 const (
-	TypePressureHigh        AlertType = "pressure_high"
+	TypePressureHigh      AlertType = "pressure_high"
+	TypeWearInterrupt     AlertType = "wear_interrupt"
+	TypeSensorDrift       AlertType = "sensor_drift"
+	TypeWearDurationShort AlertType = "wear_duration_short"
+	// TypePressureFluctuation T257 2.6（方案A）：自本卡起引擎**不再产生**该类型，
+	// 常量保留是因为 DB CHECK 仍允许它（000001 起有存量行），读历史/按类型筛选要用。
 	TypePressureFluctuation AlertType = "pressure_fluctuation"
-	TypeWearInterrupt       AlertType = "wear_interrupt"
-	TypeSensorDrift         AlertType = "sensor_drift"
 )
 
 // PressureFrame 压力采集帧
@@ -62,7 +65,7 @@ type PointRule struct {
 // （压力偏高 45N / 波动 30% / 中断 60min / 漂移 2.8N / 去重 30min）。
 type RuleEvaluator struct {
 	PressureHighThreshold   float64 // 压力偏高阈值 (N)，默认 45
-	FluctuationThresholdPct float64 // 波动阈值 (%)，默认 30
+	FluctuationThresholdPct float64 // 已停用（T257 2.6 停产生压力波动）；字段保留：冻结契约 engine_test.go 仍按字面量构造
 	WearInterruptMinutes    int     // 佩戴中断判定（分钟），默认 60
 	SensorDriftThreshold    float64 // 传感器漂移阈值 (N)，默认 2.8
 	DedupWindowMinutes      int     // 去重窗口（分钟），默认 30；<=0 表示不去重
@@ -91,7 +94,9 @@ func (e *RuleEvaluator) pointRule(point string) (PointRule, bool) {
 
 // Evaluate 评估单帧，返回首个命中的告警结果；无命中返回 nil。
 // 补传帧（IsBackfill）不参与实时告警评估（A9）。
-// 规则优先级：pressure_high → pressure_fluctuation → sensor_drift → wear_interrupt。
+// 规则优先级：pressure_high → sensor_drift → wear_interrupt。
+// T257 2.6：压力波动规则已摘除（方案A 四类）；「佩戴时长不足」不在此按帧评估，
+// 它按自然日聚合，判定见 EvaluateWearDurationShort + scanner。
 func (e *RuleEvaluator) Evaluate(frame PressureFrame, prevFrame *PressureFrame) *AlertResult {
 	results := e.EvaluateAll(frame, prevFrame)
 	if len(results) == 0 {
@@ -108,7 +113,6 @@ func (e *RuleEvaluator) EvaluateAll(frame PressureFrame, prevFrame *PressureFram
 	}
 	rules := []func(PressureFrame, *PressureFrame) *AlertResult{
 		e.checkPressureHigh,
-		e.checkPressureFluctuation,
 		e.checkSensorDrift,
 		e.checkWearInterrupt,
 	}

@@ -80,7 +80,7 @@ func main() {
 	}
 
 	// 阈值配置统一入口（T009）：从 sys_configs 读取 + 联动校验（PRD §7D.12）。
-	// 加载失败（校验拒绝/DB 不可达）时保持引擎默认口径（45N/30%/60min/2.8N）并记录错误，
+	// 加载失败（校验拒绝/DB 不可达）时保持引擎默认口径（45N/60min/2.8N）并记录错误，
 	// 后续每轮扫描前重试热刷新，配置修复后无需重启即生效。
 	eval := engine.NewDefaultRuleEvaluator()
 	// 同一个 repo 实现两份契约：sys_configs 阈值（Store）+ alert_point_rules 逐点规则（PointRuleStore）
@@ -98,6 +98,7 @@ func main() {
 			Float64("sensor_drift_n", t.SensorDriftN).
 			Float64("wearing_n", t.WearingN).
 			Int("collect_interval_min", t.CollectIntervalMinutes).
+			Float64("wear_target_hours", t.WearTargetHours).
 			Msg("alert threshold config loaded")
 	}
 
@@ -110,6 +111,8 @@ func main() {
 		eval,
 	)
 	scan.SetLogger(log.Logger)
+	// T257 2.6：每日「佩戴时长不足」判定所需的 rollup 来源（daily_wear_stats 只读）。
+	scan.SetWearStore(repo.NewWearRepo(pool))
 
 	// T010：alert:pending 常驻消费者（服务可用即排空积压，不依赖重启触发）。
 	// T019：Notifier 接入 msg-service HTTP 推送（超时/失败进 Redis 重试队列，不阻塞落库）。
@@ -169,6 +172,39 @@ func main() {
 	sched.Start(ctx)
 	log.Info().Str("spec", spec).Msg("wear-interrupt scanner started")
 
+	// T257 2.6：每日「佩戴时长不足」扫描，独立调度（默认昨日 00:35 北京时间，即上一自然日
+	// rollup 已完整之后）。Start 会同步补跑一轮 ⇒ 进程重启/停摆跨天也能补上；
+	// 同一业务日重复执行由告警 ts 固定 + uk_alerts_natural 天然幂等（每日一发）。
+	dailySpec := envOr("DAILY_WEAR_CRON", "35 0 * * *")
+	dailySched, err := scheduler.New(dailySpec, func(dctx context.Context) {
+		targetHours := config.DefaultThresholds().WearTargetHours
+		if t, cfgErr := cfgMgr.Current(dctx); cfgErr != nil {
+			log.Error().Err(cfgErr).Msg("daily wear scan: threshold config unavailable, use default wear_target_hours")
+		} else {
+			targetHours = t.WearTargetHours
+		}
+		prevDay := scanner.PreviousBizDay(time.Now(), scheduler.CSTZone())
+		rep, scanErr := scan.ScanDailyWear(dctx, prevDay, targetHours)
+		if scanErr != nil {
+			log.Error().Err(scanErr).Msg("daily wear-duration scan failed")
+			return
+		}
+		log.Info().
+			Time("biz_day", prevDay).
+			Float64("target_hours", targetHours).
+			Int("patients", rep.Patients).
+			Int("alert_created", rep.AlertCreated).
+			Int("deduped", rep.Deduped).
+			Int("above_target", rep.AboveTarget).
+			Int("errors", rep.WearErrors).
+			Msg("daily wear-duration scan done")
+	}, log.Logger)
+	if err != nil {
+		log.Fatal().Err(err).Str("spec", dailySpec).Msg("daily wear scanner create failed")
+	}
+	dailySched.Start(ctx)
+	log.Info().Str("spec", dailySpec).Msg("daily wear-duration scanner started")
+
 	// 消费协程在调度器之后拉起（cons 已在上方装配完成）
 	pollInterval := consumer.DefaultPollInterval
 	if ms := os.Getenv("PENDING_POLL_MS"); ms != "" {
@@ -200,6 +236,7 @@ func main() {
 	<-ctx.Done()
 	log.Info().Msg("shutting down alert-service")
 	sched.Stop()
+	dailySched.Stop()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
