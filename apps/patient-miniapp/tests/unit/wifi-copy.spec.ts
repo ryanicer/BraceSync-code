@@ -91,3 +91,36 @@ describe('T192 — 状态推进口径（PRD §7A.9 状态 0/1/2/3/9）', () => {
     expect(ENTRY.prepItems.map((p) => p.key)).toEqual(['bluetooth', 'location', 'power'])
   })
 })
+
+/**
+ * T297 — 2.4GHz 提示只给能力口径，不教用户凭网络名判断频段
+ * （PRD §7A.9.1 ④「只认信道不认名字」红线 + Boss 09-21 23:02 裁定 D5 选①）
+ */
+describe('T297 — 患者端不得出现「凭网络名称判断频段」的引导', () => {
+  const NAME_BASED = ['名称带', '字样', '看名字', '名字带']
+
+  it('三处 2.4G 引导（入口提示 / 扫描前置 / 名称怎么找第 3 步）已去掉认名字句式', () => {
+    const targets: Array<[string, string]> = [
+      ['ENTRY.hint', ENTRY.hint],
+      ['SCAN.notice24G', SCAN.notice24G],
+      ['CONNECT.findModal.steps[2]', CONNECT.findModal.steps[2]],
+    ]
+    for (const [name, text] of targets) {
+      for (const word of NAME_BASED) expect(text, `${name} 仍留认名字句式`).not.toContain(word)
+    }
+  })
+
+  it('全量患者文案零命中认名字句式（防止换个键位回潮）', () => {
+    const hits = ALL_COPY.flatMap((t) => NAME_BASED.filter((w) => t.includes(w)).map((w) => `${w} ← ${t}`))
+    expect(hits).toEqual([])
+  })
+
+  it('能力提示不丢：三处仍写明仅支持 2.4GHz、不支持 5G', () => {
+    for (const text of [ENTRY.hint, SCAN.notice24G, CONNECT.findModal.steps[2]]) {
+      expect(text).toContain('2.4GHz')
+      expect(text).toContain('5G')
+    }
+    expect(ENTRY.hint).toContain('本设备仅支持 2.4GHz 家庭 WiFi')
+    expect(SCAN.notice24G).toContain('本设备仅支持 2.4GHz 家庭 WiFi')
+  })
+})
