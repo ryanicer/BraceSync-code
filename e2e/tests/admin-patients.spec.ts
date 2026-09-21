@@ -25,14 +25,37 @@ test.describe('列表渲染', () => {
     await expect(first).toContainText('活跃')
   })
 
-  test('未绑定设备患者显示未绑定与待分配', async ({ page }) => {
+  // T289 F7：PRD §7D.3:1062/:1464 禁用「待分配」，非 active 一律显示「不可登录」
+  test('未绑定设备患者显示未绑定与不可登录', async ({ page }) => {
     const row = tableRows(page).filter({ hasText: '赵欣然' })
     await expect(row).toContainText('未绑定')
-    await expect(row).toContainText('待分配')
+    await expect(row).toContainText('不可登录')
+    await expect(row).not.toContainText('待分配')
   })
 
   test('分页组件显示共 6 条', async ({ page }) => {
     await expect(page.locator('.el-pagination')).toContainText('共 6 条')
+  })
+
+  // T289 4.1：设计稿 患者管理.html:88 列序 = ID/姓名/性别/年龄/诊断/绑定设备/绑定团队/状态/操作。
+  // 「操作」列属 4.3（尚未派到前端），本用例只锁已落地的设计稿列名与相对顺序，
+  // 并允许 PRD §7D.3 多出、T245 明令「不自行判删」的 Cobb角 / 主治医生 两列插在诊断之后。
+  test('列名与列序对齐设计稿（绑定设备/绑定团队/状态 相邻且同序）', async ({ page }) => {
+    const heads = await page
+      .locator('.el-table__header-wrapper thead th')
+      .evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()).filter(Boolean))
+    expect(heads).toEqual([
+      '患者ID',
+      '姓名',
+      '性别',
+      '年龄',
+      '诊断',
+      'Cobb角',
+      '主治医生',
+      '绑定设备',
+      '绑定团队',
+      '状态',
+    ])
   })
 })
 

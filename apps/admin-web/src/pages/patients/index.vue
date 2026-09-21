@@ -29,22 +29,24 @@
         <el-table-column label="诊断" min-width="180">
           <template #default="{ row }">{{ row.diagnosis || '-' }}</template>
         </el-table-column>
+        <!-- 设计稿 患者管理.html:88 无以下两列，PRD §7D.3 有；T245 明令多出列不自行判删。
+             插在诊断之后，让设计稿的 绑定设备 / 绑定团队 / 状态 保持相邻原序。 -->
         <el-table-column label="Cobb角" width="90">
           <template #default="{ row }">{{ row.cobbAngle ? row.cobbAngle + '°' : '-' }}</template>
-        </el-table-column>
-        <el-table-column label="团队" width="130">
-          <template #default="{ row }">{{ row.teamName || teamNameOf(row.teamId) }}</template>
         </el-table-column>
         <el-table-column label="主治医生" width="110">
           <template #default="{ row }">{{ row.doctorName || doctorNameOf(row.doctorId) }}</template>
         </el-table-column>
-        <el-table-column label="设备" width="130">
+        <el-table-column label="绑定设备" width="130">
           <template #default="{ row }">{{ row.deviceId || '未绑定' }}</template>
+        </el-table-column>
+        <el-table-column label="绑定团队" width="130">
+          <template #default="{ row }">{{ row.teamName || teamNameOf(row.teamId) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.status === 'active' ? 'success' : 'warning'" size="small">
-              {{ row.status === 'active' ? '活跃' : '待分配' }}
+              {{ row.status === 'active' ? '活跃' : '不可登录' }}
             </el-tag>
           </template>
         </el-table-column>

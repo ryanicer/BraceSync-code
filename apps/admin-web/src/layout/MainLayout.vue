@@ -74,6 +74,7 @@
         </div>
         <div class="top-nav-right">
           <el-tag v-if="auth.role" size="small" type="info" effect="plain">{{ roleName(auth.role) }}</el-tag>
+          <span class="user-avatar">{{ avatarChar }}</span>
           <span class="user-name">{{ auth.user?.name }}</span>
           <el-button size="small" @click="handleLogout">退出</el-button>
         </div>
@@ -150,7 +151,16 @@ const visibleMenus = computed<MenuItem[]>(() => {
     }))
 })
 
-const currentTitle = computed(() => String(route.meta?.title ?? ''))
+// G3：设计稿各页顶栏标题带 emoji 前缀（如 数据概览.html:87「📊 数据概览」），emoji 取自路由 meta.icon
+const currentTitle = computed(() => {
+  const title = String(route.meta?.title ?? '')
+  const icon = String(route.meta?.icon ?? '')
+  return icon ? `${icon} ${title}` : title
+})
+
+// G2：设计稿顶栏右侧圆形头像（样式取 数据概览.html:26）。设计稿头像字取角色名首字（「管理员」→「管」），
+// 我们顶栏本来就并列显示真实姓名，取姓名首字更贴合「展示当前登录人」的口径。
+const avatarChar = computed(() => (auth.user?.name ?? '').trim().charAt(0) || '?')
 
 async function handleLogout() {
   try {
@@ -237,6 +247,18 @@ async function handleLogout() {
 .user-name {
   font-size: 13px;
   color: #333;
+}
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #1a6db5;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
 }
 .page-content {
   background: #f5f7fa;

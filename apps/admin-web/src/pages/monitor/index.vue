@@ -98,7 +98,7 @@
           采集点实时热力图
           <span class="realtime-tag small">
             <span class="realtime-dot" />
-            每 2s 刷新
+            每秒刷新
           </span>
         </div>
         <div class="heatmap-wrap">
@@ -217,7 +217,8 @@ import type { RealtimeSnapshot, PressureHeatmapPoint } from '../../mock/patients
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
 // ====== 常量 ======
-const POLL_MS = 2000
+// F6：设计稿 实时监控.html:161 写「每秒刷新」，PRD §7D.2 写 2s —— 按四层关系以设计稿为准（T289 PM 23:39 指令）
+const POLL_MS = 1000
 const CHART_WINDOW = 30
 const HM_MAX_N = 60
 const BLUE = '#1a6db5'

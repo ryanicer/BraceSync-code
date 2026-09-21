@@ -37,7 +37,8 @@ test.describe('团队管理 · 列表渲染（T270 A-FLOW-14）', () => {
   })
 
   test('顶栏标题与工具条', async ({ page }) => {
-    await expect(page.locator('.top-nav-title')).toHaveText('团队管理')
+    // T289 G3：顶栏标题带设计稿 emoji 前缀（👥 团队管理），改用 contains 判定文案本体
+    await expect(page.locator('.top-nav-title')).toContainText('团队管理')
     await expect(page.locator('.page-toolbar').getByRole('button', { name: '新建团队' })).toBeVisible()
   })
 

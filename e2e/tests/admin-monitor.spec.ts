@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { adminRoutes, adminLogin, pickSelectOption } from '../admin-helpers'
 
 /**
- * admin-web 实时监控（T056 重做后）：患者下拉选择 + 4×5 热力图 + 实时压力曲线 + 2s 轮询
+ * admin-web 实时监控（T056 重做后）：患者下拉选择 + 4×5 热力图 + 实时压力曲线 + 每秒轮询（T289 F6，设计稿 实时监控.html:161）
  *
  * 新版页面结构（pages/monitor/index.vue）：
  * - 顶部栏：.realtime-tag "实时同步中" + .update-time "最近更新：HH:mm:ss" + 立即刷新按钮
@@ -127,7 +127,7 @@ test.describe('交互与刷新', () => {
  * T270 补口：A-MON-03 / A-MON-05 / A-MON-07 / A-MON-08（README §5 第一类）
  *            + 假绿 #4（自动轮询）/ #5（曲线刻度与 tooltip）（README §5 第二类）
  *
- * 🔴 本页每 2s 轮询一次，且每次轮询会把热力图选中态重置（monitor/index.vue refreshTick
+ * 🔴 本页每秒轮询一次（T289 F6），且每次轮询会把热力图选中态重置（monitor/index.vue refreshTick
  *    里 heatmapSelected.value = null）。因此凡是「一次交互的结果要在多处之间比对」的断言，
  *    必须在**同一次页面求值内**把相关 DOM 一起读出来，再用 expect.poll 重试整个原子读取，
  *    否则会撞在轮询边界上产生假红。下面 summary / points / 热力图详情都按这个写法来。
@@ -254,11 +254,12 @@ test.describe('患者摘要与点位（T270 A-MON-03/05/07/08）', () => {
 })
 
 test.describe('自动刷新与曲线细节（T270 假绿 #4/#5）', () => {
-  test('假绿#4 A-MON-09 自动轮询：什么都不点，时间戳应在 2s 轮询下自行变化', async ({ page }) => {
+  test('假绿#4 A-MON-09 自动轮询：什么都不点，时间戳应在每秒轮询下自行变化', async ({ page }) => {
     await waitForSnapshotLoaded(page)
     const before = await page.locator('.update-time').innerText()
     // 不做任何点击，仅等待轮询自己推进时间戳（旧 e2e 只测了手动「立即刷新」）
-    await expect(page.locator('.update-time')).not.toHaveText(before, { timeout: 10_000 })
+    // T289 F6：轮询周期 = POLL_MS 1000（设计稿 实时监控.html:161「每秒刷新」），2.5s 内必须变
+    await expect(page.locator('.update-time')).not.toHaveText(before, { timeout: 2_500 })
     await expect(page.locator('.el-message--error')).toHaveCount(0)
     // 轮询期间页面不得白屏：曲线与热力图仍各自在位
     await expect(page.locator('.chart-container canvas')).toBeVisible()
