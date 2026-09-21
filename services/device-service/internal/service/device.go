@@ -44,6 +44,9 @@ func NewDeviceService(store repo.Store, enc *crypto.Encryptor) *DeviceService {
 
 // mapRepoErr repo 哨兵错误 → AppError（其余按系统错误 90001）
 func mapRepoErr(err error, fallback *model.AppError) *model.AppError {
+	if appErr := patientBusyErr(err); appErr != nil {
+		return appErr
+	}
 	switch {
 	case errors.Is(err, repo.ErrNotFound):
 		return fallback
@@ -52,6 +55,22 @@ func mapRepoErr(err error, fallback *model.AppError) *model.AppError {
 	default:
 		return model.ErrInternal("internal error: %v", err)
 	}
+}
+
+// patientBusyErr T299「一患者一设备」冲突 → 409 加可执行文案（指引先解绑占位设备）；非该错误返回 nil。
+// OtherDeviceID 为空表示并发下由唯一索引拦截，占位设备未知。
+func patientBusyErr(err error) *model.AppError {
+	var phd *repo.ErrPatientHasDevice
+	if !errors.As(err, &phd) {
+		return nil
+	}
+	if phd.OtherDeviceID == "" {
+		return model.ErrConflict(
+			"patient %q already has another bound device; unbind it first (one device per patient)", phd.PatientID)
+	}
+	return model.ErrConflict(
+		"patient %q is already bound to device %q; unbind that device first (one device per patient)",
+		phd.PatientID, phd.OtherDeviceID)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -138,6 +157,7 @@ type BindResult struct {
 //   - 已有同患者 active binding → 幂等成功
 //   - 已有他患者 active binding → 自动换绑（旧行 unbind_at+reason=rebind，历史可追溯）
 //   - 互斥不变式：同设备同一时刻仅一个 active binding（uk_bindings_active 兜底）
+//   - 互斥不变式（T299）：一患者至多一台生效设备，患者已占用其它设备 → 409 拒绝，不再静默改绑
 //   - bindings 写入与 devices.patient_id/status/bind_time 更新同一事务
 func (s *DeviceService) Bind(ctx context.Context, deviceID, patientID, operatorID string) (*BindResult, *model.AppError) {
 	if deviceID == "" || patientID == "" {

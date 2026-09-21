@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bracesync/bracesync/services/device-service/internal/model"
@@ -22,6 +23,30 @@ var ErrNotFound = errors.New("repo: row not found")
 
 // ErrConflict 唯一约束/状态冲突（uk_bindings_active / uk_install_baseline / 基线已存在）
 var ErrConflict = errors.New("repo: conflict")
+
+// ErrPatientHasDevice 「一患者一设备」规则（T299）：目标患者已持有另一台生效设备，绑定/换绑被拒。
+// OtherDeviceID 为当前占用该患者的设备；并发下被唯一索引 uk_devices_active_patient 拦时为空
+// （事务已中止，查不到占位设备，service 层须容忍）。
+type ErrPatientHasDevice struct {
+	PatientID     string
+	OtherDeviceID string
+}
+
+func (e *ErrPatientHasDevice) Error() string {
+	if e.OtherDeviceID == "" {
+		return fmt.Sprintf("repo: patient %s already bound to another device", e.PatientID)
+	}
+	return fmt.Sprintf("repo: patient %s already bound to device %s", e.PatientID, e.OtherDeviceID)
+}
+
+// ukActivePatient 一患者至多一台当前设备的部分唯一索引（迁移 000012，T151 方案C）
+const ukActivePatient = "uk_devices_active_patient"
+
+// isUniqueViolation 判定指定约束名触发的唯一冲突（SQLSTATE 23505）
+func isUniqueViolation(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraint
+}
 
 // BindParams 绑定事务入参
 type BindParams struct {
@@ -40,10 +65,12 @@ type Store interface {
 	PatientExists(ctx context.Context, patientID string) (bool, error)
 	TechExists(ctx context.Context, techID string) (bool, error)
 	// Bind 绑定/自动换绑事务：同患者幂等 nil；他患者 active binding 存在时自动换绑
-	// （旧行写 unbind_at+reason=rebind，返回 prevActive）；新 binding + devices 更新同一事务
+	// （旧行写 unbind_at+reason=rebind，返回 prevActive）；新 binding + devices 更新同一事务。
+	// T299 一患者一设备：目标患者已持有其它生效设备 → 返回 *ErrPatientHasDevice，整事务不落库
 	Bind(ctx context.Context, p BindParams) (prevActive *model.Binding, err error)
 	// Rebind 换绑事务：要求存在 active binding（否则 ErrConflict）；
-	// 旧行写 unbind_at+reason=rebind → 新 binding → 更新 devices，历史可追溯
+	// 旧行写 unbind_at+reason=rebind → 新 binding → 更新 devices，历史可追溯。
+	// T299 一患者一设备：新目标患者已持有其它生效设备 → 返回 *ErrPatientHasDevice
 	Rebind(ctx context.Context, p BindParams) (prevActive *model.Binding, err error)
 	// Unbind 解绑事务（幂等）：hadActive=false 表示本就无有效绑定
 	Unbind(ctx context.Context, deviceID, operatorID string) (hadActive bool, err error)
@@ -125,7 +152,8 @@ func (r *PGStore) TechExists(ctx context.Context, techID string) (bool, error) {
 }
 
 // Bind 绑定/自动换绑事务（同设备仅一个 active binding，uk_bindings_active 兜底）：
-// 同患者重复绑定幂等；他患者 active binding 存在时自动换绑（旧行关闭 reason=rebind）。
+// 同患者重复绑定幂等；他患者 active binding 存在时自动换绑（旧行关闭 reason=rebind）；
+// 目标患者已持有其它生效设备时拒绝（T299 一患者一设备，返回 *ErrPatientHasDevice）。
 func (r *PGStore) Bind(ctx context.Context, p BindParams) (*model.Binding, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -143,6 +171,11 @@ func (r *PGStore) Bind(ctx context.Context, p BindParams) (*model.Binding, error
 	}
 	if !devExists {
 		return nil, ErrNotFound
+	}
+
+	// T299 一患者一设备：目标患者已占用其它生效设备则整事务拒绝（任何写动作之前判，不留半途变更）
+	if err := assertPatientFreeOfOtherDevice(ctx, tx, p.PatientID, p.DeviceID); err != nil {
+		return nil, err
 	}
 
 	// 查当前 active binding（行锁）
@@ -175,12 +208,7 @@ func (r *PGStore) Bind(ctx context.Context, p BindParams) (*model.Binding, error
 		reason = model.ReasonRebind
 	}
 
-	// T151(方案B)：保证「一个患者至多一台当前设备」(uk_devices_active_patient)——先解绑仍指向该患者的其它设备
-	//（先解绑旧设备、再绑新设备），避免跨设备换绑被唯一索引 uk_devices_active_patient 拒绝。
-	if err := r.clearPatientOtherDevices(ctx, tx, p.PatientID, p.DeviceID, p.OperatorID); err != nil {
-		return nil, err
-	}
-
+	// T151(方案B) 的静默改绑已由 T299 显式校验取代（见事务开头的 assertPatientFreeOfOtherDevice）
 	if _, err = tx.Exec(ctx,
 		`INSERT INTO device_bindings (device_id, patient_id, reason, operator_id)
 		 VALUES ($1, $2, $3, $4)`, p.DeviceID, p.PatientID, reason, p.OperatorID,
@@ -196,6 +224,9 @@ func (r *PGStore) Bind(ctx context.Context, p BindParams) (*model.Binding, error
 		     updated_at = now()
 		 WHERE device_id = $1`, p.DeviceID, p.PatientID, model.StatusUnbound, model.StatusOffline,
 	); err != nil {
+		if isUniqueViolation(err, ukActivePatient) {
+			return nil, &ErrPatientHasDevice{PatientID: p.PatientID} // 并发抢绑，占位设备未知
+		}
 		return nil, fmt.Errorf("bind: update device: %w", err)
 	}
 
@@ -206,7 +237,8 @@ func (r *PGStore) Bind(ctx context.Context, p BindParams) (*model.Binding, error
 }
 
 // Rebind 换绑事务：旧 binding 写 unbind_at+reason=rebind+operator → 新 binding → 更新 devices（历史可追溯）。
-// 无 active binding 时返回 ErrConflict（应先走 Bind）。
+// 无 active binding 时返回 ErrConflict（应先走 Bind）；
+// 目标患者已持有其它生效设备时拒绝（T299 一患者一设备，返回 *ErrPatientHasDevice）。
 func (r *PGStore) Rebind(ctx context.Context, p BindParams) (*model.Binding, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -240,6 +272,11 @@ func (r *PGStore) Rebind(ctx context.Context, p BindParams) (*model.Binding, err
 		return nil, nil // 幂等：换绑到同一患者，无变更
 	}
 
+	// T299 一患者一设备：新目标患者已占用其它生效设备则整事务拒绝（关闭旧绑定之前判）
+	if err := assertPatientFreeOfOtherDevice(ctx, tx, p.PatientID, p.DeviceID); err != nil {
+		return nil, err
+	}
+
 	// 关闭旧绑定（reason=rebind）
 	if _, err = tx.Exec(ctx,
 		`UPDATE device_bindings SET unbind_at = now(), reason = $2, operator_id = $3
@@ -248,11 +285,7 @@ func (r *PGStore) Rebind(ctx context.Context, p BindParams) (*model.Binding, err
 		return nil, fmt.Errorf("rebind: close previous: %w", err)
 	}
 
-	// T151(方案B)：换绑到新患者时，同样先解绑仍指向该新患者的其它设备（保证一个患者至多一台当前设备）
-	if err := r.clearPatientOtherDevices(ctx, tx, p.PatientID, p.DeviceID, p.OperatorID); err != nil {
-		return nil, err
-	}
-
+	// T151(方案B) 的静默改绑已由 T299 显式校验取代（见事务开头的 assertPatientFreeOfOtherDevice）
 	if _, err = tx.Exec(ctx,
 		`INSERT INTO device_bindings (device_id, patient_id, reason, operator_id)
 		 VALUES ($1, $2, $3, $4)`, p.DeviceID, p.PatientID, model.ReasonRebind, p.OperatorID,
@@ -265,6 +298,9 @@ func (r *PGStore) Rebind(ctx context.Context, p BindParams) (*model.Binding, err
 		`UPDATE devices SET patient_id = $2, bind_time = now(), updated_at = now()
 		 WHERE device_id = $1`, p.DeviceID, p.PatientID,
 	); err != nil {
+		if isUniqueViolation(err, ukActivePatient) {
+			return nil, &ErrPatientHasDevice{PatientID: p.PatientID} // 并发抢绑，占位设备未知
+		}
 		return nil, fmt.Errorf("rebind: update device: %w", err)
 	}
 
@@ -274,26 +310,23 @@ func (r *PGStore) Rebind(ctx context.Context, p BindParams) (*model.Binding, err
 	return prev, nil
 }
 
-// clearPatientOtherDevices 遵守「一个患者至多一台当前设备」不变量（uk_devices_active_patient / T151 方案B）：
-// 在把患者 patientID 绑定/换绑到 targetDeviceID 的事务内，先解绑仍指向该患者的其它设备——
-// 关闭其 active binding（reason=rebind 可追溯），并清空其 devices.patient_id/bind_time 冗余，
-// 即「先解绑旧设备，再绑新设备」，避免跨设备换绑被唯一索引 uk_devices_active_patient 拒绝。
-func (r *PGStore) clearPatientOtherDevices(ctx context.Context, tx pgx.Tx, patientID, targetDeviceID, operatorID string) error {
-	if _, err := tx.Exec(ctx,
-		`UPDATE device_bindings SET unbind_at = now(), reason = $2, operator_id = $3
-		 WHERE patient_id = $1 AND device_id <> $4 AND unbind_at IS NULL`,
-		patientID, model.ReasonRebind, operatorID, targetDeviceID,
-	); err != nil {
-		return fmt.Errorf("clear patient other bindings: %w", err)
+// assertPatientFreeOfOtherDevice 「一患者一设备」写入口校验（T299，与部分唯一索引 uk_devices_active_patient 同口径）：
+// 在绑定/换绑事务内，若目标患者已指向另一台生效设备，返回 *ErrPatientHasDevice 让调用方整事务回滚——
+// 取代 T151 方案B 的「先静默解绑旧设备再绑新设备」，把冲突显式暴露给技师（须先解绑旧设备）。
+// targetDeviceID 自身排除在外，故对同设备重复绑定/换绑幂等无影响。
+func assertPatientFreeOfOtherDevice(ctx context.Context, tx pgx.Tx, patientID, targetDeviceID string) error {
+	var other string
+	err := tx.QueryRow(ctx,
+		`SELECT device_id FROM devices WHERE patient_id = $1 AND device_id <> $2 LIMIT 1`,
+		patientID, targetDeviceID,
+	).Scan(&other)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE devices SET patient_id = NULL, bind_time = NULL, status = $2, updated_at = now()
-		 WHERE patient_id = $1 AND device_id <> $3`,
-		patientID, model.StatusUnbound, targetDeviceID,
-	); err != nil {
-		return fmt.Errorf("clear patient other device patient_id: %w", err)
+	if err != nil {
+		return fmt.Errorf("check patient other device: %w", err)
 	}
-	return nil
+	return &ErrPatientHasDevice{PatientID: patientID, OtherDeviceID: other}
 }
 
 // Unbind 解绑事务（幂等：无 active binding 时 hadActive=false，不报错）

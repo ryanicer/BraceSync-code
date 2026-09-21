@@ -102,12 +102,29 @@ func (f *FakeStore) activeBinding(deviceID string) *model.Binding {
 	return nil
 }
 
+// patientOtherDevice 「一患者一设备」事实源（T299，同 uk_devices_active_patient 口径）：
+// 返回患者已占用的、非 targetDeviceID 的那台设备 ID；无占用返回 ""。
+func (f *FakeStore) patientOtherDevice(patientID, targetDeviceID string) string {
+	for id, dev := range f.devices {
+		if id == targetDeviceID {
+			continue
+		}
+		if dev.PatientID != nil && *dev.PatientID == patientID {
+			return id
+		}
+	}
+	return ""
+}
+
 func (f *FakeStore) Bind(_ context.Context, p repo.BindParams) (*model.Binding, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	dev, ok := f.devices[p.DeviceID]
 	if !ok {
 		return nil, repo.ErrNotFound
+	}
+	if other := f.patientOtherDevice(p.PatientID, p.DeviceID); other != "" {
+		return nil, &repo.ErrPatientHasDevice{PatientID: p.PatientID, OtherDeviceID: other}
 	}
 
 	var prevActive *model.Binding
@@ -157,6 +174,9 @@ func (f *FakeStore) Rebind(_ context.Context, p repo.BindParams) (*model.Binding
 	}
 	if active.PatientID == p.PatientID {
 		return nil, nil // 幂等
+	}
+	if other := f.patientOtherDevice(p.PatientID, p.DeviceID); other != "" {
+		return nil, &repo.ErrPatientHasDevice{PatientID: p.PatientID, OtherDeviceID: other}
 	}
 
 	now := time.Now()

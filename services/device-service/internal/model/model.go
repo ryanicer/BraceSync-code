@@ -82,7 +82,7 @@ const (
 	CodeInvalidParam    = 20400 // 参数非法（device_id 格式 / offset_values 长度 / installId 解析）
 	CodeNotFound        = 20404 // 设备域资源不存在（device / install_record）
 	CodeForbidden       = 20403 // 越权访问（T193 水平越权：非本人绑定设备）
-	CodeConflict        = 20409 // 状态冲突（绑定互斥 / 基线已存在 / 安装与绑定不一致）
+	CodeConflict        = 20409 // 状态冲突（设备已被他患者占用而拒绝 / 一患者一设备 T299 / 基线已存在 / 安装与绑定不一致）
 	CodeTooMany         = 20429 // 请求过频（T091 配网密钥重发间隔内重复领取）
 	CodeUserResNotFound = 10404 // 用户域资源不存在（patient / technician，owner: user-service）
 	CodeInternal        = 90001 // 系统内部错误

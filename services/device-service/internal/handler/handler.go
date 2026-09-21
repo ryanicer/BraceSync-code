@@ -6,7 +6,7 @@
 //	GET  /api/v1/devices                          设备分页列表（T030：patientName join）
 //	GET  /api/v1/devices/:deviceId                设备详情
 //	GET  /api/v1/devices/:deviceId/bindings       绑定历史（追溯）
-//	POST /api/v1/devices/:deviceId/bind           绑定（互斥：已被他患者绑定 → 409）
+//	POST /api/v1/devices/:deviceId/bind           绑定（同设备已被他患者绑定 → 自动换绑；目标患者已有其它设备 → 409，T299）
 //	POST /api/v1/devices/:deviceId/rebind         换绑（旧绑定历史可追溯）
 //	POST /api/v1/devices/:deviceId/unbind         解绑（幂等）
 //	POST /api/v1/devices/:deviceId/wifi           WiFi 配置状态（wifi_ssid 维护）
@@ -237,7 +237,8 @@ func (h *Handler) listBindings(c *gin.Context) {
 	ok(c, gin.H{"list": list})
 }
 
-// bind 绑定（契约 bindDevice → ApiResponse<BindResponseDTO>；互斥：已被他患者绑定 → 自动换绑）
+// bind 绑定（契约 bindDevice → ApiResponse<BindResponseDTO>；同设备已被他患者绑定 → 自动换绑；
+// 目标患者已持有其它生效设备 → 409/20409，T299 一患者一设备）
 func (h *Handler) bind(c *gin.Context) {
 	var req bindRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
