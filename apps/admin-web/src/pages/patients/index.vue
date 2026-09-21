@@ -116,6 +116,46 @@
       <div v-if="detail" class="drawer-actions">
         <el-button type="primary" @click="openAssignTeam">分配团队</el-button>
       </div>
+
+      <!-- T300 异常报告最小入口：按患者 + 日期范围汇总，并导出同口径 CSV 明细 -->
+      <div v-if="detail" class="abnormal-report">
+        <div class="report-head">
+          <span class="report-title">异常报告</span>
+          <el-date-picker
+            v-model="reportRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            size="small"
+            unlink-panels
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            class="report-range"
+          />
+        </div>
+        <div class="report-actions">
+          <el-button size="small" :loading="reportLoading" @click="loadReport">查询汇总</el-button>
+          <el-button size="small" type="primary" :loading="exporting" @click="handleExportReport">导出 CSV</el-button>
+        </div>
+        <template v-if="report">
+          <p class="report-total">
+            共 {{ report.total }} 条
+            <span v-for="s in report.byStatus" :key="s.key">
+              · {{ processStatusLabel(s.key) }} {{ s.count }}
+            </span>
+          </p>
+          <el-table :data="report.byType" size="small" border empty-text="该区间无异常">
+            <el-table-column label="异常类型">
+              <template #default="{ row }">{{ abnormalTypeLabel(row.key) }}</template>
+            </el-table-column>
+            <el-table-column prop="count" label="次数" width="70" align="right" />
+          </el-table>
+          <el-table :data="report.byDay" size="small" border :max-height="200" class="report-days" empty-text="该区间无异常">
+            <el-table-column prop="key" label="日期" />
+            <el-table-column prop="count" label="次数" width="70" align="right" />
+          </el-table>
+        </template>
+      </div>
     </el-drawer>
 
     <!-- 新建患者弹窗 -->
@@ -181,9 +221,11 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import type { Patient, Team, Doctor } from '@bracesync/shared-types'
+import type { AbnormalReport } from '../../mock/alerts'
 import {
   fetchPatients, fetchTeams, fetchDoctors, teamNameOf, doctorNameOf,
   createPatientApi, assignPatientTeamApi, batchBindPatientsApi,
+  fetchAbnormalReport, exportAbnormalReportApi,
 } from '../../api'
 import type { BatchBindFailure } from '../../mock/patients'
 
@@ -266,6 +308,24 @@ const canConfirmBatch = computed(
     batchSelected.value.every((r) => !!batchTargetTeam.value[r.patientId]),
 )
 
+// T300 异常报告（详情抽屉内）
+const reportRange = ref<[string, string]>(defaultReportRange())
+const report = ref<AbnormalReport | null>(null)
+const reportLoading = ref(false)
+const exporting = ref(false)
+
+/** 默认看最近 7 天（含今天） */
+function defaultReportRange(): [string, string] {
+  const end = new Date()
+  const start = new Date(end.getTime() - 6 * 86400000)
+  return [dayText(start), dayText(end)]
+}
+
+function dayText(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 function formatDate(iso: string): string {
   return iso.slice(0, 10)
 }
@@ -295,11 +355,71 @@ function handleSearch() {
 
 function viewDetail(row: PatientRow) {
   detail.value = row
+  report.value = null
   drawerVisible.value = true
+  loadReport()
 }
 
 function onBatchSelectionChange(rows: PatientRow[]) {
   batchSelected.value = rows
+}
+
+// T300 异常报告
+function reportQueryOrNull() {
+  const [start, end] = reportRange.value
+  if (!detail.value) return null
+  if (!start || !end) {
+    ElMessage.warning('请选择日期范围')
+    return null
+  }
+  if (start > end) {
+    ElMessage.warning('结束日期不能早于开始日期')
+    return null
+  }
+  return { patientId: detail.value.patientId, start, end }
+}
+
+async function loadReport() {
+  const q = reportQueryOrNull()
+  if (!q) return
+  reportLoading.value = true
+  try {
+    report.value = await fetchAbnormalReport(q)
+  } catch (e: unknown) {
+    report.value = null
+    ElMessage.error(e instanceof Error ? e.message : '汇总加载失败')
+  } finally {
+    reportLoading.value = false
+  }
+}
+
+async function handleExportReport() {
+  const q = reportQueryOrNull()
+  if (!q) return
+  exporting.value = true
+  try {
+    await exportAbnormalReportApi(q)
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
+function abnormalTypeLabel(key: string): string {
+  const map: Record<string, string> = {
+    pressure_high: '压力偏高',
+    pressure_fluctuation: '压力波动',
+    wear_interrupt: '佩戴中断',
+    sensor_drift: '传感器漂移',
+    wear_duration_short: '佩戴时长不足',
+  }
+  return map[key] || key
+}
+
+function processStatusLabel(key: string): string {
+  const map: Record<string, string> = { pending: '待处理', processing: '处理中', processed: '已处理' }
+  return map[key] || key
 }
 
 // 新建患者
@@ -438,5 +558,35 @@ onMounted(async () => {
 /* 设计稿 患者管理.html:108 确认分配按钮 margin-top:12px */
 .batch-submit {
   margin-top: 12px;
+}
+.abnormal-report {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #ebeef5;
+}
+.report-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.report-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.report-range {
+  width: 100%;
+}
+.report-actions {
+  margin: 10px 0 12px;
+  text-align: right;
+}
+.report-total {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #606266;
+}
+.report-days {
+  margin-top: 8px;
 }
 </style>

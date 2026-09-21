@@ -7,6 +7,7 @@ import type {
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
 } from '@bracesync/shared-types'
 import { USE_MOCK, request } from '../utils/request'
+import { getToken } from '../utils/token'
 import { reactive } from 'vue'
 import * as dashboardMock from '../mock/dashboard'
 import * as patientMock from '../mock/patients'
@@ -164,6 +165,65 @@ export async function resetAlertPointRulesApi(): Promise<alertMock.AlertRules> {
 export async function saveAlertGlobalRulesApi(input: Partial<alertMock.AlertGlobalRules>): Promise<alertMock.AlertRules> {
   if (USE_MOCK) { await delay(); return alertMock.mockSaveAlertGlobalRules(input) }
   return request<alertMock.AlertRules>({ url: '/api/v1/admin/alert-rules/global', method: 'PUT', data: input as unknown as Record<string, unknown> })
+}
+
+// ========== 患者异常报告（T300，端点由 alert-service 提供，网关已转发 + staff 专属） ==========
+
+export async function fetchAbnormalReport(q: alertMock.AbnormalReportQuery): Promise<alertMock.AbnormalReport> {
+  if (USE_MOCK) { await delay(); return alertMock.mockAbnormalReport(q) }
+  return request<alertMock.AbnormalReport>({
+    url: '/api/v1/admin/abnormal-reports',
+    data: { patientId: q.patientId, start: q.start, end: q.end },
+  })
+}
+
+/**
+ * 导出 CSV。走带 Authorization 的 fetch 取回二进制再触发下载——
+ * window.open / <a href> 不带凭据头，真实模式下会被网关 401（现有两处下载走的是预签名 URL，不适用于此）。
+ */
+export async function exportAbnormalReportApi(q: alertMock.AbnormalReportQuery): Promise<void> {
+  if (USE_MOCK) {
+    await delay()
+    saveCsvText(`abnormal-report-${q.patientId}-${q.start}_${q.end}.csv`, alertMock.mockAbnormalReportCsv(q))
+    return
+  }
+  const params = new URLSearchParams({ patientId: q.patientId, start: q.start, end: q.end })
+  const token = getToken()
+  let res: Response
+  try {
+    res = await fetch(`/api/v1/admin/abnormal-reports/export?${params.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+  } catch {
+    throw new Error('网络错误，导出失败')
+  }
+  if (!res.ok) {
+    // 失败时后端回 JSON 信封而非 CSV，不能把错误体当文件存盘
+    const body = (await res.json().catch(() => null)) as ApiResponse<unknown> | null
+    throw new Error(body?.message || `导出失败（HTTP ${res.status}）`)
+  }
+  saveCsvBlob(dispositionFilename(res.headers.get('Content-Disposition')), await res.blob())
+}
+
+/** 从 Content-Disposition 取后端给的文件名（含患者编号与日期范围） */
+function dispositionFilename(header: string | null): string {
+  const m = /filename="?([^";]+?)"?/.exec(header ?? '')
+  return m ? m[1].trim() : 'abnormal-report.csv'
+}
+
+function saveCsvText(filename: string, text: string): void {
+  saveCsvBlob(filename, new Blob([text], { type: 'text/csv;charset=utf-8' }))
+}
+
+function saveCsvBlob(filename: string, blob: Blob): void {
+  const href = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = href
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(href)
 }
 
 // ========== Device / Team / Doctor / Technician / Install ==========

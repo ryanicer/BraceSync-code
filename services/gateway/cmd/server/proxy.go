@@ -4,6 +4,7 @@
 //
 //	GET  /api/v1/alerts                     → alert-service（转发查询参数）
 //	POST /api/v1/alerts/:alertId/process    → alert-service
+//	GET  /api/v1/admin/abnormal-reports[/export] → alert-service（T300 异常报告汇总/CSV 导出）
 //
 // 鉴权边界（架构 §3.3）：对外 /api/v1/* 经 gateway 统一鉴权（Phase 1 JWT 中间件
 // 落地后挂载于 api 路由组）；/internal/* 为服务间直连，不经网关。
@@ -60,5 +61,9 @@ func registerAlertsProxyOn(api *gin.RouterGroup, targetURL string) {
 	api.GET("/alerts", forward)
 	api.POST("/alerts/:alertId/process", forward)
 	api.POST("/alerts/:alertId/processing", forward) // T257 2.7 开始处理
+	// T300 患者异常报告汇总/导出（合同 §二 患者管理）：同属 alert-service，
+	// 路径必须原样转发（服务侧按 /api/v1/admin/abnormal-reports 注册路由）
+	api.GET("/admin/abnormal-reports", forward)
+	api.GET("/admin/abnormal-reports/export", forward)
 	log.Info().Str("target", targetURL).Msg("alerts proxy registered")
 }

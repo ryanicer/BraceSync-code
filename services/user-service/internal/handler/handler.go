@@ -1574,7 +1574,20 @@ const (
 	keyCollectIntervalSeconds = "collect_interval_seconds" // T256 #4：API 秒口径（设计稿）
 	keyRetentionDays          = "data_retention_days"      // T256 #4：数据保留天数
 	keyMaxPatients            = "max_patients"             // T256 #4：最大患者数
+	// T302 F1 后端半边：PRD §7D.12 已有语义、此前只有 seed 行没有读写口的三项
+	keyCalibrationOffset = "threshold_calibration_offset" // 空载校准偏差上限（N），000019 已 ÷10 到 0.05
+	keyWechatTemplateID  = "notify_wechat_template_id"    // 微信模板消息 ID（PRD §7D.12 通知模板配置）
+	keySmsTemplateID     = "notify_sms_template_id"       // 短信模板 ID（同上）
 )
+
+// defaultCalibrationOffsetN 缺行兜底，与 seed.sql:354 / 000019 ÷10 后同值
+// （🔴 T173 口径：阈值是配置参数，此处只是「库里没行时显示什么」，不是硬编码判定值）。
+const defaultCalibrationOffsetN = 0.05
+
+// 模板 ID 形状守卫：只挡控制字符与超长，不校验厂商格式
+// （微信模板 ID 是 URL-safe 串、阿里云短信是 SMS_ 前缀，且各家不同 —— 写死前缀 = 换厂商就得改后端）。
+// 上限 128 < sys_configs.config_value VARCHAR(255)，留余量给两侧空格被 trim 的情况。
+const maxTemplateIDLen = 128
 
 // 缺失键默认值（PRD §7D.12 + T203 ÷10，与 @bracesync/constants DEFAULT_THRESHOLDS 对齐）
 var settingsDefaults = model.SystemSettingsDTO{
@@ -1628,13 +1641,17 @@ func maskWifiPasswords(list []model.WifiPresetDTO) []model.WifiPresetDTO {
 // T256 #4：collectIntervalSeconds 直接读 collect_interval_seconds（设计稿秒口径）；
 // 内部分钟键 collect_interval_minutes 由写入端点同步维护，供 device/alert 服务消费。
 func (h *Handler) getSettings(c *gin.Context) {
-	keys := []string{keyWearTarget, keyPressureHigh, keyPressureLow, keyFluctuationPct, keyWearInterrupt, keySensorDrift, keyWifiPresets, keyCollectIntervalSeconds, keyRetentionDays, keyMaxPatients}
+	keys := []string{keyWearTarget, keyPressureHigh, keyPressureLow, keyFluctuationPct, keyWearInterrupt, keySensorDrift, keyWifiPresets, keyCollectIntervalSeconds, keyRetentionDays, keyMaxPatients, keyCalibrationOffset, keyWechatTemplateID, keySmsTemplateID}
 	kvs, err := h.store.GetConfigs(c.Request.Context(), keys)
 	if err != nil {
 		fail(c, model.ErrInternal("read settings failed"))
 		return
 	}
 	pressureLow := numOr(kvs[keyPressureLow], defaultUnifiedLowerN)
+	// T302：三项 GET 恒回值（缺行按默认 / 空串），指针只为让 PUT 能表达「本次不改」
+	calibrationOffset := numOr(kvs[keyCalibrationOffset], defaultCalibrationOffsetN)
+	wechatTemplateID := strings.TrimSpace(kvs[keyWechatTemplateID]) // 缺键 = 未配置 = 空串
+	smsTemplateID := strings.TrimSpace(kvs[keySmsTemplateID])
 	dto := model.SystemSettingsDTO{
 		DailyWearTargetHours:   numOr(kvs[keyWearTarget], settingsDefaults.DailyWearTargetHours),
 		PressureHighThresholdN: numOr(kvs[keyPressureHigh], settingsDefaults.PressureHighThresholdN),
@@ -1646,6 +1663,9 @@ func (h *Handler) getSettings(c *gin.Context) {
 		CollectIntervalSeconds: int(numOr(kvs[keyCollectIntervalSeconds], float64(settingsDefaults.CollectIntervalSeconds))),
 		RetentionDays:          int(numOr(kvs[keyRetentionDays], float64(settingsDefaults.RetentionDays))),
 		MaxPatients:            int(numOr(kvs[keyMaxPatients], float64(settingsDefaults.MaxPatients))),
+		CalibrationOffsetN:     &calibrationOffset,
+		WechatTemplateID:       &wechatTemplateID,
+		SmsTemplateID:          &smsTemplateID,
 	}
 	ok(c, dto)
 }
@@ -1675,6 +1695,11 @@ func validateSettings(s model.SystemSettingsDTO, collectInterval, pressureLow fl
 		return model.ErrInvalidParam("wearInterruptMinutes must be >= 2x collect interval (%.0f)", 2*collectInterval)
 	case s.SensorDriftN < 0.1 || s.SensorDriftN > 20:
 		return model.ErrInvalidParam("sensorDriftN must be in [0.1,20]")
+	case s.CalibrationOffsetN != nil && (*s.CalibrationOffsetN < 0.01 || *s.CalibrationOffsetN > 20):
+		// 上限与 sensorDriftN 同档（都是「偏差类」阈值，N 量纲，T203 ÷10 后量级）；
+		// 下限不给 0：0 容差会让每次空载校准必判失败。区间是形状守卫，不代表量纲已定
+		// （🔴 T173：现值仍是占位，待按 mN/÷1000 量级重定后随配置调整，不改代码）。
+		return model.ErrInvalidParam("calibrationOffsetN must be in [0.01,20]")
 	case s.CollectIntervalSeconds < 60 || s.CollectIntervalSeconds%60 != 0:
 		return model.ErrInvalidParam("collectIntervalSeconds must be a positive multiple of 60 (seconds)")
 	case s.RetentionDays < 1:
@@ -1687,6 +1712,32 @@ func validateSettings(s model.SystemSettingsDTO, collectInterval, pressureLow fl
 	for _, p := range s.WifiPresets {
 		if strings.TrimSpace(p.Ssid) == "" {
 			return model.ErrInvalidParam("wifiPreset ssid must not be empty")
+		}
+	}
+	// T302：模板 ID 只在请求给出时校验（nil = 本次不改该键，沿用库里现值）
+	if s.WechatTemplateID != nil {
+		if appErr := validateTemplateID("wechatTemplateId", *s.WechatTemplateID); appErr != nil {
+			return appErr
+		}
+	}
+	if s.SmsTemplateID != nil {
+		if appErr := validateTemplateID("smsTemplateId", *s.SmsTemplateID); appErr != nil {
+			return appErr
+		}
+	}
+	return nil
+}
+
+// validateTemplateID 通知模板 ID 形状守卫：允许空（= 未配置，回滚到不用模板直发），
+// 拒绝控制字符（CR/LF 会被拼进下游消息与查询串 ⇒ 分隔符注入）与超长（列宽 VARCHAR(255)）。
+// 🔴 不校验厂商格式：微信是 URL-safe 串、短信服务商各家前缀不同，写死即把配置项变成绑定。
+func validateTemplateID(field, v string) *model.AppError {
+	if len(v) > maxTemplateIDLen {
+		return model.ErrInvalidParam("%s exceeds %d characters", field, maxTemplateIDLen)
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] == 0x7F {
+			return model.ErrInvalidParam("%s must not contain control characters", field)
 		}
 	}
 	return nil
@@ -1727,7 +1778,10 @@ func (h *Handler) updateSettings(c *gin.Context) {
 
 	// T257 12.4：统一压力下限与告警管理页 Tab2 同键（threshold_pressure_low）；
 	// 请求未给（nil）= 不改该键，校验时沿用库里现值
-	currentKVs, err := h.store.GetConfigs(c.Request.Context(), []string{keyWifiPresets, keyPressureLow})
+	// T302：同一条规则扩展到空载校准上限与两个模板 ID（三项都是后加的，老前端不带字段）
+	currentKVs, err := h.store.GetConfigs(c.Request.Context(), []string{
+		keyWifiPresets, keyPressureLow, keyCalibrationOffset, keyWechatTemplateID, keySmsTemplateID,
+	})
 	if err != nil {
 		fail(c, model.ErrInternal("read existing settings failed"))
 		return
@@ -1735,6 +1789,23 @@ func (h *Handler) updateSettings(c *gin.Context) {
 	pressureLow := numOr(currentKVs[keyPressureLow], defaultUnifiedLowerN)
 	if req.PressureLowThresholdN != nil {
 		pressureLow = *req.PressureLowThresholdN
+	}
+	// 模板 ID 入库前 trim（首尾空白在厂商后台复制时常见，留着会让下次 GET 与本次校验口径不一致）
+	wechatTemplateID := strings.TrimSpace(currentKVs[keyWechatTemplateID])
+	if req.WechatTemplateID != nil {
+		trimmed := strings.TrimSpace(*req.WechatTemplateID)
+		req.WechatTemplateID = &trimmed
+		wechatTemplateID = trimmed
+	}
+	smsTemplateID := strings.TrimSpace(currentKVs[keySmsTemplateID])
+	if req.SmsTemplateID != nil {
+		trimmed := strings.TrimSpace(*req.SmsTemplateID)
+		req.SmsTemplateID = &trimmed
+		smsTemplateID = trimmed
+	}
+	calibrationOffset := numOr(currentKVs[keyCalibrationOffset], defaultCalibrationOffsetN)
+	if req.CalibrationOffsetN != nil {
+		calibrationOffset = *req.CalibrationOffsetN
 	}
 
 	if appErr := validateSettings(req, intervalMinutes, pressureLow); appErr != nil {
@@ -1766,12 +1837,25 @@ func (h *Handler) updateSettings(c *gin.Context) {
 	if req.PressureLowThresholdN != nil {
 		kvs = append(kvs, repo.ConfigKV{Key: keyPressureLow, Value: fmtNum(pressureLow)})
 	}
+	// T302 三项同规则：给出才写
+	if req.CalibrationOffsetN != nil {
+		kvs = append(kvs, repo.ConfigKV{Key: keyCalibrationOffset, Value: fmtNum(calibrationOffset)})
+	}
+	if req.WechatTemplateID != nil {
+		kvs = append(kvs, repo.ConfigKV{Key: keyWechatTemplateID, Value: wechatTemplateID})
+	}
+	if req.SmsTemplateID != nil {
+		kvs = append(kvs, repo.ConfigKV{Key: keySmsTemplateID, Value: smsTemplateID})
+	}
 	if err := h.store.UpsertConfigs(c.Request.Context(), kvs, operatorID(c, "ops")); err != nil {
 		fail(c, model.ErrInternal("save settings failed"))
 		return
 	}
 	req.WifiPresets = maskWifiPasswords(merged)
-	req.PressureLowThresholdN = &pressureLow // 响应与 GET 同形（恒回数值）
+	req.PressureLowThresholdN = &pressureLow    // 响应与 GET 同形（恒回数值）
+	req.CalibrationOffsetN = &calibrationOffset // T302 同上
+	req.WechatTemplateID = &wechatTemplateID    // T302 同上
+	req.SmsTemplateID = &smsTemplateID          // T302 同上
 	ok(c, req)
 }
 
