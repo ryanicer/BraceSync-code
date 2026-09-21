@@ -82,8 +82,16 @@ BACKUP_FILENAME=$(basename "$LATEST_BACKUP")
 # 落地的副本），coscmd download 非 -f 时遇同名文件会直接报错退出。
 DRILL_DL_DIR="${BACKUP_DIR}/restore-drill"
 mkdir -p "$DRILL_DL_DIR"
+chmod 700 "$DRILL_DL_DIR"
 find "$DRILL_DL_DIR" -name '*.sql.gz' -mtime +3 -delete 2>/dev/null || true
 LOCAL_BACKUP="${DRILL_DL_DIR}/${NOW}-${BACKUP_FILENAME}"
+# 下载物是生产库副本，任何中途退出（校验失败、pg_restore 失败）都必须清掉，
+# 不能只在成功路径上删（2026-09-21 实测：19:44 那次中止就把副本留在了盘上）
+cleanup_local_backup() {
+  [ -n "${LOCAL_BACKUP:-}" ] && rm -f "$LOCAL_BACKUP"
+  return 0
+}
+trap cleanup_local_backup EXIT
 
 echo "  最新备份: $LATEST_BACKUP" | tee -a "$LOG_FILE"
 
@@ -95,6 +103,7 @@ if ! coscmd download -f "$LATEST_BACKUP" "$LOCAL_BACKUP" 2>&1 | tee -a "$LOG_FIL
 fi
 
 DOWNLOAD_SIZE=$(du -h "$LOCAL_BACKUP" | cut -f1)
+chmod 600 "$LOCAL_BACKUP"
 echo "  下载完成，大小: $DOWNLOAD_SIZE" | tee -a "$LOG_FILE"
 
 #---------- 下载物有效性校验（必须在破坏性 DROP 之前）----------
