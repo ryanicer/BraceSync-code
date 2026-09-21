@@ -60,27 +60,6 @@ async function typeInto(input: Locator, raw: string): Promise<void> {
   await input.pressSequentially(raw)
 }
 
-/**
- * 等「onMounted 的 mock 配置覆盖初值」这一步真正完成。
- *
- * mock 基座下 fetchSettings 不发网络请求（USE_MOCK 直接 resolve，带 delay），
- * 而页面里有硬编码初值（`pages/settings/index.vue:194` pressureHighThresholdN: 45），
- * 加载完成后才被 mock 默认值（`packages/constants` PRESSURE_HIGH_N = 5）覆盖。
- * ⇒ 只等「表单/输入框可见」在 4 workers 并发下会读到初值，本用例此前因此偶发判红
- *   （serially 绿、--workers=4 稳定红）。用「连续两次读数一致」判定覆盖结束。
- */
-async function waitSettingsLoaded(page: Page): Promise<void> {
-  const keys = Object.keys(LABELS) as FieldKey[]
-  let prev = ''
-  for (let i = 0; i < 30; i++) {
-    const cur = (await Promise.all(keys.map((k) => numInput(page, k).inputValue()))).join('|')
-    if (cur !== '' && cur === prev) return
-    prev = cur
-    await page.waitForTimeout(100)
-  }
-  throw new Error('系统配置 8 个输入框的值 3s 内未稳定，疑似加载竞态未收口')
-}
-
 /** 输入越界值并失焦，返回输入框最终留住的文本 */
 async function typeAndBlur(input: Locator, raw: string): Promise<string> {
   await typeInto(input, raw)
@@ -91,8 +70,11 @@ async function typeAndBlur(input: Locator, raw: string): Promise<string> {
 /**
  * 等「后端现值已回显」再读框。
  * 🔴 全局参数卡整张挂 v-loading，罩子只在 GET /admin/settings 返回后移除；
- * 不等它就直接读 ⇒ 读到的是 form 里的**初始默认值**，刷新还原类断言会假失败
- * （T289 12.4 加了两张新卡后本页渲染变重，此竞态已被实测触发）。
+ * 不等它就直接读 ⇒ 读到的是 form 里的**初始默认值**，刷新还原类断言会假失败。
+ * T301（PR #156）先实测到这条竞态（--workers=4 稳定红、serially 绿），当时用
+ * 「连续两次读数一致」轮询收口；本页现值一律走后端回显 ⇒ 罩子消失即等价信号，
+ * 合并两条卡时统一改成认 v-loading，不再轮询。
+ * （T289 12.4 加了压力阈值 / 医生默认阈值两张卡后本页渲染变重，此竞态又红过一次。）
  */
 async function waitSettingsLoaded(page: Page): Promise<void> {
   await expect(
@@ -110,7 +92,6 @@ test.describe('系统配置 · 输入框上下限与步进（T270 A-SET-03）', 
     await waitSettingsLoaded(page)
     // 9 个可编辑框都在，且标签带单位（设计稿口径：数值不能光秃秃）
     for (const key of ALL) await expect(numInput(page, key)).toBeVisible()
-    await waitSettingsLoaded(page)
   })
 
   test('越上限：失焦后夹到各字段 max，夹到顶后「+」禁用', async ({ page }) => {
