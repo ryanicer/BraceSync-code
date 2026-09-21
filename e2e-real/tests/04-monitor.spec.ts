@@ -92,6 +92,93 @@ test.describe('04-实时监控', () => {
     })
   })
 
+  test.describe('热力图数值渲染与接口同源（T296）', () => {
+    // 渲染夹具：改写实时快照响应体（与 4.4 同一手法），用真机 payload 的量级断言前端不再吞精度/错量纲。
+    // 设备真实上报口径：points 单位 mN，后端 ÷1000 落库为 N，故页面收到的是亚牛顿值。
+    const T296_GRID = Array.from({ length: 20 }, (_, i) => {
+      const v = i === 0 ? 0.599 : i === 1 ? 4.0 : i === 2 ? -0.02 : i === 7 ? 0.038 : i === 14 ? 0.014 : 0
+      return {
+        pointId: `P${String(i + 1).padStart(2, '0')}`,
+        row: Math.floor(i / 5) + 1,
+        col: (i % 5) + 1,
+        label: `R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`,
+        pressureValue: v,
+        isMax: i === 1,
+      }
+    })
+
+    async function injectT296Grid(page: import('@playwright/test').Page): Promise<void> {
+      await page.route('**/api/v1/patients/*/realtime', async (route) => {
+        const res = await route.fetch()
+        let body: { data?: Record<string, unknown> }
+        try {
+          body = await res.json()
+        } catch {
+          await route.fulfill({ response: res })
+          return
+        }
+        if (body?.data) {
+          const data = body.data as {
+            pressureHeatmap?: unknown
+            heatmapMaxN?: number
+            pressureHighN?: number
+            pressureRecords?: Array<Record<string, unknown>>
+          }
+          data.pressureHeatmap = T296_GRID
+          data.heatmapMaxN = 6
+          data.pressureHighN = 5
+          data.pressureRecords = [{ ...(data.pressureRecords?.[0] ?? {}), timestamp: new Date().toISOString() }]
+        }
+        await route.fulfill({ response: res, body: JSON.stringify(body) })
+      })
+      await page.locator('.page-toolbar').getByRole('button', { name: '立即刷新' }).click()
+    }
+
+    test('4.2c 亚牛顿值不被压成 0/-0，色阶与分级按后端下发上界渲染', async ({ page }) => {
+      await waitForSnapshotLoaded(page)
+      await injectT296Grid(page)
+
+      const vals = page.locator('.hm-cell-val')
+      await expect(vals).toHaveCount(20)
+      // P01=0.599 → 一位小数可见（旧实现 toFixed(0) 显示 1，且 P15/P17 全成 0）
+      await expect(vals.nth(0)).toHaveText('0.6')
+      // P03=-0.02 → 归一为 0.0，不得出现非物理读数「-0」
+      await expect(vals.nth(2)).toHaveText('0.0')
+      // P08=0.038 / P15=0.014 → 保留 0.0 而非 -0
+      await expect(vals.nth(7)).toHaveText('0.0')
+
+      // 色阶上界取快照 heatmapMaxN=6：P02=4.0 → 4/6=0.67 → 「偏高」黄；
+      // 若前端仍写死 60，则 4/60=0.067 会渲染成「低压」蓝 —— 此断言即失效点
+      const cellBg = async (i: number) => (await page.locator('.hm-cell').nth(i).evaluate(
+        (el) => getComputedStyle(el).backgroundColor,
+      )).replace(/\s/g, '')
+      expect(await cellBg(1), 'P02 4.0N 在 6N 量程下应为偏高黄').toBe('rgb(250,204,21)')
+      expect(await cellBg(0), 'P01 0.599N 应为低压蓝').toBe('rgb(96,165,250)')
+
+      // 分级列：4.0 ≥ 0.75×5 → 关注；0.599 < 3.75 → 正常（旧 45/30 分界下两者都显示「正常」）
+      const statusCells = page.locator('.points-table tbody tr td:nth-child(4)')
+      await expect(statusCells).toHaveCount(20)
+      await expect(statusCells.nth(1)).toContainText('关注')
+      await expect(statusCells.nth(0)).toContainText('正常')
+
+      // 最大点标记落在接口 isMax 的那一格（P02），不被前端二次归约挪位
+      await expect(page.locator('.hm-cell-max')).toHaveCount(1)
+      await expect(page.locator('.hm-cell-id').nth(1)).toHaveText('P02')
+      await expect(page.locator('.heatmap-card .hm-detail')).toContainText('★ 压力最大点：P02 (R1C2)')
+    })
+
+    test('4.2d 热力图卡片显示本帧采集时刻，可与设备逐帧日志对账', async ({ page }) => {
+      await waitForSnapshotLoaded(page)
+      await injectT296Grid(page)
+
+      const stamp = page.locator('.heatmap-card .card-title .hm-frame-stamp')
+      await expect(stamp).toHaveCount(1)
+      await expect(stamp).toContainText(/\d{2}:\d{2}:\d{2} 采集 · 距今 \d+s/)
+      const age = Number((await stamp.textContent())!.match(/距今 (\d+)s/)![1])
+      expect(age, '夹具用当前时刻，距今应远小于一个轮询周期').toBeLessThan(30)
+    })
+  })
+
   test.describe('患者切换', () => {
     test('4.3 患者下拉 ≥5 选项，切换 2 次患者后状态或时间戳有更新', async ({ page }) => {
       await waitForSnapshotLoaded(page)
