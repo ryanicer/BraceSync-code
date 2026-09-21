@@ -1,0 +1,71 @@
+# BraceSync 备份脚本静态检查
+# T291 §三：scripts/backup/** 此前不在任何 workflow 的 paths 里，这类脚本进不了 CI。
+# 定位 = 最小语法级检查。`bash -n` 失败即红（语法错的脚本 cron 必挂）；
+# shellcheck 结论只作注释呈现，不做门禁（既有告警面广，先建可见性）。
+# 未在分支保护里设为 required check ⇒ 不阻塞合并。
+name: Backup Scripts Static Check
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'scripts/backup/**'
+      - '.github/workflows/ci-backup-scripts.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backup-scripts-static:
+    name: bash -n + shellcheck (scripts/backup)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n 语法检查（失败即红）
+        run: |
+          rc=0
+          shopt -s nullglob
+          for f in scripts/backup/*.sh; do
+            if bash -n "$f" 2>/tmp/syn.err; then
+              echo "OK    $f"
+            else
+              echo "::error file=$f::bash -n 语法检查失败"
+              sed 's/^/        /' /tmp/syn.err
+              rc=1
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "存在语法错误的备份脚本，cron 侧必失败"
+          fi
+          exit $rc
+
+      - name: shellcheck（informational，结论作 PR 注释）
+        run: |
+          shopt -s nullglob
+          files=(scripts/backup/*.sh)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::notice::scripts/backup 下无 .sh，跳过"
+            exit 0
+          fi
+          shellcheck --version
+          report=$(mktemp)
+          shellcheck -f gcc "${files[@]}" >"$report" 2>&1 || true
+          lines=$(mktemp)
+          grep -E '^[^:]+:[0-9]+:[0-9]+: [a-z]+: ' "$report" >"$lines" || true
+          total=$(wc -l < "$lines" | tr -d '[:space:]')
+          errors=$(grep -c ': error: ' "$lines" || true)
+          while IFS= read -r line; do
+            # shellcheck -f gcc 一行五段：file:line:col: severity: message
+            file=$(echo "$line" | cut -d: -f1)
+            ln=$(echo "$line" | cut -d: -f2)
+            sev=$(echo "$line" | cut -d: -f4 | tr -d '[:space:]')
+            msg=$(echo "$line" | cut -d: -f5-)
+            case "$sev" in
+              error) echo "::error file=$file,line=$ln::shellcheck$msg" ;;
+              warning) echo "::warning file=$file,line=$ln::shellcheck$msg" ;;
+              *) echo "::notice file=$file,line=$ln::shellcheck$msg" ;;
+            esac
+          done < "$lines"
+          echo "shellcheck 结论：共 ${total} 条（其中 error 级 ${errors}），本步骤不以其结果判定成败"
