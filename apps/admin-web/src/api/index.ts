@@ -2,7 +2,7 @@
 // Dashboard 域契约对齐 api-contracts.ts（T021 聚合接口）；告警域复用 T019B 已验证端点。
 import type {
   AdminLoginResult, ApiResponse, DashboardKPI, TeamRanking, DoctorRanking, PaginatedResponse, Patient, Device,
-  Alert, InstallRecord, Technician, Team, TeamDetail, TeamMember, TeamStats, Doctor, Feedback, OrthosisPlan,
+  Alert, InstallRecordRow, InstallRecordDetail, Technician, Team, TeamDetail, TeamMember, TeamStats, Doctor, Feedback, OrthosisPlan,
   FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
 } from '@bracesync/shared-types'
@@ -284,9 +284,15 @@ export async function updateTechnicianApi(techId: string, input: Partial<CreateT
   return request<Technician>({ url: `/api/v1/admin/technicians/${techId}`, method: 'PUT', data: input as unknown as Record<string, unknown> })
 }
 
-export async function fetchInstallRecords(params: { keyword?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<InstallRecord>> {
+export async function fetchInstallRecords(params: { keyword?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<InstallRecordRow>> {
   if (USE_MOCK) { await delay(); return orgMock.mockInstallRecords(params) }
-  return request<PaginatedResponse<InstallRecord>>({ url: '/api/v1/install-records', data: params as Record<string, unknown> })
+  return request<PaginatedResponse<InstallRecordRow>>({ url: '/api/v1/install-records', data: params as Record<string, unknown> })
+}
+
+/** T289 9.1：单条安装记录详情（契约 getInstallDetail，网关已放行；含 20 点偏移值与校准状态） */
+export async function fetchInstallRecordDetail(installId: string): Promise<InstallRecordDetail> {
+  if (USE_MOCK) { await delay(); return orgMock.mockInstallRecordDetail(installId) }
+  return request<InstallRecordDetail>({ url: `/api/v1/install-records/${installId}` })
 }
 
 // ========== Feedback（患者沟通） ==========

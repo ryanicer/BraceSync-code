@@ -1,6 +1,6 @@
 // 组织域 mock 数据（对齐 api-contracts.ts getTeams/getDoctors/getTechnicians/getInstallRecords）
-import type { Team, TeamDetail, TeamMember, TeamStats, Doctor, Technician, InstallRecord } from '@bracesync/shared-types'
-import { mockPatients } from './patients'
+import type { Team, TeamDetail, TeamMember, TeamStats, Doctor, Technician, InstallRecordRow, InstallRecordDetail } from '@bracesync/shared-types'
+import { mockPatients, mockPatientDetail } from './patients'
 
 /** T059 成员管理视图（GET /teams/:teamId/members 本地类型；shared-types.TeamMembers 为一期只读契约，此处用 TeamMember 统一字段） */
 export interface TeamMembersView {
@@ -39,13 +39,26 @@ const TECHNICIANS: Technician[] = [
   { techId: 'TECH-004', name: '冯师傅', phoneMasked: '136****8901', teamId: 'TEAM-004', installCount: 52, status: 'disabled', authStatus: 'authorized', createdAt: '2026-07-01T00:00:00+08:00' },
 ]
 
-const INSTALL_RECORDS: InstallRecord[] = [
-  { installId: 'INS-001', deviceId: 'DEV-A3F312', patientId: 'PT-001', techId: 'TECH-001', calibrateTime: '2026-03-12T10:00:00+08:00', baselineId: 'BL-001', notes: '首次安装，空载校准通过', signatureUrl: '', wifiStatus: 'connected' },
-  { installId: 'INS-002', deviceId: 'DEV-B7E456', patientId: 'PT-002', techId: 'TECH-001', calibrateTime: '2026-04-02T14:00:00+08:00', baselineId: 'BL-002', notes: '首次安装', signatureUrl: '', wifiStatus: 'connected' },
-  { installId: 'INS-003', deviceId: 'DEV-C9D789', patientId: 'PT-003', techId: 'TECH-002', calibrateTime: '2026-05-18T15:30:00+08:00', baselineId: 'BL-003', notes: '首次安装，WiFi 待配网', signatureUrl: '', wifiStatus: 'unconfigured' },
-  { installId: 'INS-004', deviceId: 'DEV-D2A012', patientId: 'PT-004', techId: 'TECH-002', calibrateTime: '2026-06-01T10:30:00+08:00', baselineId: 'BL-004', notes: '首次安装', signatureUrl: '', wifiStatus: 'connected' },
-  { installId: 'INS-005', deviceId: 'DEV-E5B347', patientId: 'PT-006', techId: 'TECH-003', calibrateTime: '2026-07-15T16:00:00+08:00', baselineId: null, notes: '基线待保存', signatureUrl: '', wifiStatus: 'unconfigured' },
+const INSTALL_RECORDS: InstallRecordRow[] = [
+  { installId: 'INS-001', deviceId: 'DEV-A3F312', patientId: 'PT-001', techId: 'TECH-001', calibrateTime: '2026-03-12T10:00:00+08:00', baselineId: 'BL-001', notes: '首次安装，空载校准通过', signatureUrl: '', wifiStatus: 'connected', calibStatus: 'normal' },
+  { installId: 'INS-002', deviceId: 'DEV-B7E456', patientId: 'PT-002', techId: 'TECH-001', calibrateTime: '2026-04-02T14:00:00+08:00', baselineId: 'BL-002', notes: '首次安装', signatureUrl: '', wifiStatus: 'connected', calibStatus: 'normal' },
+  { installId: 'INS-003', deviceId: 'DEV-C9D789', patientId: 'PT-003', techId: 'TECH-002', calibrateTime: '2026-05-18T15:30:00+08:00', baselineId: 'BL-003', notes: '首次安装，WiFi 待配网', signatureUrl: '', wifiStatus: 'unconfigured', calibStatus: 'abnormal' },
+  { installId: 'INS-004', deviceId: 'DEV-D2A012', patientId: 'PT-004', techId: 'TECH-002', calibrateTime: '2026-06-01T10:30:00+08:00', baselineId: 'BL-004', notes: '首次安装', signatureUrl: '', wifiStatus: 'connected', calibStatus: 'normal' },
+  { installId: 'INS-005', deviceId: 'DEV-E5B347', patientId: 'PT-006', techId: 'TECH-003', calibrateTime: '2026-07-15T16:00:00+08:00', baselineId: null, notes: '基线待保存', signatureUrl: '', wifiStatus: 'unconfigured', calibStatus: 'uncalibrated' },
 ]
+
+/**
+ * T289 9.1/9.2 详情偏移值：取设计稿 安装记录.html:124-128 样例数组。
+ * INS-003 第 12 点 5.82 即设计稿的越界样例（对应 calibStatus: abnormal）；
+ * INS-005 无基线 ⇒ 契约（api-contracts.ts getInstallDetail）规定未校准返回 []，不是 null。
+ */
+const INSTALL_OFFSETS: Record<string, number[]> = {
+  'INS-001': [0.12, 0.08, -0.05, 0.03, 0.21, 0.15, -0.02, 0.07, 0.19, 0.1, 0.06, 0.14, -0.11, 0.09, 0.17, 0.04, -0.08, 0.13, 0.2, 0.05],
+  'INS-002': [0.09, 0.11, 0.04, -0.03, 0.15, 0.08, 0.02, 0.12, 0.07, 0.05, 0.1, 0.03, -0.06, 0.14, 0.11, 0.06, 0.01, 0.16, 0.08, 0.13],
+  'INS-003': [0.18, 0.22, 0.07, 0.11, 0.09, 0.05, 0.14, 0.2, 0.08, 0.03, 0.17, 5.82, 0.12, 0.06, 0.21, 0.1, 0.04, 0.15, 0.09, 0.13],
+  'INS-004': [0.05, 0.08, 0.03, 0.07, 0.11, 0.04, 0.06, 0.09, 0.02, 0.1, 0.07, 0.05, 0.01, 0.08, 0.06, 0.03, 0.09, 0.04, 0.12, 0.07],
+  'INS-005': [],
+}
 
 export function mockTeams(): Team[] {
   return TEAMS.map((t) => ({ ...t }))
@@ -83,16 +96,32 @@ export function mockTechnicians(params: { page?: number; pageSize?: number }): {
   return { list: TECHNICIANS.slice(start, start + pageSize), total: TECHNICIANS.length, page, pageSize }
 }
 
-export function mockInstallRecords(params: { keyword?: string; page?: number; pageSize?: number }): { list: InstallRecord[]; total: number; page: number; pageSize: number } {
+export function mockInstallRecords(params: { keyword?: string; page?: number; pageSize?: number }): { list: InstallRecordRow[]; total: number; page: number; pageSize: number } {
   const page = params.page ?? 1
   const pageSize = params.pageSize ?? 10
   let list = INSTALL_RECORDS.map((r) => ({ ...r }))
   if (params.keyword) {
+    // 关键词口径对齐契约（api-contracts.ts:414 设备ID/患者ID/患者姓名/技师姓名）
+    // 与设计稿 安装记录.html:105「搜索患者/设备ID/技师」一致
     const kw = params.keyword.toLowerCase()
-    list = list.filter((r) => r.deviceId.toLowerCase().includes(kw) || r.patientId.toLowerCase().includes(kw) || r.installId.toLowerCase().includes(kw))
+    list = list.filter(
+      (r) =>
+        r.deviceId.toLowerCase().includes(kw) ||
+        r.patientId.toLowerCase().includes(kw) ||
+        r.installId.toLowerCase().includes(kw) ||
+        mockPatientDetail(r.patientId)?.name?.toLowerCase().includes(kw) ||
+        mockTechName(r.techId).toLowerCase().includes(kw),
+    )
   }
   const start = (page - 1) * pageSize
   return { list: list.slice(start, start + pageSize), total: list.length, page, pageSize }
+}
+
+/** T289 9.1 详情：GET /api/v1/install-records/:id（mock 不区分建档时间与校准时间） */
+export function mockInstallRecordDetail(installId: string): InstallRecordDetail {
+  const row = INSTALL_RECORDS.find((r) => r.installId === installId)
+  if (!row) throw new Error(`安装记录不存在: ${installId}`)
+  return { ...row, offsetValues: [...(INSTALL_OFFSETS[installId] ?? [])], createdAt: row.calibrateTime }
 }
 
 export function mockTechName(techId: string): string {
