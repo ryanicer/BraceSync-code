@@ -73,9 +73,15 @@ export async function request<T>(options: RequestOptions): Promise<T> {
             reject(new Error(data.message || '登录已过期，请重新登录'))
           } else {
             // T173：透传业务码/HTTP 状态，供调用方区分语义（如基线 409 = 20409）
-            const err = new Error(data.message || '请求失败') as Error & { code?: number; httpStatus?: number }
+            // T299：一并透传响应 data，供调用方读结构化附带字段（如 409 的 occupiedDeviceId）而非解析文案
+            const err = new Error(data.message || '请求失败') as Error & {
+              code?: number
+              httpStatus?: number
+              data?: unknown
+            }
             err.code = data.code
             err.httpStatus = res.statusCode
+            err.data = data.data
             reject(err)
           }
         }

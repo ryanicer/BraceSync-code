@@ -1,13 +1,26 @@
 ﻿import { request, USE_MOCK } from '../utils/request'
 
+/** 绑定/换绑响应（后端 BindResponseDTO） */
+export interface BindResult {
+  deviceId: string
+  status: string
+  /** true=本次关闭过既有绑定：设备从其他患者换来，或 T299 患者级确认换绑 */
+  swapped?: boolean
+  /** T299 确认换绑时被解除绑定的该患者原设备号；未发生则不返回该字段 */
+  patientSwappedFrom?: string
+}
+
 /**
  * 设备绑定（真实：POST /api/v1/devices/:deviceId/bind）
- * @returns { deviceId, status, swapped? } swapped=true 表示从其他患者换绑
+ * @param confirmSwap T299 换绑意图：目标患者已绑定其它设备时，false → 后端 409/20409（不静默改绑），
+ *                    true → 后端同事务先解旧设备再绑本机。技师在确认框点「换绑」后置 true 重试。
+ * @returns { deviceId, status, swapped?, patientSwappedFrom? }
  */
 export async function bindDevice(
   deviceId: string,
-  patientId: string
-): Promise<{ deviceId: string; status: string; swapped?: boolean }> {
+  patientId: string,
+  confirmSwap = false
+): Promise<BindResult> {
   if (USE_MOCK) {
     // T089-MOCK: 等后端 T084 对齐后切换真实
     await new Promise((r) => setTimeout(r, 400))
@@ -17,10 +30,10 @@ export async function bindDevice(
       swapped: false,
     }
   }
-  return request<{ deviceId: string; status: string; swapped?: boolean }>({
+  return request<BindResult>({
     url: `/api/v1/devices/${deviceId}/bind`,
     method: 'POST',
-    data: { patientId },
+    data: { patientId, confirmSwap },
   })
 }
 

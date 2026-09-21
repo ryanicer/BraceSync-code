@@ -6,7 +6,7 @@
 //	GET  /api/v1/devices                          设备分页列表（T030：patientName join）
 //	GET  /api/v1/devices/:deviceId                设备详情
 //	GET  /api/v1/devices/:deviceId/bindings       绑定历史（追溯）
-//	POST /api/v1/devices/:deviceId/bind           绑定（互斥：已被他患者绑定 → 409）
+//	POST /api/v1/devices/:deviceId/bind           绑定（同设备已被他患者绑定 → 自动换绑；目标患者已有其它设备 → 未带 confirmSwap 则 409，带则确认换绑，T299）
 //	POST /api/v1/devices/:deviceId/rebind         换绑（旧绑定历史可追溯）
 //	POST /api/v1/devices/:deviceId/unbind         解绑（幂等）
 //	POST /api/v1/devices/:deviceId/wifi           WiFi 配置状态（wifi_ssid 维护）
@@ -106,8 +106,9 @@ func ok(c *gin.Context, data any) {
 	c.JSON(http.StatusOK, jsonResp{Code: model.CodeOK, Message: "success", Data: data})
 }
 
+// fail 错误响应：Data 为该错误的结构化附带数据（多数为 nil），供前端取机器可读字段而非解析文案
 func fail(c *gin.Context, appErr *model.AppError) {
-	c.JSON(appErr.HTTPStatus, jsonResp{Code: appErr.Code, Message: appErr.Message, Data: nil})
+	c.JSON(appErr.HTTPStatus, jsonResp{Code: appErr.Code, Message: appErr.Message, Data: appErr.Data})
 }
 
 // operatorID 操作人：一律取网关注入的 X-User-Id（T261 身份单一来源）。
@@ -126,9 +127,12 @@ type registerRequest struct {
 	Model    string `json:"model"`
 }
 
+// bindRequest 绑定/换绑入参。ConfirmSwap=T299 确认换绑意图（技师在「该患者已绑定设备 xxx，是否换绑？」
+// 弹窗确认后重试时置 true）；缺省 false，即患者已占用其它设备时按一患者一设备规则 409 拒绝。
 type bindRequest struct {
-	PatientID  string `json:"patientId"`
-	OperatorID string `json:"operatorId"` // T261: 保留字段兼容前端，值被忽略，操作人一律取 X-User-Id
+	PatientID   string `json:"patientId"`
+	OperatorID  string `json:"operatorId"` // T261: 保留字段兼容前端，值被忽略，操作人一律取 X-User-Id
+	ConfirmSwap bool   `json:"confirmSwap"`
 }
 
 type unbindRequest struct {
@@ -186,12 +190,18 @@ type reportRequest struct {
 // BindResponseDTO 绑定/换绑响应体（对齐前端 bindDevice 契约）
 type BindResponseDTO struct {
 	model.DeviceDTO
-	Swapped bool `json:"swapped"` // true=本次为换绑（旧 binding 已关闭）
+	Swapped bool `json:"swapped"` // true=本次关闭过既有绑定（设备级自动换绑 或 T299 患者级确认换绑）
+	// PatientSwappedFrom T299 确认换绑时被解除绑定的原设备号；""=未发生患者级换绑
+	PatientSwappedFrom string `json:"patientSwappedFrom,omitempty"`
 }
 
 // toBindResponse service.BindResult → 前端响应 DTO
 func toBindResponse(r *service.BindResult) BindResponseDTO {
-	return BindResponseDTO{DeviceDTO: r.Device.ToDTO(), Swapped: r.Rebound}
+	return BindResponseDTO{
+		DeviceDTO:          r.Device.ToDTO(),
+		Swapped:            r.Rebound,
+		PatientSwappedFrom: r.PatientSwappedFrom,
+	}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -237,14 +247,16 @@ func (h *Handler) listBindings(c *gin.Context) {
 	ok(c, gin.H{"list": list})
 }
 
-// bind 绑定（契约 bindDevice → ApiResponse<BindResponseDTO>；互斥：已被他患者绑定 → 自动换绑）
+// bind 绑定（契约 bindDevice → ApiResponse<BindResponseDTO>；同设备已被他患者绑定 → 自动换绑；
+// 目标患者已持有其它生效设备：未带 confirmSwap → 409/20409 且 data 带占用设备号；
+// 带 confirmSwap=true → 同事务先解旧设备再绑本机，T299 一患者一设备）
 func (h *Handler) bind(c *gin.Context) {
 	var req bindRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	result, appErr := h.svc.Bind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c))
+	result, appErr := h.svc.Bind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c), req.ConfirmSwap)
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -259,7 +271,7 @@ func (h *Handler) rebind(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	result, appErr := h.svc.Rebind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c))
+	result, appErr := h.svc.Rebind(c.Request.Context(), c.Param("deviceId"), req.PatientID, operatorID(c), req.ConfirmSwap)
 	if appErr != nil {
 		fail(c, appErr)
 		return
