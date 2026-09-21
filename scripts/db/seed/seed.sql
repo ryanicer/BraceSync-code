@@ -362,7 +362,12 @@ INSERT INTO sys_configs (config_key, config_value, description) VALUES
   ('collect_interval_seconds', '1800', '数据采集间隔（秒，运营后台按设计稿秒口径读写；=collect_interval_minutes×60）'),
   ('data_retention_days', '365', '数据保留天数（T256 12.5；清理任务未启用）'),
   ('max_patients', '10000', '最大患者数（T256 12.5；建员上限未启用）'),
-  ('wifi_presets', '[{"ssid":"ClinicWiFi"},{"ssid":"HomeWiFi"}]', 'WiFi 预置列表（JSON 数组，技师端拉取辅助配网）')
+  ('wifi_presets', '[{"ssid":"ClinicWiFi"},{"ssid":"HomeWiFi"}]', 'WiFi 预置列表（JSON 数组，技师端拉取辅助配网）'),
+  -- T302：PRD §7D.12「告警通知模板配置」两项，值播空串 = 未配置（msg-service 两个 sender
+  -- 目前是无模板占位实现，本卡只补参数存储与读写口，不改发送行为）。
+  -- 与迁移 000023 同一份键与描述（CI 集成测只跑 migrations 不跑 seed，两边都要有）。
+  ('notify_wechat_template_id', '', '告警微信模板消息 ID（PRD §7D.12 通知模板配置；空=未配置，直发不带模板）'),
+  ('notify_sms_template_id', '', '告警短信模板 ID（PRD §7D.12 通知模板配置；空=未配置）')
 ON CONFLICT (config_key) DO NOTHING;
 
 -- ===== 告警通知规则默认值（PRD §7D.6）=====

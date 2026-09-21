@@ -312,6 +312,13 @@ type SystemSettingsDTO struct {
 	CollectIntervalSeconds int             `json:"collectIntervalSeconds"` // 采集间隔（秒，设计稿口径）
 	RetentionDays          int             `json:"retentionDays"`          // 数据保留天数
 	MaxPatients            int             `json:"maxPatients"`            // 最大患者数
+	// T302（F1 后端半边，PRD §7D.12 三项「有配置、无读写口」的补齐）：
+	// 三项都用指针语义，同 pressureLowThresholdN —— 现网 settings 页前端尚未带这三个字段，
+	// 按值绑定会让老前端一次保存把它们抹成 0/空。nil = 本次不改该键，沿用库里现值；
+	// GET 恒回数值（缺行按默认），前端不用判缺失。
+	CalibrationOffsetN *float64 `json:"calibrationOffsetN,omitempty"` // 空载校准偏差上限（N，threshold_calibration_offset）
+	WechatTemplateID   *string  `json:"wechatTemplateId,omitempty"`   // 微信模板消息 ID（notify_wechat_template_id）
+	SmsTemplateID      *string  `json:"smsTemplateId,omitempty"`      // 短信模板 ID（notify_sms_template_id）
 }
 
 // LoginResultDTO 登录响应（契约 adminLogin，T030 #9）
