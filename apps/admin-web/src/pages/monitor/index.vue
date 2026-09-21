@@ -54,8 +54,8 @@
         </div>
         <div class="peak-cell peak-value">
           <div class="peak-label">当前最大压力</div>
-          <div class="peak-num" :style="{ color: hmColor(curFrameValue, HM_MAX_N) }">
-            {{ curFrameValue.toFixed(1) }} N
+          <div class="peak-num" :style="{ color: hmColor(curFrameValue, hmMaxN) }">
+            {{ fmtN(curFrameValue) }} N
           </div>
         </div>
         <div class="peak-cell">
@@ -100,6 +100,7 @@
             <span class="realtime-dot" />
             每 2s 刷新
           </span>
+          <span v-if="frameStamp" class="hm-frame-stamp" title="本帧采集时刻（数据侧时间戳）">本帧 {{ frameStamp }}</span>
         </div>
         <div class="heatmap-wrap">
           <div class="hm-size-hint">压力片 4×5 网格 (40mm × 50mm)</div>
@@ -109,12 +110,12 @@
                 v-for="pt in row"
                 :key="pt.pointId"
                 :class="['hm-cell', { 'hm-cell-max': pt.isMax, 'hm-cell-pulse': pt.isMax }]"
-                :style="{ background: hmColor(pt.pressureValue, HM_MAX_N) }"
-                :title="`${pt.pointId} (${pt.label}): ${pt.pressureValue.toFixed(1)} N`"
+                :style="{ background: hmColor(pt.pressureValue, hmMaxN) }"
+                :title="`${pt.pointId} (${pt.label}): ${fmtN(pt.pressureValue, 2)} N`"
                 @click="selectHeatmapPoint(pt)"
               >
                 <span class="hm-cell-id">{{ pt.pointId }}</span>
-                <span class="hm-cell-val">{{ pt.pressureValue.toFixed(0) }}</span>
+                <span class="hm-cell-val">{{ fmtN(pt.pressureValue) }}</span>
               </div>
             </div>
           </div>
@@ -148,7 +149,7 @@
               <tr v-for="pt in flatHeatmap" :key="pt.pointId" :class="{ 'point-max': pt.isMax }">
                 <td>{{ pt.pointId }}</td>
                 <td>{{ pt.label }}</td>
-                <td :style="{ color: hmColor(pt.pressureValue, HM_MAX_N) }">{{ pt.pressureValue.toFixed(1) }}</td>
+                <td :style="{ color: hmColor(pt.pressureValue, hmMaxN) }">{{ fmtN(pt.pressureValue) }}</td>
                 <td>
                   <span class="status-dot" :class="pointStatus(pt.pressureValue)" />
                   {{ pointStatusLabel(pt.pressureValue) }}
@@ -219,7 +220,10 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, T
 // ====== 常量 ======
 const POLL_MS = 2000
 const CHART_WINDOW = 30
-const HM_MAX_N = 60
+// T296：色阶上界与偏高分界改由快照 heatmapMaxN / pressureHighN 下发（与告警引擎同源于 sys_configs）。
+// 此前写死 60 / 45 / 30，是 T203「÷10」之前的量纲，真机亚牛顿数据在页面上恒贴底、色阶全冷。
+const HM_MAX_FALLBACK = 6
+const PRESS_HIGH_FALLBACK = 5
 const BLUE = '#1a6db5'
 const BLUE_ALPHA = 'rgba(26,109,181,0.08)'
 
@@ -256,6 +260,32 @@ const statusLabel = computed(() => {
   if (s === 'abnormal') return '异常'
   if (s === 'offline') return '未佩戴'
   return '加载中'
+})
+
+// T296：渲染口径跟随后端下发值，缺字段（旧镜像/未部署）时回落到 T203 后的默认量纲
+function positiveNum(v: unknown): number | null {
+  return typeof v === 'number' && v > 0 && Number.isFinite(v) ? v : null
+}
+const hmMaxN = computed(() => positiveNum(snapshot.value?.heatmapMaxN) ?? HM_MAX_FALLBACK)
+const pressHighN = computed(() => positiveNum(snapshot.value?.pressureHighN) ?? PRESS_HIGH_FALLBACK)
+
+/** 压力值渲染：先按位数取整再归一 -0，避免亚阈值负值显示成「-0」这种非物理读数 */
+function fmtN(v: number, digits = 1): string {
+  const r = Number(v.toFixed(digits))
+  return (Object.is(r, -0) ? 0 : r).toFixed(digits)
+}
+
+/** 本帧采集时刻（数据侧时间戳）+ 距今秒数：热力图与设备逐帧日志对账的唯一凭据 */
+const frameStamp = computed(() => {
+  const iso = snapshot.value?.pressureRecords?.[0]?.timestamp
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  const at = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  const age = Math.round((Date.now() - d.getTime()) / 1000)
+  if (age < 0 || age >= 86400) return `${at} 采集` // 历史/占位数据不报「距今」
+  return `${at} 采集 · 距今 ${age}s`
 })
 
 /** 将 20 个 heatmap 点按 4 行分组 (每行 5 点，row 优先 P01-P20) */
@@ -303,17 +333,17 @@ const flatHeatmap = computed<PressureHeatmapPoint[]>(() => {
   }))
 })
 
-// 采集点压力状态（设计稿 3.2）
+// 采集点压力状态（设计稿 3.2；分界与后端 PointStatus 同源：0.75× / 1.0× pressureHighN）
 function pointStatus(v: number): string {
   if (v <= 0) return 'status-offline'
-  if (v > 45) return 'status-danger'
-  if (v > 30) return 'status-warn'
+  if (v >= pressHighN.value) return 'status-danger'
+  if (v >= 0.75 * pressHighN.value) return 'status-warn'
   return 'status-ok'
 }
 function pointStatusLabel(v: number): string {
   if (v <= 0) return '无信号'
-  if (v > 45) return '偏高'
-  if (v > 30) return '关注'
+  if (v >= pressHighN.value) return '偏高'
+  if (v >= 0.75 * pressHighN.value) return '关注'
   return '正常'
 }
 
@@ -366,7 +396,8 @@ const chartData = computed<ChartData<'line'>>(() => ({
   ],
 }))
 
-const chartOptions: ChartOptions<'line'> = {
+// 曲线纵轴与色阶共用快照下发的上界（写死会让亚牛顿真机数据整条线贴底，T296）
+const chartOptions = computed<ChartOptions<'line'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
   animation: { duration: 200 },
@@ -376,15 +407,15 @@ const chartOptions: ChartOptions<'line'> = {
       mode: 'index',
       intersect: false,
       callbacks: {
-        label: (c) => `压力：${Number(c.parsed.y).toFixed(1)} N`,
+        label: (c) => `压力：${fmtN(Number(c.parsed.y))} N`,
       },
     },
   },
   scales: {
     y: {
       min: 0,
-      max: HM_MAX_N,
-      ticks: { stepSize: 20, callback: (v) => `${v}N` },
+      max: hmMaxN.value,
+      ticks: { stepSize: hmMaxN.value / 3, callback: (v) => `${fmtN(Number(v))}N` },
       grid: { color: '#f0f0f0' },
     },
     x: {
@@ -392,7 +423,7 @@ const chartOptions: ChartOptions<'line'> = {
       ticks: { maxTicksLimit: 8 },
     },
   },
-}
+}))
 
 // ====== 工具函数 ======
 
@@ -597,6 +628,14 @@ void h
   margin-bottom: 14px;
   display: flex;
   align-items: center;
+}
+
+/* T296：本帧采集时刻（数据侧时间戳），供与设备逐帧日志对账 */
+.hm-frame-stamp {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: #64748b;
 }
 
 /* ===== 患者选择 ===== */
