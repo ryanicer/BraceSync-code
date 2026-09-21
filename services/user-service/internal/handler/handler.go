@@ -1330,6 +1330,8 @@ func toFeelingDTO(r repo.FeelingLogRow) model.FeelingLogDTO {
 		Notes:           r.Notes,
 		ReplyContent:    r.ReplyContent,
 		ReplyTime:       replyTime,
+		// T306：提交时间取 created_at 列（NOT NULL），RFC3339 口径同 replyTime。
+		CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
