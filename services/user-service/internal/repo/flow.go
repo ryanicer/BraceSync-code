@@ -1,7 +1,8 @@
 // T274 告警流程画布数据访问层（flow_template / flow_instance / flow_node_state / flow_node_action）
 //
 // 表归属：四表均 user-service owner（migration 000020）。跨 owner 只有 flow_instance.alert_id
-// 外键指向 alerts（alert-service），本文件只写不读该列 —— 由外键约束拦截不存在的告警。
+// 指向 alerts（alert-service）—— 不建外键（000020 有因），本层只写该列值、不读其列，
+// 存在性由 CreateFlowInstance 事务内校验。
 //
 // 🔴 单一状态权威在后端：flow_node_state 只由本文件的 CreateFlowInstance / ApplyFlowNodeAction
 // 两处写入，读端点不改状态。前端不得自行推算节点色（契约 submitFlowNodeAction 已写同一条）。
@@ -45,7 +46,7 @@ func (e *ErrFlowInstanceExists) Error() string {
 	return "flow instance already exists for this alert"
 }
 
-// ErrFlowAlertNotFound alert_id 外键命中 23503（告警不存在）→ 400。
+// ErrFlowAlertNotFound 告警不存在（CreateFlowInstance 事务内校验）→ 400。
 var ErrFlowAlertNotFound = errors.New("alert not found for flow instance")
 
 // ErrFlowNodeNotFound 节点不属于该实例（flow_node_state 无该行）→ 404。
@@ -326,7 +327,7 @@ func scanFlowInstance(row pgx.Row) (*FlowInstanceRow, error) {
 // 图数据不在本方法解析：nodeIDs / entryNodeIDs 由 handler 依模板 edges 算好后传入，
 // 与 ApplyFlowNodeAction 同口径（数据层不做图遍历）。启动人只落审计，不入实例行。
 //
-// 告警不存在 → ErrFlowAlertNotFound（23503）；该告警已有实例 → ErrFlowInstanceExists（23505）。
+// 告警不存在 → ErrFlowAlertNotFound（事务内存在性校验）；该告警已有实例 → ErrFlowInstanceExists（23505）。
 func (s *PGStore) CreateFlowInstance(ctx context.Context, templateID string, alertID int64, nodeIDs, entryNodeIDs []string) (*FlowInstanceRow, error) {
 	id, err := newFlowID("FLOW_I")
 	if err != nil {
@@ -338,15 +339,21 @@ func (s *PGStore) CreateFlowInstance(ctx context.Context, templateID string, ale
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// alerts 上不带外键（见 000020：alert-service 用 TRUNCATE alerts RESTART IDENTITY 做用例隔离），
+	// 存在性只在这里校，同一事务内校完即插，不给并发窗口留空档。
+	var existsAlert bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM alerts WHERE alert_id = $1)`, alertID).Scan(&existsAlert); err != nil {
+		return nil, err
+	}
+	if !existsAlert {
+		return nil, ErrFlowAlertNotFound
+	}
+
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO flow_instance (instance_id, template_id, alert_id, current_node_id)
 		 VALUES ($1, $2, $3, NULL)`, id, templateID, alertID); err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-			// 本条 INSERT 挂两个外键，按约束名区分：把「模板刚被删除」报成「告警不存在」会误导前端
-			if pgErr.ConstraintName == "flow_instance_alert_id_fkey" {
-				return nil, ErrFlowAlertNotFound
-			}
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" { // 仅剩 template_id 一个外键
 			return nil, ErrFlowTemplateNotFound
 		}
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // alert_id UNIQUE：已有实例

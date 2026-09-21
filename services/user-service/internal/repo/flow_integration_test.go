@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,10 +29,18 @@ const (
 )
 
 // itFlowFixture 建一套独占的「设备 → 告警 → 模板」前置数据；alertID 由 IDENTITY 生成后回读
+//
+// 患者故意复用 seedITData 的 P-USR-IT-1：同包 TestITListPatientsJoinAndFilter 断言 patients
+// 全表行数与团队过滤计数，夹具自建患者会改掉它的期望值（CI 实测 2 → 14）。
 type itFlowFixture struct {
 	templateID string
 	alertID    int64
+	deviceID   string
+	alertSeq   int
 }
+
+// itFlowPatient seedITData 里 status=active 的既有患者
+const itFlowPatient = "P-USR-IT-1"
 
 func newITFlow(t *testing.T, suffix string) *itFlowFixture {
 	t.Helper()
@@ -48,34 +55,47 @@ func newITFlow(t *testing.T, suffix string) *itFlowFixture {
 		require.True(t, exists, "migration 000020 未建出表 %s", tbl)
 	}
 
-	fx := &itFlowFixture{}
-	patient := "P-FX-" + suffix
-	device := "DEV-FX-" + suffix
-	team := "TEAM-FX-" + suffix
+	fx := &itFlowFixture{deviceID: "DEV-FX-" + suffix}
+	if _, err := itStore.pool.Exec(ctx,
+		`INSERT INTO devices (device_id, device_secret_enc, patient_id, status)
+		 VALUES ($1, '\x00'::bytea, $2, 'online')`, fx.deviceID, itFlowPatient); err != nil {
+		t.Fatalf("it: flow fixture 前置数据: %v", err)
+	}
+	fx.alertID = fx.newAlert(t, "T274 夹具告警")
 
-	stmts := []string{
-		fmt.Sprintf(`INSERT INTO teams (team_id, name, member_count, patient_count) VALUES ('%s', '流程夹具团队', 0, 1)
-		 ON CONFLICT (team_id) DO NOTHING`, team),
-		fmt.Sprintf(`INSERT INTO patients (patient_id, name, phone_enc, phone_hash, gender, age, team_id, status) VALUES
-		   ('%s', '流程夹具患者', '\x00'::bytea, 'ff%s' || repeat('0', 58), 'male', 12, '%s', 'active')
-		 ON CONFLICT (patient_id) DO NOTHING`, patient, suffix, team),
-		fmt.Sprintf(`INSERT INTO devices (device_id, device_secret_enc, patient_id, status) VALUES
-		   ('%s', '\x00'::bytea, '%s', 'online') ON CONFLICT (device_id) DO NOTHING`, device, patient),
-	}
-	for _, s := range stmts {
-		if _, err := itStore.pool.Exec(ctx, s); err != nil {
-			t.Fatalf("it: flow fixture 前置数据: %v", err)
+	// 全用例跑在同一个库上：夹具写过的行必须撤回，否则后面的计数类用例被污染
+	t.Cleanup(func() {
+		c := context.Background()
+		for _, s := range []string{
+			`DELETE FROM flow_instance WHERE alert_id IN (SELECT alert_id FROM alerts WHERE device_id = $1)`,
+			`DELETE FROM alerts WHERE device_id = $1`,
+			`DELETE FROM devices WHERE device_id = $1`,
+		} {
+			if _, err := itStore.pool.Exec(c, s, fx.deviceID); err != nil {
+				t.Errorf("it: flow fixture 清理: %v", err)
+			}
 		}
-	}
-	require.NoError(t, itStore.pool.QueryRow(ctx,
-		`INSERT INTO alerts (patient_id, device_id, type, detail, ts)
-		 VALUES ($1, $2, 'pressure_high', 'T274 夹具告警', now()) RETURNING alert_id`,
-		patient, device).Scan(&fx.alertID), "it: 夹具告警插入失败")
+	})
 
 	tpl, err := itStore.CreateFlowTemplate(ctx, "流程夹具模板-"+suffix, itFlowNodes, itFlowEdges, itAdmin)
 	require.NoError(t, err)
 	fx.templateID = tpl.TemplateID
 	return fx
+}
+
+// newAlert 在夹具设备下追加一条告警
+//
+// ts 按序号逐条错开：alerts 上有 uk_alerts_natural(patient_id,device_id,type,ts) 唯一键，
+// 同一夹具的第二条告警若与第一条同刻（now() 取事务起点）会被它拦下，报不到流程外键分支。
+func (fx *itFlowFixture) newAlert(t *testing.T, detail string) int64 {
+	t.Helper()
+	fx.alertSeq++
+	var id int64
+	require.NoError(t, itStore.pool.QueryRow(context.Background(),
+		`INSERT INTO alerts (patient_id, device_id, type, detail, ts)
+		 VALUES ($1, $2, 'pressure_high', $3, now() + make_interval(secs => $4::int)) RETURNING alert_id`,
+		itFlowPatient, fx.deviceID, detail, fx.alertSeq).Scan(&id), "it: 夹具告警插入失败")
+	return id
 }
 
 // nodeStateOf 取某节点状态行（不存在即 require 失败）
@@ -228,13 +248,15 @@ func TestITT274InstanceStartGeneratesStates(t *testing.T) {
 	require.True(t, errors.As(err, &exists), "应返回 *ErrFlowInstanceExists，实际 %v", err)
 	assert.Equal(t, inst.InstanceID, exists.Existing.InstanceID, "409 要带回已有实例供前端跳转")
 
-	// 不存在的告警 → 外键拦截
+	// 不存在的告警 → repo 层存在性校验拦截（alerts 上无外键，见 000020）
 	_, err = itStore.CreateFlowInstance(ctx, fx.templateID, 999999999, []string{"N1"}, []string{"N1"})
 	assert.True(t, errors.Is(err, ErrFlowAlertNotFound), "应返回 ErrFlowAlertNotFound，实际 %v", err)
 
-	// 不存在的模板（告警合法）→ 同一条 INSERT 的另一个外键，必须按约束名区分，
-	// 否则「模板刚被并发删除」会被报成「告警不存在」，前端排查方向整个错掉
-	_, err = itStore.CreateFlowInstance(ctx, "FLOW_T_NOT_EXIST", fx.alertID, []string{"N1"}, []string{"N1"})
+	// 不存在的模板（告警合法）→ 唯一的 template_id 外键，必须回 ErrFlowTemplateNotFound，
+	// 否则「模板刚被并发删除」会被报成「告警不存在」，前端排查方向整个错掉。
+	// 🔴 要用一条没有实例的干净告警：复用 fx.alertID 时 alert_id UNIQUE(23505) 先触发，只会回 409。
+	_, err = itStore.CreateFlowInstance(ctx, "FLOW_T_NOT_EXIST",
+		fx.newAlert(t, "T274 模板外键分支告警"), []string{"N1"}, []string{"N1"})
 	assert.True(t, errors.Is(err, ErrFlowTemplateNotFound), "应返回 ErrFlowTemplateNotFound，实际 %v", err)
 	assert.NotErrorIs(t, err, ErrFlowAlertNotFound)
 
@@ -440,8 +462,10 @@ func TestITT274CheckConstraintsRejectBadEnums(t *testing.T) {
 	require.Error(t, err, "action CHECK 应拒绝枚举外的值")
 	assert.Contains(t, err.Error(), "flow_node_action_action_check")
 
+	// 'doing' 而非 'in_progress'：status 是 VARCHAR(8)，超长先撞 22001 长度错，
+	// 就测不到「枚举外取值被 CHECK 拦下」这条契约了。
 	_, err = itStore.pool.Exec(ctx,
-		`INSERT INTO flow_node_state (instance_id, node_id, status) VALUES ($1, 'NX', 'in_progress')`,
+		`INSERT INTO flow_node_state (instance_id, node_id, status) VALUES ($1, 'NX', 'doing')`,
 		inst.InstanceID)
 	require.Error(t, err, "status CHECK 应拒绝枚举外的值")
 	assert.Contains(t, err.Error(), "flow_node_state_status_check")

@@ -34,9 +34,11 @@ COMMENT ON COLUMN flow_template.name IS '无唯一索引（同 roles 先例）�
 CREATE TABLE flow_instance (
     instance_id      VARCHAR(32)  PRIMARY KEY,
     template_id      VARCHAR(32)  NOT NULL REFERENCES flow_template (template_id),
-    -- 跨 owner 引用（alerts 归 alert-service）：只建外键不读列，与本仓既有惯例一致
-    -- （000001 的 alerts.patient_id REFERENCES patients、000009 review_records.report_file_id）
-    alert_id         BIGINT       NOT NULL UNIQUE REFERENCES alerts (alert_id),
+    -- 🔴 不建指向 alerts 的外键：alert-service 的用例隔离用 `TRUNCATE TABLE alerts RESTART IDENTITY`
+    -- （不带 CASCADE），加入向外键会让它 SQLSTATE 0A000 全线失败（CI 实测 14 个用例）；
+    -- 且 RESTART IDENTITY 会让 alert_id 重发号，外键反而指向错行。alertId 是否存在改由
+    -- repo 层 CreateFlowInstance 事务内 SELECT 校验 → 400。
+    alert_id         BIGINT       NOT NULL UNIQUE,
     current_node_id  VARCHAR(64),
     status           VARCHAR(12)  NOT NULL DEFAULT 'running'
                        CHECK (status IN ('running', 'completed', 'terminated')),
@@ -48,7 +50,7 @@ CREATE INDEX idx_flow_instance_template ON flow_instance (template_id);
 
 COMMENT ON TABLE  flow_instance IS 'T274 运行态流程实例（每条告警一个，2.3 画布的宿主行）';
 COMMENT ON COLUMN flow_instance.current_node_id IS '便捷指针：最近一次推进到的节点。并行/汇聚下可能有多个 current，画布着色必须以 flow_node_state.status=''current'' 集合为准';
-COMMENT ON COLUMN flow_instance.alert_id IS 'UNIQUE = 一条告警一个实例；重复启动由应用层回 409 + 既有实例（幂等跳转）。外键拦截不存在的 alertId → 400';
+COMMENT ON COLUMN flow_instance.alert_id IS 'UNIQUE = 一条告警一个实例；重复启动由应用层回 409 + 既有实例（幂等跳转）。不存在的 alertId 由 repo 层存在性校验回 400（外键见上方说明）';
 
 -- ── 节点运行状态：2.3 画布着色数据源 ──────────────────────────────────
 CREATE TABLE flow_node_state (
