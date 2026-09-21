@@ -97,7 +97,10 @@ test.describe('系统配置', () => {
     await expect(page.getByText('全局系统参数')).toBeVisible()
     await expect(page.locator('.settings-form')).toContainText('数据采集间隔')
     await expect(page.locator('.settings-form')).toContainText('每日佩戴目标时长')
-    await expect(page.locator('.settings-form')).toContainText('压力偏高阈值')
+    // T289 12.4（设计稿 系统配置.html:95-102）：压力阈值独立成「压力阈值配置」卡，
+    // 字段名随稿改为 偏高上限；此处锚点从 .settings-form 换成 .pressure-tier-card，
+    // 不能再用 .settings-form —— 页面上现在有两张表单卡，且该键已不在全局参数卡里。
+    await expect(page.locator('.pressure-tier-card')).toContainText('偏高上限（N）')
     await expect(page.locator('.settings-form')).toContainText('佩戴中断判定时间')
     // T247 新增采集间隔为第一项；定位"每日佩戴目标时长"对应的 el-input-number
     const formItem = page.locator('.el-form-item', { hasText: '每日佩戴目标时长' })

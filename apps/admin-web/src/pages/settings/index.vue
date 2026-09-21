@@ -19,9 +19,6 @@
             <el-form-item label="每日佩戴目标时长（h）">
               <el-input-number v-model="form.dailyWearTargetHours" :min="1" :max="24" />
             </el-form-item>
-            <el-form-item label="压力偏高阈值（N）">
-              <el-input-number v-model="form.pressureHighThresholdN" :min="1" :max="200" />
-            </el-form-item>
             <el-form-item label="压力波动幅度阈值（%）">
               <el-input-number v-model="form.pressureFluctuationPct" :min="1" :max="100" />
             </el-form-item>
@@ -36,6 +33,66 @@
               <el-button type="primary" :loading="saving" @click="saveSettings">保存配置</el-button>
             </el-form-item>
           </el-form>
+        </div>
+
+        <!-- T289 12.4（设计稿 系统配置.html:95-102，三档输入 :98-100）：压力阈值承载。
+             数值一律回显后端现值，不写死设计稿样例的 20/40/60（PM 裁定 ③）；
+             中间档「正常上限」后端不落库（api-contracts.ts:303-305 写死推导规则
+             normalUpper =（偏高上限 + 低压上限）÷ 2，前端不得自行换算法）⇒ 设计稿此处是输入框，
+             实现按契约改为只读回显。 -->
+        <div class="page-card pressure-tier-card">
+          <div class="page-card-title">压力阈值配置</div>
+          <p class="card-desc">患者端热力图颜色分层依据，修改后实时生效</p>
+          <el-form label-width="220px" class="pressure-tier-form">
+            <el-form-item label="低压上限（N）">
+              <el-input-number v-model="form.pressureLowThresholdN" :min="0" :max="200" :step="0.1" />
+              <span class="form-hint">低于此值为蓝色低压 · 写 sys_configs threshold_pressure_low（与告警页 Tab2 同键）</span>
+            </el-form-item>
+            <el-form-item label="正常上限（N）">
+              <el-input-number :model-value="normalUpperN ?? undefined" disabled :step="0.1" />
+              <span class="form-hint">低于此值为绿色正常 · 三档合两键（契约写死，前端不得换算法）=（偏高上限 + 低压上限）÷ 2，后端不落库</span>
+            </el-form-item>
+            <el-form-item label="偏高上限（N）">
+              <el-input-number v-model="form.pressureHighThresholdN" :min="1" :max="200" :step="0.1" />
+              <span class="form-hint">低于此值为黄色偏高，超过为红色高压 · 写 sys_configs threshold_pressure_high</span>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="saving" @click="saveSettings">保存阈值</el-button>
+            </el-form-item>
+          </el-form>
+          <!-- 数值一律回显后端现值（不写死设计稿样例 20/40/60，PM 裁定 ③）；
+               三档绝对阈值 ↔ PRD V3.8 Q3 比例法四档的取值冲突待 Boss 裁决，
+               已登记 PRD V3.17 冲突 ⑥，不在界面文案里向用户播报。 -->
+        </div>
+
+        <!-- T289 12.4（设计稿 系统配置.html:103-137，表头 :107、20 行 :109-128、说明 :131-135）：医生默认阈值 20 点表（只读，单点在告警页网格改） -->
+        <div class="page-card default-threshold-card">
+          <div class="page-card-title">医生默认阈值</div>
+          <p class="card-desc">
+            全 20 个采集点（4×5 网格）逐点列出，未逐点改过时的回退默认值；单点独立阈值在
+            <router-link to="/alerts" class="card-link">告警管理 · 告警规则配置</router-link>
+            的网格内编辑。
+          </p>
+          <el-table :data="pointDefaults" size="small" class="point-table">
+            <el-table-column prop="point" label="采集点" width="100" />
+            <el-table-column prop="grid" label="网格位置" width="110" />
+            <el-table-column label="默认上限(N)" width="130">
+              <template #default="{ row }">{{ row.upper }}</template>
+            </el-table-column>
+            <el-table-column label="默认下限(N)" width="130">
+              <template #default="{ row }">{{ row.lower }}</template>
+            </el-table-column>
+          </el-table>
+          <ul class="threshold-notes">
+            <li><b>数值来源</b>：全点统一默认，等同 sys_configs 的
+              threshold_pressure_high={{ form.pressureHighThresholdN }} /
+              threshold_pressure_low={{ pressureLowN }}（后端现值回显），
+              与告警页 Tab2「统一压力上下限」是同一组键、不建第二份。</li>
+            <li><b>点位命名口径</b>：采集点编号 P01–P20（零填充两位，同 alert_point_rules.point_id），
+              网格位置 R行C列，换算 编号 =（行−1）×5 + 列。</li>
+            <li><b>不列解剖名</b>：20 点的解剖名无来源文档，口径待裁，本表只按网格位置标识。</li>
+            <li><b>量纲</b>：T203 已把压力类阈值统一 ÷10，本表按 N 呈现（设计稿样例的 45/10 为换算前旧值）。</li>
+          </ul>
         </div>
 
         <div class="page-card">
@@ -169,8 +226,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { DEFAULT_THRESHOLDS } from '@bracesync/constants'
 import type { NotifyRule, NotificationRecord, NotifyChannel, NotifyTarget, AlertType } from '@bracesync/shared-types'
 import { alertTypeLabel } from '@bracesync/shared-utils'
 import {
@@ -192,12 +250,36 @@ const form = reactive<SystemSettings>({
   retentionDays: 365,
   maxPatients: 10000,
   dailyWearTargetHours: 22,
-  pressureHighThresholdN: 45,
+  pressureHighThresholdN: DEFAULT_THRESHOLDS.PRESSURE_HIGH_N,
+  // T289 12.4：GET 前须有值，否则低压框渲染成空（契约 :753 恒回数值、默认 1N；
+  // 1 ≡ 迁移 000021 落库的 threshold_pressure_low 与后端 defaultUnifiedLowerN）
+  pressureLowThresholdN: 1,
   pressureFluctuationPct: 30,
   wearInterruptMinutes: 60,
   sensorDriftN: 2.8,
   wifiPresets: [],
 })
+
+/**
+ * T289 12.4：中间档「正常上限」后端不落库（三档合两键，PM 裁定 Q3）。
+ * 推导规则由契约写死（api-contracts.ts:302-306）：normalUpper = (偏高上限 + 低压上限) / 2，不得另推算法。
+ */
+const normalUpperN = computed<number | null>(() => {
+  const low = form.pressureLowThresholdN
+  return low === null || low === undefined ? null : (form.pressureHighThresholdN + low) / 2
+})
+/** threshold_pressure_low 现值；后端 GET 恒回数值，null 只代表尚未加载 */
+const pressureLowN = computed(() => form.pressureLowThresholdN ?? null)
+
+/** 医生默认阈值表：20 点全点统一默认（编号 =（行−1）×5 + 列，设计稿 系统配置.html:109-128） */
+const pointDefaults = computed(() =>
+  Array.from({ length: 20 }, (_, i) => ({
+    point: `P${String(i + 1).padStart(2, '0')}`,
+    grid: `R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`,
+    upper: form.pressureHighThresholdN,
+    lower: pressureLowN.value ?? '—',
+  })),
+)
 
 function logStatusLabel(status: NotificationRecord['status']): string {
   const map: Record<NotificationRecord['status'], string> = { pending: '待发送', sent: '已发送', failed: '失败', degraded: '降级短信' }
@@ -337,10 +419,32 @@ onMounted(async () => {
 .settings-form {
   max-width: 560px;
 }
+/* 与 .settings-form 同宽，但用独立类名：e2e 里 .settings-form 是「全局系统参数」卡的定位锚点 */
+.pressure-tier-form {
+  max-width: 560px;
+}
 .form-hint {
   font-size: 12px;
   color: #999;
   margin-left: 12px;
+}
+.card-desc {
+  font-size: 12px;
+  color: #888;
+  margin: 0 0 14px;
+}
+.card-link {
+  color: #1a6db5;
+}
+.point-table {
+  max-width: 560px;
+}
+.threshold-notes {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.75;
+  color: #888;
 }
 .audit-toolbar {
   display: flex;
