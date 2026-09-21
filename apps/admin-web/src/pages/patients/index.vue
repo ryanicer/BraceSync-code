@@ -44,8 +44,10 @@
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
+            <!-- 设计稿 患者管理.html:92 仍写「活跃」，属稿面未回写且与 PRD §7D.3:1065/:1320 的
+                 「可登录 / 不可登录」两态口径冲突 ⇒ 按 PM 09-22 01:03 裁定 ① 统一两态，不与同列「不可登录」混搭。 -->
             <el-tag :type="row.status === 'active' ? 'success' : 'warning'" size="small">
-              {{ row.status === 'active' ? '活跃' : '不可登录' }}
+              {{ row.status === 'active' ? '可登录' : '不可登录' }}
             </el-tag>
           </template>
         </el-table-column>

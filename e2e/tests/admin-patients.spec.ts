@@ -30,7 +30,26 @@ test.describe('列表渲染', () => {
     await expect(first).toContainText('脊柱侧弯一组')
     await expect(first).toContainText('张建国')
     await expect(first).toContainText('DEV-A3F312')
-    await expect(first).toContainText('活跃')
+    await expect(first).toContainText('可登录')
+  })
+
+  /**
+   * PM 09-22 01:03 裁定 ①：状态列两态统一为「可登录 / 不可登录」（PRD §7D.3:1065 / :1320）。
+   * 设计稿 患者管理.html:92 的「活跃」属稿面未回写，已由 PM 登记文档批次，不由本卡改别人文件。
+   * 「不可登录」含「可登录」子串，故必须逐格精确比文本，不能用整表 not.toContainText。
+   */
+  test('状态列两态只有可登录与不可登录，不再出现「活跃」', async ({ page }) => {
+    await expect(listRows(page).first()).toBeVisible({ timeout: 15_000 })
+    // 🔴 不过滤空表头：下面要用这个下标去取 td:nth-child，过滤会让下标与单元格错位
+    const heads = await listHeads(page).evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()))
+    const col = heads.indexOf('状态')
+    expect(col, `状态列在位，实际表头：${JSON.stringify(heads)}`).toBeGreaterThan(-1)
+    const cells = listRows(page).locator(`td:nth-child(${col + 1})`)
+    const texts = await cells.evaluateAll((tds) => tds.map((td) => (td.textContent ?? '').trim()))
+    expect(texts.length, '逐行比对，不是只验一行').toBe(8)
+    for (const t of texts) expect(['可登录', '不可登录'], `状态文案越界：「${t}」`).toContain(t)
+    expect(texts).toContain('可登录')
+    expect(texts).toContain('不可登录')
   })
 
   // T289 F7：PRD §7D.3:1062/:1464 禁用「待分配」，非 active 一律显示「不可登录」
