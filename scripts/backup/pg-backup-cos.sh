@@ -101,48 +101,91 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] 清理过期备份..." | tee -a "$LOG_FILE"
 # 清理本地临时文件（只保留最近 3 天）
 find "$BACKUP_DIR" -name 'bracesync-*.sql.gz' -mtime +3 -delete 2>&1 | tee -a "$LOG_FILE"
 
+# 清理 COS 过期备份
+# coscmd list 每个对象一行，列为「对象键 大小 存储类别 日期 时间」；原先取 awk '{print $NF}'
+# 拿到的是时间列（如 02:00:02），既删不掉对象又会让后面的日期匹配失败。
+# 统一抽对象键 token，与列顺序无关。
+# DRY_RUN=1 只报告不删除。
+DRY_RUN="${DRY_RUN:-0}"
+PRUNED=0
+PRUNE_FAILED=0
+
+prune_report() {
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "  [DRY_RUN] 本应删除 $1: $2 ($3)" | tee -a "$LOG_FILE"
+  else
+    echo "  删除过期 $1: $2 ($3)" | tee -a "$LOG_FILE"
+  fi
+}
+
 # 清理 COS daily（保留 7 天）
-COS_DAILY_FILES=$(coscmd list "${COS_BASE_PATH}/daily/" 2>&1 | grep '.sql.gz' | awk '{print $NF}' || true)
-for f in $COS_DAILY_FILES; do
-  FILE_DATE=$(echo "$f" | grep -oP '\d{4}-\d{2}-\d{2}')
+COS_DAILY_KEYS=$(coscmd list "${COS_BASE_PATH}/daily/" 2>&1 | grep -oE '[^[:space:]]+\.sql\.gz' | sort || true)
+for f in $COS_DAILY_KEYS; do
+  FILE_DATE=$(echo "$f" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | tail -1 || true)
   if [ -n "$FILE_DATE" ]; then
     AGE_DAYS=$(( ($(date +%s) - $(date -d "$FILE_DATE" +%s)) / 86400 ))
     if [ "$AGE_DAYS" -gt "$RETENTION_DAILY" ]; then
-      echo "  删除过期 daily: $f (${AGE_DAYS}天)" | tee -a "$LOG_FILE"
-      coscmd delete "$f" 2>&1 | tee -a "$LOG_FILE"
+      prune_report "daily" "$f" "${AGE_DAYS}天"
+      if [ "$DRY_RUN" != "1" ]; then
+        if coscmd delete "$f" >>"$LOG_FILE" 2>&1; then
+          PRUNED=$((PRUNED + 1))
+        else
+          PRUNE_FAILED=$((PRUNE_FAILED + 1))
+          echo "  [ERROR] 删除失败: $f" | tee -a "$LOG_FILE"
+        fi
+      fi
     fi
   fi
 done
 
 # 清理 COS weekly（保留 4 周）
-COS_WEEKLY_FILES=$(coscmd list "${COS_BASE_PATH}/weekly/" 2>&1 | grep '.sql.gz' | awk '{print $NF}' || true)
-for f in $COS_WEEKLY_FILES; do
-  WEEK_STR=$(echo "$f" | grep -oP 'week-\d{2}')
+COS_WEEKLY_KEYS=$(coscmd list "${COS_BASE_PATH}/weekly/" 2>&1 | grep -oE '[^[:space:]]+\.sql\.gz' | sort || true)
+for f in $COS_WEEKLY_KEYS; do
+  WEEK_STR=$(echo "$f" | grep -oE 'week-[0-9]{2}' | tail -1 || true)
   if [ -n "$WEEK_STR" ]; then
-    WEEK_NUM_FILE=$(echo "$WEEK_STR" | grep -oP '\d{2}')
+    WEEK_NUM_FILE=$(echo "$WEEK_STR" | grep -oE '[0-9]{2}' | tail -1 || true)
     CURRENT_WEEK=$(date '+%W')
     AGE_WEEKS=$(( (10#$CURRENT_WEEK - 10#$WEEK_NUM_FILE + 53) % 53 ))
     if [ "$AGE_WEEKS" -gt "$RETENTION_WEEKLY" ]; then
-      echo "  删除过期 weekly: $f (${AGE_WEEKS}周)" | tee -a "$LOG_FILE"
-      coscmd delete "$f" 2>&1 | tee -a "$LOG_FILE"
+      prune_report "weekly" "$f" "${AGE_WEEKS}周"
+      if [ "$DRY_RUN" != "1" ]; then
+        if coscmd delete "$f" >>"$LOG_FILE" 2>&1; then
+          PRUNED=$((PRUNED + 1))
+        else
+          PRUNE_FAILED=$((PRUNE_FAILED + 1))
+          echo "  [ERROR] 删除失败: $f" | tee -a "$LOG_FILE"
+        fi
+      fi
     fi
   fi
 done
 
 # 清理 COS monthly（保留 3 月）
-COS_MONTHLY_FILES=$(coscmd list "${COS_BASE_PATH}/monthly/" 2>&1 | grep '.sql.gz' | awk '{print $NF}' || true)
-for f in $COS_MONTHLY_FILES; do
-  MONTH_STR=$(echo "$f" | grep -oP 'month-\d{4}-\d{2}')
+COS_MONTHLY_KEYS=$(coscmd list "${COS_BASE_PATH}/monthly/" 2>&1 | grep -oE '[^[:space:]]+\.sql\.gz' | sort || true)
+for f in $COS_MONTHLY_KEYS; do
+  MONTH_STR=$(echo "$f" | grep -oE 'month-[0-9]{4}-[0-9]{2}' | tail -1 || true)
   if [ -n "$MONTH_STR" ]; then
-    MONTH_FILE=$(echo "$MONTH_STR" | grep -oP '\d{4}-\d{2}')
-    CURRENT_MONTH=$(date '+%Y-%m')
+    MONTH_FILE=$(echo "$MONTH_STR" | grep -oE '[0-9]{4}-[0-9]{2}' | tail -1 || true)
     AGE_MONTHS=$(( (10#$(date '+%Y') * 12 + 10#$(date '+%m')) - (10#$(echo "$MONTH_FILE" | cut -d'-' -f1) * 12 + 10#$(echo "$MONTH_FILE" | cut -d'-' -f2)) ))
     if [ "$AGE_MONTHS" -gt "$RETENTION_MONTHLY" ]; then
-      echo "  删除过期 monthly: $f (${AGE_MONTHS}月)" | tee -a "$LOG_FILE"
-      coscmd delete "$f" 2>&1 | tee -a "$LOG_FILE"
+      prune_report "monthly" "$f" "${AGE_MONTHS}月"
+      if [ "$DRY_RUN" != "1" ]; then
+        if coscmd delete "$f" >>"$LOG_FILE" 2>&1; then
+          PRUNED=$((PRUNED + 1))
+        else
+          PRUNE_FAILED=$((PRUNE_FAILED + 1))
+          echo "  [ERROR] 删除失败: $f" | tee -a "$LOG_FILE"
+        fi
+      fi
     fi
   fi
 done
+
+echo "  清理小结: 删除 ${PRUNED} 个，失败 ${PRUNE_FAILED} 个（保留策略 ${RETENTION_DAILY}日/${RETENTION_WEEKLY}周/${RETENTION_MONTHLY}月；DRY_RUN=${DRY_RUN}）" | tee -a "$LOG_FILE"
+if [ "$PRUNE_FAILED" -ne 0 ]; then
+  echo "[ERROR] 存在删除失败的过期备份，详见 $LOG_FILE" | tee -a "$LOG_FILE"
+  exit 1
+fi
 
 #---------- 清理旧日志（保留 30 天）----------
 find "$LOG_DIR" -name 'backup-*.log' -mtime +30 -delete 2>&1 || true
