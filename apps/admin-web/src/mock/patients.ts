@@ -109,6 +109,9 @@ export interface RealtimeSnapshot {
   pressureRecords: PressureRecord[]
   alerts: Alert[]
   pressureHeatmap: PressureHeatmapPoint[]
+  /** T296 展示口径：色阶上界 / 偏高分界（N），与后端 sys_configs 同源；缺字段时前端回落到 6 / 5 */
+  heatmapMaxN?: number
+  pressureHighN?: number
 }
 
 export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
