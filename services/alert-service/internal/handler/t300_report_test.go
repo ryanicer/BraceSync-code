@@ -230,7 +230,7 @@ func TestT300_ExportHeadersAndRows(t *testing.T) {
 	assert.Equal(t, "2026-09-02 00:05:00", records[1][9], "采集时间按北京时间，不是 UTC")
 	assert.Equal(t, "2026-09-02 01:00:00", records[1][12], "开始处理时间同样转北京")
 	assert.Equal(t, "", records[1][13], "未处理 ⇒ 处理时间留空")
-	assert.Equal(t, "压力超阈值", records[1][4])
+	assert.Equal(t, "压力偏高", records[1][4])
 	assert.Equal(t, "45.00", records[1][7])
 	assert.Equal(t, "52.50", records[1][8])
 	assert.Equal(t, "未读", records[1][10])

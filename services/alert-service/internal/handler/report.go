@@ -31,9 +31,11 @@ const (
 	csvBOM = "\ufeff"
 )
 
-// reportAlertTypeLabels 告警类型的中文口径（仅展示层；未知值原样输出）
+// reportAlertTypeLabels 告警类型的中文口径（仅展示层；未知值原样输出）。
+// 措辞跟后台「告警管理」页现状一致（同一告警在两处不得叫两个名）；
+// T272 裁定的新名（设备离线 / 传感器标定异常）整仓尚未回写，落地后随该卡统一改。
 var reportAlertTypeLabels = map[string]string{
-	"pressure_high":        "压力超阈值",
+	"pressure_high":        "压力偏高",
 	"pressure_fluctuation": "压力波动",
 	"wear_interrupt":       "佩戴中断",
 	"sensor_drift":         "传感器漂移",

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'fs'
 import { adminRoutes, adminLogin, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
@@ -139,7 +140,8 @@ test.describe('详情抽屉', () => {
 
     await drawer.locator('.el-drawer__close-btn').click()
     await expect(drawer).toBeHidden()
-    await expect(tableRows(page)).toHaveCount(rowCount) // 关抽屉不改变列表（未触发筛选/翻页）
+    // 只数列表那一张表：T300 后抽屉里还有两张汇总表，全局 .el-table 选择器会把它们算进来
+    await expect(page.locator('.page-card .el-table__body-wrapper tbody tr')).toHaveCount(rowCount) // 关抽屉不改变列表（未触发筛选/翻页）
   })
 
   test('抽屉可关闭', async ({ page }) => {
@@ -148,5 +150,50 @@ test.describe('详情抽屉', () => {
     await expect(drawer).toBeVisible()
     await drawer.locator('.el-drawer__close-btn').click()
     await expect(drawer).toBeHidden()
+  })
+})
+
+/**
+ * T300 异常报告最小入口（合同 §二 患者管理）：抽屉内按「患者 + 日期范围」出汇总 + 导出 CSV。
+ * 断言两件事：① 汇总三视图计数与总数自洽（口径没错配）；② 导出的 CSV 明细行数 == 页面显示的总数
+ * （汇总与明细同源，这条正是后端「同一 WHERE」设计在前端的可见结果）。
+ */
+test.describe('T300 异常报告入口', () => {
+  test('进抽屉自动出汇总，状态计数之和等于总数', async ({ page }) => {
+    await tableRows(page).filter({ hasText: '林小雨' }).click()
+    const section = page.locator('.el-drawer .abnormal-report')
+    const totalLine = section.locator('.report-total')
+    await expect(totalLine).toContainText('共 ')
+
+    const text = await totalLine.innerText()
+    const total = Number(/共 (\d+) 条/.exec(text)?.[1] ?? -1)
+    expect(total, `汇总总数应为正整数，实际文本「${text}」`).toBeGreaterThan(0)
+    const statusSum = ['待处理', '处理中', '已处理']
+      .reduce((n, label) => n + Number(new RegExp(`${label} (\\d+)`).exec(text)?.[1] ?? -1), 0)
+    expect(statusSum, '三状态计数不重不漏 = 总数').toBe(total)
+    await expect(section.getByRole('button', { name: '导出 CSV' })).toBeVisible()
+    // 两个视图各出一张表（按类型 / 按日期），且都有行
+    const tables = section.locator('.el-table')
+    await expect(tables).toHaveCount(2)
+    await expect(tables.nth(0).locator('tbody tr').first()).toBeVisible()
+    await expect(tables.nth(1).locator('tbody tr').first()).toBeVisible()
+  })
+
+  test('导出 CSV：文件名含患者与区间，明细行数等于页面总数', async ({ page }) => {
+    await tableRows(page).filter({ hasText: '林小雨' }).click()
+    const section = page.locator('.el-drawer .abnormal-report')
+    const total = Number(/共 (\d+) 条/.exec(await section.locator('.report-total').innerText())?.[1] ?? -1)
+    expect(total).toBeGreaterThan(0)
+
+    const download = page.waitForEvent('download')
+    await section.getByRole('button', { name: '导出 CSV' }).click()
+    const file = await download
+    expect(file.suggestedFilename()).toMatch(/^abnormal-report-PT-001-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.csv$/)
+
+    const raw = readFileSync(await file.path())
+    expect(raw.subarray(0, 3).toString('hex'), 'Excel 打开不乱码需 UTF-8 BOM').toBe('efbbbf')
+    const lines = raw.toString('utf8').slice(1).trim().split('\r\n')
+    expect(lines[0].split(',')).toHaveLength(16)
+    expect(lines.length - 1, 'CSV 明细行数 = 汇总总数').toBe(total)
   })
 })
