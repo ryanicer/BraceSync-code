@@ -116,15 +116,19 @@ func (f *FakeStore) patientOtherDevice(patientID, targetDeviceID string) string 
 	return ""
 }
 
-func (f *FakeStore) Bind(_ context.Context, p repo.BindParams) (*model.Binding, error) {
+func (f *FakeStore) Bind(_ context.Context, p repo.BindParams) (*repo.BindOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	dev, ok := f.devices[p.DeviceID]
 	if !ok {
 		return nil, repo.ErrNotFound
 	}
+	var swappedFrom string
 	if other := f.patientOtherDevice(p.PatientID, p.DeviceID); other != "" {
-		return nil, &repo.ErrPatientHasDevice{PatientID: p.PatientID, OtherDeviceID: other}
+		if !p.ConfirmSwap {
+			return nil, &repo.ErrPatientHasDevice{PatientID: p.PatientID, OtherDeviceID: other}
+		}
+		swappedFrom = f.releasePatientDevice(other, p.OperatorID) // T299 确认换绑：同一次调用内解旧绑新
 	}
 
 	var prevActive *model.Binding
@@ -158,10 +162,10 @@ func (f *FakeStore) Bind(_ context.Context, p repo.BindParams) (*model.Binding, 
 	dev.BindTime = &now
 	dev.Status = model.NextStatusOnBind(dev.Status)
 	dev.UpdatedAt = now
-	return prevActive, nil
+	return repo.NewBindOutcome(prevActive, swappedFrom), nil
 }
 
-func (f *FakeStore) Rebind(_ context.Context, p repo.BindParams) (*model.Binding, error) {
+func (f *FakeStore) Rebind(_ context.Context, p repo.BindParams) (*repo.BindOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	dev, ok := f.devices[p.DeviceID]
@@ -175,8 +179,12 @@ func (f *FakeStore) Rebind(_ context.Context, p repo.BindParams) (*model.Binding
 	if active.PatientID == p.PatientID {
 		return nil, nil // 幂等
 	}
+	var swappedFrom string
 	if other := f.patientOtherDevice(p.PatientID, p.DeviceID); other != "" {
-		return nil, &repo.ErrPatientHasDevice{PatientID: p.PatientID, OtherDeviceID: other}
+		if !p.ConfirmSwap {
+			return nil, &repo.ErrPatientHasDevice{PatientID: p.PatientID, OtherDeviceID: other}
+		}
+		swappedFrom = f.releasePatientDevice(other, p.OperatorID) // T299 确认换绑：关闭本机旧绑定之前先解旧设备
 	}
 
 	now := time.Now()
@@ -198,7 +206,26 @@ func (f *FakeStore) Rebind(_ context.Context, p repo.BindParams) (*model.Binding
 	dev.PatientID = strPtr(p.PatientID)
 	dev.BindTime = &now
 	dev.UpdatedAt = now
-	return &cp, nil
+	return repo.NewBindOutcome(&cp, swappedFrom), nil
+}
+
+// releasePatientDevice T299 确认换绑：解除该患者原设备的绑定（关闭 binding 写 reason=rebind + 设备归属清空），
+// 返回被解除的设备号，与 PGStore.swapPatientOtherDevice 的两次 UPDATE 同语义。
+func (f *FakeStore) releasePatientDevice(deviceID, operatorID string) string {
+	if active := f.activeBinding(deviceID); active != nil {
+		now := time.Now()
+		active.UnbindAt = &now
+		active.Reason = strPtr(model.ReasonRebind)
+		active.OperatorID = strPtr(operatorID)
+	}
+	if dev, ok := f.devices[deviceID]; ok {
+		now := time.Now()
+		dev.PatientID = nil
+		dev.BindTime = nil
+		dev.Status = model.StatusUnbound
+		dev.UpdatedAt = now
+	}
+	return deviceID
 }
 
 func (f *FakeStore) Unbind(_ context.Context, deviceID, operatorID string) (bool, error) {

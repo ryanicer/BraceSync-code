@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bracesync/bracesync/services/device-service/internal/model"
 )
 
 // itSeedPatientT299 幂等插入本文件专用患者（patients owner=user-service，此处仅集成测试最小夹具）
@@ -149,4 +151,94 @@ func TestIT_ActivePatientUniqueIndex_StillGuards(t *testing.T) {
 	assert.Equal(t, devE, phd.OtherDeviceID)
 
 	itUnbind(ctx, t, store, devE)
+	itUnbind(ctx, t, store, devF)
+}
+
+// 确认换绑（PRD §7C.3 技师确认后重试）：同事务内解 A 绑 B，两步要么都成要么都不落库
+func TestIT_Bind_ConfirmSwap_SwapsInOneTransaction(t *testing.T) {
+	const (
+		patientID  = "P-DEV-IT-T299-SW"
+		devG, devH = "DEV-IT-T299-G", "DEV-IT-T299-H"
+	)
+	ctx := context.Background()
+	store := newITStore()
+	itSeedPatientT299(ctx, t, patientID, "da2e")
+	itRegister(ctx, t, store, devG)
+	itRegister(ctx, t, store, devH)
+
+	_, err := store.Bind(ctx, BindParams{DeviceID: devG, PatientID: patientID, OperatorID: itTech})
+	require.NoError(t, err)
+
+	out, err := store.Bind(ctx, BindParams{
+		DeviceID: devH, PatientID: patientID, OperatorID: itTech, ConfirmSwap: true,
+	})
+	require.NoError(t, err, "带换绑意图必须放行")
+	require.NotNil(t, out)
+	assert.Equal(t, devG, out.PatientSwappedFrom, "须带出被解除的原设备号")
+
+	devGRow, err := store.GetDevice(ctx, devG)
+	require.NoError(t, err)
+	assert.Nil(t, devGRow.PatientID, "旧设备归属须在事务内清空")
+	assert.Equal(t, model.StatusUnbound, devGRow.Status)
+
+	devHRow, err := store.GetDevice(ctx, devH)
+	require.NoError(t, err)
+	require.NotNil(t, devHRow.PatientID)
+	assert.Equal(t, patientID, *devHRow.PatientID)
+
+	// 历史可追溯：旧设备 binding 被关闭且 reason=rebind，且没多出活跃行
+	bindings, err := store.ListBindings(ctx, devG)
+	require.NoError(t, err)
+	require.Len(t, bindings, 1)
+	require.NotNil(t, bindings[0].UnbindAt)
+	require.NotNil(t, bindings[0].Reason)
+	assert.Equal(t, model.ReasonRebind, *bindings[0].Reason)
+
+	// 库层不变式：该患者名下活跃设备恰好一台
+	var active int
+	require.NoError(t, itPool.QueryRow(ctx,
+		`SELECT count(*) FROM devices WHERE patient_id = $1`, patientID).Scan(&active))
+	assert.Equal(t, 1, active, "确认换绑后患者仍只能持有一台生效设备")
+
+	itUnbind(ctx, t, store, devH)
+}
+
+// 确认换绑对 rebind 写入口同样生效，且不带意图时仍拒（同一事务边界，两个入口口径一致）
+func TestIT_Rebind_ConfirmSwap_SwapsPatientDevice(t *testing.T) {
+	const (
+		patient3, patient4 = "P-DEV-IT-T299-RB3", "P-DEV-IT-T299-RB4"
+		devI, devJ, devK   = "DEV-IT-T299-I", "DEV-IT-T299-J", "DEV-IT-T299-K"
+	)
+	ctx := context.Background()
+	store := newITStore()
+	itSeedPatientT299(ctx, t, patient3, "da2f")
+	itSeedPatientT299(ctx, t, patient4, "da30")
+	for _, d := range []string{devI, devJ, devK} {
+		itRegister(ctx, t, store, d)
+	}
+	_, err := store.Bind(ctx, BindParams{DeviceID: devI, PatientID: patient3, OperatorID: itTech})
+	require.NoError(t, err)
+	_, err = store.Bind(ctx, BindParams{DeviceID: devJ, PatientID: patient4, OperatorID: itTech})
+	require.NoError(t, err)
+	_, err = store.Bind(ctx, BindParams{DeviceID: devK, PatientID: patient4, OperatorID: itTech})
+	var phd *ErrPatientHasDevice
+	require.ErrorAs(t, err, &phd, "换绑前该患者已占用两台设备，先拒掉多余的那台")
+
+	out, err := store.Rebind(ctx, BindParams{
+		DeviceID: devI, PatientID: patient4, OperatorID: itTech, ConfirmSwap: true,
+	})
+	require.NoError(t, err, "rebind 带意图须放行")
+	require.NotNil(t, out)
+	assert.Equal(t, devJ, out.PatientSwappedFrom, "被解除的应是目标患者原设备")
+
+	devIRow, err := store.GetDevice(ctx, devI)
+	require.NoError(t, err)
+	require.NotNil(t, devIRow.PatientID)
+	assert.Equal(t, patient4, *devIRow.PatientID)
+
+	devJRow, err := store.GetDevice(ctx, devJ)
+	require.NoError(t, err)
+	assert.Nil(t, devJRow.PatientID, "目标患者原设备被显式解除")
+
+	itUnbind(ctx, t, store, devI)
 }

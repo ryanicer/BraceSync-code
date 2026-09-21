@@ -62,13 +62,13 @@ func TestBindingMutex_OneActivePerDevice(t *testing.T) {
 	registerAndAddPatient(t, svc, store, devID, "P20260002")
 
 	// 第一次绑定：设备绑定到 P20260001
-	result1, appErr := svc.Bind(ctx, devID, "P20260001", "")
+	result1, appErr := svc.Bind(ctx, devID, "P20260001", "", false)
 	require.Nil(t, appErr)
 	require.NotNil(t, result1)
 	assert.False(t, result1.Rebound, "first bind should not be a rebind")
 
 	// 第二次绑定：同设备绑定到 P20260002 → 真实实现自动换绑
-	result2, appErr := svc.Bind(ctx, devID, "P20260002", "")
+	result2, appErr := svc.Bind(ctx, devID, "P20260002", "", false)
 
 	t.Log("KNOWN_RED upgraded: now delegates to real implementation. Second bind auto-rebinds (succeeds as rebind, not rejected)")
 	require.Nil(t, appErr)
@@ -85,10 +85,10 @@ func TestBindingMutex_DifferentDevice(t *testing.T) {
 	registerAndAddPatient(t, svc, store, "PRS-ML05-RC-20260701001", "P20260001")
 	registerAndAddPatient(t, svc, store, "PRS-ML05-RC-20260701002", "P20260002")
 
-	result1, appErr := svc.Bind(ctx, "PRS-ML05-RC-20260701001", "P20260001", "")
+	result1, appErr := svc.Bind(ctx, "PRS-ML05-RC-20260701001", "P20260001", "", false)
 	require.Nil(t, appErr)
 
-	result2, appErr := svc.Bind(ctx, "PRS-ML05-RC-20260701002", "P20260002", "")
+	result2, appErr := svc.Bind(ctx, "PRS-ML05-RC-20260701002", "P20260002", "", false)
 	require.Nil(t, appErr)
 
 	t.Log("KNOWN_RED upgraded: now delegates to real implementation. Different devices can each have one active binding")
@@ -105,11 +105,11 @@ func TestRebindHistory_PreservesUnbindInfo(t *testing.T) {
 	registerAndAddPatient(t, svc, store, devID, "P20260002")
 
 	// Step 1: 绑定到 P20260001
-	_, appErr := svc.Bind(ctx, devID, "P20260001", "")
+	_, appErr := svc.Bind(ctx, devID, "P20260001", "", false)
 	require.Nil(t, appErr)
 
 	// Step 2: 换绑到 P20260002（自动换绑：旧绑定写 unbind_at+reason=rebind）
-	_, appErr = svc.Bind(ctx, devID, "P20260002", "T0001")
+	_, appErr = svc.Bind(ctx, devID, "P20260002", "T0001", false)
 	require.Nil(t, appErr)
 
 	// 查绑定历史验证旧绑定记录
@@ -139,7 +139,7 @@ func TestUnbind_ReasonUnbind(t *testing.T) {
 	registerAndAddPatient(t, svc, store, devID, "P20260001")
 
 	// 先绑定
-	_, appErr := svc.Bind(ctx, devID, "P20260001", "")
+	_, appErr := svc.Bind(ctx, devID, "P20260001", "", false)
 	require.Nil(t, appErr)
 
 	// 解绑（非换绑）
@@ -171,7 +171,7 @@ func TestStateMachine_UnboundToOnline(t *testing.T) {
 	devID := "PRS-ML05-RC-20260701001"
 
 	registerAndAddPatient(t, svc, store, devID, "P20260001")
-	_, appErr := svc.Bind(ctx, devID, "P20260001", "")
+	_, appErr := svc.Bind(ctx, devID, "P20260001", "", false)
 	require.Nil(t, appErr)
 
 	now := time.Now()
@@ -197,7 +197,7 @@ func TestStateMachine_UnboundToOffline(t *testing.T) {
 	devID := "PRS-ML05-RC-20260701001"
 
 	registerAndAddPatient(t, svc, store, devID, "P20260001")
-	_, appErr := svc.Bind(ctx, devID, "P20260001", "")
+	_, appErr := svc.Bind(ctx, devID, "P20260001", "", false)
 	require.Nil(t, appErr)
 
 	// 绑定后设备状态变为 offline（NextStatusOnBind: unbound→offline）
@@ -222,7 +222,7 @@ func TestStateMachine_UnboundToAbnormal(t *testing.T) {
 	devID := "PRS-ML05-RC-20260701001"
 
 	registerAndAddPatient(t, svc, store, devID, "P20260001")
-	_, appErr := svc.Bind(ctx, devID, "P20260001", "")
+	_, appErr := svc.Bind(ctx, devID, "P20260001", "", false)
 	require.Nil(t, appErr)
 
 	appErr = svc.Touch(ctx, devID, time.Now(), 1)
@@ -254,7 +254,7 @@ func TestStateMachine_ReportingUpdatesLastReportAt(t *testing.T) {
 	devID := "PRS-ML05-RC-20260701001"
 
 	registerAndAddPatient(t, svc, store, devID, "P20260001")
-	_, appErr := svc.Bind(ctx, devID, "P20260001", "")
+	_, appErr := svc.Bind(ctx, devID, "P20260001", "", false)
 	require.Nil(t, appErr)
 
 	oldTime := time.Now().Add(-5 * time.Minute)

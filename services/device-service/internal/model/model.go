@@ -93,6 +93,9 @@ type AppError struct {
 	Code       int    `json:"code"`
 	Message    string `json:"message"`
 	HTTPStatus int    `json:"-"`
+	// Data 错误的结构化附带数据（T299：409 携带占用中的设备号，供前端填提示，不让它解析文案）；
+	// 由 handler 放进统一响应体的 data 字段，本身不参与序列化。
+	Data any `json:"-"`
 }
 
 func (e *AppError) Error() string { return fmt.Sprintf("code=%d: %s", e.Code, e.Message) }

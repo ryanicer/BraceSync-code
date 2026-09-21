@@ -28,6 +28,26 @@ describe('T144 契约漂移门禁（tech-miniapp 真实路径）', () => {
     expect(res.status).toBe('online')
   })
 
+  // T299 一患者一设备：换绑意图上行、被解除设备号下行，字段名须与后端 DTO 同步
+  it('T299 bindDevice 出入参：confirmSwap 上行 / patientSwappedFrom 下行', async () => {
+    request.mockResolvedValue({
+      deviceId: 'D00002', status: 'offline', swapped: true, patientSwappedFrom: 'D00001',
+    })
+    const res = await bindDevice('D00002', 'P00001', true)
+    const call = request.mock.calls[0][0] as { url: string; data: Record<string, unknown> }
+    expect(call.url).toBe('/api/v1/devices/D00002/bind')
+    expect(call.data).toMatchObject({ patientId: 'P00001', confirmSwap: true })
+    expect(res.swapped).toBe(true)
+    expect(res.patientSwappedFrom).toBe('D00001')
+  })
+
+  it('T299 bindDevice 缺省不带换绑意图（默认走后端拒绝路径）', async () => {
+    request.mockResolvedValue({ deviceId: 'D00003', status: 'online' })
+    await bindDevice('D00003', 'P00001')
+    expect((request.mock.calls[0][0] as { data: Record<string, unknown> }).data)
+      .toMatchObject({ confirmSwap: false })
+  })
+
   it('setDeviceWifi 真实响应读取 deviceId/wifiStatus', async () => {
     request.mockResolvedValue({ deviceId: 'D00001', wifiStatus: 'connected' })
     const res = await setDeviceWifi('D00001', 'MyWifi')

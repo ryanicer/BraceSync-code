@@ -73,7 +73,7 @@ import { useDeviceStore } from '../../stores/device'
 import { useInstallStore } from '../../stores/install'
 import { discoverDevices, initBluetooth, connectDevice, readDeviceInfo, registerBleStateListener, closeBLEConnection } from '../../utils/ble'
 import { bleLog } from '../../utils/ble-log'
-import { bindDevice } from '../../api/device'
+import { bindDevice, type BindResult } from '../../api/device'
 import { createInstall } from '../../api/install'
 import { getPatient } from '../../api/patient'
 
@@ -105,6 +105,35 @@ function scanDevice() {
   uni.showToast({ title: '扫码成功（mock）', icon: 'none' })
 }
 
+// T299 一患者一设备：后端 409 带 occupiedDeviceId 时，按 PRD §7C.3 弹「是否换绑？」
+// —— 确认才带换绑意图重试；取消则不动任何本地状态，也不进安装流程。
+type BindAttempt = { cancelled: true } | { cancelled: false; resp: BindResult }
+
+function askSwapConfirm(deviceId: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    uni.showModal({
+      title: '患者已绑定设备',
+      content: `该患者已绑定设备 ${deviceId}，是否换绑？确认后旧绑定关系自动解除`,
+      confirmText: '换绑',
+      cancelText: '取消',
+      success: (r) => resolve(!!r.confirm),
+      fail: () => resolve(false),
+    })
+  })
+}
+
+async function bindWithSwapConfirm(devId: string, patId: string): Promise<BindAttempt> {
+  try {
+    return { cancelled: false, resp: await bindDevice(devId, patId) }
+  } catch (e) {
+    const err = e as { code?: number; data?: { occupiedDeviceId?: string } }
+    const occupied = err.data?.occupiedDeviceId
+    if (err.code !== 20409 || !occupied) throw e
+    if (!(await askSwapConfirm(occupied))) return { cancelled: true }
+    return { cancelled: false, resp: await bindDevice(devId, patId, true) }
+  }
+}
+
 async function bindManual() {
   const devId = manualDeviceId.value.trim()
   const patId = patientId.value.trim()
@@ -119,11 +148,18 @@ async function bindManual() {
 
   binding.value = true
   try {
-    // 1. 设备绑定（真实 API）
-    const bindResp = await bindDevice(devId, patId)
+    // 1. 设备绑定（真实 API；患者已占其它设备时走 T299 换绑确认）
+    const attempt = await bindWithSwapConfirm(devId, patId)
+    if (attempt.cancelled) {
+      uni.showToast({ title: '已取消换绑，绑定关系未改动', icon: 'none' })
+      return
+    }
+    const bindResp = attempt.resp
 
     // 换绑提示
-    if (bindResp.swapped) {
+    if (bindResp.patientSwappedFrom) {
+      uni.showToast({ title: `已换绑：该患者原设备 ${bindResp.patientSwappedFrom} 已解绑`, icon: 'none' })
+    } else if (bindResp.swapped) {
       uni.showToast({ title: '设备已从其他患者换绑至当前患者', icon: 'none' })
     }
 
