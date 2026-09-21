@@ -18,28 +18,31 @@
 
         <div class="page-card">
           <el-table :data="list" size="small" v-loading="loading">
-            <el-table-column label="类型" width="110">
-              <template #default="{ row }">
-                <el-tag :type="severityType(row.type)" size="small">{{ alertTypeLabel(row.type) }}</el-tag>
-              </template>
+            <!-- 2.5：列清单与列序按设计稿 告警管理.html:246（时间/患者/设备/告警类型/采集点/阈值/实际值/状态/操作）。
+                 「详情」「恢复态」两列设计稿没有、PRD §7D.6 有 → T245 明令多出列不自行判删，排在设计稿列之后。 -->
+            <el-table-column label="时间" width="140">
+              <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
             </el-table-column>
-            <el-table-column prop="detail" label="详情" min-width="240" show-overflow-tooltip />
             <el-table-column label="患者" width="110">
               <template #default="{ row }">{{ row.patientName || patientNameOf(row.patientId) }}</template>
             </el-table-column>
             <el-table-column prop="deviceId" label="设备" width="130" />
-            <el-table-column label="传感器" width="80">
-              <template #default="{ row }">{{ row.sensorPoint || '-' }}</template>
-            </el-table-column>
-            <el-table-column label="阈值/实际" width="110">
+            <el-table-column label="告警类型" width="110">
               <template #default="{ row }">
-                {{ row.thresholdValue != null ? `${formatAlertValue(row.type, row.thresholdValue)}/${formatAlertValue(row.type, row.actualValue)}` : '-' }}
+                <el-tag :type="severityType(row.type)" size="small">{{ alertTypeLabel(row.type) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="时间" width="140">
-              <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
+            <el-table-column label="采集点" width="80">
+              <template #default="{ row }">{{ row.sensorPoint || '-' }}</template>
             </el-table-column>
-            <el-table-column label="处理状态" width="90">
+            <el-table-column label="阈值" width="90">
+              <template #default="{ row }">{{ row.thresholdValue != null ? formatAlertValue(row.type, row.thresholdValue) : '-' }}</template>
+            </el-table-column>
+            <el-table-column label="实际值" width="90">
+              <template #default="{ row }">{{ row.actualValue != null ? formatAlertValue(row.type, row.actualValue) : '-' }}</template>
+            </el-table-column>
+            <el-table-column prop="detail" label="详情" min-width="240" show-overflow-tooltip />
+            <el-table-column label="状态" width="90">
               <template #default="{ row }">
                 <el-tag :type="row.processStatus === 'pending' ? 'warning' : 'primary'" size="small">
                   {{ row.processStatus === 'pending' ? '待处理' : '已处理' }}

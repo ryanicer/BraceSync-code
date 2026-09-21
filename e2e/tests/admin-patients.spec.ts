@@ -41,6 +41,7 @@ test.describe('列表渲染', () => {
   // 「操作」列属 4.3（尚未派到前端），本用例只锁已落地的设计稿列名与相对顺序，
   // 并允许 PRD §7D.3 多出、T245 明令「不自行判删」的 Cobb角 / 主治医生 两列插在诊断之后。
   test('列名与列序对齐设计稿（绑定设备/绑定团队/状态 相邻且同序）', async ({ page }) => {
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
     const heads = await page
       .locator('.el-table__header-wrapper thead th')
       .evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()).filter(Boolean))
@@ -131,7 +132,8 @@ test.describe('详情抽屉', () => {
     // 取第 2 行（避开上一条用例钉死的首行）
     const target = rows.nth(1)
     const cells = await target.evaluate((el) => Array.from(el.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim()))
-    const [, patientId, name, gender, age, diagnosis, cobb, team, doctor, device] = cells
+    // T289 4.1 列序（设计稿 患者管理.html:88）：复选框 / 患者ID / 姓名 / 性别 / 年龄 / 诊断 / Cobb角 / 主治医生 / 绑定设备 / 绑定团队 / 状态
+    const [, patientId, name, gender, age, diagnosis, cobb, doctor, device, team] = cells
 
     await target.locator('td').nth(2).click() // 点姓名单元格，避开首列复选框
     const drawer = page.locator('.el-drawer')

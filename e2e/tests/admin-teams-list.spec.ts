@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { adminLogin, gotoMenu, tableRows } from '../admin-helpers'
+import { adminLogin, adminRoutes, gotoMenu, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
  * admin-web 团队管理 · 列表只读渲染：T270 补齐 README §5 第一类缺口 A-FLOW-14
@@ -76,6 +76,90 @@ test.describe('团队管理 · 列表渲染（T270 A-FLOW-14）', () => {
       for (const btn of ['成员', '编辑', '删除']) {
         await expect(ops.getByRole('button', { name: btn }), `${where} 缺操作按钮「${btn}」`).toBeVisible()
       }
+    }
+  })
+})
+
+/**
+ * T289 5.1 团队统计卡（设计稿 团队管理.html:88-92 四张 + PRD §7D.4:1103-1105）
+ * 数据源 = GET /api/v1/admin/teams/stats（T256 #1）。
+ * 🔴 不写死具体数字：断言「四张卡齐全 + 取数为整数 + 团队总数与列表行数自洽」，
+ *    换一批团队数据依然成立。
+ */
+test.describe('团队统计卡（T289 5.1）', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.teams)
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('四张卡齐全、标签与设计稿一致、取数为整数', async ({ page }) => {
+    const cards = page.locator('.stats-grid .stat-card')
+    await expect(cards).toHaveCount(4)
+    // stats 异步到货：先等首卡出数字，再断言（否则读到占位 '-'）
+    await expect(cards.first().locator('.value')).toHaveText(/^\d+$/, { timeout: 15_000 })
+    const labels = await cards.locator('.label').allInnerTexts()
+    expect(labels.map((l) => l.trim())).toEqual(['团队总数', '成员总数', '管理患者', '待分配患者'])
+    for (let i = 0; i < 4; i++) {
+      await expect(cards.nth(i).locator('.value')).toHaveText(/^\d+$/)
+    }
+  })
+
+  test('团队总数卡与列表行数自洽', async ({ page }) => {
+    const value = page.locator('.stats-grid .stat-card').first().locator('.value')
+    await expect(value).toHaveText(/^\d+$/, { timeout: 15_000 })
+    expect(Number(await value.innerText()), '统计卡团队总数').toBe(await tableRows(page).count())
+  })
+
+  test('待分配患者卡带口径说明（PRD §7D.4:1104 防与患者状态混淆）', async ({ page }) => {
+    const hint = page.locator('.stats-grid .stat-card').nth(3).locator('.label-hint')
+    await expect(hint).toBeVisible()
+    await hint.hover()
+    const popper = page.locator('.el-popper', { hasText: 'team_id 为空' })
+    await expect(popper.first()).toBeVisible()
+  })
+})
+
+/**
+ * T289 5.3 团队成员搜索 + 角色筛选（设计稿 团队管理.html:154-157）
+ * 成员列表为全量返回，筛选在前端完成。
+ */
+test.describe('团队成员搜索与角色筛选（T289 5.3）', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.teams)
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
+    await tableRows(page).first().getByRole('button', { name: '成员' }).click()
+    await expect(page.locator('.member-panel-header')).toBeVisible()
+  })
+
+  test('工具条含搜索框与角色下拉', async ({ page }) => {
+    await expect(page.locator('.member-toolbar .member-search input')).toBeVisible()
+    await expect(page.locator('.member-toolbar .member-role-filter')).toContainText('全部角色')
+  })
+
+  test('按姓名搜索只留命中行', async ({ page }) => {
+    const rows = tableRows(page)
+    const firstName = (await rows.first().locator('td').first().innerText()).trim()
+    await page.locator('.member-toolbar .member-search input').fill(firstName)
+    await expect(rows).toHaveCount(1)
+    await expect(rows.first()).toContainText(firstName)
+    await page.locator('.member-toolbar .member-search input').fill('不存在的成员名')
+    await expect(rows).toHaveCount(0)
+  })
+
+  test('按角色筛选只留该角色成员', async ({ page }) => {
+    const rows = tableRows(page)
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 })
+    const total = await rows.count()
+    expect(total, '成员需 ≥2 行才能验证筛选收窄').toBeGreaterThanOrEqual(2)
+    const role = (await rows.first().locator('td').nth(1).innerText()).trim()
+    expect(role, '首行角色不能为空才能验筛选').not.toBe('-')
+    await pickSelectOption(page, page.locator('.member-toolbar .member-role-filter'), role)
+    await expect.poll(async () => rows.count(), { timeout: 10_000, message: '筛选后行数应收窄' }).toBeLessThan(total)
+    const hit = await rows.count()
+    for (let i = 0; i < hit; i++) {
+      await expect(rows.nth(i).locator('td').nth(1)).toHaveText(role)
     }
   })
 })

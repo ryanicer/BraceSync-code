@@ -72,11 +72,12 @@ export interface TeamDetail extends Team {
   createdAt: string;
 }
 
-/** 团队管理统计卡（T256 #1：GET /admin/teams/stats，4 个计数） */
+/** 团队管理统计卡（T256 #1：GET /admin/teams/stats，4 个计数）
+ *  字段名对齐后端 model.TeamStatsDTO 的 json tag（services/user-service/internal/model/model.go:205-210） */
 export interface TeamStats {
   teamCount: number;        // 团队总数
   memberCount: number;      // 成员总数
-  patientCount: number;     // 管理患者数（已分配团队的患者）
+  managedPatientCount: number;    // 管理患者数（已分配团队的患者）
   unassignedPatientCount: number; // 待分配患者数（未分配团队）
 }
 

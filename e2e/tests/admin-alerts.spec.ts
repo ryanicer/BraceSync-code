@@ -20,9 +20,21 @@ test.describe('告警列表', () => {
     await expect(first).toContainText('压力偏高')
     await expect(first).toContainText('林小雨')
     await expect(first).toContainText('DEV-A3F312')
-    await expect(first).toContainText('60.00N/68.50N')
+    // T289 2.5：阈值与实际值按设计稿 告警管理.html:246 拆成两列（原「阈值/实际」合并列作废）
+    await expect(first.locator('td').nth(5)).toHaveText('60.00N')
+    await expect(first.locator('td').nth(6)).toHaveText('68.50N')
     await expect(first).toContainText('待处理')
     await expect(first).toContainText('进行中')
+  })
+
+  // T289 2.5：设计稿 告警管理.html:246 九列 = 时间/患者/设备/告警类型/采集点/阈值/实际值/状态/操作；
+  // 「详情」「恢复态」为 PRD 多出的列，排在设计稿列之后（T245：多出列不自行判删）。
+  test('列清单与列序对齐设计稿', async ({ page }) => {
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
+    const heads = await page
+      .locator('.el-table__header-wrapper thead th')
+      .evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()).filter(Boolean))
+    expect(heads).toEqual(['时间', '患者', '设备', '告警类型', '采集点', '阈值', '实际值', '详情', '状态', '恢复态', '操作'])
   })
 
   test('已处理告警显示处理人', async ({ page }) => {

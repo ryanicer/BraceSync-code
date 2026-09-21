@@ -2,7 +2,7 @@
 // Dashboard 域契约对齐 api-contracts.ts（T021 聚合接口）；告警域复用 T019B 已验证端点。
 import type {
   AdminLoginResult, ApiResponse, DashboardKPI, TeamRanking, DoctorRanking, PaginatedResponse, Patient, Device,
-  Alert, InstallRecord, Technician, Team, TeamDetail, TeamMember, Doctor, Feedback, OrthosisPlan,
+  Alert, InstallRecord, Technician, Team, TeamDetail, TeamMember, TeamStats, Doctor, Feedback, OrthosisPlan,
   FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
 } from '@bracesync/shared-types'
@@ -193,6 +193,12 @@ export async function fetchTeams(): Promise<Team[]> {
   const teams = await request<Team[]>({ url: '/api/v1/teams' })
   for (const t of teams) orgNames.teams[t.teamId] = t.name
   return teams
+}
+
+/** T289 5.1 团队管理 4 张统计卡（T256 #1 端点，后端字段见 model.TeamStatsDTO） */
+export async function fetchTeamStats(): Promise<TeamStats> {
+  if (USE_MOCK) { await delay(); return orgMock.mockTeamStats() }
+  return request<TeamStats>({ url: '/api/v1/admin/teams/stats' })
 }
 
 // T059 团队管理写功能（6 写端点 + 1 成员明细读端点）

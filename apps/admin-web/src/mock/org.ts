@@ -1,5 +1,6 @@
 // 组织域 mock 数据（对齐 api-contracts.ts getTeams/getDoctors/getTechnicians/getInstallRecords）
-import type { Team, TeamDetail, TeamMember, Doctor, Technician, InstallRecord } from '@bracesync/shared-types'
+import type { Team, TeamDetail, TeamMember, TeamStats, Doctor, Technician, InstallRecord } from '@bracesync/shared-types'
+import { mockPatients } from './patients'
 
 /** T059 成员管理视图（GET /teams/:teamId/members 本地类型；shared-types.TeamMembers 为一期只读契约，此处用 TeamMember 统一字段） */
 export interface TeamMembersView {
@@ -48,6 +49,17 @@ const INSTALL_RECORDS: InstallRecord[] = [
 
 export function mockTeams(): Team[] {
   return TEAMS.map((t) => ({ ...t }))
+}
+
+/** T289 5.1：GET /admin/teams/stats 的 mock 版，四个计数由本地 mock 体现算，不写死设计稿样例数字 */
+export function mockTeamStats(): TeamStats {
+  const patients = mockPatients({ page: 1, pageSize: 10_000 }).list
+  return {
+    teamCount: TEAMS.filter((t) => t.status !== 'deleted').length,
+    memberCount: DOCTORS.length + TECHNICIANS.length,
+    managedPatientCount: patients.filter((p) => p.teamId).length,
+    unassignedPatientCount: patients.filter((p) => !p.teamId).length,
+  }
 }
 
 export function mockTeamName(teamId: string | null): string {

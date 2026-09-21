@@ -74,8 +74,10 @@
         </div>
         <div class="top-nav-right">
           <el-tag v-if="auth.role" size="small" type="info" effect="plain">{{ roleName(auth.role) }}</el-tag>
-          <span class="user-avatar">{{ avatarChar }}</span>
-          <span class="user-name">{{ auth.user?.name }}</span>
+          <div class="user-info">
+            <span class="user-avatar">{{ avatarChar }}</span>
+            <span class="user-name">{{ auth.user?.name }}</span>
+          </div>
           <el-button size="small" @click="handleLogout">退出</el-button>
         </div>
       </el-header>
@@ -158,8 +160,7 @@ const currentTitle = computed(() => {
   return icon ? `${icon} ${title}` : title
 })
 
-// G2：设计稿顶栏右侧圆形头像（样式取 数据概览.html:26）。设计稿头像字取角色名首字（「管理员」→「管」），
-// 我们顶栏本来就并列显示真实姓名，取姓名首字更贴合「展示当前登录人」的口径。
+// G2（PRD §7D.0:994）：顶栏右侧圆形头像取当前登录人姓名首字，不得硬编码「管」字
 const avatarChar = computed(() => (auth.user?.name ?? '').trim().charAt(0) || '?')
 
 async function handleLogout() {
@@ -244,10 +245,16 @@ async function handleLogout() {
   gap: 12px;
   flex-shrink: 0;
 }
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .user-name {
   font-size: 13px;
   color: #333;
 }
+/* T289 G2：设计稿 数据概览.html:26 .user-avatar 原样 */
 .user-avatar {
   width: 36px;
   height: 36px;

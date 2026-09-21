@@ -6,6 +6,33 @@
         <el-button type="success" @click="openCreate">新建团队</el-button>
       </div>
 
+      <!-- T289 5.1：设计稿 团队管理.html:88-92 四张统计卡，数据源 GET /api/v1/admin/teams/stats（T256 #1） -->
+      <div class="stats-grid">
+        <div class="stat-card primary">
+          <div class="value">{{ stats?.teamCount ?? '-' }}</div>
+          <div class="label">团队总数</div>
+        </div>
+        <div class="stat-card success">
+          <div class="value">{{ stats?.memberCount ?? '-' }}</div>
+          <div class="label">成员总数</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="value">{{ stats?.managedPatientCount ?? '-' }}</div>
+          <div class="label">管理患者</div>
+        </div>
+        <div class="stat-card sky">
+          <div class="value">{{ stats?.unassignedPatientCount ?? '-' }}</div>
+          <!-- PRD §7D.4:1104：第四张卡的「待分配」= 尚无团队归属（team_id 为空），与患者状态无关，
+               须在卡片说明里点明，避免与已禁用的「待分配」状态文案混淆 -->
+          <div class="label-row">
+            <div class="label">待分配患者</div>
+            <el-tooltip content="统计口径：尚未分配团队（team_id 为空）的患者数，与患者登录状态无关" placement="top">
+              <span class="label-hint">ⓘ</span>
+            </el-tooltip>
+          </div>
+        </div>
+      </div>
+
       <div class="page-card">
         <el-table :data="teams" size="small" v-loading="loading">
           <el-table-column prop="teamId" label="团队编号" width="120" />
@@ -41,10 +68,17 @@
       <div class="member-panel-header">
         <span class="member-panel-title">团队: {{ currentTeam?.name }} - 成员管理</span>
         <el-button size="small" @click="mode = 'list'">返回</el-button>
+      </div>
+      <!-- T289 5.3：设计稿 团队管理.html:154-158 成员工具条 = 搜索成员 + 全部角色筛选 + 添加成员 -->
+      <div class="member-toolbar">
+        <el-input v-model="memberKeyword" placeholder="搜索成员" clearable class="member-search" />
+        <el-select v-model="memberRoleFilter" placeholder="全部角色" clearable class="member-role-filter">
+          <el-option v-for="r in ROLE_OPTIONS" :key="r" :label="r" :value="r" />
+        </el-select>
         <el-button type="success" size="small" @click="openAddMember">添加成员</el-button>
       </div>
       <div class="page-card">
-        <el-table :data="memberList" size="small" v-loading="memberLoading">
+        <el-table :data="filteredMembers" size="small" v-loading="memberLoading">
           <el-table-column prop="name" label="姓名" width="110" />
           <el-table-column label="角色" width="110">
             <template #default="{ row }">{{ row.role ?? '-' }}</template>
@@ -144,9 +178,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import type { Team, TeamMember, Doctor } from '@bracesync/shared-types'
+import type { Team, TeamMember, TeamStats, Doctor } from '@bracesync/shared-types'
 import {
-  fetchTeams, fetchDoctors,
+  fetchTeams, fetchDoctors, fetchTeamStats,
   createTeamApi, updateTeamApi, deleteTeamApi,
   fetchTeamMembersApi, addTeamMemberApi, updateTeamMemberApi, removeTeamMemberApi,
 } from '../../api'
@@ -157,11 +191,25 @@ const mode = ref<'list' | 'members'>('list')
 const teams = ref<Team[]>([])
 const doctors = ref<Doctor[]>([])
 const loading = ref(false)
+// T289 5.1：团队统计卡
+const stats = ref<TeamStats | null>(null)
 
 // 团队成员管理
 const currentTeam = ref<Team | null>(null)
 const memberList = ref<TeamMember[]>([])
 const memberLoading = ref(false)
+// T289 5.3：成员搜索 + 角色筛选（前端过滤，成员列表为全量返回，无分页）
+const memberKeyword = ref('')
+const memberRoleFilter = ref('')
+
+const filteredMembers = computed(() => {
+  const kw = memberKeyword.value.trim().toLowerCase()
+  return memberList.value.filter((m) => {
+    if (memberRoleFilter.value && m.role !== memberRoleFilter.value) return false
+    if (!kw) return true
+    return `${m.name}`.toLowerCase().includes(kw) || `${m.phoneMasked ?? ''}`.toLowerCase().includes(kw)
+  })
+})
 
 // 新建/编辑团队
 const teamDialogVisible = ref(false)
@@ -195,6 +243,16 @@ async function loadTeams() {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   } finally {
     loading.value = false
+  }
+  loadStats()
+}
+
+/** 统计卡失败不弹错：卡片显示 '-'，列表本身仍可用（避免同一次进页两条 ElMessage） */
+async function loadStats() {
+  try {
+    stats.value = await fetchTeamStats()
+  } catch {
+    stats.value = null
   }
 }
 
@@ -259,6 +317,7 @@ async function confirmSaveTeam() {
       ElMessage.success('创建成功')
     }
     teamDialogVisible.value = false
+    loadStats() // 团队总数/成员总数随增删改变化，统计卡重新拉取
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
@@ -282,6 +341,7 @@ async function confirmDelete(row: Team) {
     // 乐观移除本地行
     teams.value = teams.value.filter((t) => t.teamId !== row.teamId)
     ElMessage.success('删除成功')
+    loadStats()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '删除失败')
   }
@@ -291,6 +351,8 @@ async function confirmDelete(row: Team) {
 async function openMembers(row: Team) {
   currentTeam.value = row
   mode.value = 'members'
+  memberKeyword.value = ''
+  memberRoleFilter.value = ''
   await loadMembers(row.teamId)
 }
 
@@ -330,6 +392,7 @@ async function confirmAddMember() {
     memberList.value.push(result)
     ElMessage.success('添加成功')
     addMemberVisible.value = false
+    loadStats()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '添加失败')
   } finally {
@@ -386,6 +449,7 @@ async function confirmRemoveMember(row: TeamMember) {
     // 乐观移除本地行（幂等）
     memberList.value = memberList.value.filter((m) => m.memberId !== row.memberId)
     ElMessage.success('移除成功')
+    loadStats()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '移除失败')
   }
@@ -404,6 +468,66 @@ onMounted(async () => {
 <style scoped>
 .page-toolbar {
   margin-bottom: 12px;
+}
+/* T289 5.1：统计卡样式取设计稿 团队管理.html:37-43 */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+.stat-card .value {
+  font-size: 28px;
+  font-weight: 600;
+}
+.stat-card .label {
+  font-size: 13px;
+  color: #999;
+  margin-top: 4px;
+}
+.label-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.stat-card.primary {
+  border-left: 4px solid #1a6db5;
+}
+.stat-card.success {
+  border-left: 4px solid #10ac84;
+}
+.stat-card.purple {
+  border-left: 4px solid #9c27b0;
+}
+.stat-card.sky {
+  border-left: 4px solid #2e86de;
+}
+.label-hint {
+  cursor: help;
+  color: #bbb;
+}
+@media (max-width: 1023px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+.member-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.member-search {
+  width: 200px;
+}
+.member-role-filter {
+  width: 150px;
 }
 .member-panel-header {
   display: flex;
