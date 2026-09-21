@@ -269,13 +269,14 @@ STAGING_POST_TABLES=$(echo "$STAGING_POST" | grep -c '=' || true)
 STAGING_POST_ROWS=$(echo "$STAGING_POST" | cut -d= -f2 | awk '{s+=$1} END {print s+0}')
 echo "  staging 现库表数量: $STAGING_POST_TABLES，总行数: $STAGING_POST_ROWS" | tee -a "$LOG_FILE"
 if [ "$STAGING_PRE" = "$STAGING_POST" ]; then
-  STAGING_UNCHANGED=1
+  STAGING_DIFF_TABLES=0
   echo "  [OK] staging 现库逐表行数与演练前完全一致（本脚本对 staging 只执行了 SELECT）" | tee -a "$LOG_FILE"
 else
-  STAGING_UNCHANGED=0
-  echo "  [WARN] staging 现库逐表行数与演练前不一致，差异（- 演练前 / + 演练后）:" | tee -a "$LOG_FILE"
-  diff <(echo "$STAGING_PRE") <(echo "$STAGING_POST") | sed 's/^/    /' | tee -a "$LOG_FILE" || true
-  echo "  [WARN] 本脚本对 staging 现库只执行了 SELECT count(*)，不一致来自演练窗口内的并发写入（如 e2e-real / 人工操作），需人工核查" | tee -a "$LOG_FILE"
+  STAGING_DIFF_DESC=$(diff <(echo "$STAGING_PRE") <(echo "$STAGING_POST") || true)
+  STAGING_DIFF_TABLES=$(echo "$STAGING_DIFF_DESC" | grep -cE '^[<>] ' || true)
+  echo "  [WARN] staging 现库逐表行数与演练前不一致，差异（< 演练前 / > 演练后）:" | tee -a "$LOG_FILE"
+  echo "$STAGING_DIFF_DESC" | sed 's/^/    /' | tee -a "$LOG_FILE"
+  echo "  [WARN] 本脚本对 staging 现库只执行 SELECT，不一致来自演练窗口内的并发写入（staging 上有设备持续上报 / e2e-real / 人工操作），需人工核查" | tee -a "$LOG_FILE"
 fi
 
 #---------- 演练判定 ----------
@@ -288,7 +289,7 @@ if [ "$DRILL_TABLES" -lt "$ARCHIVE_TABLES" ]; then DRILL_STATUS="FAIL"; DRILL_NO
 if echo "$DRILL_COUNTS" | grep -q '=ERR$'; then DRILL_STATUS="FAIL"; DRILL_NOTES+=("存在 count(*) 失败的表"); fi
 if [ "$KEY_TABLES_MISS" -ne 0 ]; then DRILL_STATUS="FAIL"; DRILL_NOTES+=("${KEY_TABLES_MISS} 张关键表缺失"); fi
 
-RTO_STR="${RTO_HOURS}h${RTO_REMAINDER_MIN}m"
+RTO_STR="${RTO_HOURS}h${RTO_REMAINDER_MIN}m$((RTO_SECONDS % 60))s (${RTO_SECONDS}s)"
 RTO_STATUS="PASS"
 if [ "$RTO_SECONDS" -gt 14400 ]; then
   RTO_STATUS="FAIL"
@@ -302,7 +303,7 @@ echo "  备份大小: $DOWNLOAD_SIZE" | tee -a "$LOG_FILE"
 echo "  恢复目标库: ${DRILL_DB_NAME}（独立演练库，报告打印后删除）" | tee -a "$LOG_FILE"
 echo "  演练库表数: $DRILL_TABLES（总行数 $DRILL_ROWS，归档声明 $ARCHIVE_TABLES）" | tee -a "$LOG_FILE"
 echo "  演练库大小: $DB_SIZE" | tee -a "$LOG_FILE"
-echo "  staging 现库: ${STAGING_DB_NAME} 演练前后 ${STAGING_PRE_TABLES}表/${STAGING_PRE_ROWS}行 -> ${STAGING_POST_TABLES}表/${STAGING_POST_ROWS}行（未变动: $([ "$STAGING_UNCHANGED" = "1" ] && echo 是 || echo 否)）" | tee -a "$LOG_FILE"
+echo "  staging 现库: ${STAGING_DB_NAME} 演练前后 ${STAGING_PRE_TABLES}表/${STAGING_PRE_ROWS}行 -> ${STAGING_POST_TABLES}表/${STAGING_POST_ROWS}行（行数有差异的表: ${STAGING_DIFF_TABLES} 张，本脚本对该库只执行 SELECT）" | tee -a "$LOG_FILE"
 echo "  RTO: ${RTO_STR} (${RTO_STATUS}, 目标 ≤4h)" | tee -a "$LOG_FILE"
 echo "  演练结果: ${DRILL_STATUS}" | tee -a "$LOG_FILE"
 if [ "${#DRILL_NOTES[@]}" -gt 0 ]; then
