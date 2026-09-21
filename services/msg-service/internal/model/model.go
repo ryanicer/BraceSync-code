@@ -9,6 +9,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -21,10 +22,13 @@ type AlertType string
 
 // 告警类型枚举
 const (
-	AlertTypePressureHigh        AlertType = "pressure_high"
+	AlertTypePressureHigh AlertType = "pressure_high"
+	// AlertTypePressureFluctuation T257 2.6（方案A）：alert-service 引擎已停止产生该类型，
+	// 常量保留 = DB CHECK 仍允许（000001 起有存量行），admin 仍可查看/配置其通知规则。
 	AlertTypePressureFluctuation AlertType = "pressure_fluctuation"
 	AlertTypeWearInterrupt       AlertType = "wear_interrupt"
 	AlertTypeSensorDrift         AlertType = "sensor_drift"
+	AlertTypeWearDurationShort   AlertType = "wear_duration_short"
 )
 
 // KnownAlertTypes 全部合法告警类型（admin 规则更新校验用）
@@ -33,6 +37,17 @@ var KnownAlertTypes = []AlertType{
 	AlertTypePressureFluctuation,
 	AlertTypeWearInterrupt,
 	AlertTypeSensorDrift,
+	AlertTypeWearDurationShort,
+}
+
+// AlertTypeList 合法类型清单的 "/" 拼接串（报错文案用）。
+// 由 KnownAlertTypes 生成，避免文案与枚举两处以不同速度漂移（T257 加类型时曾漏改硬编码文案）。
+func AlertTypeList() string {
+	parts := make([]string, 0, len(KnownAlertTypes))
+	for _, t := range KnownAlertTypes {
+		parts = append(parts, string(t))
+	}
+	return strings.Join(parts, "/")
 }
 
 // ValidAlertType 校验告警类型是否在 CHECK 约束枚举内

@@ -25,7 +25,7 @@ import (
 
 func TestIT_T252_PointRules_ReaderAndEngineHotRefresh(t *testing.T) {
 	ctx := context.Background()
-	cleanITConfigs(ctx, t) // 空 sys_configs = 引擎回退 PRD 默认（统一上限 45N）
+	cleanITConfigs(ctx, t) // 空 sys_configs = 引擎回退 PRD 默认（统一上限 5N）
 	_, err := itPool.Exec(ctx, `DELETE FROM alert_point_rules`)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -52,7 +52,7 @@ func TestIT_T252_PointRules_ReaderAndEngineHotRefresh(t *testing.T) {
 	eval := &engine.RuleEvaluator{}
 	th, err := config.NewManagerWithPointRules(r, r).Refresh(ctx, eval)
 	require.NoError(t, err)
-	assert.Equal(t, 45.0, th.PressureHighN)
+	assert.Equal(t, 5.0, th.PressureHighN)
 
 	// P03 未勾选：50N 不告警
 	assert.Nil(t, eval.Evaluate(pointRuleFrame(2, 50), nil))
@@ -61,11 +61,11 @@ func TestIT_T252_PointRules_ReaderAndEngineHotRefresh(t *testing.T) {
 	require.NotNil(t, res)
 	assert.Equal(t, "P07", res.SensorPoint)
 	assert.InDelta(t, 20.5, res.ThresholdValue, 1e-9)
-	// P11 未设独立上限：30N 不触发、50N 按统一 45N 触发
-	assert.Nil(t, eval.Evaluate(pointRuleFrame(10, 30), nil))
-	res = eval.Evaluate(pointRuleFrame(10, 50), nil)
+	// P11 未设独立上限：4N 不触发、6N 按统一 5N 触发
+	assert.Nil(t, eval.Evaluate(pointRuleFrame(10, 4), nil))
+	res = eval.Evaluate(pointRuleFrame(10, 6), nil)
 	require.NotNil(t, res)
-	assert.InDelta(t, 45.0, res.ThresholdValue, 1e-9)
+	assert.InDelta(t, 5.0, res.ThresholdValue, 1e-9)
 }
 
 func TestIT_T252_PointRules_EmptyTableMeansNoOverride(t *testing.T) {

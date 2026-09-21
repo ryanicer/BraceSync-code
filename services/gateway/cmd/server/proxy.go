@@ -59,5 +59,6 @@ func registerAlertsProxyOn(api *gin.RouterGroup, targetURL string) {
 
 	api.GET("/alerts", forward)
 	api.POST("/alerts/:alertId/process", forward)
+	api.POST("/alerts/:alertId/processing", forward) // T257 2.7 开始处理
 	log.Info().Str("target", targetURL).Msg("alerts proxy registered")
 }

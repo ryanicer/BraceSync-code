@@ -10,10 +10,12 @@
 // 键复用口径（不建第二份参数，避免双写漂移）：
 //   - 统一压力上限 ≡ sys_configs threshold_pressure_high（§7D.12「压力偏高阈值」，引擎已消费）
 //   - 佩戴时长下限 ≡ sys_configs wear_target_hours（§7D.12 dailyWearTargetHours）
+//   - 设备离线阈值 ≡ sys_configs threshold_wear_interrupt_minutes（T257 12.4 三档合两键）
 //
 // 🔴 生效范围（本卡只落存储 + 上限方向接线）：
 //   - monitored=false 与逐点 upperN：alert-service 引擎按点覆盖 + 跳过未勾选点（本批同时改）
-//   - lowerN：完整落库但**不产生告警**——「压力低于下限」需新告警类型（alerts.type 有 CHECK 枚举），待 PM/Boss 定
+//   - lowerN：完整落库但**不产生告警**——「压力低于下限」需新告警类型；T257 2.6 按 PM 裁定
+//     走方案A（严格照设计稿 4 类），该类型仍未纳入，继续待 Boss 定
 //   - continuous_wear_max_hours / report_timeout_minutes：可配置存储，触发何种告警 + 通知谁需 Boss 定
 package handler
 
@@ -29,10 +31,16 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 )
 
-// 告警规则专用 sys_configs 键（threshold_pressure_high / wear_target_hours 复用既有键，见 handler.go）
+// 告警规则专用 sys_configs 键（threshold_pressure_high / wear_target_hours /
+// threshold_wear_interrupt_minutes 复用既有键，见 handler.go）
+//
+// T257 12.4（三档合两键，PM 裁定 Q3）：设计稿「设备离线阈值(分钟)」与 §7D.12
+// 「佩戴中断阈值」是同一件事（Boss 确认「设备离线」≡ wear_interrupt），故本卡起
+// deviceOfflineMinutes 直接读写 threshold_wear_interrupt_minutes；
+// 旧键 device_offline_minutes（迁移 000016 播的默认行）不再被任何代码路径读写，
+// 保留在库里不删（删行要新迁移且回滚成本高），已在交件说明中登记。
 const (
 	keyPressureLow            = "threshold_pressure_low"
-	keyDeviceOfflineMinutes   = "device_offline_minutes"
 	keyContinuousWearMaxHours = "continuous_wear_max_hours"
 	keyReportTimeoutMinutes   = "report_timeout_minutes"
 )
@@ -42,8 +50,8 @@ const (
 	alertPointCount = 20
 	// alertGridCols 设计稿 4×5 网格列数
 	alertGridCols = 5
-	// defaultUnifiedLowerN 统一压力下限默认（设计稿 :282 示意值 10；上限默认沿用 §7D.12 的 45N）
-	defaultUnifiedLowerN = 10
+	// defaultUnifiedLowerN 统一压力下限默认（T203 ÷10 后 0.5；上限默认 5N）
+	defaultUnifiedLowerN = 0.5
 	// alertTargetType audit_logs.target_type 取值
 	alertTargetType = "alert_rule"
 )
@@ -59,10 +67,20 @@ func floatOr(p *float64, def float64) float64 {
 	return *p
 }
 
+// collectIntervalMinutes 当前采集间隔（分钟，缺失回 §7D.12 默认 30）——
+// 12.4 合键后本页写 threshold_wear_interrupt_minutes 需按它做联动校验。
+func (h *Handler) collectIntervalMinutes(ctx context.Context) (float64, error) {
+	kvs, err := h.store.GetConfigs(ctx, []string{keyCollectInterval})
+	if err != nil {
+		return 0, err
+	}
+	return numOr(kvs[keyCollectInterval], float64(settingsDefaults.CollectIntervalSeconds)/60), nil
+}
+
 // loadAlertRules 组装 Tab2 聚合视图：sys_configs 标量 + 稀疏逐点表 → 恒 20 条点位
 func (h *Handler) loadAlertRules(ctx context.Context) (*model.AlertRulesDTO, *model.AppError) {
 	keys := []string{
-		keyPressureHigh, keyPressureLow, keyDeviceOfflineMinutes,
+		keyPressureHigh, keyPressureLow, keyWearInterrupt,
 		keyWearTarget, keyContinuousWearMaxHours, keyReportTimeoutMinutes,
 	}
 	kvs, err := h.store.GetConfigs(ctx, keys)
@@ -106,7 +124,8 @@ func (h *Handler) loadAlertRules(ctx context.Context) (*model.AlertRulesDTO, *mo
 		UnifiedLowerN: unifiedLower,
 		Points:        points,
 		GlobalRules: model.AlertGlobalRulesDTO{
-			DeviceOfflineMinutes:   numOr(kvs[keyDeviceOfflineMinutes], 30),
+			// T257 12.4：设备离线阈值 ≡ §7D.12 佩戴中断阈值（同一键，默认同为 60 分钟）
+			DeviceOfflineMinutes:   numOr(kvs[keyWearInterrupt], settingsDefaults.WearInterruptMinutes),
 			DailyWearMinHours:      numOr(kvs[keyWearTarget], settingsDefaults.DailyWearTargetHours),
 			ContinuousWearMaxHours: numOr(kvs[keyContinuousWearMaxHours], 23),
 			ReportTimeoutMinutes:   numOr(kvs[keyReportTimeoutMinutes], 5),
@@ -255,7 +274,7 @@ func (h *Handler) resetAlertPointRules(c *gin.Context) {
 	ctx := c.Request.Context()
 	kvs := []repo.ConfigKV{
 		{Key: keyPressureHigh, Value: strconv.FormatFloat(settingsDefaults.PressureHighThresholdN, 'f', -1, 64)},
-		{Key: keyPressureLow, Value: strconv.Itoa(defaultUnifiedLowerN)},
+		{Key: keyPressureLow, Value: strconv.FormatFloat(defaultUnifiedLowerN, 'f', -1, 64)},
 	}
 	operator := operatorID(c, "ops")
 	if err := h.store.ResetAlertRules(ctx, kvs, operator); err != nil {
@@ -267,7 +286,7 @@ func (h *Handler) resetAlertPointRules(c *gin.Context) {
 		Action:      auditActionConfig,
 		TargetType:  alertTargetType,
 		TargetID:    "points",
-		Description: fmt.Sprintf("恢复默认告警规则：统一上限 %.0fN / 下限 %dN，清空逐点阈值", settingsDefaults.PressureHighThresholdN, defaultUnifiedLowerN),
+		Description: fmt.Sprintf("恢复默认告警规则：统一上限 %.0fN / 下限 %.1fN，清空逐点阈值", settingsDefaults.PressureHighThresholdN, defaultUnifiedLowerN),
 	})
 
 	latest, appErr := h.loadAlertRules(ctx)
@@ -279,6 +298,9 @@ func (h *Handler) resetAlertPointRules(c *gin.Context) {
 }
 
 // updateAlertGlobalRules PUT /api/v1/admin/alert-rules/global（nil = 不改该键）
+//
+// T257 12.4：deviceOfflineMinutes 与 §7D.12 wearInterruptMinutes 同键同源，
+// 因此量程也取 §7D.12 的 [10,720]（原 [1,1440] 会写出 settings 页拒绝的值）。
 func (h *Handler) updateAlertGlobalRules(c *gin.Context) {
 	var req model.UpdateAlertGlobalRulesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -299,7 +321,7 @@ func (h *Handler) updateAlertGlobalRules(c *gin.Context) {
 		min   float64
 		max   float64
 	}{
-		{keyDeviceOfflineMinutes, req.DeviceOfflineMinutes, current.GlobalRules.DeviceOfflineMinutes, "deviceOfflineMinutes", 1, 1440},
+		{keyWearInterrupt, req.DeviceOfflineMinutes, current.GlobalRules.DeviceOfflineMinutes, "deviceOfflineMinutes", 10, 720},
 		{keyWearTarget, req.DailyWearMinHours, current.GlobalRules.DailyWearMinHours, "dailyWearMinHours", 1, 24},
 		{keyContinuousWearMaxHours, req.ContinuousWearMaxHours, current.GlobalRules.ContinuousWearMaxHours, "continuousWearMaxHours", 1, 24},
 		{keyReportTimeoutMinutes, req.ReportTimeoutMinutes, current.GlobalRules.ReportTimeoutMinutes, "reportTimeoutMinutes", 1, 1440},
@@ -319,6 +341,20 @@ func (h *Handler) updateAlertGlobalRules(c *gin.Context) {
 	if len(kvs) == 0 {
 		fail(c, model.ErrInvalidParam("no global rule field provided"))
 		return
+	}
+	// T257 12.4：deviceOfflineMinutes 写的就是 §7D.12 的 threshold_wear_interrupt_minutes，
+	// 该键被 alert-service ValidateThresholds 要求 ≥ 2×采集间隔——不同源校验会写出一份
+	// alert-service 拒绝加载的配置（引擎静默保持上一份生效值），故必须在落库前拦住。
+	if req.DeviceOfflineMinutes != nil {
+		interval, err := h.collectIntervalMinutes(ctx)
+		if err != nil {
+			fail(c, model.ErrInternal("read collect interval failed"))
+			return
+		}
+		if *req.DeviceOfflineMinutes < 2*interval {
+			fail(c, model.ErrInvalidParam("deviceOfflineMinutes must be >= 2x collect interval (%.0f)", 2*interval))
+			return
+		}
 	}
 
 	operator := operatorID(c, "ops")

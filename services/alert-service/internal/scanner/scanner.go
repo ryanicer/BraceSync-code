@@ -1,15 +1,18 @@
-// Package scanner — 佩戴中断定时扫描器（T008）
+// Package scanner — 定时扫描器（T008 佩戴中断；T257 2.6 增每日佩戴时长不足）
 //
 // 对齐：架构 §1.3 兜底链路 / §3.6 设备状态扫描 / §4.3 恢复机制 / §4.6 状态机混合计算；
 // PRD §8.1 设备状态机（abnormal > offline）；test-plan §3.1 A5/A7/A8。
 //
-// 职责（每 5min 由 scheduler 触发一轮 Scan）：
-//  1. 扫描绑定设备的 Redis lastseen，超中断阈值生成 wear_interrupt 告警（去重窗口 = 1×阈值）；
-//  2. 设备恢复上报（lastseen 新鲜，含补传——data-service 补传同样刷新 lastseen）时，
+// 职责：
+//  1. Scan（每 5min）：扫描绑定设备的 Redis lastseen，超中断阈值生成 wear_interrupt 告警（去重窗口 = 1×阈值）；
+//  2. Scan（同轮）：设备恢复上报（lastseen 新鲜，含补传——data-service 补传同样刷新 lastseen）时，
 //     自动将该设备 active 的佩戴中断告警置 resolved + resolved_at；
-//  3. 按 PRD §8.1 状态机推导 devices.status 并落库（仅变更时写）。
+//  3. Scan（同轮）：按 PRD §8.1 状态机推导 devices.status 并落库（仅变更时写）；
+//  4. ScanDailyWear（每日一次，独立调度）：上一完整自然日累计佩戴 < wear_target_hours
+//     → 生成 wear_duration_short 告警（ts 固定 = 该日 23:59:59，靠自然唯一键每日一发）。
 //
-// 判定逻辑复用 internal/engine.EvaluateWearInterrupt（扫描器只做触发源）。
+// 判定逻辑复用 internal/engine（中断：EvaluateWearInterrupt；时长：EvaluateWearDurationShort），
+// 扫描器只做触发源与落库。
 package scanner
 
 import (
@@ -41,7 +44,7 @@ type NewAlert struct {
 	PatientID      string
 	DeviceID       string
 	Type           engine.AlertType
-	SensorPoint    string // 触发告警的采集点（P01–P20），压力偏高/波动/漂移时有值
+	SensorPoint    string // 触发告警的采集点（P01–P20），仅压力偏高/漂移时有值；按日类告警（离线/时长不足）为空
 	Detail         string
 	ThresholdValue float64
 	ActualValue    float64
@@ -75,6 +78,22 @@ type LastSeenReader interface {
 	GetLastSeen(ctx context.Context, deviceID string) (time.Time, bool, error)
 }
 
+// WearStore 每日佩戴时长 rollup 读取契约（T257 2.6 新增；daily_wear_stats，data-service 写、本服务只读）。
+// 与 msg-service 佩戴提醒读同一张 rollup 表，不另算一套口径（架构 §5 禁扫明细）。
+type WearStore interface {
+	// DailyWearMinutes 业务日累计佩戴分钟数；无 rollup 行返回 0（=整日无有效佩戴，与 msg-service 同判定）
+	DailyWearMinutes(ctx context.Context, patientID string, bizDate time.Time) (int, error)
+}
+
+// DailyReport 单日佩戴时长扫描结果统计
+type DailyReport struct {
+	Patients     int // 判定的患者数（按绑定设备去重后）
+	AlertCreated int // 新生成「佩戴时长不足」告警数
+	Deduped      int // 当日已有同类告警 / 唯一约束抑制数
+	AboveTarget  int // 达标跳过数
+	WearErrors   int // 单患者 rollup 读失败数（不中断整轮）
+}
+
 // Report 单轮扫描结果统计
 type Report struct {
 	Scanned        int   // 扫描的绑定设备数
@@ -91,6 +110,7 @@ type Scanner struct {
 	devices  DeviceStore
 	alerts   AlertStore
 	lastseen LastSeenReader
+	wear     WearStore // T257 2.6：可选（SetWearStore 注入）；nil 时跳过每日佩戴时长扫描
 	eval     *engine.RuleEvaluator
 	now      func() time.Time
 	log      zerolog.Logger
@@ -110,6 +130,110 @@ func New(devices DeviceStore, alerts AlertStore, lastseen LastSeenReader, eval *
 
 // SetLogger 注入日志器（生产使用；默认 Nop）
 func (s *Scanner) SetLogger(l zerolog.Logger) { s.log = l }
+
+// SetWearStore 注入每日佩戴时长来源（T257 2.6）。未注入 ⇒ ScanDailyWear 直接空转返回，
+// 保持 scanner.New 四参数签名不变（冻结契约 engine_test.go 直接调用该构造函数）。
+func (s *Scanner) SetWearStore(w WearStore) { s.wear = w }
+
+// bizDayOf 给定时刻 → 所属业务日零点（loc 由调用方给 Asia/Shanghai，架构 §3.5）
+func bizDayOf(t time.Time, loc *time.Location) time.Time {
+	y, m, d := t.In(loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, loc)
+}
+
+// PreviousBizDay 上一个**完整**自然日零点（T257 2.6 判定对象）。
+// 不用「今天到此刻」：那样每天阈值时刻之前人人不达标，等于天天误报。
+func PreviousBizDay(now time.Time, loc *time.Location) time.Time {
+	return bizDayOf(now, loc).AddDate(0, 0, -1)
+}
+
+// ScanDailyWear 每日「佩戴时长不足」扫描（T257 2.6 新增第四类告警）。
+//
+// 判定对象 = targetDay 所在业务日（调用方传 PreviousBizDay）；阈值 targetHours 来自
+// sys_configs wear_target_hours（与 §7D.12 系统配置页同一键，PM 裁定不另设）。
+//
+// 幂等（每日一发）：告警 ts 固定写该业务日 23:59:59（业务时区），
+// 直接命中 alerts 自然唯一键 uk_alerts_natural(patient_id, device_id, type, ts)
+// ⇒ 同一业务日重复执行不产生第二条，无需新去重表；执行时刻由调度器决定（00:30 + 启动补扫）。
+func (s *Scanner) ScanDailyWear(ctx context.Context, targetDay time.Time, targetHours float64) (DailyReport, error) {
+	var report DailyReport
+	if s.wear == nil {
+		return report, nil // 未注入 rollup 来源：规则不启用（不误报）
+	}
+	if targetHours <= 0 {
+		return report, nil // 阈值零值 = 规则未启用（与引擎其他规则同口径），整轮不查库
+	}
+	devices, err := s.devices.ListBoundDevices(ctx)
+	if err != nil {
+		return report, err
+	}
+	// 一名患者可绑多设备，但佩戴时长是**患者级**指标 ⇒ 按患者去重，设备取字典序最小者
+	// （固定选取，保证 ts 相同的重复扫描命中同一唯一键）。
+	patientDevice := make(map[string]string, len(devices))
+	for _, dev := range devices {
+		if dev.PatientID == "" {
+			continue
+		}
+		if cur, ok := patientDevice[dev.PatientID]; !ok || dev.DeviceID < cur {
+			patientDevice[dev.PatientID] = dev.DeviceID
+		}
+	}
+	report.Patients = len(patientDevice)
+
+	loc := targetDay.Location()
+	alertTs := time.Date(targetDay.Year(), targetDay.Month(), targetDay.Day(),
+		23, 59, 59, 0, loc)
+	bizDate := targetDay.Format("2006-01-02")
+
+	for patientID, deviceID := range patientDevice {
+		// 去重一：该业务日已有同类告警 ⇒ 不再查 rollup（多数轮次走此快路径）
+		recent, err := s.alerts.HasAlertSince(ctx, deviceID, engine.TypeWearDurationShort, targetDay)
+		if err != nil {
+			report.WearErrors++
+			s.log.Error().Err(err).Str("patient_id", patientID).Msg("daily wear: dedup query failed, skip patient")
+			continue
+		}
+		if recent {
+			report.Deduped++
+			continue
+		}
+		minutes, err := s.wear.DailyWearMinutes(ctx, patientID, targetDay)
+		if err != nil {
+			report.WearErrors++
+			s.log.Error().Err(err).Str("patient_id", patientID).Msg("daily wear: read rollup failed, skip patient")
+			continue
+		}
+		result := s.eval.EvaluateWearDurationShort(patientID, targetDay, float64(minutes), targetHours)
+		if result == nil {
+			report.AboveTarget++
+			continue
+		}
+		_, created, err := s.alerts.CreateAlert(ctx, NewAlert{
+			PatientID:      patientID,
+			DeviceID:       deviceID,
+			Type:           result.AlertType,
+			Detail:         result.Message,
+			ThresholdValue: result.ThresholdValue,
+			ActualValue:    result.ActualValue,
+			Ts:             alertTs,
+		})
+		if err != nil {
+			report.WearErrors++
+			s.log.Error().Err(err).Str("patient_id", patientID).Msg("daily wear: create alert failed")
+			continue
+		}
+		if !created {
+			report.Deduped++ // 唯一约束保底（并发副本等极端场景）
+			continue
+		}
+		report.AlertCreated++
+		s.log.Warn().Str("patient_id", patientID).Str("device_id", deviceID).
+			Str("biz_date", bizDate).Int("wear_minutes", minutes).
+			Float64("target_hours", targetHours).
+			Msg("daily wear: wear_duration_short alert created")
+	}
+	return report, nil
+}
 
 // DeriveStatus 按 PRD §8.1 状态机推导 devices.status（优先级 abnormal > offline）：
 //   - gap ≥ 3×采集间隔（缺数 3 个周期）→ abnormal

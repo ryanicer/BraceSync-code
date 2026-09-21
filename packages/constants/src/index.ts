@@ -13,18 +13,18 @@ export const ALERT_TYPES = {
 
 export type AlertType = (typeof ALERT_TYPES)[keyof typeof ALERT_TYPES]
 
-/** System configuration threshold defaults (PRD §7D.12) */
+/** System configuration threshold defaults (PRD §7D.12 + T203 ÷10) */
 export const DEFAULT_THRESHOLDS = {
-  /** 压力偏高阈值 (N) */
-  PRESSURE_HIGH_N: 45,
+  /** 压力偏高阈值 (N)，T203: 45 → 5 */
+  PRESSURE_HIGH_N: 5,
   /** 压力波动幅度阈值 (%) */
   PRESSURE_FLUCTUATION_PCT: 30,
   /** 佩戴中断判定时间 (分钟，须 ≥2×采集间隔) */
   WEAR_INTERRUPT_MINUTES: 60,
-  /** 传感器漂移告警阈值 (N) */
-  SENSOR_DRIFT_N: 2.8,
-  /** 空载校准偏差上限 (N) */
-  CALIBRATION_OFFSET_N: 0.5,
+  /** 传感器漂移告警阈值 (N)，T203: 2.8 → 0.3 */
+  SENSOR_DRIFT_N: 0.3,
+  /** 空载校准偏差上限 (N)，T203: 0.5 → 0.05 */
+  CALIBRATION_OFFSET_N: 0.05,
 } as const
 
 /** Device signature time window (minutes) */
@@ -40,17 +40,17 @@ export const SENSOR_COUNT = 20
 export const MN_PER_N = 1000
 
 /**
- * 患者端热力图色阶（N）——占位值，T173 起待 Boss+小顾重定真实物理范围后更新。
+ * 患者端热力图色阶（N）——T203 ÷10 后量纲。
  * 与 sys_configs heatmap/threshold 键同步演进；此常量为端上兜底默认。
  */
 export const HEATMAP_TIERS = {
-  LOW_MAX: 20,
-  NORMAL_MAX: 40,
-  ELEVATED_MAX: 60,
+  LOW_MAX: 2,
+  NORMAL_MAX: 4,
+  ELEVATED_MAX: 6,
 } as const
 
-/** 患者端趋势曲线 Y 轴上界 (N)——占位值，随阈值重定同步调整 */
-export const TREND_CURVE_MAX_N = 75
+/** 患者端趋势曲线 Y 轴上界 (N)，T203: 75 → 8 */
+export const TREND_CURVE_MAX_N = 8
 
 /** Patient statuses */
 export const PATIENT_STATUS = {

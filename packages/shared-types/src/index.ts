@@ -127,16 +127,18 @@ export interface Alert {
   patientId: string;
   patientName?: string | null;
   deviceId: string;
-  type: 'pressure_high' | 'wear_interrupt' | 'pressure_fluctuation' | 'sensor_drift';
+  type: AlertType;
   detail: string;
   sensorPoint: string;
   thresholdValue: number;
   actualValue: number;
   timestamp: string;
-  readStatus: 'read' | 'unread';           // 患者侧
-  processStatus: 'pending' | 'processed';  // 处理侧
+  readStatus: 'read' | 'unread';                  // 患者侧
+  processStatus: 'pending' | 'processing' | 'processed'; // 处理侧（T257 2.7 三态）
   resolvedStatus: 'active' | 'resolved';   // 恢复态（佩戴中断设备恢复后自动 resolved）
   resolvedAt: string | null;
+  /** T257 2.7：进入「处理中」的时刻；可选 + null 均表示从未进入过处理中（含三态上线前的历史行） */
+  inProgressAt?: string | null;
   processedBy: string | null;
   processedAt: string | null;
   processNote: string | null;
@@ -287,8 +289,15 @@ export interface PatientPreference {
 
 // ===== 消息 / 通知 / 额度域（msg-service，对齐架构 §2.5/§3.3/§7D.6） =====
 
-/** 告警类型枚举（对齐 DB alerts.type + alert_notify_rules.type） */
-export type AlertType = 'pressure_high' | 'wear_interrupt' | 'pressure_fluctuation' | 'sensor_drift';
+/** 告警类型枚举（对齐 DB alerts.type + alert_notify_rules.type）
+ *  T257 2.6：新增 wear_duration_short（佩戴时长不足）；pressure_fluctuation（压力波动）
+ *  自本卡起引擎不再产生，**保留成员**用于渲染历史告警行，不得当作可产生类型使用。 */
+export type AlertType =
+  | 'pressure_high'
+  | 'wear_interrupt'
+  | 'pressure_fluctuation'
+  | 'sensor_drift'
+  | 'wear_duration_short';
 
 /** 通知渠道 */
 export type NotifyChannel = 'wechat' | 'sms';
@@ -384,6 +393,46 @@ export interface AdminRole {
 export interface RolePermissions {
   scope: 'all' | 'team' | 'all_patients';  // 数据范围（架构 §3.3 RBAC）
   modules: string[];                        // 可访问模块清单
+  /**
+   * T257 11.5 子权限（设计稿 权限控制.html:121-187 组内勾选项），key 形如 `alerts.process`。
+   * - GET 恒回数组：库里未细化（老角色 / seed 预置三个）时后端按目录物化为「modules 下全部子权限」；
+   * - PUT 省略 / null = 不细化（保持全勾语义）；`[]` = 显式全不勾（与省略**不同义**）；
+   * - 写入校验：key 必须在 GET /admin/permissions/catalog 目录内，且其模块已在 modules 里。
+   * 🔴 PM 裁定 Q2=(c)：**只用于前端隐藏菜单/按钮，不参与后端鉴权**——网关与服务层仍只判角色级，
+   * 少勾一个 item 不会让任何接口返 403。
+   */
+  items?: string[];
+}
+
+/** 子权限条目（T257 11.5） */
+export interface PermissionItem {
+  key: string;      // 「模块.动作」，如 comm.reply
+  label: string;    // 设计稿中文标签，直接渲染
+}
+
+/** 子权限分组 = 一个后台页面（T257 11.5，设计稿 .perm-group） */
+export interface PermissionGroup {
+  module: string;   // 与 RolePermissions.modules 同一套词表
+  label: string;
+  items: PermissionItem[];
+}
+
+/** GET /api/v1/admin/permissions/catalog —— 全量子权限目录（9 组 23 项，admin 专属） */
+export interface PermissionCatalog {
+  groups: PermissionGroup[];
+}
+
+/**
+ * GET /api/v1/admin/me/permissions —— 当前登录人的有效权限（全 staff 可读，患者 403）。
+ * 前端据此渲染菜单/按钮，不用再按 roleId 硬编码；身份取网关注入的 X-User-Id / X-Role。
+ * 角色不在 roles 表（technician / patient / 已删角色）⇒ 200 + 空清单（不是 404）。
+ */
+export interface MyPermissions {
+  adminId: string;
+  roleId: string;
+  scope: string;      // 数据范围；角色未落库时为空串
+  modules: string[];
+  items: string[];    // 已按目录物化，直接渲染
 }
 
 /** 团队成员明细（T030 #10：getTeams 概要之外的成员清单，一期只读） */
@@ -401,9 +450,17 @@ export interface WifiPreset {
 /** 系统参数（PRD §7D.12，sys_configs KV 映射；user-service GET/PUT /api/v1/admin/settings） */
 export interface SystemSettings {
   dailyWearTargetHours: number;      // wear_target_hours
-  pressureHighThresholdN: number;    // threshold_pressure_high
-  pressureFluctuationPct: number;    // threshold_pressure_fluctuation_pct
-  wearInterruptMinutes: number;      // threshold_wear_interrupt_minutes（≥2×采集间隔）
+  pressureHighThresholdN: number;    // threshold_pressure_high（设计稿 系统配置.html:98「偏高上限」）
+  /**
+   * T257 12.4（三档合两键，PM 裁定 Q3）：设计稿「低压上限」≡ 告警管理页 Tab2「统一压力下限」
+   * ≡ sys_configs threshold_pressure_low —— 同一个键，两个页面读写同一份值。
+   * GET 恒回数值；PUT 省略 / null = 不改该键（沿用库里现值）。
+   * 🔴 设计稿第三档「正常上限（绿/黄分界）」**后端不落库**：两键只承载 低压/偏高 两条边界，
+   * 热力图中间档由前端派生或另议（T257 交件说明已登记待裁）。
+   */
+  pressureLowThresholdN?: number | null;
+  pressureFluctuationPct: number;    // threshold_pressure_fluctuation_pct（T257 2.6：引擎已停产生该类型告警，键仍可配）
+  wearInterruptMinutes: number;      // threshold_wear_interrupt_minutes（≥2×采集间隔；≡ 告警页 deviceOfflineMinutes）
   sensorDriftN: number;              // threshold_sensor_drift
   wifiPresets: WifiPreset[];         // wifi_presets
   collectIntervalSeconds: number;    // T256 #4：采集间隔（秒，设计稿口径；内部存储 collect_interval_minutes）
