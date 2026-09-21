@@ -1,7 +1,7 @@
 // T252 11.2 角色增删改端点实现侧测试（admin 权限控制页）
 //
 // 验收对应（T252 ③ 角色自定义维护）：
-//  1. 模板下拉 5 项，permissions 与 migration 000016 种子同源；
+//  1. 模板下拉 3 项（T277：与 000017 收敛后的 3 个登录角色一一对应）；
 //  2. 新建角色：模板 or 显式 permissions 二选一，重名 409，形状非法 400；
 //  3. 编辑：预置角色 name 锁定 400，但描述/启停仍可改；非预置可改名（改名撞名 409）；
 //  4. 删除：预置 403；被管理员账号引用 409 + memberCount；不存在 404；
@@ -42,14 +42,18 @@ func TestT252_ListRoleTemplates(t *testing.T) {
 
 	var list []model.RoleTemplateDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &list))
-	require.Len(t, list, 5)
-	assert.Equal(t, []string{"admin", "director", "doctor", "therapist", "nurse"},
-		[]string{list[0].Key, list[1].Key, list[2].Key, list[3].Key, list[4].Key})
-	assert.Equal(t, "超级管理员", list[0].Name)
+	// T277：模板收口为 3 条 = 设计稿 权限控制.html:203 下拉的 运营管理员 / 医生 / 客服
+	//（主任医师 / 主治医师 / 康复师 / 护士 = 职称，不是角色，不得再作为模板出现）
+	require.Len(t, list, 3)
+	assert.Equal(t, []string{"admin", "doctor", "cs"},
+		[]string{list[0].Key, list[1].Key, list[2].Key})
+	assert.Equal(t, []string{"运营管理员", "医生", "客服"},
+		[]string{list[0].Name, list[1].Name, list[2].Name})
 	assert.Equal(t, "all", list[0].Permissions.Scope)
-	assert.Len(t, list[0].Permissions.Modules, 12, "超级管理员 12 个模块全开")
-	assert.Equal(t, "team", list[4].Permissions.Scope)
-	assert.Equal(t, []string{"patients", "comm"}, list[4].Permissions.Modules)
+	assert.Len(t, list[0].Permissions.Modules, 12, "运营管理员 12 个模块全开")
+	assert.Equal(t, "team", list[1].Permissions.Scope)
+	assert.Equal(t, "all_patients", list[2].Permissions.Scope, "客服：全量患者、仅沟通模块")
+	assert.Equal(t, []string{"comm"}, list[2].Permissions.Modules)
 }
 
 // ── 新建 ──
@@ -86,7 +90,7 @@ func TestT252_CreateAdminRole_FromTemplate(t *testing.T) {
 func TestT252_CreateAdminRole_ExplicitPermissionsOverrideTemplate(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.createdRole = t252RoleRow("ROLE_C1", "自定义")
-	tpl := "nurse"
+	tpl := "cs"
 
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/roles", map[string]any{
 		"name":        "自定义",
@@ -110,10 +114,10 @@ func TestT252_CreateAdminRole_RejectsBadRequests(t *testing.T) {
 		body map[string]any
 		msg  string
 	}{
-		{"缺名称", map[string]any{"template": "nurse"}, "invalid request body"},
-		{"名称全空格", map[string]any{"name": "   ", "template": "nurse"}, "must be 1-64 chars"},
-		{"名称超长", map[string]any{"name": strings.Repeat("角", 65), "template": "nurse"}, "must be 1-64 chars"},
-		{"描述超长", map[string]any{"name": "角色", "description": strings.Repeat("说", 256), "template": "nurse"}, "description must be at most 255"},
+		{"缺名称", map[string]any{"template": "cs"}, "invalid request body"},
+		{"名称全空格", map[string]any{"name": "   ", "template": "cs"}, "must be 1-64 chars"},
+		{"名称超长", map[string]any{"name": strings.Repeat("角", 65), "template": "cs"}, "must be 1-64 chars"},
+		{"描述超长", map[string]any{"name": "角色", "description": strings.Repeat("说", 256), "template": "cs"}, "description must be at most 255"},
 		{"未知模板", map[string]any{"name": "角色", "template": "superman"}, "unknown template"},
 		{"模板与权限都缺", map[string]any{"name": "角色"}, "template or permissions is required"},
 		{"scope 非法", map[string]any{"name": "角色", "permissions": map[string]any{"scope": "org", "modules": []string{"patients"}}}, "invalid scope"},
@@ -138,7 +142,7 @@ func TestT252_CreateAdminRole_DuplicateNameConflicts(t *testing.T) {
 	e.store.roleNameTaken = true
 
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/roles",
-		map[string]any{"name": "主任医师", "template": "nurse"}, t252AdminHdr())
+		map[string]any{"name": "主任医师", "template": "cs"}, t252AdminHdr())
 	assert.Equal(t, http.StatusConflict, w.Code)
 	assert.Equal(t, model.CodeConflict, resp.Code)
 	assert.Contains(t, resp.Message, "role name already exists")
@@ -150,14 +154,14 @@ func TestT252_CreateAdminRole_StoreFailures(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.roleNameErr = errors.New("db")
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/roles",
-		map[string]any{"name": "角色A", "template": "nurse"}, t252AdminHdr())
+		map[string]any{"name": "角色A", "template": "cs"}, t252AdminHdr())
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, resp.Message, "check role name")
 
 	e2 := newEnv(t, true, true)
 	e2.store.createRoleErr = errors.New("db")
 	w2, _ := e2.do(http.MethodPost, "/api/v1/admin/roles",
-		map[string]any{"name": "角色B", "template": "nurse"}, t252AdminHdr())
+		map[string]any{"name": "角色B", "template": "cs"}, t252AdminHdr())
 	assert.Equal(t, http.StatusInternalServerError, w2.Code)
 	assert.Empty(t, e2.store.auditRows, "创建失败不写权限变更审计")
 }

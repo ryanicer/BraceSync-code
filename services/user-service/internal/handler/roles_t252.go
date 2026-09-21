@@ -29,37 +29,32 @@ import (
 // roleTargetType audit_logs.target_type 取值
 const roleTargetType = "role"
 
-// roleTemplates 角色模板（设计稿 权限控制.html:100-104 的 5 个预置角色；
-// 键名对齐契约 RoleTemplate.key，permissions 与 migration 000016 的种子**同源**，改一处需改两处）。
+// roleTemplates 基础权限模板 —— **3 条**（Boss 2026-09-20 裁定，T277 收口）：
+// 与设计稿 权限控制.html:203「新增角色 → 基础权限模板」下拉、以及 000017 收敛后的
+// 3 个预置登录角色（运营管理员 / 医生 / 客服）一一对应。
+// 🔴 「主任医师 / 主治医师 / 康复师 / 护士」是医护**职称**（走 doctors.title），不是角色，
+// 不得作为模板 —— T262 收口 roles 表、T263 收口设计稿、本卡收口这个下拉。
+// 键名对齐契约 RoleTemplate.key（前端 11.2 按本列表渲染，改键需同步契约）。
 var roleTemplates = []model.RoleTemplateDTO{
 	{
-		Key: "admin", Name: "超级管理员", Description: "系统全部权限",
+		Key: "admin", Name: "运营管理员", Description: "系统全部权限",
 		Permissions: model.RolePermissionsDTO{Scope: "all", Modules: []string{
 			"dashboard", "realtime", "patients", "teams", "devices", "alerts",
 			"comm", "orthosis", "install", "tech", "perm", "config",
 		}},
 	},
+	// ⚠️ doctor 的 modules 比 ROLE_DOCTOR 种子（seed.sql:10-11、000017:30-31 均只 4 项）多
+	//    patients、comm —— T252 沿 000016 旧种子留下的偏差，T277 只收口模板**条数与名称**，
+	//    是否连预设一起对齐已登记待 PM 裁定（改这里即改变新建角色的默认权限）。
 	{
-		Key: "director", Name: "主任医师", Description: "患者管理+数据分析+团队管理",
-		Permissions: model.RolePermissionsDTO{Scope: "all", Modules: []string{
-			"dashboard", "realtime", "patients", "teams", "alerts", "orthosis", "install",
-		}},
-	},
-	{
-		Key: "doctor", Name: "主治医师", Description: "患者数据+告警处理+沟通",
+		Key: "doctor", Name: "医生", Description: "患者数据+告警处理+沟通",
 		Permissions: model.RolePermissionsDTO{Scope: "team", Modules: []string{
 			"dashboard", "realtime", "patients", "alerts", "comm", "orthosis",
 		}},
 	},
 	{
-		Key: "therapist", Name: "康复师", Description: "患者数据查看+矫形日志+沟通",
-		Permissions: model.RolePermissionsDTO{Scope: "team", Modules: []string{
-			"realtime", "patients", "alerts", "comm", "orthosis",
-		}},
-	},
-	{
-		Key: "nurse", Name: "护士", Description: "患者列表查看+基本沟通",
-		Permissions: model.RolePermissionsDTO{Scope: "team", Modules: []string{"patients", "comm"}},
+		Key: "cs", Name: "客服", Description: "患者沟通模块，全量患者",
+		Permissions: model.RolePermissionsDTO{Scope: "all_patients", Modules: []string{"comm"}},
 	},
 }
 
@@ -129,7 +124,7 @@ func (h *Handler) createAdminRole(c *gin.Context) {
 	case req.Template != nil && *req.Template != "":
 		tpl, found := findRoleTemplate(*req.Template)
 		if !found {
-			fail(c, model.ErrInvalidParam("unknown template %q (admin|director|doctor|therapist|nurse)", *req.Template))
+			fail(c, model.ErrInvalidParam("unknown template %q (admin|doctor|cs)", *req.Template))
 			return
 		}
 		perms = tpl.Permissions
@@ -190,7 +185,7 @@ func derefStr(p *string) string {
 
 // updateAdminRole PUT /api/v1/admin/roles/:roleId —— 改角色档案（name/description/status）
 //
-// 预置角色（3 个登录角色 + 5 个设计稿播种角色）的 **name 锁定 400**：设计稿按名字渲染角色，
+// 预置角色（T262 收敛后的 3 个登录角色）的 **name 锁定 400**：设计稿按名字渲染角色，
 // 改名会让前端矩阵与设计稿对不上；description / status 仍可改（契约 updateAdminRole）。
 // 删除预置角色另行拦 403，见 deleteAdminRole。
 func (h *Handler) updateAdminRole(c *gin.Context) {
