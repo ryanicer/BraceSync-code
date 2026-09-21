@@ -14,12 +14,11 @@
       </el-select>
       <el-button type="primary" @click="handleSearch">查询</el-button>
       <el-button type="success" @click="openCreate">添加患者</el-button>
-      <el-button type="warning" :disabled="selectedRows.length === 0" @click="openBatchBind">批量绑定</el-button>
     </div>
 
-    <div class="page-card">
-      <el-table :data="list" size="small" v-loading="loading" @row-click="viewDetail" @selection-change="onSelectionChange">
-        <el-table-column type="selection" width="40" />
+    <div class="page-card patient-list-card">
+      <!-- 4.2（设计稿 患者管理.html:88）：列表 thead 无复选框列，批量分配改由下方独立卡片承载 -->
+      <el-table :data="list" size="small" v-loading="loading" @row-click="viewDetail">
         <el-table-column prop="patientId" label="患者ID" width="110" />
         <el-table-column prop="name" label="姓名" width="100" />
         <el-table-column label="性别" width="70">
@@ -29,22 +28,26 @@
         <el-table-column label="诊断" min-width="180">
           <template #default="{ row }">{{ row.diagnosis || '-' }}</template>
         </el-table-column>
+        <!-- 设计稿 患者管理.html:88 无以下两列，PRD §7D.3 有；T245 明令多出列不自行判删。
+             插在诊断之后，让设计稿的 绑定设备 / 绑定团队 / 状态 保持相邻原序。 -->
         <el-table-column label="Cobb角" width="90">
           <template #default="{ row }">{{ row.cobbAngle ? row.cobbAngle + '°' : '-' }}</template>
-        </el-table-column>
-        <el-table-column label="团队" width="130">
-          <template #default="{ row }">{{ row.teamName || teamNameOf(row.teamId) }}</template>
         </el-table-column>
         <el-table-column label="主治医生" width="110">
           <template #default="{ row }">{{ row.doctorName || doctorNameOf(row.doctorId) }}</template>
         </el-table-column>
-        <el-table-column label="设备" width="130">
+        <el-table-column label="绑定设备" width="130">
           <template #default="{ row }">{{ row.deviceId || '未绑定' }}</template>
+        </el-table-column>
+        <el-table-column label="绑定团队" width="130">
+          <template #default="{ row }">{{ row.teamName || teamNameOf(row.teamId) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
+            <!-- 设计稿 患者管理.html:92 仍写「活跃」，属稿面未回写且与 PRD §7D.3:1065/:1320 的
+                 「可登录 / 不可登录」两态口径冲突 ⇒ 按 PM 09-22 01:03 裁定 ① 统一两态，不与同列「不可登录」混搭。 -->
             <el-tag :type="row.status === 'active' ? 'success' : 'warning'" size="small">
-              {{ row.status === 'active' ? '活跃' : '待分配' }}
+              {{ row.status === 'active' ? '可登录' : '不可登录' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -57,6 +60,47 @@
         layout="total, prev, pager, next"
         @current-change="loadData"
       />
+    </div>
+
+    <!-- T289 4.2 批量患者-团队绑定（设计稿 患者管理.html:98-108 WB-09）：
+         独立卡片 + 逐行「分配至」下拉 + 确认分配。卡片只列未分配团队的患者 = F2
+         （PRD §7D.3:1070「勾选未分配团队的患者」限定）。 -->
+    <div class="page-card batch-bind-card">
+      <div class="page-card-title">批量患者-团队绑定</div>
+      <el-table
+        :data="unassignedList"
+        size="small"
+        v-loading="batchLoading"
+        class="batch-table"
+        @selection-change="onBatchSelectionChange"
+      >
+        <el-table-column type="selection" width="40" />
+        <el-table-column prop="patientId" label="患者ID" width="120" />
+        <el-table-column prop="name" label="姓名" width="120" />
+        <el-table-column label="当前团队" width="120">
+          <template #default><el-tag type="info" size="small">未分配</el-tag></template>
+        </el-table-column>
+        <el-table-column label="分配至" min-width="200">
+          <template #default="{ row }">
+            <el-select
+              v-model="batchTargetTeam[row.patientId]"
+              placeholder="选择团队"
+              size="small"
+              class="batch-team-select"
+            >
+              <el-option v-for="t in teams" :key="t.teamId" :label="t.name" :value="t.teamId" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <template #empty>暂无未分配团队的患者</template>
+      </el-table>
+      <el-button
+        type="primary"
+        class="batch-submit"
+        :disabled="!canConfirmBatch"
+        :loading="batching"
+        @click="confirmBatch"
+      >确认分配</el-button>
     </div>
 
     <!-- 患者详情抽屉 -->
@@ -171,27 +215,11 @@
         <el-button type="primary" :loading="assigning" @click="confirmAssign">确定</el-button>
       </template>
     </el-dialog>
-
-    <!-- 批量绑定弹窗 -->
-    <el-dialog v-model="batchVisible" title="批量绑定" width="480px" :close-on-click-modal="false">
-      <p class="batch-desc">已选 {{ selectedRows.length }} 位患者，请选择目标团队：</p>
-      <el-form label-width="80px">
-        <el-form-item label="目标团队">
-          <el-select v-model="batchTeamId" placeholder="请选择团队">
-            <el-option v-for="t in teams" :key="t.teamId" :label="t.name" :value="t.teamId" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="batchVisible = false">取消</el-button>
-        <el-button type="primary" :loading="batching" @click="confirmBatch">确定</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import type { Patient, Team, Doctor } from '@bracesync/shared-types'
@@ -201,6 +229,7 @@ import {
   createPatientApi, assignPatientTeamApi, batchBindPatientsApi,
   fetchAbnormalReport, exportAbnormalReportApi,
 } from '../../api'
+import type { BatchBindFailure } from '../../mock/patients'
 
 /** T269 D1：后端 /admin/patients 已 join 出团队名与医生名，优先用返回值显示 */
 type PatientRow = Patient & { teamName?: string | null; doctorName?: string | null }
@@ -216,7 +245,6 @@ const teamFilter = ref('')
 const loading = ref(false)
 const drawerVisible = ref(false)
 const detail = ref<PatientRow | null>(null)
-const selectedRows = ref<PatientRow[]>([])
 
 // 新建患者
 const createVisible = ref(false)
@@ -242,10 +270,45 @@ const assignVisible = ref(false)
 const assigning = ref(false)
 const assignTeamId = ref('')
 
-// 批量绑定
-const batchVisible = ref(false)
+// 批量分配（4.2 独立卡片）
+const batchLoading = ref(false)
 const batching = ref(false)
-const batchTeamId = ref('')
+const unassignedList = ref<PatientRow[]>([])
+const batchSelected = ref<PatientRow[]>([])
+const batchTargetTeam = ref<Record<string, string>>({})
+
+/**
+ * 契约 api-contracts.ts:53 明写 patients 分页 pageSize 上限 100（超限 400 code=10400；
+ * staging 实测 101 即拒），所以只能按页扫，不能一次要 200。
+ * 扫描上限 10 页 = 1000 人；再要更大范围得后端补 unassigned 过滤参数（已登记契约偏差清单）。
+ */
+const UNASSIGNED_SCAN_PAGE_SIZE = 100
+const UNASSIGNED_SCAN_MAX_PAGES = 10
+
+async function loadUnassigned() {
+  batchLoading.value = true
+  try {
+    const acc: PatientRow[] = []
+    let totalCount = 0
+    for (let p = 1; p <= UNASSIGNED_SCAN_MAX_PAGES; p++) {
+      const res = await fetchPatients({ page: p, pageSize: UNASSIGNED_SCAN_PAGE_SIZE })
+      totalCount = res.total
+      acc.push(...res.list)
+      if (res.list.length === 0 || acc.length >= totalCount) break
+    }
+    unassignedList.value = acc.filter((x) => !x.teamId)
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '未分配患者加载失败')
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+const canConfirmBatch = computed(
+  () =>
+    batchSelected.value.length > 0 &&
+    batchSelected.value.every((r) => !!batchTargetTeam.value[r.patientId]),
+)
 
 // T300 异常报告（详情抽屉内）
 const reportRange = ref<[string, string]>(defaultReportRange())
@@ -292,17 +355,15 @@ function handleSearch() {
   loadData()
 }
 
-function viewDetail(row: PatientRow, column?: { type?: string }) {
-  // 点击 selection 列的 checkbox 不触发详情抽屉
-  if (column?.type === 'selection') return
+function viewDetail(row: PatientRow) {
   detail.value = row
   report.value = null
   drawerVisible.value = true
   loadReport()
 }
 
-function onSelectionChange(rows: PatientRow[]) {
-  selectedRows.value = rows
+function onBatchSelectionChange(rows: PatientRow[]) {
+  batchSelected.value = rows
 }
 
 // T300 异常报告
@@ -395,6 +456,7 @@ async function confirmCreate() {
     ElMessage.success('创建成功')
     createVisible.value = false
     loadData()
+    loadUnassigned()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
   } finally {
@@ -417,6 +479,7 @@ async function confirmAssign() {
     ElMessage.success('分配成功')
     assignVisible.value = false
     loadData()
+    loadUnassigned()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '分配失败')
   } finally {
@@ -424,27 +487,37 @@ async function confirmAssign() {
   }
 }
 
-// 批量绑定
-function openBatchBind() {
-  batchTeamId.value = ''
-  batchVisible.value = true
-}
-
+// 批量分配（4.2）
 async function confirmBatch() {
-  if (selectedRows.value.length === 0 || !batchTeamId.value) return
+  if (!canConfirmBatch.value) return
   batching.value = true
   try {
-    const ids = selectedRows.value.map((r) => r.patientId)
-    const result = await batchBindPatientsApi(ids, batchTeamId.value)
-    if (result.failedCount > 0) {
-      ElMessage.warning(`成功 ${result.successCount} 条，失败 ${result.failedCount} 条`)
-    } else {
-      ElMessage.success(`批量绑定成功 ${result.successCount} 条`)
+    // 契约 POST /admin/patients/batch-bind 单次只接受一个 teamId ⇒ 按目标团队分组逐组提交
+    const byTeam = new Map<string, string[]>()
+    for (const row of batchSelected.value) {
+      const teamId = batchTargetTeam.value[row.patientId]
+      const ids = byTeam.get(teamId)
+      if (ids) ids.push(row.patientId)
+      else byTeam.set(teamId, [row.patientId])
     }
-    batchVisible.value = false
-    loadData()
+    let successCount = 0
+    const failures: BatchBindFailure[] = []
+    for (const [teamId, ids] of byTeam) {
+      const result = await batchBindPatientsApi(ids, teamId)
+      successCount += result.successCount
+      failures.push(...result.failures)
+    }
+    if (failures.length > 0) {
+      const reasons = failures.map((f) => `${f.patientId}：${f.reason}`).join('；')
+      ElMessage.warning(`成功 ${successCount} 条，失败 ${failures.length} 条（${reasons}）`)
+    } else {
+      ElMessage.success(`批量分配成功 ${successCount} 条`)
+    }
+    batchSelected.value = []
+    batchTargetTeam.value = {}
+    await Promise.all([loadData(), loadUnassigned()])
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '批量绑定失败')
+    ElMessage.error(e instanceof Error ? e.message : '批量分配失败')
   } finally {
     batching.value = false
   }
@@ -452,6 +525,7 @@ async function confirmBatch() {
 
 onMounted(async () => {
   loadData()
+  loadUnassigned()
   try {
     teams.value = await fetchTeams()
   } catch {
@@ -480,10 +554,12 @@ onMounted(async () => {
   margin-top: 16px;
   text-align: right;
 }
-.batch-desc {
-  margin: 0 0 12px;
-  color: #333;
-  font-size: 13px;
+.batch-team-select {
+  width: 180px;
+}
+/* 设计稿 患者管理.html:108 确认分配按钮 margin-top:12px */
+.batch-submit {
+  margin-top: 12px;
 }
 .abnormal-report {
   margin-top: 20px;

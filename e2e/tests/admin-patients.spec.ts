@@ -1,11 +1,18 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '@playwright/test'
 import { readFileSync } from 'fs'
-import { adminRoutes, adminLogin, pickSelectOption, tableRows } from '../admin-helpers'
+import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
  * admin-web 患者管理：列表 / 关键词搜索 / 团队筛选 / 分页 / 详情抽屉
- * mock 数据对齐 mock/patients.ts：6 名患者（PT-001~PT-006，TEAM-001 有 2 名）
+ * mock 数据对齐 mock/patients.ts：8 名患者（PT-001~PT-008，TEAM-001 有 2 名，
+ * PT-007/PT-008 未分配团队 ⇒ 落在批量分配卡片）
+ *
+ * T289 4.2：本页有两张 el-table（患者列表 + 批量患者-团队绑定），
+ * 所以本文件的行/表头一律 scope 到 .patient-list-card，不用全局 tableRows(page)。
  */
+const listCard = (page: Page): Locator => page.locator('.patient-list-card')
+const listRows = (page: Page): Locator => tableRows(page, listCard(page))
+const listHeads = (page: Page): Locator => listCard(page).locator('.el-table__header-wrapper thead th')
 
 test.beforeEach(async ({ page }) => {
   await adminLogin(page, 'admin')
@@ -13,9 +20,9 @@ test.beforeEach(async ({ page }) => {
 })
 
 test.describe('列表渲染', () => {
-  test('渲染 6 名患者且列信息完整', async ({ page }) => {
-    const rows = tableRows(page)
-    await expect(rows).toHaveCount(6)
+  test('渲染 8 名患者且列信息完整', async ({ page }) => {
+    const rows = listRows(page)
+    await expect(rows).toHaveCount(8)
     const first = rows.first()
     await expect(first).toContainText('PT-001')
     await expect(first).toContainText('林小雨')
@@ -23,17 +30,61 @@ test.describe('列表渲染', () => {
     await expect(first).toContainText('脊柱侧弯一组')
     await expect(first).toContainText('张建国')
     await expect(first).toContainText('DEV-A3F312')
-    await expect(first).toContainText('活跃')
+    await expect(first).toContainText('可登录')
   })
 
-  test('未绑定设备患者显示未绑定与待分配', async ({ page }) => {
-    const row = tableRows(page).filter({ hasText: '赵欣然' })
+  /**
+   * PM 09-22 01:03 裁定 ①：状态列两态统一为「可登录 / 不可登录」（PRD §7D.3:1065 / :1320）。
+   * 设计稿 患者管理.html:92 的「活跃」属稿面未回写，已由 PM 登记文档批次，不由本卡改别人文件。
+   * 「不可登录」含「可登录」子串，故必须逐格精确比文本，不能用整表 not.toContainText。
+   */
+  test('状态列两态只有可登录与不可登录，不再出现「活跃」', async ({ page }) => {
+    await expect(listRows(page).first()).toBeVisible({ timeout: 15_000 })
+    // 🔴 不过滤空表头：下面要用这个下标去取 td:nth-child，过滤会让下标与单元格错位
+    const heads = await listHeads(page).evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()))
+    const col = heads.indexOf('状态')
+    expect(col, `状态列在位，实际表头：${JSON.stringify(heads)}`).toBeGreaterThan(-1)
+    const cells = listRows(page).locator(`td:nth-child(${col + 1})`)
+    const texts = await cells.evaluateAll((tds) => tds.map((td) => (td.textContent ?? '').trim()))
+    expect(texts.length, '逐行比对，不是只验一行').toBe(8)
+    for (const t of texts) expect(['可登录', '不可登录'], `状态文案越界：「${t}」`).toContain(t)
+    expect(texts).toContain('可登录')
+    expect(texts).toContain('不可登录')
+  })
+
+  // T289 F7：PRD §7D.3:1062/:1464 禁用「待分配」，非 active 一律显示「不可登录」
+  test('未绑定设备患者显示未绑定与不可登录', async ({ page }) => {
+    const row = listRows(page).filter({ hasText: '赵欣然' })
     await expect(row).toContainText('未绑定')
-    await expect(row).toContainText('待分配')
+    await expect(row).toContainText('不可登录')
+    await expect(row).not.toContainText('待分配')
   })
 
-  test('分页组件显示共 6 条', async ({ page }) => {
-    await expect(page.locator('.el-pagination')).toContainText('共 6 条')
+  test('分页组件显示共 8 条', async ({ page }) => {
+    await expect(page.locator('.el-pagination')).toContainText('共 8 条')
+  })
+
+  // T289 4.1：设计稿 患者管理.html:88 列序 = ID/姓名/性别/年龄/诊断/绑定设备/绑定团队/状态/操作。
+  // 「操作」列属 4.3（尚未派到前端），本用例只锁已落地的设计稿列名与相对顺序，
+  // 并允许 PRD §7D.3 多出、T245 明令「不自行判删」的 Cobb角 / 主治医生 两列插在诊断之后。
+  // 设计稿该 thead 无复选框列 ⇒ 4.2 已把列表勾选撤掉，这里用 filter(Boolean) 兜住空表头。
+  test('列名与列序对齐设计稿（绑定设备/绑定团队/状态 相邻且同序）', async ({ page }) => {
+    await expect(listRows(page).first()).toBeVisible({ timeout: 15_000 })
+    const heads = await listHeads(page).evaluateAll((ths) =>
+      ths.map((th) => (th.textContent ?? '').trim()).filter(Boolean),
+    )
+    expect(heads).toEqual([
+      '患者ID',
+      '姓名',
+      '性别',
+      '年龄',
+      '诊断',
+      'Cobb角',
+      '主治医生',
+      '绑定设备',
+      '绑定团队',
+      '状态',
+    ])
   })
 })
 
@@ -41,7 +92,7 @@ test.describe('搜索与筛选', () => {
   test('按姓名搜索：林 → 仅林小雨', async ({ page }) => {
     await page.locator('.search-input input').fill('林')
     await page.locator('.page-toolbar').getByRole('button', { name: '查询' }).click()
-    const rows = tableRows(page)
+    const rows = listRows(page)
     await expect(rows).toHaveCount(1)
     await expect(rows.first()).toContainText('林小雨')
   })
@@ -49,7 +100,7 @@ test.describe('搜索与筛选', () => {
   test('按患者ID搜索：PT-002 → 陈子航', async ({ page }) => {
     await page.locator('.search-input input').fill('PT-002')
     await page.locator('.page-toolbar').getByRole('button', { name: '查询' }).click()
-    const rows = tableRows(page)
+    const rows = listRows(page)
     await expect(rows).toHaveCount(1)
     await expect(rows.first()).toContainText('陈子航')
   })
@@ -57,30 +108,30 @@ test.describe('搜索与筛选', () => {
   test('回车触发搜索', async ({ page }) => {
     await page.locator('.search-input input').fill('王梓萌')
     await page.locator('.search-input input').press('Enter')
-    await expect(tableRows(page)).toHaveCount(1)
+    await expect(listRows(page)).toHaveCount(1)
   })
 
   test('按团队筛选：脊柱侧弯一组 → 2 名', async ({ page }) => {
     await pickSelectOption(page, page.locator('.team-select'), '脊柱侧弯一组')
-    const rows = tableRows(page)
+    const rows = listRows(page)
     await expect(rows).toHaveCount(2)
     await expect(rows.nth(0)).toContainText('林小雨')
     await expect(rows.nth(1)).toContainText('陈子航')
   })
 
-  test('清空搜索恢复 6 名', async ({ page }) => {
+  test('清空搜索恢复 8 名', async ({ page }) => {
     await page.locator('.search-input input').fill('林')
     await page.locator('.page-toolbar').getByRole('button', { name: '查询' }).click()
-    await expect(tableRows(page)).toHaveCount(1)
+    await expect(listRows(page)).toHaveCount(1)
     await page.locator('.search-input input').clear()
     await page.locator('.page-toolbar').getByRole('button', { name: '查询' }).click()
-    await expect(tableRows(page)).toHaveCount(6)
+    await expect(listRows(page)).toHaveCount(8)
   })
 })
 
 test.describe('详情抽屉', () => {
   test('点击行打开详情抽屉', async ({ page }) => {
-    await tableRows(page).filter({ hasText: '林小雨' }).click()
+    await listRows(page).filter({ hasText: '林小雨' }).click()
     const drawer = page.locator('.el-drawer')
     await expect(drawer).toBeVisible()
     await expect(drawer).toContainText('林小雨（PT-001）')
@@ -101,7 +152,7 @@ test.describe('详情抽屉', () => {
    * 并禁止回落成原始编号）+ apps/admin-web/test/contract-drift-gate.spec.ts（API 层，后端 ID 命名空间夹具）。
    */
   test('A-FLOW-10 抽屉字段契约：标题=所点行 + 8 项逐格对齐列表 + 底部动作 + 关闭后列表不变', async ({ page }) => {
-    const rows = tableRows(page)
+    const rows = listRows(page)
     await expect(rows.first()).toBeVisible({ timeout: 15_000 })
     const rowCount = await rows.count()
     expect(rowCount, '列表需至少 2 行才能取非首行验证').toBeGreaterThan(1)
@@ -109,9 +160,10 @@ test.describe('详情抽屉', () => {
     // 取第 2 行（避开上一条用例钉死的首行）
     const target = rows.nth(1)
     const cells = await target.evaluate((el) => Array.from(el.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim()))
-    const [, patientId, name, gender, age, diagnosis, cobb, team, doctor, device] = cells
+    // T289 4.1/4.2 列序（设计稿 患者管理.html:88，无复选框列）：患者ID / 姓名 / 性别 / 年龄 / 诊断 / Cobb角 / 主治医生 / 绑定设备 / 绑定团队 / 状态
+    const [patientId, name, gender, age, diagnosis, cobb, doctor, device, team] = cells
 
-    await target.locator('td').nth(2).click() // 点姓名单元格，避开首列复选框
+    await target.locator('td').nth(1).click() // 点姓名单元格
     const drawer = page.locator('.el-drawer')
     await expect(drawer).toBeVisible()
     await expect(drawer.locator('.el-drawer__title')).toHaveText(`${name}（${patientId}）`)
@@ -140,16 +192,81 @@ test.describe('详情抽屉', () => {
 
     await drawer.locator('.el-drawer__close-btn').click()
     await expect(drawer).toBeHidden()
-    // 只数列表那一张表：T300 后抽屉里还有两张汇总表，全局 .el-table 选择器会把它们算进来
-    await expect(page.locator('.page-card .el-table__body-wrapper tbody tr')).toHaveCount(rowCount) // 关抽屉不改变列表（未触发筛选/翻页）
+    // 只数列表那一张表：T300 后抽屉里还有两张汇总表、4.2 后本页还有批量绑定表，
+    // 全局 .el-table 选择器会把它们算进来 ⇒ scope 到 .patient-list-card
+    await expect(listRows(page)).toHaveCount(rowCount) // 关抽屉不改变列表（未触发筛选/翻页）
   })
 
   test('抽屉可关闭', async ({ page }) => {
-    await tableRows(page).filter({ hasText: '陈子航' }).click()
+    await listRows(page).filter({ hasText: '陈子航' }).click()
     const drawer = page.locator('.el-drawer')
     await expect(drawer).toBeVisible()
     await drawer.locator('.el-drawer__close-btn').click()
     await expect(drawer).toBeHidden()
+  })
+})
+
+/**
+ * T289 4.2 + F2（设计稿 患者管理.html:98-108 WB-09 · PRD §7D.3:1070）
+ * 批量患者-团队绑定独立卡片：只列未分配团队的患者，逐行「分配至」下拉，确认后写回团队。
+ */
+test.describe('批量患者-团队绑定卡片（T289 4.2 / F2）', () => {
+  const batchCard = (page: Page): Locator => page.locator('.batch-bind-card')
+  const batchRows = (page: Page): Locator => tableRows(page, batchCard(page))
+
+  test('卡片标题与设计稿列头一致', async ({ page }) => {
+    await expect(batchRows(page).first()).toBeVisible({ timeout: 15_000 })
+    await expect(batchCard(page).locator('.page-card-title')).toHaveText('批量患者-团队绑定')
+    const heads = await batchCard(page)
+      .locator('.el-table__header-wrapper thead th')
+      .evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()))
+    // 首格是勾选列（无文案），保留空串以证明列序
+    expect(heads).toEqual(['', '患者ID', '姓名', '当前团队', '分配至'])
+  })
+
+  test('F2 限定：卡片只列未分配团队的患者，已分配患者不出现', async ({ page }) => {
+    const rows = batchRows(page)
+    await expect(rows).toHaveCount(2)
+    await expect(rows.filter({ hasText: 'PT-007' })).toContainText('王小红')
+    await expect(rows.filter({ hasText: 'PT-008' })).toContainText('赵阳')
+    // 当前团队一栏恒为「未分配」（卡片数据源即 teamId 为空的患者）
+    await expect(rows.first().locator('td').nth(3)).toHaveText('未分配')
+    for (const assigned of ['林小雨', '陈子航', '王梓萌', '赵欣然']) {
+      await expect(rows.filter({ hasText: assigned })).toHaveCount(0)
+    }
+  })
+
+  test('未勾选或未选团队时「确认分配」不可点', async ({ page }) => {
+    const submit = batchCard(page).getByRole('button', { name: '确认分配' })
+    await expect(submit).toBeDisabled()
+    await batchRows(page).first().locator('.el-checkbox').click()
+    await expect(submit, '勾了行但没选团队仍不可点').toBeDisabled()
+  })
+
+  test('逐行选团队后确认分配：患者从卡片消失并在列表显示新团队', async ({ page }) => {
+    const row = batchRows(page).filter({ hasText: 'PT-007' })
+    await row.locator('.el-checkbox').click()
+    await pickSelectOption(page, row.locator('.batch-team-select'), '脊柱侧弯一组')
+    await batchCard(page).getByRole('button', { name: '确认分配' }).click()
+    await expect(adminMessage(page)).toContainText('批量分配成功 1 条')
+
+    const after = batchRows(page).filter({ hasText: 'PT-007' })
+    await expect(after).toHaveCount(0)
+    const listRow = listRows(page).filter({ hasText: '王小红' })
+    await expect(listRow).toContainText('脊柱侧弯一组')
+  })
+
+  test('两行选不同团队：按团队分组提交，两条都成功', async ({ page }) => {
+    const rows = batchRows(page)
+    await expect(rows).toHaveCount(2)
+    const r7 = rows.filter({ hasText: 'PT-007' })
+    const r8 = rows.filter({ hasText: 'PT-008' })
+    await batchCard(page).locator('.el-table__header-wrapper .el-checkbox').click() // 表头全选
+    await pickSelectOption(page, r7.locator('.batch-team-select'), '脊柱侧弯一组')
+    await pickSelectOption(page, r8.locator('.batch-team-select'), '脊柱侧弯二组')
+    await batchCard(page).getByRole('button', { name: '确认分配' }).click()
+    await expect(adminMessage(page)).toContainText('批量分配成功 2 条')
+    await expect(batchCard(page).locator('.el-table__empty-text')).toContainText('暂无未分配团队的患者')
   })
 })
 
@@ -160,7 +277,7 @@ test.describe('详情抽屉', () => {
  */
 test.describe('T300 异常报告入口', () => {
   test('进抽屉自动出汇总，状态计数之和等于总数', async ({ page }) => {
-    await tableRows(page).filter({ hasText: '林小雨' }).click()
+    await listRows(page).filter({ hasText: '林小雨' }).click()
     const section = page.locator('.el-drawer .abnormal-report')
     const totalLine = section.locator('.report-total')
     await expect(totalLine).toContainText('共 ')
@@ -180,7 +297,7 @@ test.describe('T300 异常报告入口', () => {
   })
 
   test('导出 CSV：文件名含患者与区间，明细行数等于页面总数', async ({ page }) => {
-    await tableRows(page).filter({ hasText: '林小雨' }).click()
+    await listRows(page).filter({ hasText: '林小雨' }).click()
     const section = page.locator('.el-drawer .abnormal-report')
     const total = Number(/共 (\d+) 条/.exec(await section.locator('.report-total').innerText())?.[1] ?? -1)
     expect(total).toBeGreaterThan(0)

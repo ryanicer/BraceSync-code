@@ -72,11 +72,12 @@ export interface TeamDetail extends Team {
   createdAt: string;
 }
 
-/** 团队管理统计卡（T256 #1：GET /admin/teams/stats，4 个计数） */
+/** 团队管理统计卡（T256 #1：GET /admin/teams/stats，4 个计数）
+ *  字段名对齐后端 model.TeamStatsDTO 的 json tag（services/user-service/internal/model/model.go:205-210） */
 export interface TeamStats {
   teamCount: number;        // 团队总数
   memberCount: number;      // 成员总数
-  patientCount: number;     // 管理患者数（已分配团队的患者）
+  managedPatientCount: number;    // 管理患者数（已分配团队的患者）
   unassignedPatientCount: number; // 待分配患者数（未分配团队）
 }
 
@@ -144,6 +145,9 @@ export interface Alert {
   processNote: string | null;
 }
 
+/** T289 9.3：设计稿「校准」列口径（api-contracts.ts getInstallRecords，T248 9.3） */
+export type CalibStatus = 'uncalibrated' | 'normal' | 'abnormal';
+
 export interface InstallRecord {
   installId: string;
   deviceId: string;
@@ -158,6 +162,24 @@ export interface InstallRecord {
   notes: string;
   signatureUrl: string;
   wifiStatus: 'connected' | 'unconfigured';  // 对齐 DB install_records.wifi_status
+}
+
+/**
+ * 管理端安装记录行（契约 InstallRecord & { calibStatus }）。
+ * 单独成类型而不是往 InstallRecord 上加必填字段：技师小程序复用 InstallRecord 造 seed，
+ * 加必填字段会牵动端外改动（见 api-contracts.ts:423 的同款写法）。
+ */
+export type InstallRecordRow = InstallRecord & {
+  /** 校准状态（T289 9.3）：后端由 baseline + 20 点偏移派生，异常判定阈值走配置不在前端硬编 */
+  calibStatus: CalibStatus;
+};
+
+/** T289 9.1/9.2：GET /api/v1/install-records/:id（契约 getInstallDetail） */
+export interface InstallRecordDetail extends InstallRecordRow {
+  /** 基线 20 点偏移值；未校准为 []（非 null，前端可直接 map） */
+  offsetValues: number[];
+  /** 建档时间（设计稿 安装记录.html:181「安装时间」，列表 DTO 无该字段） */
+  createdAt: string;
 }
 
 export interface Baseline {
@@ -179,6 +201,16 @@ export interface FeelingLog {
   notes: string;
   replyContent: string | null;   // 医生回复
   replyTime: string | null;
+  /**
+   * T289 8.1（T278 遗留项 L2）：跨患者流 GET /api/v1/admin/feeling-logs 由 patients.name join 带出；
+   * 单患者端点不 join ⇒ 恒 null，前端回落 patientId。
+   */
+  patientName?: string | null;
+  /**
+   * 设计稿 矫形日志.html:127「提交时间」列。DB feeling_logs.created_at 有列，
+   * 但 model.FeelingLogDTO 未下发 ⇒ 待后端补字段，缺失时前端显示占位而非造假时间。
+   */
+  createdAt?: string | null;
 }
 
 export interface OrthosisPlan {

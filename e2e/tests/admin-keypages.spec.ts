@@ -97,7 +97,10 @@ test.describe('系统配置', () => {
     await expect(page.getByText('全局系统参数')).toBeVisible()
     await expect(page.locator('.settings-form')).toContainText('数据采集间隔')
     await expect(page.locator('.settings-form')).toContainText('每日佩戴目标时长')
-    await expect(page.locator('.settings-form')).toContainText('压力偏高阈值')
+    // T289 12.4（设计稿 系统配置.html:95-102）：压力阈值独立成「压力阈值配置」卡，
+    // 字段名随稿改为 偏高上限；此处锚点从 .settings-form 换成 .pressure-tier-card，
+    // 不能再用 .settings-form —— 页面上现在有两张表单卡，且该键已不在全局参数卡里。
+    await expect(page.locator('.pressure-tier-card')).toContainText('偏高上限（N）')
     await expect(page.locator('.settings-form')).toContainText('佩戴中断判定时间')
     // T247 新增采集间隔为第一项；定位"每日佩戴目标时长"对应的 el-input-number
     const formItem = page.locator('.el-form-item', { hasText: '每日佩戴目标时长' })
@@ -142,7 +145,8 @@ test.describe('系统配置', () => {
   test('通知规则切换勾选后提示更新成功', async ({ page }) => {
     await page.getByRole('tab', { name: '通知规则' }).click()
     const card = page.locator('.page-card').filter({ hasText: '告警通知规则' })
-    const wearRow = card.locator('tbody tr').filter({ hasText: '佩戴中断' })
+    // T289 2.6：wear_interrupt 的显示术语全站收口为「设备离线」（shared-utils ALERT_TYPE_LABELS）
+    const wearRow = card.locator('tbody tr').filter({ hasText: '设备离线' })
     // 佩戴中断默认仅微信 + 患者；追加勾选短信渠道
     await wearRow.locator('.el-checkbox').filter({ hasText: '短信' }).click()
     await expect(adminMessage(page)).toContainText('通知渠道已更新')
@@ -188,7 +192,8 @@ test.describe('系统配置', () => {
 
       expect(recordId, `${where} 记录ID 非空`).not.toBe('')
       expect(patient, `${where} 患者列不得漏 undefined/NaN`).not.toMatch(/undefined|NaN/)
-      expect(['压力偏高', '压力波动', '佩戴中断', '传感器漂移', '非告警'], `${where} 告警类型须中文枚举`).toContain(alertType)
+      // T289 2.6：告警类型术语收口（shared-utils ALERT_TYPE_LABELS），「佩戴中断/传感器漂移」已作废
+      expect(['压力偏高', '压力波动', '设备离线', '佩戴时长不足', '传感器标定异常', '非告警'], `${where} 告警类型须中文枚举`).toContain(alertType)
       expect(['微信', '短信'], `${where} 渠道须中文，不得漏 wechat/sms 原文`).toContain(channel)
       expect(content, `${where} 内容非空`).not.toBe('')
       // 内容列 show-overflow-tooltip：EP 会给单元格加 .el-tooltip（悬停出全文的前提）

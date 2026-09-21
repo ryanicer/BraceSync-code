@@ -79,6 +79,9 @@ const PATIENTS: Patient[] = [
   { patientId: 'PT-004', name: '刘俊熙', gender: 'male', age: 14, diagnosis: '青少年特发性脊柱侧弯', cobbAngle: 31, deviceId: 'DEV-D2A012', teamId: 'TEAM-002', doctorId: 'DOC-002', status: 'active', createdAt: '2026-06-01T09:30:00+08:00', updatedAt: '2026-08-11T07:40:00+08:00' },
   { patientId: 'PT-005', name: '赵欣然', gender: 'female', age: 16, diagnosis: '青少年特发性脊柱侧弯', cobbAngle: 40, deviceId: null, teamId: 'TEAM-003', doctorId: 'DOC-003', status: 'pending', createdAt: '2026-08-08T11:00:00+08:00', updatedAt: '2026-08-08T11:00:00+08:00' },
   { patientId: 'PT-006', name: '孙浩然', gender: 'male', age: 13, diagnosis: '姿势性脊柱侧弯', cobbAngle: 18, deviceId: 'DEV-E5B347', teamId: 'TEAM-003', doctorId: 'DOC-003', status: 'active', createdAt: '2026-07-15T15:30:00+08:00', updatedAt: '2026-08-10T20:10:00+08:00' },
+  // T289 4.2：设计稿 患者管理.html:92/:105 的「未分配」样例（批量患者-团队绑定卡片的数据源）
+  { patientId: 'PT-007', name: '王小红', gender: 'female', age: 12, diagnosis: '胸腰段双弯', cobbAngle: 35, deviceId: null, teamId: null, doctorId: null, status: 'active', createdAt: '2026-08-09T10:00:00+08:00', updatedAt: '2026-08-09T10:00:00+08:00' },
+  { patientId: 'PT-008', name: '赵阳', gender: 'male', age: 14, diagnosis: '腰椎左侧弯', cobbAngle: 24, deviceId: null, teamId: null, doctorId: null, status: 'active', createdAt: '2026-08-10T16:40:00+08:00', updatedAt: '2026-08-10T16:40:00+08:00' },
 ]
 
 export function mockPatients(params: { keyword?: string; teamId?: string; page?: number; pageSize?: number }): { list: Patient[]; total: number; page: number; pageSize: number } {

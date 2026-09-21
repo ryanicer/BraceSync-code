@@ -147,6 +147,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Alert, Doctor } from '@bracesync/shared-types'
+import { alertTypeLabel } from '@bracesync/shared-utils'
 import LogicFlow from '@logicflow/core'
 import '@logicflow/core/dist/index.css'
 import {
@@ -222,14 +223,6 @@ const branchOptions = computed(() => {
     name: template.value?.nodes.find((n) => n.id === id)?.text?.value || id,
   }))
 })
-
-function alertTypeLabel(type?: string): string {
-  const map: Record<string, string> = {
-    pressure_high: '压力偏高', wear_interrupt: '佩戴中断',
-    pressure_fluctuation: '压力波动', sensor_drift: '传感器漂移',
-  }
-  return map[type || ''] || type || '-'
-}
 
 function formatTime(iso?: string | null): string {
   if (typeof iso !== 'string' || iso.length < 16) return '-'

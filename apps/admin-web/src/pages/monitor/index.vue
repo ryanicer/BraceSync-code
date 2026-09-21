@@ -98,7 +98,7 @@
           采集点实时热力图
           <span class="realtime-tag small">
             <span class="realtime-dot" />
-            每 2s 刷新
+            每秒刷新
           </span>
           <span v-if="frameStamp" class="hm-frame-stamp" title="本帧采集时刻（数据侧时间戳）">本帧 {{ frameStamp }}</span>
         </div>
@@ -212,13 +212,15 @@ import {
   type ChartData,
 } from 'chart.js'
 import type { Patient } from '@bracesync/shared-types'
+import { alertTypeLabel } from '@bracesync/shared-utils'
 import { fetchPatients, fetchPatientRealtime } from '../../api'
 import type { RealtimeSnapshot, PressureHeatmapPoint } from '../../mock/patients'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
 // ====== 常量 ======
-const POLL_MS = 2000
+// F6：设计稿 实时监控.html:161 写「每秒刷新」，PRD §7D.2 写 2s —— 按四层关系以设计稿为准（T289 PM 23:39 指令）
+const POLL_MS = 1000
 const CHART_WINDOW = 30
 // T296：色阶上界与偏高分界改由快照 heatmapMaxN / pressureHighN 下发（与告警引擎同源于 sys_configs）。
 // 此前写死 60 / 45 / 30，是 T203「÷10」之前的量纲，真机亚牛顿数据在页面上恒贴底、色阶全冷。
@@ -359,16 +361,7 @@ function fmtTime(iso: string): string {
   }
 }
 
-// 告警类型标签 & 样式（设计稿 3.3）
-function alertTypeLabel(type: string): string {
-  const map: Record<string, string> = {
-    pressure_high: '压力偏高',
-    wear_interrupt: '佩戴中断',
-    pressure_fluctuation: '压力波动',
-    sensor_drift: '传感器漂移',
-  }
-  return map[type] ?? type
-}
+// 告警类型标签走 shared-utils 的 ALERT_TYPE_LABELS（T289 2.6 全站唯一口径）；样式仍按设计稿 3.3
 function eventTypeClass(type: string): string {
   const map: Record<string, string> = {
     pressure_high: 'ev-danger',
