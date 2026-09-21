@@ -11,6 +11,9 @@ import {
 /**
  * T053 - 01 登录模块（真实模式：用户名/密码 + JWT）
  * 覆盖：登录页渲染 / 登录成功 / 错误密码拒绝 / 路由守卫与退出
+ *
+ * T279 补：1.5 = 验收卡 A-FLOW-03 步骤 4「空用户名前端拦截」（docs/tests/acceptance/admin/核心流程.md:68）。
+ *          mock 侧结构上验不了（登录页只有角色下拉，没有用户名框），故只能在真实模式补。
  */
 test.describe('01-登录模块', () => {
 
@@ -88,6 +91,47 @@ test.describe('01-登录模块', () => {
       const urlAfter = page.url()
       expect(urlAfter).toContain('/login')
       expect(urlAfter).toMatch(/redirect=/)
+      // ⚠️ T279 实测：staging 上 redirect 参数恒为 /dashboard，不是 /patients——
+      //    Nginx 把 /admin/patients 交给 SPA 后无匹配路由，只能落回默认页（见 real-helpers 顶部说明）。
+      //    所以本用例守的是「未登录进不去 + 带 redirect 回跳」，「回跳到原目标页」这一步在 staging 无法验，
+      //    已作为缺陷登记（T279 报告 F-2），不要把它读成 A-FLOW-02 的回跳已覆盖。
+    })
+  })
+
+  test.describe('空用户名前端拦截（T279 补 A-FLOW-03 步骤 4）', () => {
+    test('1.5 用户名留空点登录 → 字段下方红字「请输入用户名」+ 不发任何登录请求', async ({ page }) => {
+      // 计数口径：真实网络请求（不用 page.route 改写响应，只观察）
+      const loginCalls: string[] = []
+      page.on('request', (req) => {
+        if (req.url().includes('/api/v1/auth/login')) loginCalls.push(`${req.method()} ${req.url()}`)
+      })
+
+      await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
+      await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
+
+      // 只填密码，用户名保持空串（验收卡步骤 4：用户名留空 + 密码 admin123）
+      const usernameInput = page.locator('.login-form input:not([type="password"])').first()
+      await expect(usernameInput).toHaveValue('')
+      await page.locator('.login-form input[type="password"]').fill('admin123')
+      await page.locator('.login-form').getByRole('button', { name: '登 录' }).click()
+
+      // 1) 前端表单校验红字出现在「用户名」字段下方（el-form-item__error 挂在对应 item 内）
+      const usernameItem = page
+        .locator('.login-form .el-form-item')
+        .filter({ hasText: '用户名' })
+        .first()
+      await expect(usernameItem.locator('.el-form-item__error')).toHaveText('请输入用户名')
+
+      // 2) 零请求：给可能的异步发送留出观察窗口后再判定
+      await page.waitForTimeout(2_000)
+      expect(loginCalls).toEqual([])
+
+      // 3) 前端拦截 ⇒ 不该出现后端错误提示（后端原文是「invalid username or password」）
+      await expect(adminMessage(page)).toHaveCount(0)
+
+      // 4) 仍停在登录页，没有进入任何后台页
+      expect(new URL(page.url()).pathname).toBe('/login')
+      await expect(page.locator('.el-menu')).toHaveCount(0)
     })
   })
 })

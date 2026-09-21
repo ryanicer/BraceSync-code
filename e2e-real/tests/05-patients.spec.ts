@@ -1,12 +1,10 @@
 import { test, expect } from '@playwright/test'
 import {
   realLogin,
-  gotoMenu,
-  realLogout,
+  gotoMenuAndWaitTable,
   pickSelectOption,
   tableRows,
   adminMessage,
-  realRoutes,
   E2E_PATIENT_NAME_PREFIX,
   uniqueName,
   getAuthToken,
@@ -20,10 +18,8 @@ import {
 test.describe('05-患者管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
-    await gotoMenu(page, '患者管理')
-    await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
-      timeout: 25_000,
-    })
+    // T279：裸等表格行会命中上一页（数据概览）的排行表 → 本页 0 行就开断言（5.1/5.2 实跑失效根因）
+    await gotoMenuAndWaitTable(page, '患者管理', 'patients')
   })
 
   // 记录本文件新建的患者名，末尾清理
@@ -151,6 +147,10 @@ test.describe('05-患者管理', () => {
 
   test.describe('添加患者（写操作，可重放唯一命名）', () => {
     test('5.4 添加患者 → 唯一姓名（T053测试-xxx）+ 最小必填 → 提交成功 → 搜索可找到', async ({ page }) => {
+      // T279 停跑：后端无 DELETE /admin/patients/{id}（user-service 路由表与 proxy_admin.go 均无），
+      //   患者页也无删除入口 ⇒ afterAll 的 API 清理是结构性空转，跑一次永久留一条脏数据
+      //   （staging 遗留 P20264360f30837c4 / T053测试-672410 即证）。补删除端点后再恢复。
+      test.skip(true, '无 DELETE /admin/patients 端点，afterAll 清理失效，会永久污染共享 staging seed')
       const patientName = uniqueName(E2E_PATIENT_NAME_PREFIX)
 
       // 找"添加患者"/"新建患者"按钮
@@ -240,6 +240,10 @@ test.describe('05-患者管理', () => {
 
   test.describe('分配团队（写操作）', () => {
     test('5.5 行 → 抽屉 → 分配团队 → 选团队 → 确定 → ElMessage 成功', async ({ page }) => {
+      // T279 停跑（PM 口径：只跑自建自删的写用例）：本用例改的是 seed 患者的团队归属。
+      //   PUT /admin/patients/:id/team 虽可改回，但用例中途失败就把 seed 患者留在错误团队，
+      //   连带影响 5.3 团队筛选与 06 团队管理对成员数/患者数的 seed 断言。
+      test.skip(true, '改 seed 患者的团队归属，失败即污染 5.3/06 的 seed 断言，按 PM 口径停跑')
       const rows = tableRows(page)
       expect(await rows.count()).toBeGreaterThanOrEqual(1)
 

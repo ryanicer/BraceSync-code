@@ -1,4 +1,7 @@
 import { expect, type Page, type Locator } from '@playwright/test'
+// gotoMenu 在本文件下方要被直接调用，故必须真 import 一份——
+// 下面那串 `export { gotoMenu } from '../e2e/admin-helpers'` 只转发给消费者，不产生本地绑定。
+import { gotoMenu } from '../e2e/admin-helpers'
 
 /*
  * ⚠️ 本文件为「真实模式」E2E 专用 helper（T053）。
@@ -28,6 +31,12 @@ export {
 // 真实模式「staging 路由」全量常量（baseURL 是根，staging 前端挂在 Nginx /admin/ 下）
 // Nginx /admin/ location strip 前缀后交根路径 router（createWebHistory() 无 base，pageRoutes 全根路径）
 // 故 realRoutes 带 /admin/ 前缀对齐浏览器 URL；登录成功 router push /dashboard → 浏览器 URL /admin/dashboard
+//
+// 🔴 T279 复跑实测（2026-09-21，staging 已换 root-base 构建）：上述 strip 已不成立——
+//   /admin/xxx 深链进不了 xxx 页（SPA 见 /admin/xxx 无匹配 → 落回 /dashboard），
+//   根路径 /xxx 又被 Nginx 302 回 /admin/。⇒ 深链只能到「登录页或数据概览」，
+//   进具体页必须登录 → 点侧边栏（见 gotoMenuAndWaitTable）。
+//   保留本常量：/admin/login 与 /admin/dashboard 仍是有效入口。
 // ─────────────────────────────────────────────────────────────
 export const realRoutes = {
   login: '/admin/login',
@@ -139,6 +148,21 @@ export async function waitForTableLoaded(page: Page): Promise<void> {
   await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
     timeout: 20_000,
   })
+}
+
+/**
+ * 点侧边栏菜单进入某页，并等「本页」表格出首行。
+ *
+ * 为什么不能沿用 `gotoMenu()` + 裸等 `.el-table__body-wrapper tbody tr` 可见：
+ * 上一页（数据概览）自带团队/医生两张排行表，点击菜单后那一瞬旧 DOM 仍在，
+ * 旧表格的行会被当成本页「加载完成」信号，于是本页表格还没出数就开始断言
+ * （T279 实跑 5.1 / 5.2 / 7.1 / 7.2 四条因此读到 0 行）。
+ * 先按 URL 落位、再等行，才是本页的就绪信号。
+ */
+export async function gotoMenuAndWaitTable(page: Page, title: string, routePath: string): Promise<void> {
+  await gotoMenu(page, title)
+  await expect(page).toHaveURL(new RegExp(`/${routePath}$`), { timeout: 15_000 })
+  await waitForTableLoaded(page)
 }
 
 /** 取所有表格行中可见的 tag 文本（用于状态存在性验证） */
