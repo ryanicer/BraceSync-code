@@ -17,6 +17,7 @@
     "@bracesync/shared-utils": "*",
     "@element-plus/icons-vue": "^2.3.2",
     "@logicflow/core": "^2.2.5",
+    "@logicflow/extension": "^2.3.1",
     "chart.js": "^4.4.0",
     "element-plus": "^2.9.0",
     "pinia": "^2.1.0",

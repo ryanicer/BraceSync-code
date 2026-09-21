@@ -29,12 +29,16 @@ const BUILTIN_TO_FLOW: Record<string, string> = {
   ellipse: 'flow-ellipse',
 }
 
-/** 模板节点 → 运行态形状：优先按业务类别（properties.kind），其次沿用模板写的内置类型 */
+/**
+ * 模板节点 → 运行态形状：先认模板自己写的形状（内置名或 flow-* 名），都没有才按 properties.kind 兜底。
+ * 顺序很关键——T276 设计器把「并行/汇聚」按设计稿存成 140×48 矩形（kind=parallel/join），
+ * 若 kind 优先会把它们画成菱形/圆形，跟设计器里看到的不一致。
+ */
 function shapeType(node: FlowGraphNode): string {
-  const kind = String(node.properties?.kind ?? '')
-  if (KIND_TO_SHAPE[kind]) return KIND_TO_SHAPE[kind]
   if (BUILTIN_TO_FLOW[node.type]) return BUILTIN_TO_FLOW[node.type]
   if ((FLOW_SHAPE_TYPES as readonly string[]).includes(node.type)) return node.type
+  const kind = String(node.properties?.kind ?? '')
+  if (KIND_TO_SHAPE[kind]) return KIND_TO_SHAPE[kind]
   return 'flow-rect'
 }
 
@@ -114,4 +118,18 @@ export const FLOW_STATUS_LABEL: Record<FlowStatus, string> = {
   current: '处理中',
   todo: '待处理',
   skipped: '已跳过',
+}
+
+const TIME_UNIT_LABEL: Record<'minutes' | 'hours' | 'days', string> = {
+  minutes: '分钟', hours: '小时', days: '天',
+}
+
+/** 模板节点的处理时限 → 「2小时」。
+ * 设计器（T276）只写 timeLimit + timeUnit 两个键（T285 §2.3），没有现成的文本字段可读；
+ * delay 节点存的是 delayMinutes，不适用本函数。 */
+export function deadlineOf(props: Record<string, unknown> | undefined): string {
+  const limit = Number(props?.timeLimit)
+  if (!Number.isFinite(limit) || limit <= 0) return '-'
+  const unit = String(props?.timeUnit ?? 'minutes') as keyof typeof TIME_UNIT_LABEL
+  return `${limit}${TIME_UNIT_LABEL[unit] ?? '分钟'}`
 }

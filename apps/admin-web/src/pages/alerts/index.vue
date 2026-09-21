@@ -169,6 +169,10 @@
         <div v-if="!currentAlert" class="page-card flow-empty">请先在「告警列表」点击某条告警的「流程」按钮查看其处理流程画布。</div>
         <FlowRuntime v-else-if="activeTab === 'process'" :alert="currentAlert" />
       </el-tab-pane>
+
+      <el-tab-pane label="流程配置" name="designer">
+        <FlowDesigner v-if="activeTab === 'designer'" />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 处理对话框（复用 T019B processAlert 流程） -->
@@ -213,6 +217,7 @@ import {
 } from '../../api'
 import type { AlertPointRule, AlertGlobalRules } from '../../mock/alerts'
 import FlowRuntime from './flow/FlowRuntime.vue'
+import FlowDesigner from './flow/designer/FlowDesigner.vue'
 
 const activeTab = ref('list')
 
