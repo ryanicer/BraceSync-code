@@ -820,6 +820,7 @@ func (h *Handler) toTechDTO(r repo.TechnicianRow) model.TechnicianDTO {
 		Name:         r.Name,
 		PhoneMasked:  masked,
 		TeamID:       strOr(r.TeamID, ""),
+		TeamName:     r.TeamName,
 		InstallCount: r.InstallCount,
 		Status:       r.Status,
 		AuthStatus:   r.AuthStatus,

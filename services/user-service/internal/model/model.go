@@ -182,14 +182,17 @@ type DoctorDTO struct {
 }
 
 // TechnicianDTO 技师（契约 getTechnicians，对齐 shared-types Technician）
+// teamName：T278-② 后端 join 带出（/technicians 是分页接口，前端建不出全量团队字典 ⇒
+// 团队列此前回落成 TEAM01 编号）；NULL = 该技师未入队，前端回落显示 teamId。
 type TechnicianDTO struct {
-	TechID       string `json:"techId"`
-	Name         string `json:"name"`
-	PhoneMasked  string `json:"phoneMasked"`
-	TeamID       string `json:"teamId"`
-	InstallCount int    `json:"installCount"`
-	Status       string `json:"status"`
-	AuthStatus   string `json:"authStatus"`
+	TechID       string  `json:"techId"`
+	Name         string  `json:"name"`
+	PhoneMasked  string  `json:"phoneMasked"`
+	TeamID       string  `json:"teamId"`
+	TeamName     *string `json:"teamName"`
+	InstallCount int     `json:"installCount"`
+	Status       string  `json:"status"`
+	AuthStatus   string  `json:"authStatus"`
 }
 
 // TeamMembersDTO 团队成员明细（契约 getTeamMembers，T030 #10）

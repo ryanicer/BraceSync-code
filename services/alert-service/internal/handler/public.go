@@ -12,10 +12,15 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bracesync/bracesync/services/alert-service/internal/repo"
 )
@@ -71,7 +76,7 @@ var (
 // PublicAlertStore 公开端点数据访问接口（repo.PGAlertRepo 实现）
 type PublicAlertStore interface {
 	ListAlerts(ctx context.Context, f repo.AlertQueryFilter) ([]repo.AlertRow, int64, error)
-	ProcessAlert(ctx context.Context, alertID int64, operatorID string) (exists bool, err error)
+	ProcessAlert(ctx context.Context, alertID int64, operatorID, note string) (exists bool, err error)
 	StartProcessing(ctx context.Context, alertID int64) (repo.ProcessState, error)
 }
 
@@ -229,6 +234,8 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 // T257 2.7：pending → processed（跳级）与 processing → processed 都合法；
 // 重复处理不报错（processed_at / processed_by 以首次为准）；不存在返回 404。契约返回 ApiResponse<null>。
 // processed_by 取 gateway 注入的 X-User-Id（T257 前该列一直为空，见交件说明）。
+// T278-①：请求体 {note} 落 process_note（Iris T269 D4 实测「状态落了、备注没了」）；
+// 无 body / note 为空 ⇒ 传空串给 repo，行为与本条改动前完全一致。
 func (h *Handler) processAlert(w http.ResponseWriter, r *http.Request) {
 	if h.public == nil {
 		h.reject(w, codeInternalError, "public store not configured")
@@ -238,7 +245,11 @@ func (h *Handler) processAlert(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	exists, err := h.public.ProcessAlert(r.Context(), alertID, r.Header.Get(headerUserID))
+	note, ok := h.parseProcessNote(w, r)
+	if !ok {
+		return
+	}
+	exists, err := h.public.ProcessAlert(r.Context(), alertID, r.Header.Get(headerUserID), note)
 	if err != nil {
 		h.log.Error().Err(err).Int64("alert_id", alertID).Msg("process alert failed")
 		h.reject(w, codeInternalError, "process alert failed")
@@ -249,6 +260,40 @@ func (h *Handler) processAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope{Code: codeSuccess, Message: "success"})
+}
+
+// maxProcessNote alerts.process_note 为 VARCHAR(512)，超长 PG 直接报 22001 →
+// 与其回 500，不如在入口按字符数拒 400（中文按 rune 计，与 PG 的字符口径一致）。
+const maxProcessNote = 512
+
+// processNoteRequest 处理端点的可选请求体（note 缺省 = 无备注）
+type processNoteRequest struct {
+	Note string `json:"note"`
+}
+
+// parseProcessNote 解析可选的 {note} 请求体。
+// 空 body（老调用方 / 前端无备注时不带 body）→ 返回空串且放行；
+// body 非 JSON 或 note 超长 → 400 并返回 false。
+func (h *Handler) parseProcessNote(w http.ResponseWriter, r *http.Request) (string, bool) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	if err != nil {
+		h.reject(w, codeInvalidParam, "read body: "+err.Error())
+		return "", false
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return "", true
+	}
+	var req processNoteRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		h.reject(w, codeInvalidParam, "invalid json: "+err.Error())
+		return "", false
+	}
+	note := strings.TrimSpace(req.Note)
+	if utf8.RuneCountInString(note) > maxProcessNote {
+		h.reject(w, codeInvalidParam, "note too long: max 512 characters")
+		return "", false
+	}
+	return note, true
 }
 
 // startProcessingAlert POST /api/v1/alerts/{alertId}/processing —— 开始处理（T257 2.7 新增）。

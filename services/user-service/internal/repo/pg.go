@@ -450,11 +450,19 @@ func (s *PGStore) ListDoctorsByTeam(ctx context.Context, teamID string) ([]Docto
 // 技师
 // ─────────────────────────────────────────────────────────────
 
-const techColumns = `tech_id, name, phone_enc, phone_hash, team_id, install_count, status, auth_status`
+// techColumns 技师投影；末尾 team_name = T278-② LEFT JOIN teams 带出的团队名
+// （设计稿技师列表显示团队名，前端分页拿不到全量团队字典 ⇒ 与患者列表 D1 同源，后端 join）
+const techColumns = `technicians.tech_id, technicians.name, technicians.phone_enc, technicians.phone_hash,
+	technicians.team_id, technicians.install_count, technicians.status, technicians.auth_status,
+	teams.name AS team_name`
+
+// techFrom 统一 FROM 子句（三处技师查询共用，别名 teams 不与 technicians 列冲突）
+const techFrom = ` FROM technicians LEFT JOIN teams ON teams.team_id = technicians.team_id`
 
 func scanTech(row pgx.Row) (*TechnicianRow, error) {
 	var t TechnicianRow
-	err := row.Scan(&t.TechID, &t.Name, &t.PhoneEnc, &t.PhoneHash, &t.TeamID, &t.InstallCount, &t.Status, &t.AuthStatus)
+	err := row.Scan(&t.TechID, &t.Name, &t.PhoneEnc, &t.PhoneHash, &t.TeamID, &t.InstallCount,
+		&t.Status, &t.AuthStatus, &t.TeamName)
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +478,7 @@ func (s *PGStore) ListTechnicians(ctx context.Context, page, pageSize int) ([]Te
 	}
 	offset := (page - 1) * pageSize
 	rows, err := s.pool.Query(ctx,
-		`SELECT `+techColumns+` FROM technicians ORDER BY created_at DESC, tech_id LIMIT $1 OFFSET $2`,
+		`SELECT `+techColumns+techFrom+` ORDER BY technicians.created_at DESC, technicians.tech_id LIMIT $1 OFFSET $2`,
 		pageSize, offset)
 	if err != nil {
 		return nil, 0, err
@@ -490,7 +498,7 @@ func (s *PGStore) ListTechnicians(ctx context.Context, page, pageSize int) ([]Te
 // ListTechniciansByTeam 团队内技师（团队成员明细）
 func (s *PGStore) ListTechniciansByTeam(ctx context.Context, teamID string) ([]TechnicianRow, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT `+techColumns+` FROM technicians WHERE team_id = $1 ORDER BY tech_id`, teamID)
+		`SELECT `+techColumns+techFrom+` WHERE technicians.team_id = $1 ORDER BY technicians.tech_id`, teamID)
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +516,7 @@ func (s *PGStore) ListTechniciansByTeam(ctx context.Context, teamID string) ([]T
 
 // GetTechnician 技师详情；不存在返回 (nil, nil)
 func (s *PGStore) GetTechnician(ctx context.Context, techID string) (*TechnicianRow, error) {
-	row := s.pool.QueryRow(ctx, `SELECT `+techColumns+` FROM technicians WHERE tech_id = $1`, techID)
+	row := s.pool.QueryRow(ctx, `SELECT `+techColumns+techFrom+` WHERE technicians.tech_id = $1`, techID)
 	t, err := scanTech(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

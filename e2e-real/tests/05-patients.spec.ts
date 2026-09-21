@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '@playwright/test'
 import {
   realLogin,
   gotoMenuAndWaitTable,
@@ -15,6 +15,23 @@ import {
  * T051 seed：5 名患者。断言用 ≥5 行 / 动态读取首行姓名（避免硬编码）。
  * 覆盖：列表 / 搜索 / 团队筛选 / 添加患者（写） / 分配团队（写） + 末尾清理本任务创建的患者。
  */
+/** 表头文案 → 列下标（首列是 selection 复选框，故绝不按写死序号取列） */
+async function headerIndex(page: Page, title: string): Promise<number> {
+  const texts = await page
+    .locator('.el-table__header-wrapper thead th')
+    .evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()))
+  const idx = texts.indexOf(title)
+  expect(idx, `表头应含「${title}」列，实得 ${texts.join('|')}`).toBeGreaterThan(-1)
+  return idx
+}
+
+/** 一行的各单元格文本（逐格取，避免整行文本拼接后无法定位具体列） */
+async function cellTexts(row: Locator): Promise<string[]> {
+  return row.evaluate((tr) =>
+    Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim()),
+  )
+}
+
 test.describe('05-患者管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
@@ -65,13 +82,103 @@ test.describe('05-患者管理', () => {
       const wrapperText = await page.locator('.el-table__body-wrapper').textContent()
       // 患者 ID：staging seed 是 P20260003 等 P+数字 格式（PT- 前缀也兼容）
       expect(wrapperText).toMatch(/P\d{4,}|PT-/)
-      // 团队名：staging seed 是 TEAM01-03 等英文+数字格式（中文 XX团队/组 也兼容）
-      const hasTeam = /TEAM\d+|[\u4e00-\u9fa5]{2,}(?:组|团队)/.test(wrapperText ?? '')
-      expect(hasTeam).toBe(true)
+      // T270 收尾假绿#1（D1）订正：旧写法 `/TEAM\d+|中文…/` 把「团队列显示成原始编号」
+      // 也当合格 —— 那正是 D1 的症状本身，等于给缺陷放行。值级判据见下方 5.6。
+      expect(wrapperText).not.toMatch(/\bTEAM\d+\b/)
       // 状态：活跃 / 未绑定 / 待分配 任一
       expect(wrapperText).toMatch(/活跃|未绑定|待分配|佩戴/)
       // 设备：D+数字（如 D0002）或 DEV- 或「未绑定」
       expect(wrapperText).toMatch(/D\d{3,}|DEV-|未绑定/)
+    })
+  })
+
+  test.describe('组织名字典契约（T270 收尾假绿#1：D1 值级判据）', () => {
+    test('5.6 团队/主治医生列＝后端字典名，不得回落成原始 ID', async ({ page }) => {
+      const token = await getAuthToken(page)
+      expect(token, 'beforeEach 已 realLogin，应拿到 JWT').toBeTruthy()
+      const headers = { Authorization: `Bearer ${token}` }
+
+      /** 后端统一信封 { code, message, data }；code≠0 或 HTTP 非 2xx 直接判红 */
+      async function apiData(path: string): Promise<Record<string, unknown>[]> {
+        const res = await page.request.get(path, { headers })
+        expect(res.ok(), `GET ${path} 应 2xx`).toBe(true)
+        const body = await res.json()
+        expect(body.code, `GET ${path} 信封 code 应为 0`).toBe(0)
+        const data = body.data
+        return Array.isArray(data) ? data : ((data?.list ?? []) as Record<string, unknown>[])
+      }
+
+      const teamById = new Map(
+        (await apiData('/api/v1/teams')).map(
+          (t) => [String(t.teamId), String(t.name)] as [string, string],
+        ),
+      )
+      const doctorById = new Map(
+        (await apiData('/api/v1/doctors')).map(
+          (d) => [String(d.doctorId), String(d.name)] as [string, string],
+        ),
+      )
+      // 与页面首屏完全同参（patients/index.vue: pageSize 默认 10、page 1），DOM 才可比
+      const apiRows = await apiData('/api/v1/admin/patients?page=1&pageSize=10')
+      expect(apiRows.length, 'staging seed 患者应 ≥1 行').toBeGreaterThanOrEqual(1)
+
+      const teamIdx = await headerIndex(page, '团队')
+      const docIdx = await headerIndex(page, '主治医生')
+      await headerIndex(page, '患者ID') // 列存在性也在契约内（定位行靠它，取不到行即计入跳过）
+
+      async function cellsOfRow(patientId: string): Promise<string[] | null> {
+        const row = page
+          .locator('.el-table__body-wrapper tbody tr')
+          .filter({ hasText: patientId })
+          .first()
+        if ((await row.count()) === 0) return null // 该行不在当前 DOM 页（分页），跳过计数
+        return cellTexts(row)
+      }
+
+      let teamChecked = 0
+      let docChecked = 0
+      let unassignedChecked = 0
+      for (const p of apiRows) {
+        const pid = String(p.patientId)
+        const cells = await cellsOfRow(pid)
+        if (!cells) continue
+        const teamId = p.teamId ? String(p.teamId) : null
+        const doctorId = p.doctorId ? String(p.doctorId) : null
+
+        if (teamId) {
+          teamChecked++
+          const dictName = teamById.get(teamId)
+          // 判据力自检：字典必须能把该 ID 解析成「与编号不同」的名字，否则下面的相等断言是恒等式
+          expect(dictName, `字典 /api/v1/teams 应能解析 ${teamId}`).toBeTruthy()
+          expect(dictName, '字典名不得与原始编号同名，否则本条无判据力').not.toBe(teamId)
+          // 1) 值级：等于 /api/v1/teams 字典里该 teamId 的中文名（D1 修前这里是 mock 查表 → TEAM01）
+          expect(cells[teamIdx], `${pid} 团队列应等于字典值`).toBe(dictName)
+          // 2) 后端 join 出参非空时，页面必须用 join 值（患者页优先 row.teamName）
+          if (p.teamName) expect(cells[teamIdx], `${pid} 团队列应等于后端 join 值`).toBe(String(p.teamName))
+          // 3) 症状级：不得显示成原始编号
+          expect(cells[teamIdx], `${pid} 团队列回落成了编号`).not.toBe(teamId)
+        } else {
+          unassignedChecked++
+          expect(cells[teamIdx], `${pid} 无团队时应显示 -`).toBe('-')
+        }
+
+        if (doctorId) {
+          docChecked++
+          expect(cells[docIdx], `${pid} 主治医生列应等于字典值`).toBe(doctorById.get(doctorId))
+          if (p.doctorName) expect(cells[docIdx], `${pid} 主治医生列应等于后端 join 值`).toBe(String(p.doctorName))
+          expect(cells[docIdx], `${pid} 主治医生列回落成了编号`).not.toBe(doctorId)
+        } else {
+          unassignedChecked++
+          expect(cells[docIdx], `${pid} 无医生时应显示 -`).toBe('-')
+        }
+        // 兜底：任何一格都不该把 undefined / null 直接印出来
+        for (const c of cells) expect(c).not.toMatch(/undefined|null|\[object/)
+      }
+
+      // 防「零行也通过」：staging seed 至少各命中一次两类分支
+      expect(teamChecked, '应至少命中 1 行有团队的患者').toBeGreaterThanOrEqual(1)
+      expect(docChecked, '应至少命中 1 行有主治医生的患者').toBeGreaterThanOrEqual(1)
+      expect(unassignedChecked, '应至少命中 1 个未分配字段（否则 '-' 分支未被守）').toBeGreaterThanOrEqual(1)
     })
   })
 
@@ -116,32 +223,51 @@ test.describe('05-患者管理', () => {
       expect(await tableRows(page).count()).toBeGreaterThanOrEqual(5)
     })
 
-    test('5.3 团队筛选：读取第一个存在的团队名 → 筛选后每行都含该团队名', async ({ page }) => {
+    test('5.3 团队筛选：按表头列取首行「团队」原值 → 筛后每行该列都等于它', async ({ page }) => {
+      /**
+       * T270 收尾假绿#1（D1）订正两处旧写法：
+       *  1) 旧代码用 /(TEAM\d+|中文…)/ 从整行文本里「猜」团队名 —— 页面把编号印出来也算命中，
+       *     正是 D1 的症状；现按表头文案定位列、取该格原值。
+       *  2) 旧收尾是「每行至少有内容」的零断言 + pickSelectOption 的静默 catch；现要求逐行等值。
+       */
+      const teamIdx = await headerIndex(page, '团队')
       const rows = tableRows(page)
-      const firstRowText = await rows.first().textContent() ?? ''
-      // 抓团队名：staging seed 是 TEAM01-03 等英文+数字格式（中文 XX团队/组 也兼容）
-      const teamRe = /(TEAM\d+|[\u4e00-\u9fa5]{2,10}(?:组|团队))/
-      const m = firstRowText.match(teamRe)
-      const m2 = m
-        ? undefined
-        : (await page.locator('.el-table').textContent() ?? '').match(teamRe)
-      expect(m || m2).toBeTruthy()
-      const teamName = ((m?.[1] || m2?.[1]) as string)!
-      const teamSelect = page.locator('.team-select, .filter-select.team')
-      await expect(teamSelect.first()).toBeVisible({ timeout: 8_000 })
-      await pickSelectOption(page, teamSelect.first(), teamName).catch(async () => {
-        // 找不到精确项时跳过
-      })
-      await page.waitForTimeout(2_000)
-      const filtered = tableRows(page)
-      const count = await filtered.count()
-      if (count > 0) {
-        for (let i = 0; i < count; i++) {
-          const t = await filtered.nth(i).textContent()
-          // 允许筛选不完全对应，但每行至少有内容
-          expect(t!.trim().length).toBeGreaterThan(0)
+      await expect(rows.first()).toBeVisible({ timeout: 15_000 })
+      const totalBefore = await rows.count()
+
+      // 取第一行「有团队」的值（seed 里有未分配患者的行显示 -）
+      let teamName = ''
+      for (let i = 0; i < totalBefore; i++) {
+        const v = (await cellTexts(rows.nth(i)))[teamIdx]
+        if (v && v !== '-') {
+          teamName = v
+          break
         }
       }
+      expect(teamName, '首页应至少有一行带团队').not.toBe('')
+
+      const teamSelect = page.locator('.team-select, .filter-select.team')
+      await expect(teamSelect.first()).toBeVisible({ timeout: 8_000 })
+      await pickSelectOption(page, teamSelect.first(), teamName)
+
+      const filtered = tableRows(page)
+      await expect
+        .poll(
+          async () => {
+            const n = await filtered.count()
+            if (n === 0) return false
+            for (let i = 0; i < n; i++) {
+              if ((await cellTexts(filtered.nth(i)))[teamIdx] !== teamName) return false
+            }
+            return true
+          },
+          { timeout: 20_000, message: `筛选「${teamName}」后每行团队列都应等于该值` },
+        )
+        .toBe(true)
+
+      const count = await filtered.count()
+      expect(count, '按存在的团队名筛选不应清零').toBeGreaterThanOrEqual(1)
+      expect(count, '筛选结果不应多于筛选前').toBeLessThanOrEqual(totalBefore)
     })
   })
 

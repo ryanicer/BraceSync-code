@@ -238,7 +238,7 @@ type DoctorRow struct {
 	PatientCount int
 }
 
-// TechnicianRow technicians 表投影
+// TechnicianRow technicians 表投影（team_name 由 LEFT JOIN teams 带出，T278-②）
 type TechnicianRow struct {
 	TechID    string
 	Name      string
@@ -246,6 +246,7 @@ type TechnicianRow struct {
 	PhoneHash string // SHA-256 hex；phone_hash 为 CHAR(64)，PG 返回带尾部空格，
 	// 装配时经 TrimPhoneHash 去除（与 uk_technicians_phone_hash 查重口径一致）
 	TeamID       *string
+	TeamName     *string // NULL = 未入队（technicians.team_id 可空）
 	InstallCount int
 	Status       string
 	AuthStatus   string

@@ -194,6 +194,9 @@ func TestITTechnicianLifecycle(t *testing.T) {
 	assert.Equal(t, "authorized", created.AuthStatus)
 	assert.Equal(t, "集成技师", created.Name)
 	assert.Equal(t, "hash-it-1", created.PhoneHash)
+	// T278-②：LEFT JOIN teams 带出团队名（前端团队列不再回落编号）
+	require.NotNil(t, created.TeamName, "入队技师必须带出 teamName")
+	assert.Equal(t, "集成团队", *created.TeamName)
 
 	// 查重：自身不算占用；他人占用命中
 	taken, err := itStore.TechPhoneHashTaken(ctx, "hash-it-1", "TECH-USR-IT-1")
@@ -211,6 +214,7 @@ func TestITTechnicianLifecycle(t *testing.T) {
 	require.NotNil(t, updated)
 	assert.Equal(t, "集成技师改", updated.Name)
 	assert.Nil(t, updated.TeamID)
+	assert.Nil(t, updated.TeamName, "T278-②：未入队 ⇒ teamName 为 NULL（前端回落显示 teamId）")
 
 	// 编辑不存在的技师 → nil
 	updated, err = itStore.UpdateTechnician(ctx, "TECH-NOPE", TechInput{Name: "x", PhoneHash: "h"})
