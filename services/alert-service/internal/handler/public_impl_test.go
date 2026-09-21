@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,7 @@ type fakePublicStore struct {
 	procErr  error
 	procID   int64
 	procOpID string
+	procNote string // T278-①：handler 解析后的备注（空串 = 未提供）
 	listHits int
 	procHits int
 
@@ -49,9 +51,10 @@ func (s *fakePublicStore) ListAlerts(_ context.Context, f repo.AlertQueryFilter)
 	return s.rows, s.total, s.listErr
 }
 
-func (s *fakePublicStore) ProcessAlert(_ context.Context, alertID int64, operatorID string) (bool, error) {
+func (s *fakePublicStore) ProcessAlert(_ context.Context, alertID int64, operatorID, note string) (bool, error) {
 	s.procID = alertID
 	s.procOpID = operatorID
+	s.procNote = note
 	s.procHits++
 	return s.exists, s.procErr
 }
@@ -308,6 +311,75 @@ func TestProcessAlert_PassesOperatorID(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "DOCTOR-007", store.procOpID)
+}
+
+// doProcessBody 带请求体调用处理端点（T278-①：{note} 随体提交）
+func doProcessBody(h *Handler, alertID, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts/"+alertID+"/process", strings.NewReader(body))
+	req.Header.Set(headerUserID, "DOCTOR-007")
+	h.Router().ServeHTTP(rec, req)
+	return rec
+}
+
+// T278-① D4：前端随体提交的 note 必须透传给 repo（此前 handler 直接丢掉 body）
+func TestProcessAlert_NotePassedToStore(t *testing.T) {
+	store := &fakePublicStore{exists: true}
+	rec := doProcessBody(newPublicHandler(store), "205", `{"note":"已电话指导患者调整佩戴位置"}`)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "已电话指导患者调整佩戴位置", store.procNote)
+	assert.Equal(t, 1, store.procHits)
+}
+
+// 兼容（派发单硬要求）：无 body 时行为不变 —— note 传空串，repo 侧不覆盖 process_note
+func TestProcessAlert_NoBodyKeepsBehavior(t *testing.T) {
+	store := &fakePublicStore{exists: true}
+	rec := doProcess(newPublicHandler(store), "205") // body = nil
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "", store.procNote, "无 body ⇒ 空串（不写列）")
+	assert.Equal(t, 1, store.procHits)
+}
+
+// 空 body 的几种等价写法：都不该报错，也不该产生备注
+func TestProcessAlert_BlankBodies(t *testing.T) {
+	for name, body := range map[string]string{
+		"零字节":       "",
+		"空白":        "   ",
+		"空对象":       "{}",
+		"note 空串":   `{"note":""}`,
+		"note 全空格":  `{"note":"   "}`,
+		"note null": `{"note":null}`,
+	} {
+		store := &fakePublicStore{exists: true}
+		rec := doProcessBody(newPublicHandler(store), "205", body)
+		assert.Equal(t, http.StatusOK, rec.Code, "%s 应放行", name)
+		assert.Equal(t, "", store.procNote, "%s 应归一为空串", name)
+	}
+}
+
+// 非法 JSON 早退：400 且不触达存储（不能让状态被悄悄改掉）
+func TestProcessAlert_InvalidJSON(t *testing.T) {
+	for _, body := range []string{`{`, `not json`, `{"note":`} {
+		store := &fakePublicStore{exists: true}
+		rec := doProcessBody(newPublicHandler(store), "205", body)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%q 应 400", body)
+		assert.Zero(t, store.procHits, "body=%q 不应触达存储", body)
+	}
+}
+
+// process_note 是 VARCHAR(512)：超长必须 400，而不是让 PG 抛 22001 变 500
+func TestProcessAlert_NoteLengthBoundary(t *testing.T) {
+	store := &fakePublicStore{exists: true}
+	rec := doProcessBody(newPublicHandler(store), "205", `{"note":"`+strings.Repeat("字", 512)+`"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "512 字符（含中文）恰好合法")
+	assert.Equal(t, 512, len([]rune(store.procNote)))
+
+	over := &fakePublicStore{exists: true}
+	rec = doProcessBody(newPublicHandler(over), "205", `{"note":"`+strings.Repeat("字", 513)+`"}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "513 字符应 400")
+	assert.Zero(t, over.procHits, "超长不应触达存储")
 }
 
 // ─────────────────────────────────────────────────────────────

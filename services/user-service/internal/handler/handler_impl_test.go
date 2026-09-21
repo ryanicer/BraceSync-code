@@ -1055,6 +1055,30 @@ func TestListTechnicians(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// T278-②：/technicians 响应必须带 teamName —— 该端点是分页接口，前端建不出全量团队字典，
+// 团队名只能由后端 join（Iris T269 §五「技师名回落编号」的根因）
+func TestListTechniciansCarriesTeamName(t *testing.T) {
+	e := newEnv(t, true, true)
+	e.store.techs = []repo.TechnicianRow{
+		{TechID: "T1", Name: "技师甲", TeamID: strPtr("TEAM01"), TeamName: strPtr("康复一组"), Status: "enabled", AuthStatus: "authorized"},
+		{TechID: "T2", Name: "技师乙", Status: "enabled", AuthStatus: "authorized"}, // 未入队
+	}
+	e.store.techTotal = 2
+	w, resp := e.do(http.MethodGet, "/api/v1/technicians", nil, nil)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var page struct {
+		List []model.TechnicianDTO `json:"list"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Data, &page))
+	require.Len(t, page.List, 2)
+	require.NotNil(t, page.List[0].TeamName)
+	assert.Equal(t, "康复一组", *page.List[0].TeamName)
+	assert.Nil(t, page.List[1].TeamName, "未入队 ⇒ 无团队名")
+	assert.Contains(t, w.Body.String(), `"teamName":"康复一组"`)
+	assert.Contains(t, w.Body.String(), `"teamName":null`, "未入队要显式输出 null，前端据此回落 teamId")
+}
+
 func TestCreateTechnician(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.teamExists = true

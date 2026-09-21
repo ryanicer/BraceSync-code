@@ -393,11 +393,21 @@ func (r *PGStore) CreateNotificationRecord(ctx context.Context, rec *model.Notif
 	return nil
 }
 
+// recordColumns 通知记录投影（列序 = scanRecord 的 Scan 顺序）。
+// 第 3 列 p.name = T278-③ 带出的患者名：notification_records 只存 patient_id，
+// 后台「通知记录」列表此前整列显示编号（Iris T269 §五 K9）。
+const recordColumns = `nr.record_id, nr.patient_id, p.name, nr.alert_id, nr.alert_type, nr.kind,
+	nr.channel, nr.status, nr.content, nr.retry_count, nr.sent_at, nr.created_at`
+
+// recordFrom LEFT JOIN patients：patient_id 有 FK 且 NOT NULL，正常必命中；
+// 用 LEFT 而非 INNER 是为「患者被清历史数据时记录不翼而飞」留余地（名落 NULL，记录仍在）。
+const recordFrom = ` FROM notification_records nr LEFT JOIN patients p ON p.patient_id = nr.patient_id`
+
 func scanRecord(row pgx.Row) (*model.NotificationRecord, error) {
 	rec := &model.NotificationRecord{}
 	var alertID *string
 	var alertType *string
-	err := row.Scan(&rec.RecordID, &rec.PatientID, &alertID, &alertType, &rec.Kind,
+	err := row.Scan(&rec.RecordID, &rec.PatientID, &rec.PatientName, &alertID, &alertType, &rec.Kind,
 		&rec.Channel, &rec.Status, &rec.Content, &rec.RetryCount, &rec.SentAt, &rec.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -416,9 +426,7 @@ func scanRecord(row pgx.Row) (*model.NotificationRecord, error) {
 // GetNotificationRecord 按 ID 查记录；不存在返回 ErrNotFound
 func (r *PGStore) GetNotificationRecord(ctx context.Context, recordID int64) (*model.NotificationRecord, error) {
 	rec, err := scanRecord(r.pool.QueryRow(ctx,
-		`SELECT record_id, patient_id, alert_id, alert_type, kind, channel, status,
-		        content, retry_count, sent_at, created_at
-		 FROM notification_records WHERE record_id = $1`, recordID))
+		`SELECT `+recordColumns+recordFrom+` WHERE nr.record_id = $1`, recordID))
 	if err != nil {
 		return nil, fmt.Errorf("get notification record: %w", err)
 	}
@@ -458,16 +466,16 @@ func (r *PGStore) ListNotificationRecords(ctx context.Context, f RecordFilter) (
 		args = append(args, v)
 	}
 	if f.PatientID != "" {
-		add(`patient_id = $%d`, f.PatientID)
+		add(`nr.patient_id = $%d`, f.PatientID)
 	}
 	if f.AlertType != "" {
-		add(`alert_type = $%d`, f.AlertType)
+		add(`nr.alert_type = $%d`, f.AlertType)
 	}
 	if f.Channel != "" {
-		add(`channel = $%d`, f.Channel)
+		add(`nr.channel = $%d`, f.Channel)
 	}
 	if f.Status != "" {
-		add(`status = $%d`, f.Status)
+		add(`nr.status = $%d`, f.Status)
 	}
 	where := ""
 	if len(conds) > 0 {
@@ -475,8 +483,9 @@ func (r *PGStore) ListNotificationRecords(ctx context.Context, f RecordFilter) (
 	}
 
 	var total int
+	// where 里全是 nr. 前缀列 ⇒ COUNT 也须带 nr 别名（不 join：patients 是 1:1，行数不受影响）
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM notification_records `+where, args...).Scan(&total); err != nil {
+		`SELECT COUNT(*) FROM notification_records nr `+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count notification records: %w", err)
 	}
 
@@ -492,10 +501,8 @@ func (r *PGStore) ListNotificationRecords(ctx context.Context, f RecordFilter) (
 	}
 	offset := (page - 1) * pageSize
 
-	q := `SELECT record_id, patient_id, alert_id, alert_type, kind, channel, status,
-	             content, retry_count, sent_at, created_at
-	      FROM notification_records ` + where +
-		` ORDER BY created_at DESC, record_id DESC LIMIT $` + fmt.Sprint(len(args)+1) +
+	q := `SELECT ` + recordColumns + recordFrom + " " + where +
+		` ORDER BY nr.created_at DESC, nr.record_id DESC LIMIT $` + fmt.Sprint(len(args)+1) +
 		` OFFSET $` + fmt.Sprint(len(args)+2)
 	rows, err := r.pool.Query(ctx, q, append(args, pageSize, offset)...)
 	if err != nil {

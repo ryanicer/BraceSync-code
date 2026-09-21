@@ -197,13 +197,19 @@ func (r *PGAlertRepo) readState(ctx context.Context, alertID int64, st *ProcessS
 // T257 2.7：守卫由「仅 pending 可改」放宽为「非 processed 即可改」——否则三态下
 // 「处理中」的记录永远点不完成（跳级与逐级都走本端点，老调用方行为不变）。
 // operatorID 来自 gateway 注入的 X-User-Id（可为空，空则不写 processed_by，保持旧行为）。
-func (r *PGAlertRepo) ProcessAlert(ctx context.Context, alertID int64, operatorID string) (exists bool, err error) {
+//
+// T278-①：note = 处理备注，写入 process_note。口径与 operatorID 一致 ——
+// 空串一律「不写、保留原值」（COALESCE(NULLIF(...))），所以无备注的老调用方
+// （技师端 uni.request 不带 body）与「不带 body 的前端」行为完全不变。
+// 与 processed_at / processed_by 同规则：已 processed 时整条 UPDATE 不命中，备注同样首次为准。
+func (r *PGAlertRepo) ProcessAlert(ctx context.Context, alertID int64, operatorID, note string) (exists bool, err error) {
 	cmd, err := r.pool.Exec(ctx,
 		`UPDATE alerts
 		    SET process_status = 'processed',
 		        processed_at   = now(),
-		        processed_by   = COALESCE(NULLIF($2, ''), processed_by)
-		 WHERE alert_id = $1 AND process_status <> 'processed'`, alertID, operatorID)
+		        processed_by   = COALESCE(NULLIF($2, ''), processed_by),
+		        process_note   = COALESCE(NULLIF($3, ''), process_note)
+		 WHERE alert_id = $1 AND process_status <> 'processed'`, alertID, operatorID, note)
 	if err != nil {
 		return false, err
 	}

@@ -286,6 +286,8 @@ func TestITRecords_LifecycleAndFilter(t *testing.T) {
 	assert.Equal(t, model.StatusPending, got.Status)
 	require.NotNil(t, got.AlertID)
 	assert.Equal(t, "A-IT-001", *got.AlertID)
+	require.NotNil(t, got.PatientName, "T278-③：读侧 join 带出患者名（K9 通知记录患者列显 ID）")
+	assert.Equal(t, "集成测试患者", *got.PatientName)
 
 	now := time.Now()
 	require.NoError(t, store.UpdateNotificationStatus(ctx, rec.RecordID, model.StatusSent, &now))
@@ -309,6 +311,35 @@ func TestITRecords_LifecycleAndFilter(t *testing.T) {
 	_, err = store.GetNotificationRecord(ctx, 99999999)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+// T278-③：列表侧每一行都要带 patientName（后台「通知记录」患者列此前只显示编号）；
+// 同时守住改别名后的回归点 —— COUNT 与 WHERE 共用 nr. 前缀，过滤总数不能失真。
+func TestITRecords_CarryPatientName(t *testing.T) {
+	store := newITStore()
+	ctx := context.Background()
+
+	rec := &model.NotificationRecord{
+		PatientID: itPatient2, Kind: model.KindAlert, Channel: model.ChannelWechat,
+		Status: model.StatusPending, Content: "患者名用例",
+	}
+	require.NoError(t, store.CreateNotificationRecord(ctx, rec))
+
+	list, total, err := store.ListNotificationRecords(ctx,
+		RecordFilter{PatientID: itPatient2, Channel: model.ChannelWechat, Page: 1, PageSize: 20})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, total, 1, "按患者过滤仍命中（别名改造未破坏 WHERE）")
+	found := false
+	for _, item := range list {
+		if item.RecordID != rec.RecordID {
+			continue
+		}
+		found = true
+		require.NotNil(t, item.PatientName, "列表行必须带 patientName")
+		assert.Equal(t, "集成测试患者", *item.PatientName)
+		assert.Equal(t, itPatient2, item.PatientID, "patientId 不被 join 覆盖")
+	}
+	assert.True(t, found, "新建记录应在当页内（total=%d, len=%d）", total, len(list))
 }
 
 func TestITRecords_PaginationOrder(t *testing.T) {

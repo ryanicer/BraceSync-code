@@ -154,31 +154,53 @@ func TestIT_T028_ProcessAlert_Idempotent(t *testing.T) {
 	require.Len(t, rows, 2)
 	alertID := rows[0].AlertID
 
-	// 首次处理
-	exists, err := r.ProcessAlert(ctx, alertID, "DOCTOR-IT")
+	// 首次处理（T278-①：带备注）
+	exists, err := r.ProcessAlert(ctx, alertID, "DOCTOR-IT", "已电话指导患者调整佩戴位置")
 	require.NoError(t, err)
 	assert.True(t, exists)
 	var status string
 	var processedAt *time.Time
 	var processedBy *string
+	var processNote *string
 	require.NoError(t, itPool.QueryRow(ctx,
-		`SELECT process_status, processed_at, processed_by FROM alerts WHERE alert_id = $1`, alertID).
-		Scan(&status, &processedAt, &processedBy))
+		`SELECT process_status, processed_at, processed_by, process_note FROM alerts WHERE alert_id = $1`, alertID).
+		Scan(&status, &processedAt, &processedBy, &processNote))
 	assert.Equal(t, "processed", status)
 	require.NotNil(t, processedAt)
 	require.NotNil(t, processedBy)
 	assert.Equal(t, "DOCTOR-IT", *processedBy, "T257 2.7：processed_by 落操作人")
+	require.NotNil(t, processNote, "T278-①：D4 处理备注必须落 process_note")
+	assert.Equal(t, "已电话指导患者调整佩戴位置", *processNote)
 	firstAt := *processedAt
 
-	// 重复处理幂等：exists=true 且 processed_at / processed_by 不重写
+	// 读侧闭环：ListAlerts 投影回读同一备注（验收口径「回读 processNote 非 null」）
+	rows, _, err = r.ListAlerts(ctx, AlertQueryFilter{Status: "processed"})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].ProcessNote)
+	assert.Equal(t, "已电话指导患者调整佩戴位置", *rows[0].ProcessNote)
+
+	// 重复处理幂等：exists=true 且 processed_at / processed_by / process_note 均不重写
 	time.Sleep(10 * time.Millisecond)
-	exists, err = r.ProcessAlert(ctx, alertID, "CS-OTHER")
+	exists, err = r.ProcessAlert(ctx, alertID, "CS-OTHER", "第二个人补的备注")
 	require.NoError(t, err)
 	assert.True(t, exists, "重复处理不报错")
 	require.NoError(t, itPool.QueryRow(ctx,
-		`SELECT processed_at, processed_by FROM alerts WHERE alert_id = $1`, alertID).Scan(&processedAt, &processedBy))
+		`SELECT processed_at, processed_by, process_note FROM alerts WHERE alert_id = $1`, alertID).
+		Scan(&processedAt, &processedBy, &processNote))
 	assert.True(t, processedAt.Equal(firstAt), "幂等：处理时间不被重写")
 	assert.Equal(t, "DOCTOR-IT", *processedBy, "幂等：首个操作人不被覆盖")
+	assert.Equal(t, "已电话指导患者调整佩戴位置", *processNote, "幂等：首个备注不被覆盖（与 processed_by 同规则）")
+
+	// 无备注调用（老行为 / 前端不带 body）：process_note 保持原值，不被清空
+	exists, err = r.ProcessAlert(ctx, alertID, "", "")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	require.NoError(t, itPool.QueryRow(ctx,
+		`SELECT process_note, processed_by FROM alerts WHERE alert_id = $1`, alertID).Scan(&processNote, &processedBy))
+	require.NotNil(t, processNote, "空 note 不得清空已有备注")
+	assert.Equal(t, "已电话指导患者调整佩戴位置", *processNote)
+	assert.Equal(t, "DOCTOR-IT", *processedBy, "空 operator 同样不覆盖（T257 既有口径）")
 
 	// 筛选联动：processed 可见
 	_, total, err := r.ListAlerts(ctx, AlertQueryFilter{Status: "processed"})
@@ -186,7 +208,7 @@ func TestIT_T028_ProcessAlert_Idempotent(t *testing.T) {
 	assert.EqualValues(t, 1, total)
 
 	// 不存在的告警
-	exists, err = r.ProcessAlert(ctx, 99999999, "DOCTOR-IT")
+	exists, err = r.ProcessAlert(ctx, 99999999, "DOCTOR-IT", "")
 	require.NoError(t, err)
 	assert.False(t, exists, "不存在返回 exists=false（handler 映射 404）")
 }
@@ -219,7 +241,7 @@ func TestIT_T257_StartProcessing_StateFlow(t *testing.T) {
 	assert.True(t, st2.InProgressAt.Equal(first), "幂等：耗时起点不被刷新")
 
 	// ③ processing → processed（正常闭环）
-	exists, err := r.ProcessAlert(ctx, pendingID, "DOCTOR-IT")
+	exists, err := r.ProcessAlert(ctx, pendingID, "DOCTOR-IT", "")
 	require.NoError(t, err)
 	assert.True(t, exists)
 	// 已 processed 再 StartProcessing → 状态仍 processed（handler 据此回 409）
@@ -227,14 +249,17 @@ func TestIT_T257_StartProcessing_StateFlow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "processed", st3.Status)
 
-	// ④ 跳级：pending → processed 直接允许（设计稿允许不经过「处理中」）
-	exists, err = r.ProcessAlert(ctx, otherID, "CS-IT")
+	// ④ 跳级：pending → processed 直接允许（设计稿允许不经过「处理中」），备注同样随体落库
+	exists, err = r.ProcessAlert(ctx, otherID, "CS-IT", "跳级处理时补的备注")
 	require.NoError(t, err)
 	assert.True(t, exists)
 	var status string
+	var jumpNote *string
 	require.NoError(t, itPool.QueryRow(ctx,
-		`SELECT process_status FROM alerts WHERE alert_id = $1`, otherID).Scan(&status))
+		`SELECT process_status, process_note FROM alerts WHERE alert_id = $1`, otherID).Scan(&status, &jumpNote))
 	assert.Equal(t, "processed", status)
+	require.NotNil(t, jumpNote, "T278-①：跳级路径也要落备注")
+	assert.Equal(t, "跳级处理时补的备注", *jumpNote)
 
 	// ⑤ 三态筛选互斥：keepID 停在 processing（另两条已 processed），pending 归零
 	stKeep, err := r.StartProcessing(ctx, keepID)
