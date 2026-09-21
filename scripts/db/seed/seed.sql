@@ -344,6 +344,10 @@ INSERT INTO sys_configs (config_key, config_value, description) VALUES
   ('collect_interval_minutes', '30', '采集间隔（分钟）'),
   ('wear_target_hours', '22', '每日佩戴目标时长（小时）'),
   ('threshold_pressure_high', '5', '压力偏高阈值（N，T203 ÷10）'),
+  -- T281：000016 播的 low=10 是 ÷10 前的旧量纲，000019 漏改该键 ⇒ 与 high=5 倒挂、
+  -- /admin/settings 恒 400。迁移 000021 已把存量库改为 1，seed 同口径补上（此前该键不在 seed 里，
+  -- 纯 seed 建库也会缺）。已有行由 ON CONFLICT DO NOTHING 保留，值以迁移为准。
+  ('threshold_pressure_low', '1', '统一压力下限（N，T203 ÷10；须小于 threshold_pressure_high）'),
   ('threshold_pressure_fluctuation_pct', '30', '压力波动幅度阈值（%）'),
   ('threshold_wear_interrupt_minutes', '60', '佩戴中断判定时间（分钟，须≥2×采集间隔）'),
   ('threshold_sensor_drift', '0.3', '传感器漂移告警阈值（N，T203 ÷10）'),

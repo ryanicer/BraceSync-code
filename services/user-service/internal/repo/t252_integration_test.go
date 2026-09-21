@@ -43,8 +43,9 @@ func TestITT252AlertPointRulesRoundTrip(t *testing.T) {
 	upper, lower := 20.5, 5.25
 
 	// 迁移播种的四条全局键存在且值正确
+	// （下限值 1 是 000021/T281 的结果：000016 播的 10 属 ÷10 前旧量纲，见 TestITT281）
 	for key, want := range map[string]string{
-		"threshold_pressure_low":    "10",
+		"threshold_pressure_low":    "1",
 		"device_offline_minutes":    "30",
 		"continuous_wear_max_hours": "23",
 		"report_timeout_minutes":    "5",
