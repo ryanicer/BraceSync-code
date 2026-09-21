@@ -90,6 +90,28 @@ test('压力分段：点日期展示异常事件列表', async ({ page }) => {
   await expect(card.locator('.ap-point-error').first()).toBeVisible()
 })
 
+test('压力分段 4 类文本化：中文类型名 + 后端 detail 原文，页面无码值泄漏', async ({ page }) => {
+  await gotoJuly2026(page)
+  await page.locator('.segmented .seg-btn', { hasText: '压力异常' }).click()
+  // 07-08：压力偏高 + 佩戴时长不足 两类并存
+  await page.locator('.cal-cell', { has: page.locator('.cal-num', { hasText: /^8$/ }) }).click()
+  const card = page.locator('.detail-card')
+  await expect(card.locator('.ap-item-type')).toHaveText(['压力偏高', '佩戴时长不足'])
+  await expect(card.locator('.ap-item-detail').first()).toHaveText('压力偏高：采集点 P10 压力 69.5N 超阈值 60.0N')
+  // 佩戴时长不足：无采集点 + 数值单位口径未定（引擎写分钟）⇒ 不渲染点位/阈值数字
+  const shortRow = card.locator('.ap-item').nth(1)
+  await expect(shortRow.locator('.ap-item-point')).toHaveCount(0)
+  await expect(shortRow.locator('.ap-item-threshold')).toHaveCount(0)
+  await expect(shortRow).not.toContainText(/1080|186h/)
+  // 07-11：第 3 类「传感器标定异常」同样走中文术语
+  await page.locator('.cal-cell', { has: page.locator('.cal-num', { hasText: /^11$/ }) }).click()
+  await expect(card.locator('.ap-item-type')).toHaveText(['压力偏高', '传感器标定异常'])
+  // 整页不出现任何类型码值（患者端零技术术语）
+  await expect(page.locator('.page')).not.toContainText(
+    /pressure_high|sensor_drift|wear_duration_short|pressure_fluctuation|wear_interrupt/,
+  )
+})
+
 test('分段切换后详情随选中日期联动', async ({ page }) => {
   await gotoJuly2026(page)
   // 佩戴分段：点 07-08 → 3.1h
