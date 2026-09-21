@@ -52,17 +52,20 @@ jobs:
           shellcheck --version
           report=$(mktemp)
           shellcheck -f gcc "${files[@]}" >"$report" 2>&1 || true
-          total=$(grep -c ': [a-z]*: ' "$report" || true)
-          errors=$(grep -c ': error: ' "$report" || true)
+          lines=$(mktemp)
+          grep -E '^[^:]+:[0-9]+:[0-9]+: [a-z]+: ' "$report" >"$lines" || true
+          total=$(wc -l < "$lines" | tr -d '[:space:]')
+          errors=$(grep -c ': error: ' "$lines" || true)
           while IFS= read -r line; do
+            # shellcheck -f gcc 一行五段：file:line:col: severity: message
             file=$(echo "$line" | cut -d: -f1)
             ln=$(echo "$line" | cut -d: -f2)
-            sev=$(echo "$line" | cut -d: -f3)
-            msg=$(echo "$line" | cut -d: -f4-)
+            sev=$(echo "$line" | cut -d: -f4 | tr -d '[:space:]')
+            msg=$(echo "$line" | cut -d: -f5-)
             case "$sev" in
               error) echo "::error file=$file,line=$ln::shellcheck$msg" ;;
               warning) echo "::warning file=$file,line=$ln::shellcheck$msg" ;;
               *) echo "::notice file=$file,line=$ln::shellcheck$msg" ;;
             esac
-          done < "$report"
+          done < "$lines"
           echo "shellcheck 结论：共 ${total} 条（其中 error 级 ${errors}），本步骤不以其结果判定成败"
