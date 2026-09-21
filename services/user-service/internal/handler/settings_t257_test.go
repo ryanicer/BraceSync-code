@@ -31,7 +31,7 @@ func TestT257_UpdateSettings_RejectsUpperNotAboveStoredLower(t *testing.T) {
 }
 
 func TestT257_UpdateSettings_MissingLowerKeyFallsBackToDefault(t *testing.T) {
-	// 下限行缺失（未跑过告警页）⇒ 按默认 10N 校验，45N 仍须放行，
+	// 下限行缺失（未跑过告警页）⇒ 按代码默认 defaultUnifiedLowerN（T287 收口为 1N）校验，45N 仍须放行，
 	// 否则 settings 页会因为一个它自己不写的键被锁死
 	e := newEnv(t, true, true)
 	e.store.configs = map[string]string{keyCollectInterval: "30"}

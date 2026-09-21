@@ -50,8 +50,9 @@ const (
 	alertPointCount = 20
 	// alertGridCols 设计稿 4×5 网格列数
 	alertGridCols = 5
-	// defaultUnifiedLowerN 统一压力下限默认（T203 ÷10 后 0.5；上限默认 5N）
-	defaultUnifiedLowerN = 0.5
+	// defaultUnifiedLowerN 统一压力下限默认（与迁移 000021/seed 的 threshold_pressure_low = 1 同值；
+	// 上限默认 5N）。T287 收口：此处曾写 0.5，「恢复默认」按钮会把库里的 1 覆盖成 0.5。
+	defaultUnifiedLowerN = 1.0
 	// alertTargetType audit_logs.target_type 取值
 	alertTargetType = "alert_rule"
 )
@@ -268,7 +269,7 @@ func pointIDs(rules []repo.AlertPointRuleRow) []string {
 }
 
 // resetAlertPointRules POST /api/v1/admin/alert-rules/points/reset
-// 清空逐点表 + 统一上下限回默认（上限 §7D.12 = 45N，下限设计稿 = 10N）。
+// 清空逐点表 + 统一上下限回代码默认（上限 5N = T203 ÷10；下限 1N = T281 迁移 000021 / T287）。
 // 🔴 全局规则四项**不在本按钮范围内**（设计稿「恢复默认」只在规则卡内，全局卡另有保存按钮）。
 func (h *Handler) resetAlertPointRules(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -286,7 +287,7 @@ func (h *Handler) resetAlertPointRules(c *gin.Context) {
 		Action:      auditActionConfig,
 		TargetType:  alertTargetType,
 		TargetID:    "points",
-		Description: fmt.Sprintf("恢复默认告警规则：统一上限 %.0fN / 下限 %.1fN，清空逐点阈值", settingsDefaults.PressureHighThresholdN, defaultUnifiedLowerN),
+		Description: fmt.Sprintf("恢复默认告警规则：统一上限 %gN / 下限 %gN，清空逐点阈值", settingsDefaults.PressureHighThresholdN, defaultUnifiedLowerN),
 	})
 
 	latest, appErr := h.loadAlertRules(ctx)
