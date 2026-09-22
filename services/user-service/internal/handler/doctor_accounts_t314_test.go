@@ -520,6 +520,7 @@ func TestT314_FailedWritesNotAudited(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors",
 		t314Body(map[string]any{"status": "停用"}), t314AdminHdr())
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code, "status 非枚举应 400：%s", resp.Message)
 	assert.Empty(t, e.store.auditRows)
 
 	w, resp = e.do(http.MethodPut, "/api/v1/admin/doctors/"+t314Doctor,
