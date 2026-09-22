@@ -49,6 +49,7 @@ export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
     '/review-records',
     '/review-templates', // T135 复查模板管理
     '/technicians',
+    '/doctor-accounts', // T315 医护账号（设计稿 医护账号.html:184 要求登记路径 id；账号管理页，仅运营管理员）
     '/roles',
     '/settings',
   ],

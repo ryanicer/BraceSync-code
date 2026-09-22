@@ -5,20 +5,20 @@ import {
 
 /**
  * admin-web 权限守卫（PRD §7D.11 预置角色权限矩阵）
- * admin 14 页 / doctor 6 页 / cs 1 页，越权访问跳 /403
- * T130 新增复查报告页：admin 12→13，doctor 4→5；T135 新增复查模板管理页：admin 13→14，doctor 5→6
+ * admin 15 页 / doctor 6 页 / cs 1 页，越权访问跳 /403
+ * T130 新增复查报告页：admin 12→13，doctor 4→5；T135 新增复查模板管理页：admin 13→14，doctor 5→6；T315 新增医护账号页：admin 14→15
  */
 
 test.describe('admin 全量权限', () => {
-  test('侧边栏显示全部 14 个菜单', async ({ page }) => {
+  test('侧边栏显示全部 15 个菜单', async ({ page }) => {
     await adminLogin(page, 'admin')
-    await expect(menuItems(page)).toHaveCount(14) // 断言更新：13→14，依据 T135 新增复查模板管理页
-    for (const title of ['数据概览', '实时监控', '患者管理', '团队管理', '设备管理', '告警管理', '患者沟通', '矫形日志', '安装记录', '复查报告', '复查模板管理', '技师管理', '权限控制', '系统配置']) {
+    await expect(menuItems(page)).toHaveCount(15) // 断言更新：14→15，依据 T315 新增医护账号页
+    for (const title of ['数据概览', '实时监控', '患者管理', '团队管理', '设备管理', '告警管理', '患者沟通', '矫形日志', '安装记录', '复查报告', '复查模板管理', '技师管理', '医护账号', '权限控制', '系统配置']) {
       await expect(menuItems(page).filter({ hasText: title })).toHaveCount(1)
     }
   })
 
-  test('admin 直达 14 页全部放行（不落 403）', async ({ page }) => { // 断言更新：13→14，依据 T135 新增复查模板管理页
+  test('admin 直达 15 页全部放行（不落 403）', async ({ page }) => { // 断言更新：14→15，依据 T315 新增医护账号页
     await adminLogin(page, 'admin')
     for (const path of ADMIN_PAGES) {
       await page.goto(path)
