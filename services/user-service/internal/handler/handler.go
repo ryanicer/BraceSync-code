@@ -13,6 +13,7 @@
 //	PUT  /api/v1/admin/technicians/:techId               技师编辑
 //	POST /api/v1/technicians/:techId/toggle              技师启用/禁用
 //	GET  /api/v1/feedbacks                               反馈列表
+//	POST /api/v1/feedbacks                               反馈创建（T311 患者端配网失败自动存档）
 //	GET  /api/v1/feedbacks/stats                         反馈统计栏三项（T248 7.1）
 //	POST /api/v1/feedbacks/:feedbackId/process           反馈处理（replyContent 落库）
 //	PUT  /api/v1/admin/patients/:patientId               患者档案编辑（T248 4.3）
@@ -240,6 +241,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/technicians/:techId/toggle", h.toggleTechnician)
 
 		v1.GET("/feedbacks", h.listFeedbacks)
+		v1.POST("/feedbacks", h.createFeedback)     // T311 患者端配网失败自动存档
 		v1.GET("/feedbacks/stats", h.feedbackStats) // T248 7.1 统计栏三项
 		v1.POST("/feedbacks/:feedbackId/process", h.processFeedback)
 
@@ -1123,6 +1125,73 @@ func toFeedbackDTO(r repo.FeedbackRow) model.FeedbackDTO {
 		ReplyTime:    replyTime,
 		Status:       r.Status,
 	}
+}
+
+// feedbacks 列宽/CHECK（scripts/db/migrations/000001_init_schema.up.sql:241）
+const (
+	feedbackTypeMaxLen    = 32  // feedbacks.type VARCHAR(32)
+	feedbackContentMaxLen = 500 // feedbacks.content VARCHAR(500)
+)
+
+// feedbackStatuses feedbacks.status CHECK 枚举（含 processFeedback 会写入的 replied）
+var feedbackStatuses = map[string]bool{"pending": true, "replied": true, "resolved": true}
+
+// createFeedback POST /api/v1/feedbacks —— 反馈创建（T311 患者端配网失败自动存档）
+//
+// 鉴权沿用 assertAdminOrSelf（T264 同族，不新造中间件）：患者只能为本人提交。
+// 列宽/CHECK/外键在此预拦为 400 或 404，非法入参一律不落到 500。
+func (h *Handler) createFeedback(c *gin.Context) {
+	var req model.CreateFeedbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	patientID := trimStr(req.PatientID)
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+	if !assertAdminOrSelf(c, patientID) {
+		return
+	}
+	content := trimStr(req.Content)
+	if content == "" {
+		fail(c, model.ErrInvalidParam("content is required"))
+		return
+	}
+	if runeLen(content) > feedbackContentMaxLen {
+		fail(c, model.ErrInvalidParam("content exceeds %d characters", feedbackContentMaxLen))
+		return
+	}
+	feedbackType := trimStr(req.Type)
+	if runeLen(feedbackType) > feedbackTypeMaxLen {
+		fail(c, model.ErrInvalidParam("type exceeds %d characters", feedbackTypeMaxLen))
+		return
+	}
+	status := "pending" // 建表 DEFAULT 'pending'，入参缺省同值
+	if req.Status != nil && trimStr(*req.Status) != "" {
+		status = trimStr(*req.Status)
+	}
+	if !feedbackStatuses[status] {
+		fail(c, model.ErrInvalidParam("status must be pending / replied / resolved"))
+		return
+	}
+
+	id, err := h.store.CreateFeedback(c.Request.Context(), repo.FeedbackCreateInput{
+		PatientID: patientID,
+		Type:      feedbackType,
+		Content:   content,
+		Status:    status,
+	})
+	if err != nil {
+		if errors.Is(err, repo.ErrPatientNotFound) {
+			fail(c, model.ErrNotFound("patient not found: %s", patientID))
+			return
+		}
+		fail(c, model.ErrInternal("create feedback failed"))
+		return
+	}
+	ok(c, model.FeedbackCreatedDTO{FeedbackID: strconv.FormatInt(id, 10)})
 }
 
 // listFeedbacks GET /api/v1/feedbacks —— keyword 过滤，提交时间倒序

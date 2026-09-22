@@ -135,6 +135,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPut, "/admin/technicians/:techId"}, // T030 #4 编辑
 	{http.MethodPost, "/technicians/:techId/toggle"},
 	{http.MethodGet, "/feedbacks"},
+	{http.MethodPost, "/feedbacks"},                     // T311 患者端配网失败自动存档
 	{http.MethodGet, "/feedbacks/stats"},                // T248 7.1 统计栏三项
 	{http.MethodPost, "/feedbacks/:feedbackId/process"}, // T030 #5 replyContent
 	{http.MethodGet, "/patient/profile"},                // T186 患者本人只读档案（self-scope）

@@ -71,6 +71,9 @@ type fakeStore struct {
 	takenErr         error
 	feedbacks        []repo.FeedbackRow
 	feedbacksErr     error
+	feedbackIn       repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
+	feedbackID       int64                    // T311：CreateFeedback 返回的自增 id
+	feedbackErr      error                    // T311：CreateFeedback 注入错误
 	processOK        bool
 	processErr       error
 	plans            []repo.OrthosisPlanRow
@@ -281,6 +284,10 @@ func (f *fakeStore) TechPhoneHashTaken(_ context.Context, _, _ string) (bool, er
 }
 func (f *fakeStore) ListFeedbacks(_ context.Context, _ string) ([]repo.FeedbackRow, error) {
 	return f.feedbacks, f.feedbacksErr
+}
+func (f *fakeStore) CreateFeedback(_ context.Context, in repo.FeedbackCreateInput) (int64, error) {
+	f.feedbackIn = in
+	return f.feedbackID, f.feedbackErr
 }
 func (f *fakeStore) ProcessFeedback(_ context.Context, _ int64, _ string, reply *string) (bool, error) {
 	f.lastProcessR = reply
