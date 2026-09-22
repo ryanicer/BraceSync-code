@@ -15,9 +15,23 @@ import {
  * T051 seed：5 名患者。断言用 ≥5 行 / 动态读取首行姓名（避免硬编码）。
  * 覆盖：列表 / 搜索 / 团队筛选 / 添加患者（写） / 分配团队（写） + 末尾清理本任务创建的患者。
  */
+/**
+ * 列表断言一律钉在「患者列表」卡内。
+ *
+ * T289 4.2 让本页多了一张「批量患者-团队绑定」独立卡片，它自带 el-table。
+ * 旧写法按全局 .el-table__* 取行取表头，于是：
+ *  - 5.1 的 textContent() 撞到 strict mode violation（两个 body-wrapper）；
+ *  - 5.3 / 5.6 的表头文案列表变成两张表拼接（…|绑定团队|状态||患者ID|姓名|当前团队|分配至），
+ *    indexOf('团队') 取不到列；
+ *  - 5.2 搜索结果里混进批量卡的未分配患者行。
+ */
+function patientTable(page: Page): Locator {
+  return page.locator('.patient-list-card')
+}
+
 /** 表头文案 → 列下标（首列是 selection 复选框，故绝不按写死序号取列） */
 async function headerIndex(page: Page, title: string): Promise<number> {
-  const texts = await page
+  const texts = await patientTable(page)
     .locator('.el-table__header-wrapper thead th')
     .evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()))
   const idx = texts.indexOf(title)
@@ -74,19 +88,19 @@ test.describe('05-患者管理', () => {
 
   test.describe('列表渲染', () => {
     test('5.1 ≥5 行患者，列信息含 ID（PT-）/姓名/团队/设备/状态', async ({ page }) => {
-      const rows = tableRows(page)
+      const rows = tableRows(page, patientTable(page))
       const count = await rows.count()
       expect(count).toBeGreaterThanOrEqual(5)
 
       // 列信息存在性验证（整体表格文本中包含预期关键词簇）
-      const wrapperText = await page.locator('.el-table__body-wrapper').textContent()
+      const wrapperText = await patientTable(page).locator('.el-table__body-wrapper').textContent()
       // 患者 ID：staging seed 是 P20260003 等 P+数字 格式（PT- 前缀也兼容）
       expect(wrapperText).toMatch(/P\d{4,}|PT-/)
       // T270 收尾假绿#1（D1）订正：旧写法 `/TEAM\d+|中文…/` 把「团队列显示成原始编号」
       // 也当合格 —— 那正是 D1 的症状本身，等于给缺陷放行。值级判据见下方 5.6。
       expect(wrapperText).not.toMatch(/\bTEAM\d+\b/)
-      // 状态：活跃 / 未绑定 / 待分配 任一
-      expect(wrapperText).toMatch(/活跃|未绑定|待分配|佩戴/)
+      // 状态：PM 09-22 01:03 裁定 ① 收口为「可登录 / 不可登录」两态（旧文案「活跃」已作废）
+      expect(wrapperText).toMatch(/可登录|不可登录/)
       // 设备：D+数字（如 D0002）或 DEV- 或「未绑定」
       expect(wrapperText).toMatch(/D\d{3,}|DEV-|未绑定/)
     })
@@ -122,12 +136,13 @@ test.describe('05-患者管理', () => {
       const apiRows = await apiData('/api/v1/admin/patients?page=1&pageSize=10')
       expect(apiRows.length, 'staging seed 患者应 ≥1 行').toBeGreaterThanOrEqual(1)
 
-      const teamIdx = await headerIndex(page, '团队')
+      // T289 4.2 后本列的表头文案是「绑定团队」（设计稿 患者管理.html:88 口径）
+      const teamIdx = await headerIndex(page, '绑定团队')
       const docIdx = await headerIndex(page, '主治医生')
       await headerIndex(page, '患者ID') // 列存在性也在契约内（定位行靠它，取不到行即计入跳过）
 
       async function cellsOfRow(patientId: string): Promise<string[] | null> {
-        const row = page
+        const row = patientTable(page)
           .locator('.el-table__body-wrapper tbody tr')
           .filter({ hasText: patientId })
           .first()
@@ -184,13 +199,12 @@ test.describe('05-患者管理', () => {
 
   test.describe('搜索与筛选', () => {
     test('5.2 关键词搜索：读取第一个存在的姓名 → 搜索 → 仅匹配行', async ({ page }) => {
-      const rows = tableRows(page)
-      // 读取第一行的患者姓名（列位置：在 PT-xxx 之后，团队名之前，用正则从行文本中抓中文姓名段）
-      const firstRowText = await rows.first().textContent() ?? ''
-      // 匹配 2-4 字中文（典型姓名长度）
-      const m = firstRowText.match(/([\u4e00-\u9fa5]{2,4})/)
-      expect(m).toBeTruthy()
-      const keyword = m![1]
+      const rows = tableRows(page, patientTable(page))
+      // 姓名列按表头定位后逐格取值（旧写法用正则从整行文本里「猜」中文段，
+      // 会把「未分配」「选择团队」这类列文案当成姓名，也可能猜不到 T053测试-xxx 这种含数字的名字）
+      const nameIdx = await headerIndex(page, '姓名')
+      const keyword = (await cellTexts(rows.first()))[nameIdx]
+      expect(keyword, '首行姓名列不应为空').not.toBe('')
       // 填入搜索框
       const search = page.locator('.search-input input')
       await expect(search).toBeVisible({ timeout: 5_000 })
@@ -205,7 +219,7 @@ test.describe('05-患者管理', () => {
       }
       await page.waitForTimeout(2_000)
       // 结果每行都包含 keyword
-      const filteredRows = tableRows(page)
+      const filteredRows = tableRows(page, patientTable(page))
       const count = await filteredRows.count()
       expect(count).toBeGreaterThanOrEqual(1)
       for (let i = 0; i < count; i++) {
@@ -220,7 +234,7 @@ test.describe('05-患者管理', () => {
         await search.press('Enter')
       }
       await page.waitForTimeout(2_000)
-      expect(await tableRows(page).count()).toBeGreaterThanOrEqual(5)
+      expect(await tableRows(page, patientTable(page)).count()).toBeGreaterThanOrEqual(5)
     })
 
     test('5.3 团队筛选：按表头列取首行「团队」原值 → 筛后每行该列都等于它', async ({ page }) => {
@@ -230,8 +244,8 @@ test.describe('05-患者管理', () => {
        *     正是 D1 的症状；现按表头文案定位列、取该格原值。
        *  2) 旧收尾是「每行至少有内容」的零断言 + pickSelectOption 的静默 catch；现要求逐行等值。
        */
-      const teamIdx = await headerIndex(page, '团队')
-      const rows = tableRows(page)
+      const teamIdx = await headerIndex(page, '绑定团队')
+      const rows = tableRows(page, patientTable(page))
       await expect(rows.first()).toBeVisible({ timeout: 15_000 })
       const totalBefore = await rows.count()
 
@@ -250,7 +264,7 @@ test.describe('05-患者管理', () => {
       await expect(teamSelect.first()).toBeVisible({ timeout: 8_000 })
       await pickSelectOption(page, teamSelect.first(), teamName)
 
-      const filtered = tableRows(page)
+      const filtered = tableRows(page, patientTable(page))
       await expect
         .poll(
           async () => {
@@ -353,7 +367,7 @@ test.describe('05-患者管理', () => {
             if ((await qBtn.count()) > 0) await qBtn.first().click()
             else await search.press('Enter')
             await page.waitForTimeout(2_000)
-            const rows = tableRows(page)
+            const rows = tableRows(page, patientTable(page))
             expect(await rows.count()).toBeGreaterThanOrEqual(1)
             expect(await rows.first().textContent()).toContain(patientName)
             // 清空搜索
@@ -373,10 +387,10 @@ test.describe('05-患者管理', () => {
       //   PUT /admin/patients/:id/team 虽可改回，但用例中途失败就把 seed 患者留在错误团队，
       //   连带影响 5.3 团队筛选与 06 团队管理对成员数/患者数的 seed 断言。
       test.skip(true, '改 seed 患者的团队归属，失败即污染 5.3/06 的 seed 断言，按 PM 口径停跑')
-      const rows = tableRows(page)
+      const rows = tableRows(page, patientTable(page))
       expect(await rows.count()).toBeGreaterThanOrEqual(1)
 
-      // patients 页 @row-click=viewDetail：点第 2 个 td（第 1 个是 selection 列，避开）触发行点击打开抽屉
+      // patients 页 @row-click=viewDetail：点第 2 个 td（避开患者ID列的文本选中），行点击事件与点哪格无关
       const firstRow = rows.first()
       await firstRow.locator('td').nth(1).click()
 

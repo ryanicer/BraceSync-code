@@ -311,10 +311,13 @@ test.describe('04-实时监控', () => {
         expect(timeText, `第 ${i + 1} 行时间格式`).toMatch(/^\d{2}:\d{2}$/)
 
         const badge = cells.nth(1).locator('.event-type')
+        // 文案口径 = packages/shared-utils ALERT_TYPE_LABELS（T289 2.6 全站收口：
+        // wear_interrupt「佩戴中断」→「设备离线」、sensor_drift「传感器漂移」→「传感器标定异常」）。
+        // 色类来自 monitor/index.vue eventTypeClass，本次未变。
         const expectBadge: Record<string, { label: string; cls: string }> = {
           pressure_high: { label: '压力偏高', cls: 'ev-danger' },
-          wear_interrupt: { label: '佩戴中断', cls: 'ev-warn' },
-          sensor_drift: { label: '传感器漂移', cls: 'ev-info' },
+          wear_interrupt: { label: '设备离线', cls: 'ev-warn' },
+          sensor_drift: { label: '传感器标定异常', cls: 'ev-info' },
         }
         await expect(badge).toHaveText(expectBadge[ev.type].label)
         await expect(badge).toHaveClass(new RegExp(`\\b${expectBadge[ev.type].cls}\\b`))

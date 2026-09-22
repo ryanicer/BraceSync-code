@@ -215,6 +215,25 @@ jobs:
     # T304：真实模式过去在 CI 里只有 tsc + --list，从未真跑过一条用例。
     # 现在 PR（改动命中 paths）+ 每日 20:00 北京时间 + 手动都真跑；失败即判红，
     # 不加 continue-on-error / `|| true`，以免又变成「CI 绿但真环境没人验」。
+    #
+    # 本 job 会在 staging 留下的写动作（逐条核过服务端代码，2026-09-22 现值实测）：
+    #   · 1.3 / 1.6 两次「登录失败」请求：user-service login 只在成功时写审计留痕，
+    #     失败分支直接 401 返回，无失败计数、无锁定策略 ⇒ 反复跑不会锁死 ops_admin
+    #   · 每次登录写 1 条 audit_log「运营后台登录成功」（约 30 条/run；操作日志页按格式断言，不按条数）
+    #   · 6.2 → 6.3 → 6.5 建一个 T053团队-xxx、改名、再把它删掉（只碰自己建的）
+    #   · 8.2 PUT /admin/settings 把 maxPatients 加 1 再 PUT 回原值（finally 兜底还原）。
+    #     T281（threshold_pressure_low 10→1）合并后 staging 现值 high=5 / low=1 已满足不变量，
+    #     本条不再走「PUT 被拒即跳过」分支 ⇒ 每次 run 都会真写一次并还原
+    # 不可逆的用例在代码里就 test.skip 掉了，CI 放开不了（要放开须 PM 裁定后删那行 skip）：
+    #   3.4 处理真实告警、7.3 回复 seed 反馈（均单向无撤回端点）、6.4 删 seed 团队；
+    #   5.4/5.5 患者写用例（无 DELETE /admin/patients 端点，跑一次永久留一条脏数据）。
+    # 预期计数：30 passed / 5 skipped / 0 failed（只读 24 条已本地实测通过，另 6 条为上面的写用例）。
+    # job 级并发锁：顶部 workflow 级 concurrency 按 PR 分组，多个 PR 的真跑会同时打 staging。
+    # 写用例里 8.2 是「读现值 → +1 → 写回读到的值」，两条 run 交错会把 maxPatients 留在别人的
+    # baseline 上（值仍合法但再也回不去 seed）。故所有 run 串行排队，不取消在跑的旧 run。
+    concurrency:
+      group: e2e-real-staging
+      cancel-in-progress: false
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

@@ -58,26 +58,36 @@ async function openSettings(page: Page): Promise<void> {
   await expect(page.locator('.settings-form')).toBeVisible({ timeout: 15_000 })
 }
 
-/** 取「阈值与参数」Tab 表单里某个 label 对应的数值框 */
-function numberField(page: Page, label: string) {
+/**
+ * 取「阈值与参数」Tab 里某个 label 对应的数值框。
+ * scope 必须显式选卡：T289 12.4 把压力三档从 .settings-form 拆进独立的 .pressure-tier-form
+ * （拆卡是为了让 .settings-form 继续当「全局系统参数」卡的定位锚点，见 settings/index.vue 样式注释），
+ * 于是旧写法在 .settings-form 里找「压力偏高阈值（N）」直接超时。
+ */
+function numberField(page: Page, label: string, scope = '.settings-form') {
   return page
-    .locator('.settings-form .el-form-item')
+    .locator(`${scope} .el-form-item`)
     .filter({ hasText: label })
     .first()
     .locator('.el-input-number input')
     .first()
 }
 
-// 表单 label ↔ 契约字段（顺序即页面自上而下）
+/** 全局系统参数卡（写 sys_configs 的常规键） */
 const FORM_FIELDS: { label: string; key: keyof Settings }[] = [
   { label: '数据采集间隔（秒）', key: 'collectIntervalSeconds' },
   { label: '数据保留天数', key: 'retentionDays' },
   { label: '最大患者数', key: 'maxPatients' },
   { label: '每日佩戴目标时长（h）', key: 'dailyWearTargetHours' },
-  { label: '压力偏高阈值（N）', key: 'pressureHighThresholdN' },
   { label: '压力波动幅度阈值（%）', key: 'pressureFluctuationPct' },
   { label: '佩戴中断判定时间（分钟）', key: 'wearInterruptMinutes' },
   { label: '传感器漂移告警阈值（N）', key: 'sensorDriftN' },
+]
+
+/** 压力阈值配置卡（T289 12.4 三档；label 也随拆卡改名：压力偏高阈值（N）→ 偏高上限（N）） */
+const TIER_FIELDS: { label: string; key: keyof Settings }[] = [
+  { label: '低压上限（N）', key: 'pressureLowThresholdN' },
+  { label: '偏高上限（N）', key: 'pressureHighThresholdN' },
 ]
 
 test.describe('08-系统配置（真实模式）', () => {
@@ -91,15 +101,26 @@ test.describe('08-系统配置（真实模式）', () => {
 
     // 逐字段比对（不是「页面有数字」这种弱断言）
     const seen: Record<string, { ui: string; api: number }> = {}
-    for (const f of FORM_FIELDS) {
-      const ui = await numberField(page, f.label).inputValue()
-      seen[f.key] = { ui, api: api[f.key] as number }
-      expect(ui.trim(), `字段 ${f.label} 回显`).not.toBe('')
-      expect(Number(ui), `字段 ${f.label} 应等于接口值 ${api[f.key]}`).toBe(api[f.key])
+    for (const group of [
+      { scope: '.settings-form', fields: FORM_FIELDS },
+      { scope: '.pressure-tier-form', fields: TIER_FIELDS },
+    ]) {
+      for (const f of group.fields) {
+        const ui = await numberField(page, f.label, group.scope).inputValue()
+        seen[f.key] = { ui, api: api[f.key] as number }
+        expect(ui.trim(), `字段 ${f.label} 回显`).not.toBe('')
+        expect(Number(ui), `字段 ${f.label} 应等于接口值 ${api[f.key]}`).toBe(api[f.key])
+      }
     }
 
     // 接口少给任何一个字段，上面的比对就会 NaN ≠ undefined 而失败
-    expect(Object.keys(seen)).toHaveLength(FORM_FIELDS.length)
+    expect(Object.keys(seen)).toHaveLength(FORM_FIELDS.length + TIER_FIELDS.length)
+
+    // 中间档「正常上限」后端不落库（三档合两键），页面按契约推导 =（偏高上限 + 低压上限）÷ 2；
+    // 这条断言守的是「拆卡后推导算法没被顺手改掉」。
+    const normalUpperUi = await numberField(page, '正常上限（N）', '.pressure-tier-form').inputValue()
+    const derived = (api.pressureHighThresholdN + (api.pressureLowThresholdN ?? 0)) / 2
+    expect(Number(normalUpperUi), `正常上限应等于推导值 ${derived}`).toBe(derived)
 
     // WiFi 预设：接口有 seed 就必须渲染出来（脱敏列不得把 ssid 吞掉）
     if (api.wifiPresets.length > 0) {
