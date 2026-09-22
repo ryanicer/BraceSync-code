@@ -32,11 +32,18 @@ test.describe('04-实时监控', () => {
   }
 
   test.describe('页面默认渲染', () => {
-    test('4.1 实时同步标签 + 默认患者 + 最近更新时间戳 + 状态指示器 + 设备提示', async ({ page }) => {
-      // 1) 实时同步中标签
-      await expect(page.locator('.page-toolbar .realtime-tag')).toContainText('实时同步中', {
-        timeout: 20_000,
-      })
+    test('4.1 新鲜度标签 + 默认患者 + 采集/拉取双时刻 + 状态指示器 + 设备提示', async ({ page }) => {
+      // 1) T322 起标签随帧新鲜度变（实时同步中 / 数据已过期 / 无实时数据）。
+      //    这里不再写死「实时同步中」——staging 的种子帧早已停在上报时刻，写死它等于把
+      //    PM 报的「假实时」写进断言（2026-09-22 实测：帧冻结在 10:30，页面却秒秒跳「最近更新」）。
+      //    三态各自的表现由下方 4.1b / 4.1c 用改写响应的方式逐条钉死。
+      await expect(page.locator('.page-toolbar .realtime-tag')).toContainText(
+        /实时同步中|数据已过期|无实时数据/,
+        { timeout: 20_000 },
+      )
+      // 1b) 采集时刻与拉取时刻必须分列（不得用拉取时刻冒充数据新鲜度）
+      await expect(page.locator('.page-toolbar .update-time')).toContainText(/数据采集：/)
+      await expect(page.locator('.page-toolbar .update-time')).toContainText(/本次拉取：\d{2}:\d{2}:\d{2}/)
       // 2) 患者卡片 + 选中患者名（el-select__selected-item 或 wrapper 内有任意患者名文字）
       const card = page.locator('.patient-card')
       await expect(card).toBeVisible({ timeout: 20_000 })
@@ -62,6 +69,82 @@ test.describe('04-实时监控', () => {
         const t = await hint.textContent()
         expect(t!.trim().length).toBeGreaterThan(0)
       }
+    })
+
+    /**
+     * T322：改写实时快照的 pressureRecords 字段制造新鲜度状态，其余响应原样透传。
+     *
+     * 为什么真实模式必须靠改写：过期态与无帧态在 staging 上是「碰运气」的当前状态
+     * （帧 TTL 2 小时、有无上报取决于模拟器是否在跑），下一轮跑可能就成了另一态。
+     * 把帧时刻钉死成 3 小时前 / 把帧清空，才能让这两态成为可复跑的断言。
+     * 4.1 只验「标签落在三态之一 + 双时刻分列」，具体某一态的表现全在这两条里。
+     */
+    async function injectFrame(
+      page: import('@playwright/test').Page,
+      mutate: (data: { pressureRecords?: unknown }) => void,
+    ): Promise<void> {
+      await page.route('**/api/v1/patients/*/realtime', async (route) => {
+        const res = await route.fetch()
+        let body: { data?: Record<string, unknown> }
+        try {
+          body = await res.json()
+        } catch {
+          await route.fulfill({ response: res })
+          return
+        }
+        if (body?.data) mutate(body.data as { pressureRecords?: unknown })
+        await route.fulfill({ response: res, body: JSON.stringify(body) })
+      })
+      await page.locator('.page-toolbar').getByRole('button', { name: '立即刷新' }).click()
+    }
+
+    test('4.1b 帧时刻超过 TTL：标签转「数据已过期」+ 告警条 + 曲线不再推进', async ({ page }) => {
+      await waitForSnapshotLoaded(page)
+      const collected = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+      await injectFrame(page, (data) => {
+        const records = (data.pressureRecords as Array<Record<string, unknown>> | undefined) ?? []
+        data.pressureRecords = [{ ...(records[0] ?? {}), timestamp: collected }]
+      })
+
+      const tag = page.locator('.page-toolbar .realtime-tag')
+      await expect(tag).toHaveClass(/live-expired/, { timeout: 20_000 })
+      await expect(tag).toContainText('数据已过期')
+
+      // 告警条必须点名「末次帧」，不能只换个标签
+      const notice = page.locator('.frame-notice')
+      await expect(notice).toBeVisible()
+      await expect(notice).toContainText(/末次帧采集于 \d{2}:\d{2}:\d{2}（距今 \d+ 小时(?: \d+ 分)?）/)
+      await expect(notice).toContainText('不代表患者当前状态')
+
+      // 采集时刻与拉取时刻分列，且同一个过期帧内采集时刻不随轮询跳动（T322 的语义纠正本身）
+      const updateTime = page.locator('.page-toolbar .update-time')
+      const collectedText = (await updateTime.textContent())!.match(/数据采集：(\d{2}:\d{2}:\d{2})/)![1]
+      await page.waitForTimeout(5_000)
+      expect((await updateTime.textContent())!).toContain(`数据采集：${collectedText}`)
+
+      // 过期帧仍是帧：20 格照画，但「最大点脉冲」这种暗示实时的动画必须停
+      await expect(page.locator('.hm-cell')).toHaveCount(20)
+      await expect(page.locator('.hm-cell-pulse')).toHaveCount(0)
+      await expect(page.locator('.tbl-note')).toContainText('非当前实时')
+      await expect(page.locator('.chart-empty')).toContainText('帧已过期，曲线不再推进')
+    })
+
+    test('4.1c 快照无帧：标签转「无实时数据」且不渲染 seed 兜底热力图', async ({ page }) => {
+      await waitForSnapshotLoaded(page)
+      await injectFrame(page, (data) => {
+        data.pressureRecords = []
+      })
+
+      const tag = page.locator('.page-toolbar .realtime-tag')
+      await expect(tag).toHaveClass(/live-none/, { timeout: 20_000 })
+      await expect(tag).toContainText('无实时数据')
+
+      // 后端无帧时仍下发 seed 兜底热力图（model.go:454），前端唯一判据是 records 为空 ⇒ 一格都不许画
+      await expect(page.locator('.hm-cell')).toHaveCount(0)
+      await expect(page.locator('.hm-empty')).toContainText('无实时帧 · 不展示示例数据')
+      await expect(page.locator('.frame-notice')).toContainText('无实时帧')
+      await expect(page.locator('.points-table .empty-cell')).toContainText('无实时帧')
+      await expect(page.locator('.chart-empty')).toContainText('曲线不绘制示例数据')
     })
   })
 

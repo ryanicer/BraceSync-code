@@ -5,15 +5,17 @@ import { adminRoutes, adminLogin, pickSelectOption } from '../admin-helpers'
  * admin-web 实时监控（T056 重做后）：患者下拉选择 + 4×5 热力图 + 实时压力曲线 + 每秒轮询（T289 F6，设计稿 实时监控.html:161）
  *
  * 新版页面结构（pages/monitor/index.vue）：
- * - 顶部栏：.realtime-tag "实时同步中" + .update-time "最近更新：HH:mm:ss" + 立即刷新按钮
+ * - 顶部栏：.realtime-tag（T322 三态：实时同步中 / 数据已过期 / 无实时数据）
+ *   + .update-time「数据采集：HH:mm:ss（距今 …）| 本次拉取：HH:mm:ss」+ 立即刷新按钮
  * - 患者卡片：.patient-card > el-select(filterable) + .status-indicator + .device-hint
  * - 左栏曲线：.chart-card > .chart-container > canvas（Chart.js）
  * - 右栏热力图：.heatmap-card > .hm-grid > 4×.hm-row > 5×.hm-cell（共 20 格）
  *
  * mock 对齐 mock/patients.ts mockPatientRealtime：
- * - PT-001 林小雨 online（deviceId DEV-A3F312，压力 base=35）
+ * - PT-001 林小雨 online（deviceId DEV-A3F312，压力 base=35，帧时刻为当下）
+ * - PT-002 陈子航 帧时刻固定落后 3 小时（T322 过期态载体，status 一并 offline）
  * - PT-004 刘俊熙 abnormal（deviceId DEV-D2A012，压力 base=68）
- * - PT-005 赵欣然 offline（deviceId=null → seedHeatmap 兜底）
+ * - PT-005 赵欣然 offline（deviceId=null → pressureRecords 为空 + seedHeatmap 兜底，T322 无帧态载体）
  */
 
 /** 等待快照加载完成（update-time 出现 HH:mm:ss 时间戳） */
@@ -270,6 +272,9 @@ test.describe('自动刷新与曲线细节（T270 假绿 #4/#5）', () => {
     await waitForSnapshotLoaded(page)
     const canvas = page.locator('.chart-container canvas')
     await expect(canvas).toBeVisible({ timeout: 15_000 })
+    // T322 起曲线只画本轮真实帧（1 帧/秒），开局不再一次性造 30 点正弦假数据
+    // ⇒ 下面的像素阈值要有足够点位才成立：等出一横轴满刻度（≥8 个标签）再采样
+    await page.waitForTimeout(10_500)
     await page.waitForTimeout(400) // 等入场动画画完，避免采样到半帧
 
     /**
@@ -343,5 +348,83 @@ test.describe('自动刷新与曲线细节（T270 假绿 #4/#5）', () => {
     await page.mouse.move(box!.x + box!.width * 0.5, box!.y + box!.height + 80)
     await page.waitForTimeout(600)
     expect((await sample('dark', plot)).points).toBeLessThan(50)
+  })
+})
+
+/* ============================================================================
+ * T322 实时监控「假实时」收口
+ *
+ * Boss 2026-09-22 令：无帧 / 帧过期时必须显示「无数据 / 数据已过期」，不得把陈旧值当实时展示；
+ * 「最近更新」不得用取数时刻冒充数据新鲜度。三态在 mock 里各有承载患者：
+ *   PT-001 林小雨 → 帧为当下（正常）  PT-002 陈子航 → 帧龄 3 小时（过期）
+ *   PT-005 赵欣然 → 未绑定设备，pressureRecords 为空且后端回 seed 热力图（无帧）
+ * ========================================================================== */
+test.describe('帧新鲜度三态（T322）', () => {
+  test('正常态：数据采集时刻与本次拉取时刻分列，页面无过期告警条', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    const bar = page.locator('.page-toolbar .update-time')
+    await expect(bar).toContainText(/数据采集：\d{2}:\d{2}:\d{2}/)
+    await expect(bar).toContainText(/本次拉取：\d{2}:\d{2}:\d{2}/)
+    await expect(bar).toContainText(/距今 \d+s/)
+    await expect(page.locator('.frame-notice')).toHaveCount(0)
+    await expect(page.locator('.page-toolbar .realtime-tag')).toContainText('实时同步中')
+    // 帧龄取自数据侧时刻：正常态就是「刚采的帧」，且必须是个能解析的秒数（不是 NaN / 空白）
+    const age = Number((await bar.textContent())!.match(/距今 (\d+)s/)![1])
+    expect(age).toBeLessThan(60)
+  })
+
+  test('过期态：帧龄 3 小时 → 标签转「数据已过期」+ 告警条，脉冲停止且曲线不被轮询推活', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    await pickSelectOption(page, page.locator('.patient-card .el-select'), '陈子航')
+    const tag = page.locator('.page-toolbar .realtime-tag')
+    await expect(tag).toHaveClass(/live-expired/)
+    await expect(tag).toContainText('数据已过期')
+    // 绿点脉冲＝「数据在动」的暗示，非实时态必须停
+    expect(await tag.locator('.realtime-dot').evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
+
+    // 末次帧是一个固定时刻：轮询只推进「本次拉取」，不许推进「数据采集」。
+    // 这条不变量只有在「帧会停」的患者身上才可判，PT-001 模拟设备持续上报，采集时刻本就跟着走。
+    const bar = page.locator('.page-toolbar .update-time')
+    const barText = (await bar.textContent())!
+    const collected = barText.match(/数据采集：(\d{2}:\d{2}:\d{2})/)![1]
+    const pull = barText.match(/本次拉取：(\d{2}:\d{2}:\d{2})/)![1]
+    await page.waitForTimeout(2_200)
+    await expect(bar).toContainText(`数据采集：${collected}`)
+    await expect(bar).not.toContainText(`本次拉取：${pull}`)
+
+    const notice = page.locator('.frame-notice')
+    await expect(notice).toHaveCount(1)
+    await expect(notice).toContainText(/末次帧采集于 \d{2}:\d{2}:\d{2}（距今 \d+ 小时）/)
+    await expect(notice).toContainText('已超过 2 小时有效期')
+
+    // 末次帧数值照旧展示（有帧 ≠ 无数据），但必须标成末次帧而不是当前
+    await expect(page.locator('.hm-cell')).toHaveCount(20)
+    await expect(page.locator('.hm-cell-pulse')).toHaveCount(0)
+    await expect(
+      page.locator('.page-card').filter({ hasText: '采集点实时数值表' }).locator('.tbl-note'),
+    ).toContainText('非当前实时')
+    await expect(page.locator('.chart-empty')).toContainText('帧已过期，曲线不再推进')
+    // 防回潮：整页不得再出现「实时同步中」字样
+    await expect(page.locator('.monitor')).not.toContainText('实时同步中')
+  })
+
+  test('无帧态：未绑定设备 → 显示「无实时数据」，热力图与采集点表不得渲染 seed 兜底值', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    await pickSelectOption(page, page.locator('.patient-card .el-select'), '赵欣然')
+    const tag = page.locator('.page-toolbar .realtime-tag')
+    await expect(tag).toHaveClass(/live-none/)
+    await expect(tag).toContainText('无实时数据')
+    await expect(page.locator('.frame-notice')).toContainText('该患者当前无实时帧')
+
+    // 后端无帧时 pressureHeatmap 仍是 20 点 seed 值 —— 页面一格都不许画出来
+    await expect(page.locator('.hm-cell')).toHaveCount(0)
+    await expect(page.locator('.hm-empty')).toContainText('无实时帧 · 不展示示例数据')
+    await expect(page.locator('.points-table .empty-cell')).toContainText('无实时帧 · 不展示示例数据')
+    await expect(page.locator('.hm-detail')).toContainText('无实时帧')
+    // 帧派生摘要给占位，不给「0.0 N」这种看着像读数的值
+    await expect(page.locator('.peak-cell.peak-value .peak-num')).toHaveText('--')
+    // 最大压力采集点同样不得留 seed 派生的点位号（曾漏判：seed 兜底值混进今日峰值统计）
+    await expect(page.locator('.peak-card .peak-text')).toHaveText('--')
+    await expect(page.locator('.chart-empty')).toContainText('无实时帧，曲线不绘制示例数据')
   })
 })
