@@ -21,7 +21,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: process.env.STAGING_URL || 'https://staging.bracesync.example.com',
+    baseURL: process.env.E2E_STAGING_URL || 'http://localhost:2080',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

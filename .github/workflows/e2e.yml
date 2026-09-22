@@ -1,7 +1,22 @@
 # BraceSync E2E
-# PR 门禁（informational，不阻塞合并）：患者端 H5 Playwright e2e（e2e/ 基座）
-# 定时/手动：Admin Web staging 巡检（占位，staging 就绪后启用）
+# PR 门禁（informational，不阻塞合并）：患者端/技师端/后台 H5 Playwright e2e（e2e/ 基座，本地 webServer + mock）
+# 定时/手动：真实模式（e2e-real/）打 staging 全量回归 + 契约冒烟
 # 对齐：docs/ §4 · docs/ §6.3
+#
+# ─── T304：staging 地址与变量名口径 ───────────────────────────────────────────
+# 唯一入口变量 = E2E_STAGING_URL（本文件 env 块定义，e2e-real 两个 config 只读它）。
+#   历史遗留的 STAGING_URL / BASE_URL / E2E_BASE_URL 三种写法已废除，不留别名：
+#     · BASE_URL 曾在此传给 mock 用例，且根 config 根本不读它 ⇒ 死变量，已删
+#     · E2E_BASE_URL 曾同时被「mock 本地 dev server」和「真实模式」读取 ⇒ mock 侧改名
+#       E2E_LOCAL_BASE_URL，真实侧并入 E2E_STAGING_URL
+# 地址来源：staging 的 Nginx 公开入口 = 服务器 106.52.39.208 的 81 端口
+#   （域名等价写法 http://hbksd.com.cn:81，见 scripts/wechat/lib-target.js）。
+#   admin-web 挂在 /admin/ 下，API 走 /api/，由同一条 location 反代到 staging gateway。
+# 🔴 只打 staging：生产是同一台机器的 80/443 与另一台 49.235.137.217，本 workflow 任何 job
+#    都不得指向它们（生产零操作红线，见 docs/tasks/TAPD-agent-规则.md）。
+# 本机调试：ssh -N -L 2080:127.0.0.1:81 ubuntu@106.52.39.208
+#           再 E2E_STAGING_URL=http://localhost:2080 npx playwright test --config=e2e-real/playwright.real.config.ts
+# ──────────────────────────────────────────────────────────────────────────────
 name: E2E
 
 on:
@@ -12,12 +27,14 @@ on:
       - 'apps/**'
       - 'packages/**'
       - 'e2e/**'
+      - 'e2e-real/**'
       - 'package.json'
       - 'package-lock.json'
       - 'playwright.config.ts'
       - '.github/workflows/e2e.yml'
   schedule:
-    - cron: "0 2 * * *"  # 每日 02:00 UTC（巡检，不受 paths 限制）
+    - cron: "0 2 * * *"  # 每日 02:00 UTC（mock 巡检，不受 paths 限制）
+    - cron: "0 12 * * *" # 每日 20:00 北京时间：真实模式打 staging（会写 T053 前缀造数行，避开白天人工测试窗口）
   workflow_dispatch: {}   # 手动触发（发版前）
 
 # 成本优化（T045）：同一 PR/分支并发 push 只保留最新一次，取消旧 run（巡检/手动不受限）
@@ -27,7 +44,8 @@ concurrency:
 
 env:
   NODE_VERSION: "20"
-  STAGING_URL: https://staging.bracesync.example.com
+  E2E_STAGING_URL: http://106.52.39.208:81
+
 
 jobs:
   patient-miniapp-e2e:
@@ -166,7 +184,7 @@ jobs:
           retention-days: 14
 
   playwright-e2e:
-    name: Playwright E2E (Admin Web, staging 巡检)
+    name: Playwright E2E (mock，本地 webServer，不打 staging)
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
@@ -179,16 +197,50 @@ jobs:
         run: npm ci
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+      # T304：原先这里注入 BASE_URL=${STAGING_URL}（占位域名），而根 playwright.config.ts 从不读
+      # BASE_URL —— 用例跑在本地 webServer 上，该 env 是死变量且误导「staging 巡检」这个 job 名。
       - name: Run E2E tests
         run: npx playwright test --project=chromium
-        env:
-          BASE_URL: ${{ env.STAGING_URL }}
       - name: Upload report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-mock-schedule-report
           path: playwright-report/
+          retention-days: 14
+
+  e2e-real-staging:
+    name: E2E Real（真实模式全量回归，打 staging）
+    runs-on: ubuntu-latest
+    # T304：真实模式过去在 CI 里只有 tsc + --list，从未真跑过一条用例。
+    # 现在 PR（改动命中 paths）+ 每日 20:00 北京时间 + 手动都真跑；失败即判红，
+    # 不加 continue-on-error / `|| true`，以免又变成「CI 绿但真环境没人验」。
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Type check e2e-real
+        run: npx tsc --noEmit --project e2e-real/tsconfig.json
+      - name: Run e2e-real against staging
+        # 用例先打一行 [e2e-real][login] GET <staging>/api/... 的请求日志，
+        # 便于在 run 日志里核对「确实打了 staging」而不是打了空地址。
+        run: npx playwright test --config=./e2e-real/playwright.real.config.ts
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-real-staging-report
+          path: |
+            e2e-real/playwright-report/
+            e2e-real/test-results/
+          retention-days: 14
 
   miniapp-smoke:
     name: 小程序冒烟 (miniprogram-automator)
@@ -208,7 +260,10 @@ jobs:
           echo "需配置微信开发者工具 CI 环境，Phase 3 启用"
 
   # T144 P1：真实后端冒烟（登录→列表接口非空→页面渲染≥1条）。
-  # 不进 PR 门禁（独立 job）；nightly / 手动触发。凭证由 TRT_ADMIN_USERNAME(ADMIN_USERNAME)/ADMIN_PASSWORD 注入，缺失则用例自动 skip。
+  # 不进 PR 门禁（独立 job）；nightly / 手动触发。凭证由 ADMIN_USERNAME/ADMIN_PASSWORD 注入，缺失则用例自动 skip。
+  # T304 实况：本仓 Actions secrets 目前为空 ⇒ 这条 nightly 恒定「0 通过 / 1 skip」，
+  # 它证明不了真实后端（真正打 staging 的是上面的 e2e-real-staging）。补一行 warning 把
+  # 「skip ≠ 验过」写进日志，避免又有人拿它的绿当联调证据；要不要配凭证由 PM 定。
   real-backend-smoke:
     name: Real Backend Smoke（真实后端冒烟，T144 P1）
     runs-on: ubuntu-latest
@@ -223,10 +278,17 @@ jobs:
         run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+      - name: Note missing credentials
+        env:
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+        run: |
+          if [ -z "$ADMIN_USERNAME" ]; then
+            echo "::warning::未配 ADMIN_USERNAME/ADMIN_PASSWORD —— 本 job 的用例会整体 skip，green 不代表真实后端已验（T304）"
+          fi
       - name: Run real backend smoke
         run: npx playwright test --config=./e2e-real/playwright.config.ts
         env:
-          STAGING_URL: ${{ env.STAGING_URL }}
+          E2E_STAGING_URL: ${{ env.E2E_STAGING_URL }}
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       - name: Upload report

@@ -27,7 +27,8 @@ export default defineConfig({
   },
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: process.env.E2E_BASE_URL || baseUrl,
+    // mock 用例只打本地 dev server；staging 地址的唯一变量是 E2E_STAGING_URL（见 e2e-real/）
+    baseURL: process.env.E2E_LOCAL_BASE_URL || baseUrl,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

@@ -178,7 +178,7 @@ test.describe('05-患者管理', () => {
       // 防「零行也通过」：staging seed 至少各命中一次两类分支
       expect(teamChecked, '应至少命中 1 行有团队的患者').toBeGreaterThanOrEqual(1)
       expect(docChecked, '应至少命中 1 行有主治医生的患者').toBeGreaterThanOrEqual(1)
-      expect(unassignedChecked, '应至少命中 1 个未分配字段（否则 '-' 分支未被守）').toBeGreaterThanOrEqual(1)
+      expect(unassignedChecked, '应至少命中 1 个未分配字段（否则「-」分支未被守）').toBeGreaterThanOrEqual(1)
     })
   })
 
