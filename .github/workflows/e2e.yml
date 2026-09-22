@@ -44,7 +44,7 @@ concurrency:
 
 env:
   NODE_VERSION: "20"
-  E2E_STAGING_URL: http://106.52.39.208:81
+  E2E_STAGING_URL: http://106.52.39.208:8099
 
 jobs:
   patient-miniapp-e2e:
