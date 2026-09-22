@@ -234,6 +234,11 @@ func (h *Handler) Router() *gin.Engine {
 		v1.PUT("/teams/:teamId/members/:memberId", h.updateTeamMember)
 		v1.DELETE("/teams/:teamId/members/:memberId", h.removeTeamMember)
 		v1.GET("/doctors", h.listDoctors)
+		// T314 医护账号管理写通道（PRD §7D.10）：🔴 无 DELETE，「删除」按设计稿无入口不入需求
+		v1.POST("/admin/doctors", h.createDoctorAccount)
+		v1.PUT("/admin/doctors/:doctorId", h.updateDoctorAccount)
+		v1.POST("/admin/doctors/:doctorId/reset-password", h.resetDoctorAccountPassword)
+		v1.POST("/admin/doctors/:doctorId/status", h.setDoctorAccountStatus)
 
 		v1.GET("/technicians", h.listTechnicians)
 		v1.POST("/admin/technicians", h.createTechnician)
@@ -809,7 +814,21 @@ func (h *Handler) toDoctorDTO(r repo.DoctorRow) model.DoctorDTO {
 		PhoneMasked:  masked,
 		PatientCount: r.PatientCount,
 		Status:       r.Status,
+		// T314：admins 侧三列指针原样透出（未绑账号 = nil = JSON null，不得填成空串冒充有值）
+		Username:      r.Username,
+		AccountStatus: r.AccountStatus,
+		CreatedAt:     timePtrRFC3339(r.AccountCreatedAt),
 	}
+}
+
+// timePtrRFC3339 *time.Time → RFC3339（UTC，带 Z 标记）指针；nil 原样回 nil。
+// 与既有 CreatedAt 字段同格式（handler.go 内其它 DTO 用同一 layout 串）。
+func timePtrRFC3339(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.UTC().Format("2006-01-02T15:04:05Z07:00")
+	return &s
 }
 
 func (h *Handler) toTechDTO(r repo.TechnicianRow) model.TechnicianDTO {

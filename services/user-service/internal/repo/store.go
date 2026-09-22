@@ -227,7 +227,7 @@ type MemberInput struct {
 	Role       string // 可选，更新 doctor.title（technician 无 title 字段则忽略）
 }
 
-// DoctorRow doctors LEFT JOIN 患者计数投影
+// DoctorRow doctors LEFT JOIN 患者计数 + LEFT JOIN admins（T314 一行跨两表）
 type DoctorRow struct {
 	DoctorID     string
 	Name         string
@@ -235,8 +235,13 @@ type DoctorRow struct {
 	Department   *string
 	TeamID       *string
 	PhoneEnc     []byte // AES-GCM 密文，出 service 层前解密脱敏
-	Status       string
+	Status       string // doctors.status：档案在册层（当前无消费方，见 T314 交件待裁）
 	PatientCount int
+	// ↓ admins 侧四列。未绑登录账号的存量档案（seed D0002/D0003）三者均为 nil
+	AdminID          *string
+	Username         *string // 登录账号 doc%05d（T314 服务端发号）
+	AccountStatus    *string // admins.status：登录能力层，登录校验实际读的就是它
+	AccountCreatedAt *time.Time
 }
 
 // TechnicianRow technicians 表投影（team_name 由 LEFT JOIN teams 带出，T278-②）
@@ -482,6 +487,15 @@ type Store interface {
 	UpdateTechnician(ctx context.Context, techID string, in TechInput) (*TechnicianRow, error)
 	ToggleTechnician(ctx context.Context, techID, status string) (bool, error)
 	TechPhoneHashTaken(ctx context.Context, phoneHash, excludeTechID string) (bool, error)
+
+	// 医护账号写通道（T314，PRD §7D.10）：一行跨 admins + doctors 两表，创建同事务写两表。
+	// sentinel：ErrDoctorNotFound(404) / ErrDoctorNoAccount(409，档案未绑登录账号) /
+	//           ErrUsernameExhausted(500，发号序列连续撞已占用序号)
+	// 单条读回 GetDoctorAccount 只在 PGStore 内部复用，不进接口（无调用方，避免死方法）。
+	CreateDoctorAccount(ctx context.Context, in DoctorAccountInput) (*DoctorRow, error)
+	UpdateDoctorAccount(ctx context.Context, doctorID string, in DoctorAccountUpdate) (*DoctorRow, error)
+	SetDoctorAccountStatus(ctx context.Context, doctorID, status string) (*DoctorRow, error)
+	SetDoctorAccountPassword(ctx context.Context, doctorID, passwordHash string) (*DoctorRow, error)
 
 	// 反馈
 	ListFeedbacks(ctx context.Context, keyword string) ([]FeedbackRow, error)

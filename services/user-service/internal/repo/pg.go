@@ -409,18 +409,25 @@ func (s *PGStore) TeamExists(ctx context.Context, teamID string) (bool, error) {
 	return exists, err
 }
 
+// doctorColumns 医护读侧投影：doctors 6 列 + 主诊患者数 + admins 侧 4 列
+// （T314：PRD §7D.10（1）的「登录账号 / 创建时间」两列在 admins 侧，一行跨两张表）
+const doctorColumns = `d.doctor_id, d.name, d.title, d.department, d.team_id, d.phone_enc, d.status,
+       COUNT(p.patient_id) AS patient_count,
+       d.admin_id, a.username, a.status AS account_status, a.created_at AS account_created_at`
+
 const doctorSelect = `
-SELECT d.doctor_id, d.name, d.title, d.department, d.team_id, d.phone_enc, d.status,
-       COUNT(p.patient_id) AS patient_count
+SELECT ` + doctorColumns + `
 FROM doctors d
-LEFT JOIN patients p ON p.primary_doctor_id = d.doctor_id`
+LEFT JOIN patients p ON p.primary_doctor_id = d.doctor_id
+` + doctorAdminJoin
 
 func (s *PGStore) scanDoctors(rows pgx.Rows) ([]DoctorRow, error) {
 	defer rows.Close()
 	var list []DoctorRow
 	for rows.Next() {
 		var d DoctorRow
-		if err := rows.Scan(&d.DoctorID, &d.Name, &d.Title, &d.Department, &d.TeamID, &d.PhoneEnc, &d.Status, &d.PatientCount); err != nil {
+		if err := rows.Scan(&d.DoctorID, &d.Name, &d.Title, &d.Department, &d.TeamID, &d.PhoneEnc,
+			&d.Status, &d.PatientCount, &d.AdminID, &d.Username, &d.AccountStatus, &d.AccountCreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, d)
@@ -428,9 +435,9 @@ func (s *PGStore) scanDoctors(rows pgx.Rows) ([]DoctorRow, error) {
 	return list, rows.Err()
 }
 
-// ListDoctors 全量医生（含患者计数）
+// ListDoctors 全量医生（含主诊患者计数 + admins 侧登录账号/状态/创建时间，T314）
 func (s *PGStore) ListDoctors(ctx context.Context) ([]DoctorRow, error) {
-	rows, err := s.pool.Query(ctx, doctorSelect+` GROUP BY d.doctor_id ORDER BY d.doctor_id`)
+	rows, err := s.pool.Query(ctx, doctorSelect+` `+doctorGroupBy+` ORDER BY d.doctor_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -439,7 +446,8 @@ func (s *PGStore) ListDoctors(ctx context.Context) ([]DoctorRow, error) {
 
 // ListDoctorsByTeam 团队内医生（团队成员明细）
 func (s *PGStore) ListDoctorsByTeam(ctx context.Context, teamID string) ([]DoctorRow, error) {
-	rows, err := s.pool.Query(ctx, doctorSelect+` WHERE d.team_id = $1 GROUP BY d.doctor_id ORDER BY d.doctor_id`, teamID)
+	rows, err := s.pool.Query(ctx,
+		doctorSelect+` WHERE d.team_id = $1 `+doctorGroupBy+` ORDER BY d.doctor_id`, teamID)
 	if err != nil {
 		return nil, err
 	}

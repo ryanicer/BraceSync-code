@@ -95,6 +95,13 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/teams"),
 	rbacOf(http.MethodGet, "/api/v1/teams/:teamId/members"),
 	rbacOf(http.MethodGet, "/api/v1/doctors"),
+	// T314 医护账号管理写通道（PRD §7D.10）：与技师账号同属「运营创建后台账号」的能力，
+	// 收口 admin-only。🔴 不登记 = gateway 默认拒绝（T260 起 roleAuthz 末尾 403），
+	// 且 TestRBAC_T190_AllAdminRoutesAreGated 会红。
+	rbacOf(http.MethodPost, "/api/v1/admin/doctors"),
+	rbacOf(http.MethodPut, "/api/v1/admin/doctors/:doctorId"),
+	rbacOf(http.MethodPost, "/api/v1/admin/doctors/:doctorId/reset-password"),
+	rbacOf(http.MethodPost, "/api/v1/admin/doctors/:doctorId/status"),
 	rbacOf(http.MethodGet, "/api/v1/admin/teams/stats"), // T256 #1 团队统计卡
 
 	// T260-B：团队管理写操作 —— 仅 admin（/teams 页仅 admin 可见，permissions.ts）

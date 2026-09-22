@@ -3,7 +3,7 @@
 // 埋点位置（本卡实际覆盖，均在 user-service 写通道内）：
 //
 //	登录成功 / 患者档案新增与编辑 / 患者团队绑定与批量绑定 / 患者详情查看（§9.2a 读审计）
-//	团队与成员增删改 / 技师增删改启停 / 角色增删改（11.2）/ 权限矩阵写入（11.3）
+//	团队与成员增删改 / 技师增删改启停 / 医护账号增改·重置密码·启停（T314）/ 角色增删改（11.2）/ 权限矩阵写入（11.3）
 //	系统参数写入（§7D.12）/ 告警规则写入（2.2）
 //
 // 🔴 跨服务埋点（device 安装与校准、alert 告警处理、data 归档删除、msg 通知规则）
@@ -99,6 +99,13 @@ var auditRoutes = map[string]auditRoute{
 	http.MethodPost + " /api/v1/admin/technicians":          {auditActionDataModify, "technician", "", "创建技师账号"},
 	http.MethodPut + " /api/v1/admin/technicians/:techId":   {auditActionDataModify, "technician", "techId", "编辑技师账号 %s"},
 	http.MethodPost + " /api/v1/technicians/:techId/toggle": {auditActionDataModify, "technician", "techId", "启停技师账号 %s"},
+
+	// T314 医护账号四类写操作（PRD §7D.10（6）「本页全部写操作计入操作日志」）。
+	// 🔴 description 不带密码：随机初始密码只在 HTTP 响应里一次性出现，不留进 audit_logs.detail。
+	http.MethodPost + " /api/v1/admin/doctors":                          {auditActionDataModify, "doctor", "", "创建医护账号（登录账号由服务端发号）"},
+	http.MethodPut + " /api/v1/admin/doctors/:doctorId":                 {auditActionDataModify, "doctor", "doctorId", "编辑医护账号 %s"},
+	http.MethodPost + " /api/v1/admin/doctors/:doctorId/reset-password": {auditActionDataModify, "doctor", "doctorId", "重置医护账号 %s 的登录密码"},
+	http.MethodPost + " /api/v1/admin/doctors/:doctorId/status":         {auditActionDataModify, "doctor", "doctorId", "启停医护账号 %s"},
 
 	http.MethodPut + " /api/v1/admin/roles/:roleId/permissions": {auditActionPermissions, "role", "roleId", "写入角色 %s 的权限矩阵"},
 	http.MethodPut + " /api/v1/admin/settings":                  {auditActionConfig, "sys_config", "", "写入系统参数（§7D.12）"},

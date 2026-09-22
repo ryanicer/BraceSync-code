@@ -179,6 +179,12 @@ type DoctorDTO struct {
 	PhoneMasked  string  `json:"phoneMasked"`
 	PatientCount int     `json:"patientCount"`
 	Status       string  `json:"status"`
+	// T314 医护账号页的 admins 侧三列：PRD §7D.10（1）「登录账号 / 创建时间」不在 doctors 表，
+	// accountStatus 是 admins.status（登录能力层），与上面的 status（档案层）分列展示。
+	// 未绑登录账号的存量档案（seed D0002/D0003）三者均为 null，前端渲染破折号。
+	Username      *string `json:"username"`
+	AccountStatus *string `json:"accountStatus"`
+	CreatedAt     *string `json:"createdAt"`
 }
 
 // TechnicianDTO 技师（契约 getTechnicians，对齐 shared-types Technician）
