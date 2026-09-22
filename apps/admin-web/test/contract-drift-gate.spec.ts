@@ -35,6 +35,14 @@ import {
   teamNameOf,
   doctorNameOf,
 } from '../src/api'
+import {
+  MEDICAL_WRITE_GAP,
+  createMedicalAccountApi,
+  fetchMedicalAccounts,
+  resetMedicalPasswordApi,
+  setMedicalAccountStatusApi,
+  updateMedicalAccountApi,
+} from '../src/api/medicalAccount'
 
 // vi.mock 会被提升到文件顶部；在 factory 内创建 mock 函数并导出，
 // 后续 import 拿到的就是同一个 mock 实例（对齐 tech-miniapp test/provision-cache.spec.ts 既有模式）。
@@ -290,5 +298,39 @@ describe('T269 真实模式契约守卫', () => {
     createUrl.mockRestore()
     revokeUrl.mockRestore()
     localStorage.removeItem('admin_token')
+  })
+})
+
+// ===== T315 医护账号：真实模式下读有源、写无源 =====
+describe('T315 医护账号真实模式守卫', () => {
+  it('读走 GET /api/v1/doctors，admins 侧两列缺数据回落空串（页面显示横杠）', async () => {
+    requestMock.mockResolvedValue([backendDoctorRow])
+    const rows = await fetchMedicalAccounts()
+    const req = lastRequest()
+    expect(req.url).toBe('/api/v1/doctors')
+    expect(req.method).toBeUndefined()
+    expect(rows[0]).toEqual({
+      doctorId: 'D0001',
+      username: '',
+      name: '李医师',
+      phoneMasked: '138****0001',
+      department: '脊柱外科',
+      teamId: 'TEAM01',
+      title: '主治医师',
+      patientCount: 5,
+      status: 'enabled',
+      createdAt: '',
+    })
+  })
+
+  it('四类写操作契约未就绪：抛指定文案且不发请求（不猜端点）', async () => {
+    const input = { name: '新医护', phone: '13800001234', department: '骨科', teamId: 'TEAM01', title: '护士', status: 'enabled' } as const
+    // beforeEach 的 mockReset 不清 calls 计数，改为「调用数不变」而不是「零调用」
+    const before = requestMock.mock.calls.length
+    await expect(createMedicalAccountApi(input)).rejects.toThrow(MEDICAL_WRITE_GAP)
+    await expect(updateMedicalAccountApi('D0001', { name: '改名' })).rejects.toThrow(MEDICAL_WRITE_GAP)
+    await expect(setMedicalAccountStatusApi('D0001', 'disabled')).rejects.toThrow(MEDICAL_WRITE_GAP)
+    await expect(resetMedicalPasswordApi('D0001')).rejects.toThrow(MEDICAL_WRITE_GAP)
+    expect(requestMock.mock.calls.length).toBe(before)
   })
 })

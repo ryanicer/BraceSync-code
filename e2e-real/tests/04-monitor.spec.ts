@@ -14,6 +14,14 @@ test.describe('04-实时监控', () => {
     await gotoMenu(page, '实时监控')
   })
 
+  // 4.2c / 4.4 用 page.route 改写 realtime 响应，而监控页每 2s 轮询同一接口：用例结束时
+  // 可能还有一个 handler 卡在 await route.fetch()。它抛的 "route.fetch: Test ended" 会被
+  // 判给同 worker 的下一条用例（2026-09-22 CI 实测：5.6 以 0ms 判红，05 文件另 3 条只读
+  // 用例 did not run），所以这里在用例收尾时先 remove + 等在飞的 handler 跑完。
+  test.afterEach(async ({ page }) => {
+    await page.unrouteAll({ behavior: 'wait' })
+  })
+
   /** 等待快照时间戳出现（即数据加载完成信号） */
   async function waitForSnapshotLoaded(page: Parameters<typeof test>[0] extends never
     ? never
@@ -311,10 +319,13 @@ test.describe('04-实时监控', () => {
         expect(timeText, `第 ${i + 1} 行时间格式`).toMatch(/^\d{2}:\d{2}$/)
 
         const badge = cells.nth(1).locator('.event-type')
+        // 文案口径 = packages/shared-utils ALERT_TYPE_LABELS（T289 2.6 全站收口：
+        // wear_interrupt「佩戴中断」→「设备离线」、sensor_drift「传感器漂移」→「传感器标定异常」）。
+        // 色类来自 monitor/index.vue eventTypeClass，本次未变。
         const expectBadge: Record<string, { label: string; cls: string }> = {
           pressure_high: { label: '压力偏高', cls: 'ev-danger' },
-          wear_interrupt: { label: '佩戴中断', cls: 'ev-warn' },
-          sensor_drift: { label: '传感器漂移', cls: 'ev-info' },
+          wear_interrupt: { label: '设备离线', cls: 'ev-warn' },
+          sensor_drift: { label: '传感器标定异常', cls: 'ev-info' },
         }
         await expect(badge).toHaveText(expectBadge[ev.type].label)
         await expect(badge).toHaveClass(new RegExp(`\\b${expectBadge[ev.type].cls}\\b`))

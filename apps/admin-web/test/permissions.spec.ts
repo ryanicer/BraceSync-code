@@ -7,8 +7,8 @@ import {
 import { pageRoutes } from '../src/router'
 
 describe('ROLE_PAGE_MATRIX（PRD §7D.11）', () => {
-  it('运营管理员可访问全部 14 页', () => {
-    expect(ROLE_PAGE_MATRIX.admin).toHaveLength(14) // 断言更新：13→14，依据 T135 新增复查模板管理页
+  it('运营管理员可访问全部 15 页', () => {
+    expect(ROLE_PAGE_MATRIX.admin).toHaveLength(15) // 断言更新：14→15，依据 T315 新增医护账号页
     for (const route of pageRoutes) {
       expect(canAccess('admin', route.path)).toBe(true)
     }
@@ -18,6 +18,7 @@ describe('ROLE_PAGE_MATRIX（PRD §7D.11）', () => {
     expect(ROLE_PAGE_MATRIX.doctor).toEqual(['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records', '/review-templates']) // 断言更新：5→6，依据 T135 医生可下载空白模板
     expect(canAccess('doctor', '/patients')).toBe(false)
     expect(canAccess('doctor', '/settings')).toBe(false)
+    expect(canAccess('doctor', '/doctor-accounts')).toBe(false) // T315 账号管理页仅运营管理员
   })
 
   it('客服仅可访问 患者沟通 1 页', () => {
