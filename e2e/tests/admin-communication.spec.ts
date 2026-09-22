@@ -19,6 +19,9 @@ import { adminRoutes, adminLogin, adminMessage, tableRows } from '../admin-helpe
  *     "打开微信客服后台"按钮，click → window.open('https://mpkf.weixin.qq.com/', '_blank')
  *   - mock/communication.ts + api/index.ts USE_MOCK 分支补 FEEDBACKS 记录内存更新
  *   - 原 #1 #2 #5 的 test.fail 标记已移除（3 处）
+ *
+ * T310 / F8（Ella 在 T301 覆盖矩阵 §四 登记）：上面第 2 条用例改前用「真实导航成功」当判据，
+ *   外网不可达时 popup.url() 落在 chrome-error://chromewebdata/ ⇒ 假红。现已改为本地拦截。
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -40,52 +43,53 @@ test.describe('患者沟通 · admin 视角', () => {
       await expect(btn).toContainText('打开微信客服后台')
     })
 
-    test('点击按钮新窗口打开微信客服 URL 含 mpkf.weixin.qq.com', async ({ page, browserName }) => {
-      // 双断言策略：
-      // 1) 优先用 waitForEvent('popup') 抓新窗口
-      // 2) 兜底 spy window.open 调用参数（mock/无头环境可能拦截真实 popup）
+    test('点击按钮新窗口打开微信客服 URL 含 mpkf.weixin.qq.com（本地拦截，不出网）', async ({ page }) => {
+      // T310/F8：改前把「真实导航成功」当判据 —— 外网不可达时 popup.url() 是
+      // chrome-error://chromewebdata/，用例直接假红（实测：断外网 3/3 红、联网 5/5 绿）。
+      // 现在域名导航由测试侧本地应答，判据换成三件本地可判的事：
+      //   ① 确实开了新窗口 ② 开的是微信客服域名 ③ window.open 的 target 是 _blank。
+      // 拦截是兜底式的（凡非本机请求一律记账 + 本地应答）⇒ 域名将来被人改走，
+      // 记到的 host 就会变（用例仍红），且任何情况下都不会真的出网。
+      const external: string[] = []
+      await page.context().route('**/*', (route) => {
+        const u = route.request().url()
+        if (u.startsWith('http://localhost') || u.startsWith('http://127.0.0.1')) return route.continue()
+        external.push(u)
+        return route.fulfill({
+          status: 200,
+          contentType: 'text/html; charset=utf-8',
+          body: '<!doctype html><title>offline stub for e2e</title>',
+        })
+      })
+
       const btn = page.locator('.page-toolbar').getByRole('button', { name: '打开微信客服后台' })
       await expect(btn).toBeVisible()
 
-      // Spy window.open（兜底）
-      await page.addInitScript(() => {
-        ;(window as unknown as { __openCalls: unknown[][] }).__openCalls = []
+      // spy window.open 调用参数。改前用 addInitScript 注入 —— 但它在 page.goto 之后才注册，
+      // 对当前页根本不生效，兜底路径一旦走到就只是换个报错（T310 顺带修）。页面已加载，直接改活页。
+      await page.evaluate(() => {
+        const w = window as unknown as { __openCalls?: unknown[][] }
+        w.__openCalls = []
         const origOpen = window.open.bind(window)
         window.open = function (...args: unknown[]) {
-          ;(window as unknown as { __openCalls: unknown[][] }).__openCalls.push(args)
-          // 尝试调用原方法，失败也返回 stub 对象
-          try {
-            return origOpen(...(args as [string, string?, string?])) ?? { closed: false }
-          } catch {
-            return { closed: false } as unknown as Window
-          }
+          w.__openCalls!.push(args)
+          return origOpen(...(args as [string, string | undefined, string | undefined]))
         }
       })
 
-      // 重新触发（page 在 addInitScript 后刷新要 re-login；此处在同一页面复用前一步上下文，
-      // 故直接点击，不对 popup 做阻塞等待；用 race 任一断言成立即可）
-
-      const popupPromise = page.waitForEvent('popup').catch(() => null)
+      const popupPromise = page.waitForEvent('popup')
       await btn.click()
       const popup = await popupPromise
 
-      if (popup && !browserName.toLowerCase().includes('webkit')) {
-        // 路径 A：真 popup 拿到 URL
-        await popup.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {})
-        expect(popup.url()).toContain('mpkf.weixin.qq.com')
-      } else {
-        // 路径 B：兜底 spy
-        const calls = await page.evaluate(
-          () => (window as unknown as { __openCalls: string[][] }).__openCalls,
-        )
-        expect(calls.length).toBeGreaterThanOrEqual(1)
-        const [url, target] = calls[0] ?? []
-        expect(String(url ?? '')).toContain('mpkf.weixin.qq.com')
-        // target 可空但默认 _blank
-        if (target !== undefined && target !== null) {
-          expect(String(target)).toEqual('_blank')
-        }
-      }
+      expect(popup.url()).toContain('mpkf.weixin.qq.com')
+      expect([...new Set(external.map((u) => new URL(u).host))]).toEqual(['mpkf.weixin.qq.com'])
+
+      const calls = await page.evaluate(
+        () => (window as unknown as { __openCalls: unknown[][] }).__openCalls,
+      )
+      expect(calls.length).toBe(1)
+      expect(String(calls[0]?.[0])).toBe('https://mpkf.weixin.qq.com/')
+      expect(String(calls[0]?.[1])).toBe('_blank')
     })
   })
 
