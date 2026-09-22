@@ -14,6 +14,14 @@ test.describe('04-实时监控', () => {
     await gotoMenu(page, '实时监控')
   })
 
+  // 4.2c / 4.4 用 page.route 改写 realtime 响应，而监控页每 2s 轮询同一接口：用例结束时
+  // 可能还有一个 handler 卡在 await route.fetch()。它抛的 "route.fetch: Test ended" 会被
+  // 判给同 worker 的下一条用例（2026-09-22 CI 实测：5.6 以 0ms 判红，05 文件另 3 条只读
+  // 用例 did not run），所以这里在用例收尾时先 remove + 等在飞的 handler 跑完。
+  test.afterEach(async ({ page }) => {
+    await page.unrouteAll({ behavior: 'wait' })
+  })
+
   /** 等待快照时间戳出现（即数据加载完成信号） */
   async function waitForSnapshotLoaded(page: Parameters<typeof test>[0] extends never
     ? never
