@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@types/node": "^22.20.4",
     "eslint": "^8.57.0",
     "miniprogram-automator": "^0.12.1",
     "sass": "^1.104.1"

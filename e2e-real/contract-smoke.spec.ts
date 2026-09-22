@@ -7,8 +7,8 @@
 // 登录走真实分支（POST /api/v1/auth/login：.login-form 用户名/密码）。
 import { test, expect, type Page } from '@playwright/test'
 
-const USERNAME = process.env.ADMIN_USERNAME
-const PASSWORD = process.env.ADMIN_PASSWORD
+const USERNAME = process.env.ADMIN_USERNAME ?? ''
+const PASSWORD = process.env.ADMIN_PASSWORD ?? ''
 
 /** admin-web 真实登录（对应用户名/密码双输入，按钮文案含空格的「登 录」） */
 async function adminLoginReal(page: Page): Promise<void> {

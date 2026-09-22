@@ -83,6 +83,21 @@ export const DEFAULT_REAL_USERNAME = 'ops_admin'
 export const DEFAULT_REAL_PASSWORD = 'admin123'
 
 /**
+ * 把浏览器发出的接口请求打到 stdout（T304）。
+ *
+ * 为什么要有：CI 里「job 绿」和「真的打了 staging」是两件事——历史上 BASE_URL 是个不存在的
+ * 占位域名，用例全 skip / 打空地址也会报绿。这行日志让 run 日志能直接 grep 到
+ * `GET http://<staging>/api/v1/...`，证明真实模式确实跑了真环境。
+ * 只打方法 + URL（不打 header / body，避免带出 Authorization 与患者字段值）。
+ */
+export function logRealRequests(page: Page, tag: string): void {
+  page.on('request', (req) => {
+    const url = req.url()
+    if (url.includes('/api/')) console.log(`[e2e-real][${tag}] ${req.method()} ${url}`)
+  })
+}
+
+/**
  * 真实模式登录（USE_MOCK=false 下的 login 页表单）。
  * 对齐 apps/admin-web/src/pages/login/index.vue 「v-else 真实模式」结构：
  *   - 用户名框：.login-form 下第一个非 password input（el-input 包装 input）
@@ -94,6 +109,7 @@ export async function realLogin(
   username: string = DEFAULT_REAL_USERNAME,
   password: string = DEFAULT_REAL_PASSWORD,
 ): Promise<void> {
+  logRealRequests(page, 'login')
   await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
   // 等待登录卡片渲染
   await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
@@ -169,6 +185,6 @@ export async function gotoMenuAndWaitTable(page: Page, title: string, routePath:
 
 /** 取所有表格行中可见的 tag 文本（用于状态存在性验证） */
 export async function getAllTagTexts(scope: Locator | Page): Promise<string[]> {
-  const root: Locator = 'locator' in scope ? scope : scope.locator('body')
-  return root.locator('.el-tag').allTextContents()
+  // Page 与 Locator 都有 .locator()，无需再分支到 body（分支写法会被 TS 收窄成 never）
+  return scope.locator('.el-tag').allTextContents()
 }

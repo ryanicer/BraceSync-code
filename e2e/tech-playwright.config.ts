@@ -24,7 +24,7 @@ export default defineConfig({
   },
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: process.env.E2E_BASE_URL || baseUrl,
+    baseURL: process.env.E2E_LOCAL_BASE_URL || baseUrl,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

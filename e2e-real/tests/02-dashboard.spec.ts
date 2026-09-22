@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { realLogin, adminMessage, realRoutes } from '../real-helpers'
+import { realLogin, adminMessage, pickSelectOption, realRoutes } from '../real-helpers'
 
 /**
  * T053 - 02 Dashboard 数据概览（真实模式）
@@ -76,29 +76,33 @@ test.describe('02-Dashboard 数据概览', () => {
 
   test.describe('周期切换', () => {
     test('2.3 切换 今日/本周/本月 后 ElMessage 无错误 + 页面仍在 dashboard', async ({ page }) => {
-      const toolbar = page.locator('.page-toolbar')
-      // 切换到「本周」
-      await toolbar.getByText('本周').click()
-      await page.waitForTimeout(2_000)
-      // 不应出现 error 型 ElMessage（.el-message--error 可见即失败）
-      const errMsg = page.locator('.el-message--error')
-      const errVisible = await errMsg.isVisible().catch(() => false)
-      expect(errVisible).toBe(false)
-      expect(new URL(page.url()).pathname).toContain('/dashboard')
+      // T289 起周期控件是 el-select（.period-select），不再是三个文字按钮 ——
+      // 旧写法 toolbar.getByText('本周').click() 等不到元素直接超时。
+      const periodSelect = page.locator('.page-toolbar .period-select')
+      await expect(periodSelect).toBeVisible({ timeout: 15_000 })
 
-      // 切换到「本月」
-      await toolbar.getByText('本月').click()
-      await page.waitForTimeout(2_000)
-      const errVisible2 = await errMsg.isVisible().catch(() => false)
-      expect(errVisible2).toBe(false)
-      expect(new URL(page.url()).pathname).toContain('/dashboard')
+      // 每切换一次都要求 KPI 接口真的按新 period 发过一次请求（不是只换了个高亮样式）
+      const periods: { label: string; query: string }[] = [
+        { label: '本周', query: 'week' },
+        { label: '本月', query: 'month' },
+        { label: '今日', query: 'today' },
+      ]
+      for (const p of periods) {
+        const kpiRequested = page
+          .waitForResponse(
+            (r) => r.url().includes(`/admin/dashboard/kpi?period=${p.query}`) && r.ok(),
+            { timeout: 20_000 },
+          )
+          .catch(() => null)
+        await pickSelectOption(page, periodSelect, p.label)
+        const resp = await kpiRequested
+        expect(resp, `切到「${p.label}」后应发出 GET /admin/dashboard/kpi?period=${p.query}`).not.toBeNull()
 
-      // 回到「今日」，确保页面仍可正常渲染
-      const todayBtns = toolbar.getByText('今日')
-      if ((await todayBtns.count()) > 0) {
-        await todayBtns.first().click()
-        await page.waitForTimeout(1_000)
+        const errMsg = page.locator('.el-message--error')
+        expect(await errMsg.isVisible().catch(() => false), `切到「${p.label}」不应报错`).toBe(false)
+        expect(new URL(page.url()).pathname).toContain('/dashboard')
       }
+
       // 检查没有 error 提示
       const msg = adminMessage(page)
       const msgVisible = await msg.isVisible().catch(() => false)
