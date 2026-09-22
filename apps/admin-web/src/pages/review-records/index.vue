@@ -94,7 +94,7 @@ import {
   uploadFileDirect,
   completeUpload,
 } from '../../api'
-import { validateReviewReportFile } from '../../utils/review-report-whitelist'
+import { validateReviewReportFile, checkReviewReportFileSize } from '../../utils/review-report-whitelist'
 import type { Patient, ReviewRecord, CreateReviewRecordRequest } from '@bracesync/shared-types'
 
 const auth = useAuthStore()
@@ -117,9 +117,16 @@ const submitting = ref(false)
 const canSubmit = computed(() => form.value.reviewDate && form.value.reviewType && patientId.value)
 
 function validateFile(file: File): boolean {
-  const result = validateReviewReportFile(file)
-  if (!result.ok) {
-    ElMessage.error(result.message || '不支持的文件类型')
+  // R4-a 白名单（扩展名 + MIME） + R4-b 20MB 上限；后端为权威，此处为体验层快反馈
+  // T309：与模板页对称——超限在 presign/直传之前就拦下，避免白传一次再被 upload-complete 拒
+  const extResult = validateReviewReportFile(file)
+  if (!extResult.ok) {
+    ElMessage.error(extResult.message || '不支持的文件类型')
+    return false
+  }
+  const sizeResult = checkReviewReportFileSize(file)
+  if (!sizeResult.ok) {
+    ElMessage.error(sizeResult.message || '文件大小超过 20MB')
     return false
   }
   return true
