@@ -77,7 +77,7 @@ test.describe('患者沟通 · admin 视角', () => {
         }
       })
 
-      const popupPromise = page.waitForEvent('popup')
+      const popupPromise = page.waitForEvent('popup', { timeout: 10_000 })
       await btn.click()
       const popup = await popupPromise
 
