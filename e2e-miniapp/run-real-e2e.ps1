@@ -1,4 +1,4 @@
-#Requires -Version 5
+﻿#Requires -Version 5
 # T054 双端小程序「真实模式」E2E 一键编排（Windows 侧，需微信开发者工具 + staging 构建）
 #
 # 与 T053（staging 服务器 run-real-e2e.sh，Playwright）不同：小程序真实模式必须由 miniprogram-automator
