@@ -16,6 +16,7 @@ import * as orgMock from '../mock/org'
 import * as deviceMock from '../mock/devices'
 import * as feedbackMock from '../mock/communication'
 import * as orthosisMock from '../mock/orthosis'
+import * as reviewMock from '../mock/review'
 import * as systemMock from '../mock/system'
 import type { RealtimeSnapshot } from '../mock/patients'
 import type { SystemSettings, AdminRoleRow } from '../mock/system'
@@ -575,9 +576,13 @@ export async function presignFile(params: {
 }): Promise<PresignResult> {
   if (USE_MOCK) {
     await delay()
+    // T307：mock 侧登记待传文件，uploadFileDirect 的 mock 分支按 fileId 标记已传，
+    // 写记录/模板时据此回填文件名与下载链接（此前这里只造 URL，文件元数据全程丢失）。
+    const fileId = reviewMock.mockNextFileId()
+    reviewMock.mockRegisterPendingFile({ fileId, fileName: params.fileName, contentType: params.contentType })
     return {
-      fileId: `FILE-${Date.now()}`,
-      uploadUrl: `https://mock-cos.example.com/upload/${Date.now()}`,
+      fileId,
+      uploadUrl: `https://mock-cos.example.com/upload/${fileId}`,
       objectKey: `review-reports/${params.fileName}`,
       expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
     }
@@ -599,6 +604,13 @@ export async function presignFile(params: {
 
 /** 直传文件到 COS（使用预签名 URL，不走网关 request） */
 export async function uploadFileDirect(uploadUrl: string, file: File, contentType: string): Promise<void> {
+  if (USE_MOCK) {
+    // T307 G11：此前 mock 下这里也会对 mock-cos 域名发真 PUT（既不成也不败）。
+    // 页面没有进度条 DOM，可观测的只有按钮 loading 与「已上传」tag，
+    // 故 mock 侧以分段延时模拟传输耗时后落一次 uploaded 状态，不伪造百分比。
+    await reviewMock.mockDirectUpload(uploadUrl, file)
+    return
+  }
   const res = await fetch(uploadUrl, {
     method: 'PUT',
     headers: { 'Content-Type': contentType },
@@ -626,23 +638,7 @@ export async function completeUpload(fileId: string): Promise<{ fileId: string; 
 export async function createReviewRecordApi(input: CreateReviewRecordRequest): Promise<ReviewRecord> {
   if (USE_MOCK) {
     await delay()
-    return {
-      reviewId: `RV-${Date.now()}`,
-      patientId: input.patientId,
-      reviewDate: input.reviewDate,
-      reviewType: input.reviewType,
-      findings: input.findings ?? null,
-      nextReviewDate: input.nextReviewDate ?? null,
-      doctorId: input.doctorId ?? null,
-      reportFileId: input.reportFileId ?? null,
-      reportFileName: null,
-      reportContentType: null,
-      reportSize: null,
-      reportUploadedAt: null,
-      reportDownloadUrl: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+    return reviewMock.mockCreateReviewRecord(input)
   }
   return request<ReviewRecord>({
     url: '/api/v1/admin/review-records',
@@ -655,7 +651,7 @@ export async function createReviewRecordApi(input: CreateReviewRecordRequest): P
 export async function fetchReviewRecords(patientId: string): Promise<ReviewRecord[]> {
   if (USE_MOCK) {
     await delay()
-    return []
+    return reviewMock.mockReviewRecords(patientId)
   }
   return request<ReviewRecord[]>({ url: `/api/v1/patients/${patientId}/review-records` })
 }
@@ -666,7 +662,7 @@ export async function fetchReviewRecords(patientId: string): Promise<ReviewRecor
 export async function fetchReviewTemplates(): Promise<ReviewTemplate[]> {
   if (USE_MOCK) {
     await delay()
-    return []
+    return reviewMock.mockReviewTemplates()
   }
   return request<ReviewTemplate[]>({ url: '/api/v1/admin/review-templates' })
 }
@@ -675,21 +671,7 @@ export async function fetchReviewTemplates(): Promise<ReviewTemplate[]> {
 export async function createReviewTemplateApi(input: CreateReviewTemplateRequest): Promise<ReviewTemplate> {
   if (USE_MOCK) {
     await delay()
-    return {
-      templateId: `TPL-${Date.now()}`,
-      groupId: `GRP-${Date.now()}`,
-      name: input.name,
-      version: 1,
-      fileId: input.fileId,
-      status: 'active',
-      uploadedBy: 'ADMIN',
-      uploadedAt: new Date().toISOString().slice(0, 10),
-      updatedAt: new Date().toISOString(),
-      fileName: null,
-      contentType: null,
-      fileSize: null,
-      downloadUrl: null,
-    }
+    return reviewMock.mockCreateReviewTemplate(input)
   }
   return request<ReviewTemplate>({
     url: '/api/v1/admin/review-templates',
@@ -702,21 +684,7 @@ export async function createReviewTemplateApi(input: CreateReviewTemplateRequest
 export async function replaceReviewTemplateApi(groupId: string, fileId: string): Promise<ReviewTemplate> {
   if (USE_MOCK) {
     await delay()
-    return {
-      templateId: `TPL-${Date.now()}`,
-      groupId,
-      name: '模板',
-      version: 2,
-      fileId,
-      status: 'active',
-      uploadedBy: 'ADMIN',
-      uploadedAt: new Date().toISOString().slice(0, 10),
-      updatedAt: new Date().toISOString(),
-      fileName: null,
-      contentType: null,
-      fileSize: null,
-      downloadUrl: null,
-    }
+    return reviewMock.mockReplaceReviewTemplate(groupId, fileId)
   }
   return request<ReviewTemplate>({
     url: `/api/v1/admin/review-templates/${groupId}/replace`,
