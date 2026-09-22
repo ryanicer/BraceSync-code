@@ -2,7 +2,7 @@ import { createRouter, createWebHistory, type RouterHistory, type RouteRecordRaw
 import { useAuthStore } from '../stores/auth'
 import { canAccess, landingPathFor } from './permissions'
 
-// 12 页路由（对齐架构 §5.4 / PRD §7D，meta.title 用于顶栏与菜单）
+// 业务页路由（对齐架构 §5.4 / PRD §7D，meta.title 用于顶栏与菜单，菜单顺序即此数组顺序）
 export const pageRoutes: RouteRecordRaw[] = [
   { path: '/dashboard', name: 'Dashboard', component: () => import('../pages/dashboard/index.vue'), meta: { title: '数据概览', icon: '📊' } },
   { path: '/monitor', name: 'Monitor', component: () => import('../pages/monitor/index.vue'), meta: { title: '实时监控', icon: '🔍' } },
@@ -16,6 +16,7 @@ export const pageRoutes: RouteRecordRaw[] = [
   { path: '/review-records', name: 'ReviewRecords', component: () => import('../pages/review-records/index.vue'), meta: { title: '复查报告', icon: '📄' } },
   { path: '/review-templates', name: 'ReviewTemplates', component: () => import('../pages/review-templates/index.vue'), meta: { title: '复查模板管理', icon: '🗂️' } },
   { path: '/technicians', name: 'Technicians', component: () => import('../pages/technicians/index.vue'), meta: { title: '技师管理', icon: '🔧' } },
+  { path: '/doctor-accounts', name: 'DoctorAccounts', component: () => import('../pages/doctors/index.vue'), meta: { title: '医护账号', icon: '🩺' } }, // T315 / PRD §7D.10，位置对齐设计稿侧栏第 12 项
   { path: '/roles', name: 'Roles', component: () => import('../pages/roles/index.vue'), meta: { title: '权限控制', icon: '🔐' } },
   { path: '/settings', name: 'Settings', component: () => import('../pages/settings/index.vue'), meta: { title: '系统配置', icon: '⚙️' } },
 ]

@@ -50,11 +50,11 @@ describe('权限路由守卫', () => {
     expect(router.currentRoute.value.query.redirect).toBe('/dashboard')
   })
 
-  it('admin 可访问全部 14 页', async () => {
+  it('admin 可访问全部 15 页', async () => {
     const pages = [
       '/dashboard', '/monitor', '/patients', '/teams', '/devices', '/alerts',
       '/communication', '/orthosis-log', '/install-records', '/review-records', '/review-templates',
-      '/technicians', '/roles', '/settings',
+      '/technicians', '/doctor-accounts', '/roles', '/settings',
     ]
     for (const page of pages) {
       expect(await navigateAs('admin', page)).toBe(page)
@@ -66,6 +66,7 @@ describe('权限路由守卫', () => {
     expect(await navigateAs('doctor', '/review-templates')).toBe('/review-templates') // T135 医生可下载空白模板
     expect(await navigateAs('doctor', '/patients')).toBe('/403')
     expect(await navigateAs('doctor', '/settings')).toBe('/403')
+    expect(await navigateAs('doctor', '/doctor-accounts')).toBe('/403') // T315 医护不能管账号
   })
 
   it('cs 仅可访问患者沟通，其余跳 403', async () => {
