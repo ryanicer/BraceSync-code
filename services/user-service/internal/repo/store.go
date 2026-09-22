@@ -17,7 +17,8 @@ import (
 var ErrPatientExists = errors.New("patient already exists")
 
 // ErrPatientNotFound 患者 ID 不存在。
-// store.AssignPatientTeam 返回此 sentinel，handler 映射为 404 CodeNotFound。
+// store.AssignPatientTeam / store.CreateFeedback（feedbacks.patient_id 外键）返回此 sentinel，
+// handler 映射为 404 CodeNotFound。
 var ErrPatientNotFound = errors.New("patient not found")
 
 // ErrWXOpenIDExists 创建微信患者 openid 冲突（并发竞态下 idx_patients_wx_openid
@@ -273,6 +274,14 @@ type FeedbackRow struct {
 	Status       string
 }
 
+// FeedbackCreateInput 反馈创建入参（T311）。字段已过 handler 层校验，长度不超列宽。
+type FeedbackCreateInput struct {
+	PatientID string
+	Type      string
+	Content   string
+	Status    string
+}
+
 // FeedbackStatsRow 患者沟通统计栏聚合投影（T248 7.1 · PRD §7D.7 统计条）
 type FeedbackStatsRow struct {
 	TodayCount   int64    // 今日（Asia/Shanghai 切日）提交数
@@ -476,6 +485,9 @@ type Store interface {
 
 	// 反馈
 	ListFeedbacks(ctx context.Context, keyword string) ([]FeedbackRow, error)
+	// CreateFeedback T311 反馈创建端点（患者端配网失败自动存档）。
+	// patient_id 外键不命中 → ErrPatientNotFound；返回自增 feedback_id。
+	CreateFeedback(ctx context.Context, in FeedbackCreateInput) (int64, error)
 	// FeedbackStats 患者沟通统计栏（T248 7.1）：今日区间由调用方按 Asia/Shanghai 切日传入
 	FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time) (FeedbackStatsRow, error)
 	ProcessFeedback(ctx context.Context, feedbackID int64, handlerID string, replyContent *string) (bool, error)

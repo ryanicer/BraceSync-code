@@ -605,6 +605,26 @@ func (s *PGStore) ListFeedbacks(ctx context.Context, keyword string) ([]Feedback
 	return list, rows.Err()
 }
 
+// CreateFeedback T311 反馈落库（患者端配网失败自动存档）。
+// submit_time 用库默认 now()，handler/reply_content/reply_time 留空待客服回复时回填。
+// patient_id 外键不命中（含校验通过后患者被删的竞态）→ ErrPatientNotFound，不裸抛 500。
+func (s *PGStore) CreateFeedback(ctx context.Context, in FeedbackCreateInput) (int64, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO feedbacks (patient_id, type, content, status)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING feedback_id`,
+		in.PatientID, in.Type, in.Content, in.Status).Scan(&id)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return 0, ErrPatientNotFound
+		}
+		return 0, err
+	}
+	return id, nil
+}
+
 // FeedbackStats 患者沟通统计栏（T248 7.1）：一次聚合出今日咨询 / 待回复 / 平均响应
 func (s *PGStore) FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time) (FeedbackStatsRow, error) {
 	var out FeedbackStatsRow
