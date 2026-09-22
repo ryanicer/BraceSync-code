@@ -139,6 +139,9 @@ type fakeStore struct {
 	// T274 流程画布：状态与断言字段集中在 flow_t274_test.go 的 fakeFlowState
 	flow fakeFlowState
 
+	// T314 医护账号写通道：同上，字段集中在 doctor_accounts_t314_test.go 的 fakeDoctorAccountState
+	docAcct fakeDoctorAccountState
+
 	lastUpsert       []repo.ConfigKV
 	lastUpsertBy     string
 	lastFilter       repo.PatientFilter

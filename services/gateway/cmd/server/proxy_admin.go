@@ -130,6 +130,11 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPut, "/teams/:teamId/members/:memberId"},    // T059 编辑成员
 	{http.MethodDelete, "/teams/:teamId/members/:memberId"}, // T059 移除成员
 	{http.MethodGet, "/doctors"},
+	// T314 医护账号管理写通道（PRD §7D.10）：🔴 无 DELETE（设计稿行内无删除入口，卡面明令）
+	{http.MethodPost, "/admin/doctors"},                          // 创建（服务端发号 + 一次性初始密码）
+	{http.MethodPut, "/admin/doctors/:doctorId"},                 // 编辑档案
+	{http.MethodPost, "/admin/doctors/:doctorId/reset-password"}, // 重置密码
+	{http.MethodPost, "/admin/doctors/:doctorId/status"},         // 禁用/启用
 	{http.MethodGet, "/technicians"},
 	{http.MethodPost, "/admin/technicians"},        // T030 #4 新建
 	{http.MethodPut, "/admin/technicians/:techId"}, // T030 #4 编辑
