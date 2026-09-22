@@ -230,6 +230,21 @@ type FeedbackStatsDTO struct {
 	AvgResponseSeconds *float64 `json:"avgResponseSeconds"` // 全量已回复样本均值，不受今日窗口约束
 }
 
+// CreateFeedbackRequest 反馈创建请求（T311，契约 createFeedback）。
+// 患者端唯一调用方是配网失败页的自动存档；status 缺省 pending，
+// replied/resolved 留给客服回复链路（processFeedback）写入，不由创建方指定。
+type CreateFeedbackRequest struct {
+	PatientID string  `json:"patientId"`
+	Type      string  `json:"type"`
+	Content   string  `json:"content"`
+	Status    *string `json:"status"`
+}
+
+// FeedbackCreatedDTO 反馈创建响应（T311）——调用方只需新记录 id
+type FeedbackCreatedDTO struct {
+	FeedbackID string `json:"feedbackId"`
+}
+
 // OrthosisPlanDTO 矫形方案（契约 getOrthosisPlans，对齐 shared-types OrthosisPlan）
 type OrthosisPlanDTO struct {
 	PlanID    string `json:"planId"`

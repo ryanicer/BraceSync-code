@@ -246,6 +246,10 @@ var publicPatterns = []rbacPattern{
 	// T226 患者自助改本人资料：user-service 校验 X-User-Id == :patientId
 	rbacOf(http.MethodPut, "/api/v1/patients/:patientId"),
 
+	// T311 患者端配网失败反馈自动存档：user-service createFeedback 走 assertAdminOrSelf
+	// （患者仅能为本人提交）。读端点 GET /api/v1/feedbacks 仍留 staffOnlyPatterns 不变。
+	rbacOf(http.MethodPost, "/api/v1/feedbacks"),
+
 	// 患者数据域（各服务 handler 层均已实现 admin-or-self 水平鉴权）
 	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/daily-wear"),         // data-service getDailyWear
 	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/feeling-logs"),       // user-service listFeelingLogs
