@@ -9,6 +9,9 @@
 #
 # 成本优化（对齐 T038/T045）：仅 e2e-miniapp/** 或本 workflow 变更时触发，最小触发集；
 #   不执行 npm ci、不启动 dev server、不拉 devtools —— 秒级完成。触发集可与 Andy 复核后收紧。
+#
+# T318 追加：本 job 末步扫全仓 .ps1/.psm1/.psd1 的编码（无 BOM + 含非 ASCII ⇒ 判红）。
+#   node --check 只看 .js，ps1 的内容此前 CI 完全不解析，T313 那类缺陷复发时门禁会全绿。
 name: MiniApp Real-E2E Gate
 
 on:
@@ -58,3 +61,26 @@ jobs:
       - name: run-real-e2e.ps1 present
         run: |
           test -f e2e-miniapp/run-real-e2e.ps1 && echo "✓ run-real-e2e.ps1（Windows 一键编排）present"
+      # T318：PowerShell 脚本编码门禁（防 T313/Alice 缺陷单那类「无 BOM + 含中文」复发）
+      - name: PowerShell script encoding gate
+        run: |
+          set -e
+          cat > /tmp/ps1-encoding-gate.cjs <<'JS'
+          const { execFileSync } = require('child_process')
+          const fs = require('fs')
+          const files = execFileSync('git', ['ls-files', '-z', '--', '*.ps1', '*.psm1', '*.psd1'])
+            .toString('utf8').split('\0').filter(Boolean).sort()
+          const bad = files.filter((f) => {
+            const b = fs.readFileSync(f)
+            const hasBom = b.length >= 3 && b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF
+            return !hasBom && b.some((c) => c > 0x7f)
+          })
+          for (const f of bad) {
+            console.error('::error::' + f + ' 是「UTF-8 无 BOM 且含非 ASCII 字节」—— Windows PowerShell 5.1 按系统 ACP（如 936/GBK）解码无 BOM 脚本，'
+              + '中文序列的悬挂前导字节会连紧随其后的 ASCII 引号/花括号一起被吞掉，运行期报 CommandNotFoundException（见 T313 / TAPD bug 1133005753001000001）。'
+              + '修法：把文件另存为「UTF-8 with BOM」，或将中文文案改为 ASCII。')
+          }
+          if (bad.length) process.exit(1)
+          console.log('✓ PowerShell 编码门禁通过：' + files.length + ' 个 .ps1/.psm1/.psd1，无「缺 BOM + 含非 ASCII」组合')
+          JS
+          node /tmp/ps1-encoding-gate.cjs
