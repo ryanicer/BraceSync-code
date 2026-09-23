@@ -151,9 +151,10 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/patients/:patientId/orthosis-plans"},
 	{http.MethodPost, "/patients/:patientId/orthosis-plans"},
 	{http.MethodGet, "/patients/:patientId/feeling-logs"},
-	{http.MethodPost, "/feeling-logs/:logId/reply"}, // T030 #6 医生回复
-	{http.MethodGet, "/admin/feeling-logs"},         // T256 #2 跨患者感受日志流
-	{http.MethodGet, "/admin/roles"},                // T030 #7
+	{http.MethodPost, "/patients/:patientId/feeling-logs"}, // T188 患者端录入佩戴感受
+	{http.MethodPost, "/feeling-logs/:logId/reply"},        // T030 #6 医生回复
+	{http.MethodGet, "/admin/feeling-logs"},                // T256 #2 跨患者感受日志流
+	{http.MethodGet, "/admin/roles"},                       // T030 #7
 	{http.MethodGet, "/admin/roles/:roleId/permissions"},
 	{http.MethodPut, "/admin/roles/:roleId/permissions"},
 	// T252 11.2/11.4 角色增删改 + 角色模板下拉

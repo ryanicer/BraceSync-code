@@ -172,6 +172,9 @@ type TeamDTO struct {
 	Leader     *string `json:"leader"`
 	LeaderName *string `json:"leaderName"`
 	CreatedAt  string  `json:"createdAt"` // T333-5：团队管理页「创建时间」列，RFC3339 UTC（库列非空）
+	// T337：与 TeamDetailDTO 同列同口径（详情一直有、列表漏带；shared-types Team 已声明这两项）
+	Description string `json:"description"`
+	Status      string `json:"status"`
 }
 
 // DoctorDTO 医生（契约 getDoctors，对齐 shared-types Doctor）
@@ -286,6 +289,17 @@ type FeelingLogDTO struct {
 	// CreatedAt：T306 补透出 DB feeling_logs.created_at（提交时间）。列一直存在且 NOT NULL，
 	// 此前只缺 DTO 与 SELECT ⇒ 后台「矫形日志」的「提交时间」列整列回落占位符。
 	CreatedAt string `json:"createdAt"` // RFC3339，取 created_at（非 logDate，logDate 是业务日期）
+}
+
+// CreateFeelingLogRequest 患者端佩戴感受录入（T188，契约 submitFeelingLog）。
+// 口径按 Boss 2026-09-23 裁决方案 A：佩戴感受两档（fitted 贴合 / discomfort 不适），
+// 独立的「支具贴合度」控件随 A 取消 ⇒ 本请求不含 fitLevel。
+// patientId 取自路径（与读端点 /patients/:patientId/feeling-logs 同址），不在体内重复。
+type CreateFeelingLogRequest struct {
+	LogDate         string   `json:"logDate"`         // 可选 YYYY-MM-DD，缺省为服务端当日（Asia/Shanghai 切日）
+	Feeling         string   `json:"feeling"`         // 必填 fitted | discomfort
+	DiscomfortAreas []string `json:"discomfortAreas"` // 可选，设计稿 8 区中文原词
+	Notes           string   `json:"notes"`           // 可选，详细描述 ≤200 字
 }
 
 // AdminRoleDTO RBAC 角色行（契约 getAdminRoles，对齐 shared-types AdminRole）

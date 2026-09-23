@@ -36,12 +36,12 @@ import {
   doctorNameOf,
 } from '../src/api'
 import {
-  MEDICAL_WRITE_GAP,
   createMedicalAccountApi,
   fetchMedicalAccounts,
   resetMedicalPasswordApi,
   setMedicalAccountStatusApi,
   updateMedicalAccountApi,
+  type DoctorWithAccount,
 } from '../src/api/medicalAccount'
 
 // vi.mock 会被提升到文件顶部；在 factory 内创建 mock 函数并导出，
@@ -301,17 +301,43 @@ describe('T269 真实模式契约守卫', () => {
   })
 })
 
-// ===== T315 医护账号：真实模式下读有源、写无源 =====
-describe('T315 医护账号真实模式守卫', () => {
-  it('读走 GET /api/v1/doctors，admins 侧两列缺数据回落空串（页面显示横杠）', async () => {
-    requestMock.mockResolvedValue([backendDoctorRow])
+// ===== T315/T338 医护账号：真实模式读写全通（后端 T314 已部署 staging） =====
+describe('T338 医护账号真实模式守卫', () => {
+  /** 夹具字段名逐条对齐 staging 实况：GET /api/v1/doctors 已并 admins 侧三列，未绑账号的行三列为 null */
+  const doctorWithAccount: DoctorWithAccount = {
+    ...backendDoctorRow,
+    username: 'doctor_li',
+    accountStatus: 'enabled',
+    createdAt: '2026-08-12T15:45:49Z',
+  }
+  const doctorNoAccount: DoctorWithAccount = {
+    ...backendDoctorRow,
+    doctorId: 'D0002',
+    name: '王医师',
+    username: null,
+    accountStatus: null,
+    createdAt: null,
+  }
+
+  interface Req { url: string; method?: string; data?: Record<string, unknown> }
+  function allRequests(): Req[] {
+    // request 只收一个入参 ⇒ 每次调用形如 [options]
+    return (requestMock.mock.calls as unknown as Req[][]).map((args) => args[0])
+  }
+
+  beforeEach(() => {
+    requestMock.mockClear()
+  })
+
+  it('读：登录账号 / 创建时间取服务端 admins 列；未绑账号的行回落空串（页面显示横杠）', async () => {
+    requestMock.mockResolvedValue([doctorWithAccount, doctorNoAccount])
     const rows = await fetchMedicalAccounts()
     const req = lastRequest()
     expect(req.url).toBe('/api/v1/doctors')
     expect(req.method).toBeUndefined()
     expect(rows[0]).toEqual({
       doctorId: 'D0001',
-      username: '',
+      username: 'doctor_li',
       name: '李医师',
       phoneMasked: '138****0001',
       department: '脊柱外科',
@@ -319,18 +345,78 @@ describe('T315 医护账号真实模式守卫', () => {
       title: '主治医师',
       patientCount: 5,
       status: 'enabled',
-      createdAt: '',
+      createdAt: '2026-08-12T15:45:49Z',
     })
+    expect(rows[1]).toMatchObject({ username: '', createdAt: '' })
   })
 
-  it('四类写操作契约未就绪：抛指定文案且不发请求（不猜端点）', async () => {
-    const input = { name: '新医护', phone: '13800001234', department: '骨科', teamId: 'TEAM01', title: '护士', status: 'enabled' } as const
-    // beforeEach 的 mockReset 不清 calls 计数，改为「调用数不变」而不是「零调用」
-    const before = requestMock.mock.calls.length
-    await expect(createMedicalAccountApi(input)).rejects.toThrow(MEDICAL_WRITE_GAP)
-    await expect(updateMedicalAccountApi('D0001', { name: '改名' })).rejects.toThrow(MEDICAL_WRITE_GAP)
-    await expect(setMedicalAccountStatusApi('D0001', 'disabled')).rejects.toThrow(MEDICAL_WRITE_GAP)
-    await expect(resetMedicalPasswordApi('D0001')).rejects.toThrow(MEDICAL_WRITE_GAP)
-    expect(requestMock.mock.calls.length).toBe(before)
+  it('新建：POST /admin/doctors 发 PRD（4）六字段，初始密码由服务端回且只在本响应出现', async () => {
+    requestMock.mockResolvedValue({ ...doctorWithAccount, initialPassword: 'Brabcd2345ef#7' })
+    const res = await createMedicalAccountApi({
+      name: '新医护', phone: '13800001234', department: '骨科', teamId: 'TEAM01', title: '护士', status: 'enabled',
+    })
+    const req = lastRequest()
+    expect(req.url).toBe('/api/v1/admin/doctors')
+    expect(req.method).toBe('POST')
+    expect(req.data).toEqual({
+      name: '新医护', phone: '13800001234', department: '骨科', teamId: 'TEAM01', title: '护士', status: 'enabled',
+    })
+    expect(res.initialPassword).toBe('Brabcd2345ef#7')
+    // 登录账号是服务端发号（doc + 5 位序号），前端不得自己编号
+    expect(res.account.username).toBe('doctor_li')
+  })
+
+  it('编辑：PUT 只发给了的字段；未改的手机号整个 key 缺席（发空串会被后端判成清空）', async () => {
+    requestMock.mockResolvedValue(doctorWithAccount)
+    await updateMedicalAccountApi('D0001', {
+      name: '改名', department: '骨科', teamId: 'TEAM01', title: '护士',
+    })
+    const reqs = allRequests()
+    expect(reqs).toHaveLength(1)
+    expect(reqs[0].url).toBe('/api/v1/admin/doctors/D0001')
+    expect(reqs[0].method).toBe('PUT')
+    expect(reqs[0].data).toEqual({ name: '改名', department: '骨科', teamId: 'TEAM01', title: '护士' })
+    expect(reqs[0].data).not.toHaveProperty('phone')
+  })
+
+  it('编辑：手机号被清空 ⇒ phone: "" 照发（后端据此落 NULL）', async () => {
+    requestMock.mockResolvedValue(doctorWithAccount)
+    await updateMedicalAccountApi('D0001', { phone: '' })
+    expect(lastRequest().data).toEqual({ phone: '' })
+  })
+
+  it('编辑态改状态 ⇒ PUT 之外另发 /status（服务端 PUT 不收 status，设计稿 :378 编辑态可改）', async () => {
+    requestMock.mockResolvedValue({ ...doctorWithAccount, status: 'disabled' })
+    const row = await updateMedicalAccountApi('D0001', {
+      name: '改名', department: '骨科', teamId: 'TEAM01', title: '护士', status: 'disabled',
+    })
+    const reqs = allRequests()
+    expect(reqs.map((r) => `${r.method ?? 'GET'} ${r.url}`)).toEqual([
+      'PUT /api/v1/admin/doctors/D0001',
+      'POST /api/v1/admin/doctors/D0001/status',
+    ])
+    expect(reqs[1].data).toEqual({ action: 'disable' })
+    expect(row.status).toBe('disabled')
+  })
+
+  it('禁用 / 启用 ⇒ POST /status，body 用 {action: enable|disable}（与技师侧同形状）', async () => {
+    requestMock.mockResolvedValue({ ...doctorWithAccount, status: 'disabled' })
+    await setMedicalAccountStatusApi('D0001', 'disabled')
+    expect(lastRequest()).toEqual({
+      url: '/api/v1/admin/doctors/D0001/status',
+      method: 'POST',
+      data: { action: 'disable' },
+    })
+    await setMedicalAccountStatusApi('D0001', 'enabled')
+    expect(lastRequest().data).toEqual({ action: 'enable' })
+  })
+
+  it('重置密码 ⇒ POST /reset-password，新密码从本写接口返回（不复用登录侧 10401 通道）', async () => {
+    requestMock.mockResolvedValue({ doctorId: 'D0001', username: 'doctor_li', password: 'Brzzzz2345ab#7' })
+    const pwd = await resetMedicalPasswordApi('D0001')
+    const req = lastRequest()
+    expect(req.url).toBe('/api/v1/admin/doctors/D0001/reset-password')
+    expect(req.method).toBe('POST')
+    expect(pwd).toBe('Brzzzz2345ab#7')
   })
 })

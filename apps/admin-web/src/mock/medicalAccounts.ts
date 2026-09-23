@@ -2,8 +2,8 @@
 //
 // 医生档案侧字段（姓名 / 职称 / 科室 / 团队 / 手机号 / 管理患者数 / 状态）取自 mock/org.ts 的 DOCTORS，
 // 与「团队管理」等页共用同一批档案，避免同一医生在两页显示不同职称。
-// 账号侧字段（登录账号 / 创建时间）落在 admins 表，契约无列表端点（设计稿 医护账号.html:178），
-// 故按设计稿 :284-290 的样例在本地补齐，T314 的 GET /api/v1/admin/accounts 落地后整体替换。
+// 账号侧字段（登录账号 / 创建时间）落在 admins 表，真实端点已由 T314 并入
+// GET /api/v1/doctors 同一行 ⇒ 真实模式走服务端，本模块只服务本地 mock 模式。
 import type { Doctor } from '@bracesync/shared-types'
 import { mockDoctors } from './org'
 
@@ -29,7 +29,7 @@ export interface MedicalAccount {
   /** 主诊患者数，不是所属团队患者总数（设计稿 :146） */
   patientCount: number
   status: 'enabled' | 'disabled'
-  /** 'YYYY-MM-DD'；admins 侧字段，真实端点缺失时为 '' ⇒ 显示「—」 */
+  /** mock 侧给 'YYYY-MM-DD'；真实端点回 RFC3339，页面统一截前 10 位显示 */
   createdAt: string
 }
 
@@ -42,6 +42,10 @@ export interface CreateMedicalAccountInput {
   status: 'enabled' | 'disabled'
 }
 
+/**
+ * 编辑入参。Phone 三态（对齐后端 PUT 的指针语义）：缺席 = 不改，'' = 清空，非空 = 换新号。
+ * Status 服务端 PUT 不收，由 api 层转成 /status 请求（设计稿 :378 编辑态可改状态）。
+ */
 export type UpdateMedicalAccountInput = Partial<CreateMedicalAccountInput>
 
 const CREATED_AT: Record<string, string> = {
@@ -88,6 +92,11 @@ function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+/** 服务端即已脱敏，mock 侧同形（138****1234）；列表不再二次掩码 */
+function maskPhone(phone: string): string {
+  return `${phone.slice(0, 3)}****${phone.slice(7)}`
+}
+
 export function mockMedicalAccounts(): MedicalAccount[] {
   return accounts.map((a) => ({ ...a }))
 }
@@ -97,7 +106,7 @@ export function mockCreateMedicalAccount(input: CreateMedicalAccountInput): { ac
     doctorId: `DOC-${String(accounts.length + 1).padStart(3, '0')}`,
     username: nextUsername(),
     name: input.name,
-    phoneMasked: input.phone ? `${input.phone.slice(0, 3)}****${input.phone.slice(7)}` : '',
+    phoneMasked: input.phone ? maskPhone(input.phone) : '',
     department: input.department,
     teamId: input.teamId,
     title: input.title,
@@ -117,8 +126,8 @@ export function mockUpdateMedicalAccount(doctorId: string, input: UpdateMedicalA
   if (input.teamId) row.teamId = input.teamId
   if (input.title) row.title = input.title
   if (input.status) row.status = input.status
-  // 页面只在用户真改了手机号时传新号；列表要的仍是脱敏值
-  if (input.phone) row.phoneMasked = `${input.phone.slice(0, 3)}****${input.phone.slice(7)}`
+  // 手机号三态与真实端点一致：key 缺席不改，'' 清空，非空换新号
+  if (input.phone !== undefined) row.phoneMasked = input.phone ? maskPhone(input.phone) : ''
   return { ...row }
 }
 

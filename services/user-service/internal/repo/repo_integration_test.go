@@ -540,8 +540,35 @@ func TestITListTeamsLeader(t *testing.T) {
 	assert.Len(t, list, total)
 }
 
+// TestITListTeamsMatchesDetail T337：列表与详情的共用列必须逐项相等。
+// 缺陷原貌：description / status 在 TeamDetailRow 一直有、ListTeams 却没查，
+// 而 shared-types Team 对两者都有声明 ⇒ 列表接口结构上带不出来（T333 的反方向）。
+func TestITListTeamsMatchesDetail(t *testing.T) {
+	ctx := context.Background()
+
+	list, err := itStore.ListTeams(ctx)
+	require.NoError(t, err)
+	var lr TeamRow
+	found := false
+	for _, r := range list {
+		if r.TeamID == itTeam {
+			lr, found = r, true
+		}
+	}
+	require.True(t, found, "%s 不在 ListTeams 结果中", itTeam)
+
+	dr, err := itStore.GetTeam(ctx, itTeam)
+	require.NoError(t, err)
+
+	assert.Equal(t, dr.Description, lr.Description, "description 列表须与详情同口径（库列为空时都回空串）")
+	assert.Equal(t, dr.Status, lr.Status, "status 列表须与详情同口径")
+	assert.Equal(t, "active", lr.Status, "seed 团队状态为 active，读到空串说明列表漏查该列")
+	assert.False(t, lr.CreatedAt.IsZero())
+}
+
 // TestITGetTeam T333：单条读详情（GET /teams/:teamId 的 repo 半边）
-// 守住两件事：负责人姓名与列表同一 join 口径；详情比列表多出的 description/status/createdAt 真回得来。
+// 守住两件事：负责人姓名与列表同一 join 口径；description/status/createdAt 真回得来
+// （T337 起列表也带这三列，两接口不再有此消彼长，见 TestITListTeamsMatchesDetail）。
 func TestITGetTeam(t *testing.T) {
 	ctx := context.Background()
 

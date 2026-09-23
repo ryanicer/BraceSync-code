@@ -43,6 +43,7 @@ func TestGetHealthReports(t *testing.T) {
 		}},
 	}
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	h.SetReportLister(lister)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/patients/P20260001/health-reports", nil)
@@ -72,6 +73,7 @@ func TestGetHealthReports(t *testing.T) {
 func TestGetHealthReportsErrors(t *testing.T) {
 	// 未注入 → 500
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/patients/P1/health-reports", nil)
 	req.Header.Set(headerRole, roleAdmin) // T264：staff 身份放行
 	w := httptest.NewRecorder()

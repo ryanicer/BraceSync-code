@@ -176,6 +176,8 @@ type TeamRow struct {
 	PatientCount int
 	Leader       string // 负责人 doctor_id，无负责人为空串（T333）
 	LeaderName   string // 负责人姓名（join doctors.name），无负责人为空串（T333）
+	Description  string // T337：与 TeamDetailRow 同列，列表此前漏带
+	Status       string // T337："active"（一期固定；预留软删除字段）
 	CreatedAt    time.Time
 }
 
@@ -376,6 +378,17 @@ type PatientFilter struct {
 	PageSize int
 }
 
+// FeelingLogSaveInput T188 患者端录入入参（字段已过 handler 层校验，长度不超列宽）。
+// LogDate 用 YYYY-MM-DD 文本传参：log_date 是 DATE 列，传 time.Time 会被按会话时区
+// 做 timestamptz→date 转换，存在跨日偏移一位的风险。
+type FeelingLogSaveInput struct {
+	PatientID       string
+	LogDate         string
+	ComfortLevel    string // fitted | discomfort（方案 A 两档）
+	DiscomfortAreas []string
+	Notes           *string
+}
+
 // FeelingLogAdminFilter T256 #2：跨患者感受日志筛选条件
 type FeelingLogAdminFilter struct {
 	Keyword   string // 患者姓名 ILIKE
@@ -519,6 +532,9 @@ type Store interface {
 
 	// 感受日志
 	ListFeelingLogs(ctx context.Context, patientID string) ([]FeelingLogRow, error)
+	// SaveFeelingLog T188 患者端创建/覆盖当日感受日志（同患者同日覆盖，不清医生回复位）。
+	// patient_id 外键不命中 → ErrPatientNotFound；返回落库后的整行（含 logId / createdAt）。
+	SaveFeelingLog(ctx context.Context, in FeelingLogSaveInput) (FeelingLogRow, error)
 	ReplyFeelingLog(ctx context.Context, logID int64, replyContent string) (bool, error)
 	// ListFeelingLogsAdmin T256 #2：跨患者感受日志流（搜索/日期范围/感受筛选）
 	ListFeelingLogsAdmin(ctx context.Context, f FeelingLogAdminFilter) ([]FeelingLogRow, int64, error)

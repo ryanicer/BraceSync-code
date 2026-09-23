@@ -121,6 +121,7 @@ func newTestServer(limiter *service.RateLimiter) *testServer {
 	}
 	svc := service.NewRecordService(records, devices, stubConfigs{}, stubCache{}, stubAlerts{}, limiter)
 	h := New(svc)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	return &testServer{router: h.Router(), records: records, svc: svc}
 }
 

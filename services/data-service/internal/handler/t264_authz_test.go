@@ -67,6 +67,7 @@ func TestT264_GetRealtime_Authz(t *testing.T) {
 // TestT264_GetHealthReports_Authz 健康报告水平鉴权
 func TestT264_GetHealthReports_Authz(t *testing.T) {
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	h.SetReportLister(&fakeReportLister{})
 	router := h.Router()
 	path := "/api/v1/patients/P1/health-reports"
