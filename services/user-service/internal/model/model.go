@@ -167,6 +167,11 @@ type TeamDTO struct {
 	Name         string `json:"name"`
 	MemberCount  int    `json:"memberCount"`
 	PatientCount int    `json:"patientCount"`
+	// T333：负责人两列（对齐 shared-types Team 的可选声明）。无负责人回 null 而非空串——
+	// 前端列表用 row.leaderName ?? '-' 渲染、编辑弹窗用 row.leader ?? '' 回显，空串会渲成空白格。
+	Leader     *string `json:"leader"`
+	LeaderName *string `json:"leaderName"`
+	CreatedAt  string  `json:"createdAt"` // T333-5：团队管理页「创建时间」列，RFC3339 UTC（库列非空）
 }
 
 // DoctorDTO 医生（契约 getDoctors，对齐 shared-types Doctor）
@@ -199,6 +204,7 @@ type TechnicianDTO struct {
 	InstallCount int     `json:"installCount"`
 	Status       string  `json:"status"`
 	AuthStatus   string  `json:"authStatus"`
+	CreatedAt    string  `json:"createdAt"` // T333-6：技师管理页「创建时间」列，RFC3339 UTC（兑现 shared-types Technician.createdAt，T247 10.4 声明）
 }
 
 // TeamMembersDTO 团队成员明细（契约 getTeamMembers，T030 #10）

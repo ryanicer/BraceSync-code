@@ -237,6 +237,8 @@ func TestITTechnicianLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	require.Len(t, list, 1)
+	// T333-6：created_at 要随列表投影带出（此前 SELECT 漏列 ⇒ 技师管理页创建时间全空）
+	assert.False(t, list[0].CreatedAt.IsZero(), "ListTechnicians 必须回读 technicians.created_at")
 
 	// 团队成员查询
 	teamTechs, err := itStore.ListTechniciansByTeam(ctx, "TEAM-EMPTY")
@@ -495,4 +497,72 @@ func TestITTeamsAndDoctors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, teamDocs, 1)
 	assert.Equal(t, itDoctor, teamDocs[0].DoctorID)
+}
+
+// TestITListTeamsLeader T333：列表投影带出负责人 doctor_id 与姓名（有/无负责人两种都要覆盖）
+func TestITListTeamsLeader(t *testing.T) {
+	ctx := context.Background()
+
+	findTeam := func(teamID string) TeamRow {
+		list, err := itStore.ListTeams(ctx)
+		require.NoError(t, err)
+		for _, r := range list {
+			if r.TeamID == teamID {
+				return r
+			}
+		}
+		t.Fatalf("team %s 不在 ListTeams 结果中", teamID)
+		return TeamRow{}
+	}
+
+	// seed 团队无负责人：两列空串（handler 侧转 JSON null，前端才落到占位符）
+	before := findTeam(itTeam)
+	assert.Empty(t, before.Leader)
+	assert.Empty(t, before.LeaderName)
+	// T333-5：创建时间随列表带出（团队管理页该列此前全空）
+	assert.False(t, before.CreatedAt.IsZero(), "ListTeams 必须回读 teams.created_at")
+
+	_, err := itStore.pool.Exec(ctx, `UPDATE teams SET leader = $1 WHERE team_id = $2`, itDoctor, itTeam)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = itStore.pool.Exec(ctx, `UPDATE teams SET leader = NULL WHERE team_id = $1`, itTeam)
+	})
+
+	after := findTeam(itTeam)
+	assert.Equal(t, itDoctor, after.Leader)
+	assert.Equal(t, "集成医生", after.LeaderName, "leaderName 来自 LEFT JOIN doctors.name")
+
+	// LEFT JOIN 不得让行数翻倍（doctors.doctor_id 唯一）
+	list, err := itStore.ListTeams(ctx)
+	require.NoError(t, err)
+	var total int
+	require.NoError(t, itStore.pool.QueryRow(ctx, `SELECT COUNT(*) FROM teams`).Scan(&total))
+	assert.Len(t, list, total)
+}
+
+// TestITGetTeam T333：单条读详情（GET /teams/:teamId 的 repo 半边）
+// 守住两件事：负责人姓名与列表同一 join 口径；详情比列表多出的 description/status/createdAt 真回得来。
+func TestITGetTeam(t *testing.T) {
+	ctx := context.Background()
+
+	row, err := itStore.GetTeam(ctx, itTeam)
+	require.NoError(t, err)
+	assert.Equal(t, itTeam, row.TeamID)
+	assert.Equal(t, "active", row.Status)
+	assert.False(t, row.CreatedAt.IsZero())
+	assert.Empty(t, row.Leader, "未设负责人时详情两列为空串（handler 转 null）")
+
+	_, err = itStore.pool.Exec(ctx, `UPDATE teams SET leader = $1 WHERE team_id = $2`, itDoctor, itTeam)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = itStore.pool.Exec(ctx, `UPDATE teams SET leader = NULL WHERE team_id = $1`, itTeam)
+	})
+
+	withLeader, err := itStore.GetTeam(ctx, itTeam)
+	require.NoError(t, err)
+	assert.Equal(t, itDoctor, withLeader.Leader)
+	assert.Equal(t, "集成医生", withLeader.LeaderName)
+
+	_, err = itStore.GetTeam(ctx, "TEAM-T333-NOT-EXIST")
+	assert.ErrorIs(t, err, ErrTeamNotFound)
 }

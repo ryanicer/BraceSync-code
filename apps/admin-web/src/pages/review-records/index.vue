@@ -224,7 +224,8 @@ async function loadRecords() {
 
 async function loadPatients() {
   try {
-    const res = await fetchPatients({ page: 1, pageSize: 200 })
+    // 契约上限 pageSize 100（api-contracts.ts getPatients / 架构 §3.5），超限后端判 400
+    const res = await fetchPatients({ page: 1, pageSize: 100 })
     patients.value = res.list
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '加载患者列表失败')

@@ -195,6 +195,9 @@ type fakeStore struct {
 	lastUpdateTeamID   string
 	lastUpdateTeamIn   repo.TeamInput
 	lastDeleteTeamID   string
+	gotTeam            *repo.TeamDetailRow
+	gotTeamErr         error
+	lastGetTeamID      string
 	lastAddTeamID      string
 	lastAddMemberIn    repo.MemberInput
 	lastUpdateMTeamID  string
@@ -421,6 +424,12 @@ func (f *fakeStore) UpdateTeam(_ context.Context, teamID string, in repo.TeamInp
 func (f *fakeStore) DeleteTeam(_ context.Context, teamID string) error {
 	f.lastDeleteTeamID = teamID
 	return f.deleteTeamErr
+}
+
+// GetTeam T333：单条读团队详情
+func (f *fakeStore) GetTeam(_ context.Context, teamID string) (*repo.TeamDetailRow, error) {
+	f.lastGetTeamID = teamID
+	return f.gotTeam, f.gotTeamErr
 }
 func (f *fakeStore) AddTeamMember(_ context.Context, teamID string, in repo.MemberInput) (*repo.TeamMemberRow, error) {
 	f.lastAddTeamID = teamID
@@ -981,16 +990,69 @@ func TestGetPatient(t *testing.T) {
 
 func TestListTeams(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.teams = []repo.TeamRow{{TeamID: "TEAM01", Name: "一组", MemberCount: 2, PatientCount: 3}}
+	e.store.teams = []repo.TeamRow{
+		{TeamID: "TEAM01", Name: "一组", MemberCount: 2, PatientCount: 3, Leader: "D01", LeaderName: "医生甲",
+			CreatedAt: time.Date(2026, 8, 3, 1, 2, 3, 0, time.UTC)},
+		{TeamID: "TEAM02", Name: "二组", MemberCount: 1, PatientCount: 1,
+			CreatedAt: time.Date(2026, 8, 4, 9, 8, 7, 0, time.UTC)}, // 无负责人
+	}
 	w, resp := e.do(http.MethodGet, "/api/v1/teams", nil, nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	var list []model.TeamDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &list))
-	require.Len(t, list, 1)
+	require.Len(t, list, 2)
 	assert.Equal(t, 3, list[0].PatientCount)
+
+	// T333：负责人列回填 —— 有负责人回 doctor_id 与姓名
+	require.NotNil(t, list[0].Leader)
+	assert.Equal(t, "D01", *list[0].Leader)
+	require.NotNil(t, list[0].LeaderName)
+	assert.Equal(t, "医生甲", *list[0].LeaderName)
+
+	// 无负责人：两列均为 JSON null（不是空串——前端 row.leaderName ?? '-' 只认 null）
+	// T333-5：createdAt 一并透出（团队管理页「创建时间」列此前恒空），RFC3339 UTC
+	var items []json.RawMessage
+	require.NoError(t, json.Unmarshal(resp.Data, &items))
+	assert.JSONEq(t, `{"teamId":"TEAM02","name":"二组","memberCount":1,"patientCount":1,
+		"leader":null,"leaderName":null,"createdAt":"2026-08-04T09:08:07Z"}`, string(items[1]))
+	assert.JSONEq(t, `{"teamId":"TEAM01","name":"一组","memberCount":2,"patientCount":3,
+		"leader":"D01","leaderName":"医生甲","createdAt":"2026-08-03T01:02:03Z"}`, string(items[0]))
 
 	e.store.teamsErr = errors.New("db")
 	w, _ = e.do(http.MethodGet, "/api/v1/teams", nil, nil)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestGetTeam T333：单条读路由 GET /api/v1/teams/:teamId（此前实测 404，Boss「点进去看不到负责人」即此）
+func TestGetTeam(t *testing.T) {
+	e := newEnv(t, true, true)
+	created := time.Date(2026, 9, 1, 8, 30, 0, 0, time.UTC)
+	e.store.gotTeam = &repo.TeamDetailRow{
+		TeamID: "TEAM01", Name: "一组", Leader: "D01", LeaderName: "医生甲",
+		MemberCount: 2, PatientCount: 3, Description: "脊柱侧弯矫形", Status: "active", CreatedAt: created,
+	}
+	w, resp := e.do(http.MethodGet, "/api/v1/teams/TEAM01", nil, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "TEAM01", e.store.lastGetTeamID)
+	var d model.TeamDetailDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &d))
+	assert.Equal(t, "D01", d.Leader)
+	assert.Equal(t, "医生甲", d.LeaderName)
+	// 详情比列表多的三列必须一起回，否则编辑弹窗仍只能读列表行
+	assert.Equal(t, "脊柱侧弯矫形", d.Description)
+	assert.Equal(t, "active", d.Status)
+	assert.Equal(t, "2026-09-01T08:30:00Z", d.CreatedAt)
+
+	// 团队不存在 → 404
+	e.store.gotTeam = nil
+	e.store.gotTeamErr = repo.ErrTeamNotFound
+	w, resp = e.do(http.MethodGet, "/api/v1/teams/NOPE", nil, nil)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, model.CodeNotFound, resp.Code)
+
+	// 其它错误 → 500
+	e.store.gotTeamErr = errors.New("db")
+	w, _ = e.do(http.MethodGet, "/api/v1/teams/TEAM01", nil, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
@@ -1070,8 +1132,10 @@ func TestListTechnicians(t *testing.T) {
 func TestListTechniciansCarriesTeamName(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.techs = []repo.TechnicianRow{
-		{TechID: "T1", Name: "技师甲", TeamID: strPtr("TEAM01"), TeamName: strPtr("康复一组"), Status: "enabled", AuthStatus: "authorized"},
-		{TechID: "T2", Name: "技师乙", Status: "enabled", AuthStatus: "authorized"}, // 未入队
+		{TechID: "T1", Name: "技师甲", TeamID: strPtr("TEAM01"), TeamName: strPtr("康复一组"), Status: "enabled", AuthStatus: "authorized",
+			CreatedAt: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)},
+		{TechID: "T2", Name: "技师乙", Status: "enabled", AuthStatus: "authorized",
+			CreatedAt: time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)}, // 未入队
 	}
 	e.store.techTotal = 2
 	w, resp := e.do(http.MethodGet, "/api/v1/technicians", nil, nil)
@@ -1087,6 +1151,9 @@ func TestListTechniciansCarriesTeamName(t *testing.T) {
 	assert.Nil(t, page.List[1].TeamName, "未入队 ⇒ 无团队名")
 	assert.Contains(t, w.Body.String(), `"teamName":"康复一组"`)
 	assert.Contains(t, w.Body.String(), `"teamName":null`, "未入队要显式输出 null，前端据此回落 teamId")
+	// T333-6：技师管理页「创建时间」列取不到值 ⇒ 列表接口未透出 createdAt（T247 10.4 早已声明该字段）
+	assert.Equal(t, "2026-07-01T00:00:00Z", page.List[0].CreatedAt)
+	assert.Contains(t, w.Body.String(), `"createdAt":"2026-07-02T12:00:00Z"`)
 }
 
 func TestCreateTechnician(t *testing.T) {

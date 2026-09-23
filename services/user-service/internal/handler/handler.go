@@ -6,6 +6,7 @@
 //	GET  /api/v1/admin/patients                          管理端患者分页（团队/医生姓名 join）
 //	GET  /api/v1/admin/patients/:patientId               患者详情（管理端）
 //	GET  /api/v1/teams                                   团队概要
+//	GET  /api/v1/teams/:teamId                           团队单条详情（T333 补，此前 404）
 //	GET  /api/v1/teams/:teamId/members                   团队成员明细（医生+技师）
 //	GET  /api/v1/doctors                                 医生列表（含患者计数）
 //	GET  /api/v1/technicians                             技师分页列表
@@ -224,6 +225,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.PUT("/admin/patients/:patientId", h.updatePatientAdmin)          // T248 4.3 档案编辑
 
 		v1.GET("/teams", h.listTeams)
+		v1.GET("/teams/:teamId", h.getTeam) // T333 单条读（此前契约已声明 leader/leaderName 却无读路由，实测 404）
 		v1.GET("/teams/:teamId/members", h.getTeamMembers)
 		v1.GET("/admin/teams/stats", h.getTeamStats) // T256 #1 团队管理统计卡
 		// T059 团队/成员写操作（stub，统一返回 500；实现方转绿时填充逻辑）
@@ -786,6 +788,14 @@ func (h *Handler) getPatientProfile(c *gin.Context) {
 // 团队 / 医生（T030 #10）
 // ─────────────────────────────────────────────────────────────
 
+// nilIfBlank 空串回 nil（T333：序列化成 JSON null，前端的 ?? 兜底只在 null/undefined 上生效）
+func nilIfBlank(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // listTeams GET /api/v1/teams —— 团队概要
 func (h *Handler) listTeams(c *gin.Context) {
 	rows, err := h.store.ListTeams(c.Request.Context())
@@ -795,7 +805,15 @@ func (h *Handler) listTeams(c *gin.Context) {
 	}
 	list := make([]model.TeamDTO, 0, len(rows))
 	for _, r := range rows {
-		list = append(list, model.TeamDTO{TeamID: r.TeamID, Name: r.Name, MemberCount: r.MemberCount, PatientCount: r.PatientCount})
+		list = append(list, model.TeamDTO{
+			TeamID:       r.TeamID,
+			Name:         r.Name,
+			MemberCount:  r.MemberCount,
+			PatientCount: r.PatientCount,
+			Leader:       nilIfBlank(r.Leader),     // T333：负责人 doctor_id
+			LeaderName:   nilIfBlank(r.LeaderName), // T333：join doctors.name
+			CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		})
 	}
 	ok(c, list)
 }
@@ -845,6 +863,7 @@ func (h *Handler) toTechDTO(r repo.TechnicianRow) model.TechnicianDTO {
 		InstallCount: r.InstallCount,
 		Status:       r.Status,
 		AuthStatus:   r.AuthStatus,
+		CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
@@ -853,6 +872,22 @@ func strOr(p *string, def string) string {
 		return def
 	}
 	return *p
+}
+
+// getTeam GET /api/v1/teams/:teamId —— 团队单条详情（T333）
+// 与 POST / PUT 复用同一投影 SQL；团队不存在 404。
+func (h *Handler) getTeam(c *gin.Context) {
+	teamID := c.Param("teamId")
+	row, err := h.store.GetTeam(c.Request.Context(), teamID)
+	if err != nil {
+		if errors.Is(err, repo.ErrTeamNotFound) {
+			fail(c, model.ErrNotFound("team not found: %s", teamID))
+			return
+		}
+		fail(c, model.ErrInternal("get team failed"))
+		return
+	}
+	ok(c, toTeamDetailDTO(*row))
 }
 
 // getTeamMembers GET /api/v1/teams/:teamId/members —— 成员明细（医生+技师），团队不存在 404

@@ -174,6 +174,9 @@ type TeamRow struct {
 	Name         string
 	MemberCount  int
 	PatientCount int
+	Leader       string // 负责人 doctor_id，无负责人为空串（T333）
+	LeaderName   string // 负责人姓名（join doctors.name），无负责人为空串（T333）
+	CreatedAt    time.Time
 }
 
 // TeamStatsRow 团队维度聚合投影（T256 5.1，设计稿 团队管理.html:87-90 四张统计卡）。
@@ -256,6 +259,7 @@ type TechnicianRow struct {
 	InstallCount int
 	Status       string
 	AuthStatus   string
+	CreatedAt    time.Time // T333-6：列表 SELECT 补带（此前列表接口带不出，页面创建时间列全空）
 }
 
 // TrimPhoneHash 去除 CHAR(64) 列的尾部空格填充（PG 定长字符列语义）
@@ -474,6 +478,8 @@ type Store interface {
 	// sentinel：ErrTeamNotFound/ErrTeamNameExists/ErrLeaderNotFound/ErrMemberNotFound/ErrMemberInTeam/ErrTeamInUse
 	CreateTeam(ctx context.Context, in TeamInput) (*TeamDetailRow, error)
 	UpdateTeam(ctx context.Context, teamID string, in TeamInput) (*TeamDetailRow, error)
+	// GetTeam T333：团队单条读（GET /api/v1/teams/:teamId），与写端点回读同一投影；不存在返回 ErrTeamNotFound
+	GetTeam(ctx context.Context, teamID string) (*TeamDetailRow, error)
 	DeleteTeam(ctx context.Context, teamID string) error // 返回 ErrTeamNotFound / ErrTeamInUse
 	AddTeamMember(ctx context.Context, teamID string, in MemberInput) (*TeamMemberRow, error)
 	UpdateTeamMember(ctx context.Context, teamID, memberID string, in MemberInput) (*TeamMemberRow, error)

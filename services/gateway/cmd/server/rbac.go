@@ -93,6 +93,7 @@ var adminOnlyPatterns = []rbacPattern{
 
 	// /teams 页（团队/成员/医生）
 	rbacOf(http.MethodGet, "/api/v1/teams"),
+	rbacOf(http.MethodGet, "/api/v1/teams/:teamId"), // T333 单条详情
 	rbacOf(http.MethodGet, "/api/v1/teams/:teamId/members"),
 	rbacOf(http.MethodGet, "/api/v1/doctors"),
 	// T314 医护账号管理写通道（PRD §7D.10）：与技师账号同属「运营创建后台账号」的能力，
