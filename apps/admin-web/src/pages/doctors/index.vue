@@ -28,7 +28,7 @@
         </el-select>
         <el-select v-model="titleFilter" class="filter-select" placeholder="全部职称">
           <el-option label="全部职称" value="" />
-          <el-option v-for="t in MEDICAL_TITLES" :key="t" :label="t" :value="t" />
+          <el-option v-for="t in titleChoices" :key="t" :label="t" :value="t" />
         </el-select>
         <el-button type="primary" @click="openCreate">+ 新建医护账号</el-button>
         <span class="count-hint">共 {{ list.length }} 个账号（启用 {{ enabledCount }} / 禁用 {{ list.length - enabledCount }}）</span>
@@ -113,7 +113,7 @@
         </el-form-item>
         <el-form-item label="职称" required>
           <el-select v-model="form.title" placeholder="请选择职称" style="width: 100%">
-            <el-option v-for="t in MEDICAL_TITLES" :key="t" :label="t" :value="t" />
+            <el-option v-for="t in titleChoices" :key="t" :label="t" :value="t" />
           </el-select>
           <span class="form-help">职称落 doctors.title，均为医护岗位职称、可扩展；职称 ≠ 登录角色，本页账号的后台登录角色固定为「医护」。</span>
         </el-form-item>
@@ -140,7 +140,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Team } from '@bracesync/shared-types'
 import { fetchTeams, teamNameOf } from '../../api'
 import {
-  MEDICAL_TITLES,
   createMedicalAccountApi,
   fetchMedicalAccounts,
   resetMedicalPasswordApi,
@@ -149,6 +148,7 @@ import {
   type MedicalAccount,
   type UpdateMedicalAccountInput,
 } from '../../api/medicalAccount'
+import { titleOptions } from '../../utils/medicalTitles'
 
 /** §9.2 / 设计稿 :299：空值一律显示横杠，不留空白格 */
 const DASH = '—'
@@ -180,6 +180,13 @@ const list = computed(() => {
 })
 
 const enabledCount = computed(() => list.value.filter((r) => r.status === 'enabled').length)
+
+/**
+ * 职称下拉词表 = 预置 4 项 ∪ 当前列表出现过的职称（T360）。
+ * 取未过滤的 rows 而非 list：选了「副主任医师」后再输关键字，词表不能把自己筛掉。
+ * 设计稿 :306/:308 两处下拉读同一个数组 ⇒ 筛选与编辑同源，这里只算一次。
+ */
+const titleChoices = computed(() => titleOptions(rows.value))
 
 /** 设计稿 :226/:360：新建态提示「系统自动生成」，编辑态提示「不可改」 */
 const acctHint = computed(() => {

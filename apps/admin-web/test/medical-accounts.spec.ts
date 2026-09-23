@@ -31,6 +31,13 @@ function mountPage(): VueWrapper {
 }
 
 /**
+ * 职称下拉应有的完整词表 = 设计稿 :284 预置 4 项（顺序不变）+ mock 档案里越界的「副主任医师」
+ * （DOC-002 陈小芳 / DOC-005 赵敏，与 code 仓 scripts/db/seed/seed.sql:43 的 D0002 同形），
+ * 按首次出现序追加在后面。T360 前两处下拉只读预置 4 项 ⇒ 那一行筛不到、编辑态会改写真实职称。
+ */
+const TITLE_UNION = ['主任医师', '主治医师', '康复师', '护士', '副主任医师']
+
+/**
  * 在给定子树里取按钮/表单项。
  * VTU 默认把 wrapper 挂在 document 之外，所以 el-dialog 要用 wrapper 查；
  * ElMessageBox / ElMessage 自带 portal 到 document.body，所以那两处传 document。
@@ -65,8 +72,34 @@ function typeInto(root: ParentNode, label: string, value: string): void {
   input.dispatchEvent(new Event('input'))
 }
 
-function lastMessageBox(): HTMLElement {
-  const boxes = document.querySelectorAll<HTMLElement>('.el-message-box')
+/**
+ * el-select 的面板 teleport 到 document.body，且未展开的那个也提前挂在那里
+ * （aria-hidden="true" + display:none）⇒ 选项必须按「当前展开的那一个」读。
+ * 全局查 .el-select-dropdown__item 会读到工具栏团队下拉的选项，把同源判据读成假绿。
+ */
+function openDropdown(trigger: Element): void {
+  const wrapper = trigger.querySelector<HTMLElement>('.el-select__wrapper') ?? (trigger as HTMLElement)
+  wrapper.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+}
+
+function openedPoppers(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('.el-popper[aria-hidden="false"]')]
+}
+
+function dropdownItems(): string[] {
+  const pops = openedPoppers()
+  if (pops.length !== 1) throw new Error(`展开中的下拉面板应恰有 1 个，实到 ${pops.length} 个`)
+  return [...pops[0].querySelectorAll<HTMLElement>('.el-select-dropdown__item')].map((li) => (li.textContent ?? '').trim())
+}
+
+function pickDropdownItem(text: string): void {
+  const items = [...openedPoppers()[0]?.querySelectorAll<HTMLElement>('.el-select-dropdown__item') ?? []]
+  const opt = items.find((li) => (li.textContent ?? '').trim() === text)
+  if (!opt) throw new Error(`展开中的下拉里没有「${text}」选项，实到：${dropdownItems().join(' / ')}`)
+  opt.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+}
+
+function lastMessageBox(): HTMLElement {  const boxes = document.querySelectorAll<HTMLElement>('.el-message-box')
   const box = boxes[boxes.length - 1]
   if (!box) throw new Error('确认框未渲染')
   return box
@@ -295,8 +328,46 @@ describe('医护账号页 模态框与写操作（PRD §7D.10 八字段）', () 
     wrapper.unmount()
   })
 
-  it('职称下拉 = 设计稿 :282 四项预置词表', () => {
+  it('职称预置词表 = 设计稿 :284 四项（并集只加在后面，预置序不变）', () => {
     expect(MEDICAL_TITLES).toEqual(['主任医师', '主治医师', '康复师', '护士'])
+  })
+
+  // T360 回归：库里既有职称越出预置词表时，两处下拉都要读得到它。
+  it('筛选：职称下拉含库内既有值，选「副主任医师」能筛出对应行', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    openDropdown(wrapper.findAll('.filter-select')[1].element)
+    await flushAll() // aria-hidden 在过渡之后才翻，不推进就会读到「0 个展开中」
+    const items = dropdownItems()
+    // 筛选下拉比编辑下拉多一个「全部职称」哨兵项；剥掉后两处必须逐字相等 = 同源
+    expect(items.filter((t) => t !== '全部职称')).toEqual(TITLE_UNION)
+    pickDropdownItem('副主任医师')
+    await flushAll()
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.text().includes('副主任医师'))).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('编辑：职称下拉与筛选同源，不改职称直接保存后该行一字未变', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    const row = wrapper.findAll('tbody tr').find((r) => r.text().includes('陈小芳'))!
+    clickByText(row.element, '编辑')
+    await flushAll()
+    const dlg = dialogIn(wrapper.element)
+    // 回显原职称（不是空、也不是被 4 项词表吞掉）
+    expect(formItem(dlg, '职称').textContent).toContain('副主任医师')
+    openDropdown(formItem(dlg, '职称'))
+    await flushAll()
+    expect(dropdownItems()).toEqual(TITLE_UNION) // 与上面筛选下拉逐字相同 ⇒ 两处同源
+    openDropdown(formItem(dlg, '职称')) // 收起面板，别让「保存修改」那一击被判定为点外面关下拉
+    await flushAll()
+    clickByText(dlg, '保存修改')
+    await flushToast(400)
+    expect(toastText()).toContain('修改成功')
+    expect(mockMedicalAccounts().find((r) => r.doctorId === 'DOC-002')?.title).toBe('副主任医师')
+    wrapper.unmount()
   })
 })
 
