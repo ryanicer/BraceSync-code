@@ -115,7 +115,7 @@ func seedT366Patient(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(ctx, `
 		INSERT INTO patients (patient_id, name, phone_enc, phone_hash, status)
-		VALUES ($1, 'T366 患者', '\x00'::bytea, md5($1) || repeat('0', 32), 'active')
+		VALUES ($1, 'T366 患者', '\x00'::bytea, md5($1::text) || repeat('0', 32), 'active')
 		ON CONFLICT (patient_id) DO NOTHING`, t366Patient)
 	require.NoError(t, err, "seed patient")
 
