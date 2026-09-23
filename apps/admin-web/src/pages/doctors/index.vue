@@ -61,7 +61,7 @@
           </template>
         </el-table-column>
         <el-table-column label="创建时间" width="90">
-          <template #default="{ row }">{{ row.createdAt || DASH }}</template>
+          <template #default="{ row }">{{ row.createdAt ? row.createdAt.slice(0, 10) : DASH }}</template>
         </el-table-column>
         <el-table-column label="操作" width="155">
           <template #default="{ row }">
@@ -147,6 +147,7 @@ import {
   setMedicalAccountStatusApi,
   updateMedicalAccountApi,
   type MedicalAccount,
+  type UpdateMedicalAccountInput,
 } from '../../api/medicalAccount'
 
 /** §9.2 / 设计稿 :299：空值一律显示横杠，不留空白格 */
@@ -165,6 +166,8 @@ const submitting = ref(false)
 const editingId = ref('')
 /** 编辑态回显的脱敏号，用于判断用户是否真的改过手机号 */
 const originalPhone = ref('')
+/** 编辑态原状态：服务端 PUT 不收 status，只有真改过才另发 /status */
+const originalStatus = ref<'enabled' | 'disabled'>('enabled')
 const form = ref({ name: '', phone: '', department: '', teamId: '', title: '', status: 'enabled' as 'enabled' | 'disabled' })
 
 const list = computed(() => {
@@ -217,6 +220,7 @@ function openCreate() {
   editing.value = false
   editingId.value = ''
   originalPhone.value = ''
+  originalStatus.value = 'enabled'
   form.value = { name: '', phone: '', department: '', teamId: '', title: '', status: 'enabled' }
   formVisible.value = true
 }
@@ -225,6 +229,7 @@ function openEdit(row: MedicalAccount) {
   editing.value = true
   editingId.value = row.doctorId
   originalPhone.value = row.phoneMasked
+  originalStatus.value = row.status
   form.value = {
     name: row.name,
     phone: row.phoneMasked,
@@ -249,9 +254,12 @@ function validateForm(): boolean {
   return true
 }
 
-/** 编辑态只有「被改过」的手机号才提交 —— 提交脱敏串会把真号覆盖成星号 */
-function changedPhone(): string {
-  return form.value.phone && form.value.phone !== originalPhone.value ? form.value.phone : ''
+/**
+ * 编辑态手机号三态：未碰过 ⇒ undefined（服务端「给了才改」，回传 undefined 之外的值都可能覆盖真号），
+ * 清空 ⇒ ''（后端据此落 NULL），改过 ⇒ 新号码。
+ */
+function phonePatch(): string | undefined {
+  return form.value.phone === originalPhone.value ? undefined : form.value.phone.trim()
 }
 
 async function submitForm() {
@@ -259,14 +267,16 @@ async function submitForm() {
   submitting.value = true
   try {
     if (editing.value) {
-      await updateMedicalAccountApi(editingId.value, {
+      const patch: UpdateMedicalAccountInput = {
         name: form.value.name.trim(),
-        phone: changedPhone(),
+        phone: phonePatch(),
         department: form.value.department.trim(),
         teamId: form.value.teamId,
         title: form.value.title,
-        status: form.value.status,
-      })
+      }
+      // 服务端 PUT 不收 status ⇒ 状态真改过才另发 /status（设计稿 :378 编辑态可改状态）
+      if (form.value.status !== originalStatus.value) patch.status = form.value.status
+      await updateMedicalAccountApi(editingId.value, patch)
       formVisible.value = false
       await loadData()
       ElMessage.success('修改成功')
