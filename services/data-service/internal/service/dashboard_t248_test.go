@@ -39,7 +39,8 @@ func t248ResetCompareSpy() {
 }
 
 func (m *mockDashboardStore) KPICompare(ctx context.Context, prevFromDate, fromDate string,
-	prevAlertFrom, alertFrom, monthStart, prevMonthStart time.Time) (*repo.KPICompareRow, error) {
+	prevAlertFrom, alertFrom, monthStart, prevMonthStart time.Time, scope model.TeamScope) (*repo.KPICompareRow, error) {
+	m.see("KPICompare", scope)
 	t248CmpCall++
 	t248CmpArgs = t248Args{prevFromDate, fromDate, prevAlertFrom, alertFrom, monthStart, prevMonthStart}
 	if t248CmpErr != nil {
@@ -69,7 +70,7 @@ func TestT248_KPI_ComparisonValues(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = t248FixedNow
 
-	dto, appErr := svc.GetKPI(context.Background(), "today")
+	dto, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
 	require.Nil(t, appErr)
 	require.Equal(t, 1, t248CmpCall)
 
@@ -97,7 +98,7 @@ func TestT248_KPI_ComparisonValues(t *testing.T) {
 
 	// 下降为负值（前端据此渲染红/绿箭头）
 	t248CmpRow.AlertCount = 60
-	dto2, appErr := svc.GetKPI(context.Background(), "today")
+	dto2, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
 	require.Nil(t, appErr)
 	require.NotNil(t, dto2.AlertsChangePct)
 	assert.Equal(t, -50.0, *dto2.AlertsChangePct)
@@ -110,7 +111,7 @@ func TestT248_KPI_ZeroPrevWindow_YieldsNullChangePct(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = t248FixedNow
 
-	dto, appErr := svc.GetKPI(context.Background(), "today")
+	dto, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
 	require.Nil(t, appErr)
 
 	require.NotNil(t, dto.PrevTodayActiveWear)
@@ -131,7 +132,7 @@ func TestT248_KPI_CompareFailure_Degrades(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = t248FixedNow
 
-	dto, appErr := svc.GetKPI(context.Background(), "week")
+	dto, appErr := svc.GetKPI(context.Background(), "week", model.ScopeAll())
 	require.Nil(t, appErr, "对比基准失败不得升级为整端点失败")
 	assert.Equal(t, int64(7), dto.TotalPatients)
 	assert.Equal(t, 1, t248CmpCall)
@@ -162,7 +163,7 @@ func TestT248_KPI_PrevWindowArgs(t *testing.T) {
 		svc := NewDashboardService(store, nil)
 		svc.now = t248FixedNow
 
-		_, appErr := svc.GetKPI(context.Background(), tc.period)
+		_, appErr := svc.GetKPI(context.Background(), tc.period, model.ScopeAll())
 		require.Nil(t, appErr, tc.period)
 		require.Equal(t, 1, t248CmpCall, tc.period)
 
@@ -191,7 +192,7 @@ func TestT248_KPI_DeviceOnlineRate_HasNoBaseline(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = t248FixedNow
 
-	dto, appErr := svc.GetKPI(context.Background(), "today")
+	dto, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
 	require.Nil(t, appErr)
 	assert.Equal(t, 66.67, dto.DeviceOnlineRate)
 	assert.Nil(t, dto.PrevDeviceOnlineRate)

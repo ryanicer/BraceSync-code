@@ -82,6 +82,11 @@ func New(svc *service.RecordService) *Handler { return &Handler{svc: svc} }
 // PatientLookup 患者档案存在性查询契约（repo.PatientRepo 实现，patients 表只读）
 type PatientLookup interface {
 	PatientExists(ctx context.Context, patientID string) (bool, error)
+	// PatientInAdminTeam T350：医护（X-User-Id = admins.admin_id）与患者是否同团队。
+	// false 覆盖「患者不存在 / 无医护档案 / 任一方无团队」三种情形，统一按 403 出。
+	PatientInAdminTeam(ctx context.Context, patientID, adminID string) (bool, error)
+	// DoctorTeamByAdmin T350：admin_id → 所属团队（Dashboard 聚合范围推导，ok=false = 无团队）
+	DoctorTeamByAdmin(ctx context.Context, adminID string) (teamID string, ok bool, err error)
 }
 
 // SetPatientLookup 注入患者档案存在性数据源（生产由 main 注入）
@@ -183,6 +188,9 @@ func (h *Handler) getHistory(c *gin.Context) {
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
 		return
 	}
+	if !h.assertTeamScope(c, patientID) { // T350：医护仅限本团队患者
+		return
+	}
 	if !h.assertPatientExists(c, patientID) { // T340
 		return
 	}
@@ -226,6 +234,9 @@ func (h *Handler) getHistory(c *gin.Context) {
 func (h *Handler) getRealtime(c *gin.Context) {
 	patientID := c.Param("patientId")
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
+		return
+	}
+	if !h.assertTeamScope(c, patientID) { // T350：医护仅限本团队患者（T340 C4 现网证据面）
 		return
 	}
 	if !h.assertPatientExists(c, patientID) { // T340：未绑定设备与查无此人此前在 :477 被折叠成同一个空快照

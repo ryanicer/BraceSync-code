@@ -78,7 +78,7 @@ func TestITKPI(t *testing.T) {
 	alertFrom := to.AddDate(0, 0, -1) // 昨天 的 timestamptz
 	monthStart := time.Date(to.Year(), to.Month(), 1, 0, 0, 0, 0, model.CSTZone())
 
-	row, err := r.KPI(ctx, dateStr, alertFrom, monthStart)
+	row, err := r.KPI(ctx, dateStr, alertFrom, monthStart, model.ScopeAll())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, row.TotalPatients, int64(1)) // at least the test patient
 	assert.GreaterOrEqual(t, row.AlertCount, int64(1))    // alert from yesterday
@@ -96,7 +96,7 @@ func TestITKPICompare(t *testing.T) {
 
 	// 种子 daily_wear_stats 落在「昨天」：前窗 [昨天, 今天) 应命中，右端不取今天
 	seeded, err := r.KPICompare(ctx, yesterday.Format("2006-01-02"), today.Format("2006-01-02"),
-		yesterday, today, monthStart, prevMonthStart)
+		yesterday, today, monthStart, prevMonthStart, model.ScopeAll())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, seeded.ActiveWear, int64(1), "昨日有佩戴统计")
 	assert.Greater(t, seeded.AvgWearMinutes, 0.0)
@@ -106,7 +106,7 @@ func TestITKPICompare(t *testing.T) {
 	// 远早于任何种子数据的窗口：全部为 0（证明 stat_date 半开区间与 created_at 边界不越界）
 	far := time.Date(2000, 1, 2, 0, 0, 0, 0, model.CSTZone())
 	empty, err := r.KPICompare(ctx, far.Format("2006-01-02"), far.AddDate(0, 0, 1).Format("2006-01-02"),
-		far, far.AddDate(0, 0, 1), far, far.AddDate(0, -1, 0))
+		far, far.AddDate(0, 0, 1), far, far.AddDate(0, -1, 0), model.ScopeAll())
 	require.NoError(t, err)
 	assert.Zero(t, empty.ActiveWear)
 	assert.Zero(t, empty.AlertCount)
@@ -122,7 +122,7 @@ func TestITWearTrendFillMissingDays(t *testing.T) {
 	days := 7
 	from := time.Date(to.Year(), to.Month(), to.Day()-days+1, 0, 0, 0, 0, model.CSTZone())
 
-	rows, err := r.WearTrend(ctx, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	rows, err := r.WearTrend(ctx, from.Format("2006-01-02"), to.Format("2006-01-02"), model.ScopeAll())
 	require.NoError(t, err)
 
 	// 检查返回条数：只有一天数据，应该被填充到 7 天？No — the service layer does gap-filling.
@@ -137,11 +137,11 @@ func TestITRankings(t *testing.T) {
 	day := time.Date(to.Year(), to.Month(), to.Day()-(model.RankingWindowDays-1), 0, 0, 0, 0, model.CSTZone())
 	dateStr := day.Format("2006-01-02")
 
-	teamRows, err := r.TeamRanking(ctx, dateStr, model.WearTargetMinutes)
+	teamRows, err := r.TeamRanking(ctx, dateStr, model.WearTargetMinutes, model.ScopeAll())
 	require.NoError(t, err)
 	assert.Empty(t, teamRows) // no daily_wear_stats in window for test patient
 
-	docRows, err := r.DoctorRanking(ctx, dateStr, model.WearTargetMinutes)
+	docRows, err := r.DoctorRanking(ctx, dateStr, model.WearTargetMinutes, model.ScopeAll())
 	require.NoError(t, err)
 	assert.Empty(t, docRows)
 }
@@ -153,7 +153,7 @@ func TestITPatientAvgWear(t *testing.T) {
 	day := time.Date(to.Year(), to.Month(), to.Day()-(model.RankingWindowDays-1), 0, 0, 0, 0, model.CSTZone())
 	dateStr := day.Format("2006-01-02")
 
-	avgs, err := r.PatientAvgWearMinutes(ctx, dateStr)
+	avgs, err := r.PatientAvgWearMinutes(ctx, dateStr, model.ScopeAll())
 	require.NoError(t, err)
 	// 只有昨天的数据；窗口内应有一天的数据，平均分钟 > 0
 	assert.Greater(t, len(avgs), 0)

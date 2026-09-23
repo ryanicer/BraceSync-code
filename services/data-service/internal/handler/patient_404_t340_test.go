@@ -26,10 +26,19 @@ import (
 
 // stubPatientLookup 患者档案存在性替身。known 为 nil 表示「一律存在」（供既有测试镜像生产装配）；
 // 非 nil 时只有名单内的 patient_id 算存在。
+//
+// T350 两字段（teamOf / doctorTeam）默认空 = 一律不放行：既有测试全部走 admin/患者身份，
+// 团队闸门不会触发，只有显式配了归属的用例才可能被收口。
 type stubPatientLookup struct {
 	known    []string
 	err      error
 	lastSeen string
+
+	teamOf     map[string]string // patient_id → 所属 team_id（缺键 = 档案不存在）
+	doctorTeam map[string]string // admin_id → 所属 team_id（缺键 = 无医生档案）
+	teamErr    error             // PatientInAdminTeam / DoctorTeamByAdmin 的库错误
+	teamSeen   []string          // PatientInAdminTeam 实收的 patient_id（顺序）
+	teamLookup int               // DoctorTeamByAdmin 被调次数
 }
 
 func (s *stubPatientLookup) PatientExists(_ context.Context, patientID string) (bool, error) {
@@ -46,6 +55,28 @@ func (s *stubPatientLookup) PatientExists(_ context.Context, patientID string) (
 		}
 	}
 	return false, nil
+}
+
+// PatientInAdminTeam 与 repo 的合并 EXISTS 同语义：三因（无档案 / 无团队 / 团队不符）一律 false。
+func (s *stubPatientLookup) PatientInAdminTeam(_ context.Context, patientID, adminID string) (bool, error) {
+	s.teamSeen = append(s.teamSeen, patientID)
+	if s.teamErr != nil {
+		return false, s.teamErr
+	}
+	team, ok := s.doctorTeam[adminID]
+	if !ok || team == "" {
+		return false, nil
+	}
+	return s.teamOf[patientID] == team, nil
+}
+
+func (s *stubPatientLookup) DoctorTeamByAdmin(_ context.Context, adminID string) (string, bool, error) {
+	s.teamLookup++
+	if s.teamErr != nil {
+		return "", false, s.teamErr
+	}
+	team := s.doctorTeam[adminID]
+	return team, team != "", nil
 }
 
 type lookupError struct{}
