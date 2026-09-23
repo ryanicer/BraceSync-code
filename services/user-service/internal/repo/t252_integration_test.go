@@ -143,14 +143,25 @@ func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 		assert.False(t, ok, "000017 应删除误播角色 %s", gone)
 	}
 
-	// ② 预置登录角色 = 3 个，name/scope 与 scripts/db/seed/seed.sql 同源
+	// ② 预置登录角色 = 3 个，name/scope/modules 与 scripts/db/seed/seed.sql 同源
 	//    （000017 幂等补播这 3 条，故 harness 只跑 migrations、不跑 seed.sql 也成立；
 	//     name 取 000025 之后的现值 —— ROLE_DOCTOR 显示名已由「医生」改「医护」，
 	//     Boss 2026-09-22 14:21 裁定只改称谓，role_id 仍是 ROLE_DOCTOR ⇒ 本条同时守住「键没被顺手改」）
-	for _, want := range []struct{ id, name, scope string }{
-		{"ROLE_ADMIN", "运营管理员", "all"},
-		{"ROLE_DOCTOR", "医护", "team"},
-		{"ROLE_CS", "客服", "all_patients"},
+	// T345：modules 取 000026 之后的现值 —— ROLE_ADMIN 补齐为 15 页全集（新增
+	//   review / review_tpl / doctor_acct 三键，词表同 admin-web router/permissions.ts 的
+	//   PAGE_MODULES）；ROLE_DOCTOR 4 项、ROLE_CS 1 项是本轮红线未动项（医护对复查两页的
+	//   权限位待 Boss 裁），逐值写死即同时钉住「补了该补的、没顺手改动别的角色」。
+	for _, want := range []struct {
+		id, name, scope string
+		modules         []string
+	}{
+		{"ROLE_ADMIN", "运营管理员", "all", []string{
+			"dashboard", "realtime", "patients", "teams", "devices", "alerts",
+			"comm", "orthosis", "install", "review", "review_tpl", "tech",
+			"doctor_acct", "perm", "config",
+		}},
+		{"ROLE_DOCTOR", "医护", "team", []string{"dashboard", "realtime", "alerts", "orthosis"}},
+		{"ROLE_CS", "客服", "all_patients", []string{"comm"}},
 	} {
 		row, ok := byID[want.id]
 		require.True(t, ok, "预置登录角色 %s 应存在", want.id)
@@ -162,7 +173,7 @@ func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal([]byte(row.PermissionsJSON), &perms))
 		assert.Equal(t, want.scope, perms.Scope)
-		assert.NotEmpty(t, perms.Modules)
+		assert.Equal(t, want.modules, perms.Modules, "%s 的 modules 集", want.id)
 	}
 
 	// ③ 收口证明：剔除测试专用行（harness 播的 ROLE_IT + 各用例新建的自定义角色）后，

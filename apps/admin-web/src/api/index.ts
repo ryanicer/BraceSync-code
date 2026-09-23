@@ -5,6 +5,7 @@ import type {
   Alert, InstallRecordRow, InstallRecordDetail, Technician, Team, TeamDetail, TeamMember, TeamStats, Doctor, Feedback, OrthosisPlan,
   FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
+  RolePermissions,
 } from '@bracesync/shared-types'
 import { USE_MOCK, request } from '../utils/request'
 import { getToken } from '../utils/token'
@@ -431,20 +432,19 @@ export async function fetchAdminRoles(): Promise<AdminRoleRow[]> {
   return request<AdminRoleRow[]>({ url: '/api/v1/admin/roles' })
 }
 
-// T247: 角色权限读写（后端 UpdateRolePermissions handler.go:1358 已实现，网关 proxy_admin.go:146-147 已放行）
-export interface RolePermissions {
-  roleId: string
-  permissions: string[] // 页面路径数组，如 ['/monitor', '/alerts']
-}
-
+// T247 / T345：角色权限读写。形状一律用契约类型 RolePermissions（packages/shared-types，
+// 对齐后端 model.RolePermissionsDTO = {scope, modules, items}）。
+// 本文件此处曾自造 {roleId, permissions: 页面路径[]} 影子接口：后端 ShouldBindJSON 拿不到
+// scope 直接 400，且 mock 按这个错误形状自洽实现，故三层 CI 全绿、只有 staging 暴露。
 export async function fetchRolePermissionsApi(roleId: string): Promise<RolePermissions> {
   if (USE_MOCK) { await delay(); return systemMock.mockRolePermissions(roleId) }
   return request<RolePermissions>({ url: `/api/v1/admin/roles/${roleId}/permissions` })
 }
 
-export async function updateRolePermissionsApi(roleId: string, permissions: string[]): Promise<void> {
+/** items 传 null = 不细化子权限（后端读时按目录物化为全勾）；[] 才是显式全不勾 */
+export async function updateRolePermissionsApi(roleId: string, permissions: RolePermissions): Promise<void> {
   if (USE_MOCK) { await delay(); systemMock.mockUpdateRolePermissions(roleId, permissions); return }
-  await request<null>({ url: `/api/v1/admin/roles/${roleId}/permissions`, method: 'PUT', data: { permissions } })
+  await request<null>({ url: `/api/v1/admin/roles/${roleId}/permissions`, method: 'PUT', data: permissions as unknown as Record<string, unknown> })
 }
 
 // T253-11.2: 角色增删改 + 模板（对齐 T252 契约 api-contracts.ts createAdminRole/updateAdminRole/deleteAdminRole）

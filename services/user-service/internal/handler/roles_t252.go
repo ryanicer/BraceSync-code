@@ -38,12 +38,17 @@ const roleTargetType = "role"
 var roleTemplates = []model.RoleTemplateDTO{
 	{
 		Key: "admin", Name: "运营管理员", Description: "系统全部权限",
+		// T345：与 seed/000026 后的 ROLE_ADMIN 同集 = 15 页全集。
+		// 词表来源 apps/admin-web/src/router/permissions.ts 的 PAGE_MODULES（模块短键 ↔ 路由路径）。
+		// 缺 review / review_tpl / doctor_acct 三键时，「系统全部权限」名不副实：
+		// 复查报告、复查模板管理（T135）、医护账号（T315）三页早已上线，模板却没登记。
 		Permissions: model.RolePermissionsDTO{Scope: "all", Modules: []string{
 			"dashboard", "realtime", "patients", "teams", "devices", "alerts",
-			"comm", "orthosis", "install", "tech", "perm", "config",
+			"comm", "orthosis", "install", "review", "review_tpl", "tech",
+			"doctor_acct", "perm", "config",
 		}},
 	},
-	// ⚠️ doctor 的 modules 比 ROLE_DOCTOR 种子（seed.sql:10-11、000017:30-31 均只 4 项）多
+	// ⚠️ doctor 的 modules 比 ROLE_DOCTOR 种子（seed.sql 与 000017 的 ROLE_DOCTOR 行均只 4 项）多
 	//    patients、comm —— T252 沿 000016 旧种子留下的偏差，T277 只收口模板**条数与名称**，
 	//    是否连预设一起对齐已登记待 PM 裁定（改这里即改变新建角色的默认权限）。
 	{

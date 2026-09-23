@@ -1,8 +1,8 @@
 // 系统管理域 mock 数据（角色/权限矩阵 PRD §7D.11，系统配置 PRD §7D.12，
 // 通知规则与发送记录对齐 api-contracts.ts getNotifyRules/getNotificationLogs）
-import type { NotifyRule, NotificationRecord } from '@bracesync/shared-types'
+import type { NotifyRule, NotificationRecord, RolePermissions } from '@bracesync/shared-types'
 import { DEFAULT_THRESHOLDS } from '@bracesync/constants'
-import { PRESET_ROLES, ROLE_PAGE_MATRIX } from '../router/permissions'
+import { PRESET_ROLES, modulesForRole } from '../router/permissions'
 
 export interface AdminRoleRow {
   roleId: string
@@ -102,20 +102,33 @@ export function mockDeleteRole(roleId: string): void {
   roleCrudStore.splice(idx, 1)
 }
 
-// T247: 角色权限 mock（基于 ROLE_PAGE_MATRIX，预置角色不可编辑权限但可读）
-const rolePermStore: Record<string, string[]> = {}
-
-export function mockRolePermissions(roleId: string): { roleId: string; permissions: string[] } {
-  if (!rolePermStore[roleId]) {
-    // 按 roleId 匹配预置角色
-    const key = roleId === 'ROLE-ADMIN' ? 'admin' : roleId === 'ROLE-DOCTOR' ? 'doctor' : 'cs'
-    rolePermStore[roleId] = [...(ROLE_PAGE_MATRIX[key as keyof typeof ROLE_PAGE_MATRIX] ?? [])]
-  }
-  return { roleId, permissions: [...rolePermStore[roleId]] }
+// T247 / T345: 角色权限 mock —— 形状即契约 RolePermissions（{scope, modules, items}）。
+// 原实现返回 {roleId, permissions: 页面路径[]}，是照前端影子接口自洽写的，
+// 于是「本地全绿 + staging 保存 400」这个差值在 mock 层永远看不见。
+// modules 初值由 ROLE_PAGE_MATRIX 换算成模块短键（mock 里的预置角色按前端矩阵全放开）；
+// items 不物化：后端 GET 会按子权限目录回全勾数组，本页是页面级矩阵、不渲染子权限。
+// 注意 mockCreateRole 不落 permissions，所以新建角色在 mock 下矩阵为空（后端会落，走真实 API 不受影响）。
+const PRESET_ROLES_BY_ID: Record<string, { role: 'admin' | 'doctor' | 'cs'; scope: RolePermissions['scope'] }> = {
+  'ROLE-ADMIN': { role: 'admin', scope: 'all' },
+  'ROLE-DOCTOR': { role: 'doctor', scope: 'team' },
+  'ROLE-CS': { role: 'cs', scope: 'all_patients' },
 }
 
-export function mockUpdateRolePermissions(roleId: string, permissions: string[]): void {
-  rolePermStore[roleId] = [...permissions]
+const rolePermStore: Record<string, RolePermissions> = {}
+
+export function mockRolePermissions(roleId: string): RolePermissions {
+  if (!rolePermStore[roleId]) {
+    const preset = PRESET_ROLES_BY_ID[roleId]
+    rolePermStore[roleId] = preset
+      ? { scope: preset.scope, modules: modulesForRole(preset.role) }
+      : { scope: 'team', modules: [] }
+  }
+  const stored = rolePermStore[roleId]
+  return { ...stored, modules: [...stored.modules] }
+}
+
+export function mockUpdateRolePermissions(roleId: string, permissions: RolePermissions): void {
+  rolePermStore[roleId] = { ...permissions, modules: [...permissions.modules] }
 }
 
 /** 系统配置（PRD §7D.12，默认值对齐 @bracesync/constants DEFAULT_THRESHOLDS） */
