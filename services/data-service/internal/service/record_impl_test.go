@@ -159,7 +159,7 @@ func TestGetRealtimeDBFirst_NoRecords(t *testing.T) {
 	assert.Empty(t, snap.PressureRecords)
 	assert.Equal(t, 0.0, snap.MaxPressure)
 	assert.Empty(t, snap.MaxPoint)
-	assert.Len(t, snap.PressureHeatmap, model.PointCount) // seed 兜底
+	assert.Empty(t, snap.PressureHeatmap, "T325：有设备但无上报记录 → 热力图为空，不得下发 seed")
 }
 
 func TestGetRealtimeDBFirst_NoDevice(t *testing.T) {
@@ -178,7 +178,7 @@ func TestGetRealtimeDBFirst_NoDevice(t *testing.T) {
 
 	assert.Equal(t, "offline", snap.Status)
 	assert.Empty(t, snap.PressureRecords)
-	assert.Len(t, snap.PressureHeatmap, model.PointCount) // seed
+	assert.Empty(t, snap.PressureHeatmap, "T325：未绑定设备 → 热力图为空，不得下发 seed")
 	assert.Empty(t, snap.DeviceID, "T200：未绑定患者 deviceId 必须为空")
 }
 
