@@ -67,6 +67,7 @@ func TestFeelingLogsAdmin_CreatedAtInList(t *testing.T) {
 // 否则后台「患者工作台」里看同一份日志仍是空列。
 func TestFeelingLogs_SinglePatientHasCreatedAt(t *testing.T) {
 	e := newEnv(t, false, false)
+	e.store.patient = &repo.PatientRow{PatientID: "P0000001"} // T353：列表端点先判患者存在
 	e.store.feelings = []repo.FeelingLogRow{feelingRowWithCreated(33, "P0000001", "")}
 
 	w, resp := e.do(http.MethodGet, "/api/v1/patients/P0000001/feeling-logs", nil,
@@ -85,6 +86,7 @@ func TestFeelingLogs_SinglePatientHasCreatedAt(t *testing.T) {
 // 输入刻意用 +08:00，验证透出时被归一化，而不是原样吐出本地偏移。
 func TestFeelingLogs_CreatedAtIsRFC3339WithZone(t *testing.T) {
 	e := newEnv(t, false, false)
+	e.store.patient = &repo.PatientRow{PatientID: "P0000001"} // T353：列表端点先判患者存在
 	row := feelingRowWithCreated(34, "P0000001", "")
 	row.CreatedAt = time.Date(2026, 9, 5, 18, 30, 0, 0, time.FixedZone("CST", 8*3600))
 	e.store.feelings = []repo.FeelingLogRow{row}

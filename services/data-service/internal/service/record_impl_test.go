@@ -249,7 +249,7 @@ type fakeDailyWearStore struct {
 }
 
 func (f *fakeDailyWearStore) Upsert(_ context.Context, _ []model.DailyWearStats) error { return nil }
-func (f *fakeDailyWearStore) AggregateDate(_ context.Context, _, _ time.Time, _ int) ([]model.DailyWearStats, error) {
+func (f *fakeDailyWearStore) AggregateDate(_ context.Context, _, _ time.Time, _ float64) ([]model.DailyWearStats, error) {
 	return nil, nil
 }
 func (f *fakeDailyWearStore) ListPatientsWithStats(_ context.Context, _, _ time.Time) ([]string, error) {

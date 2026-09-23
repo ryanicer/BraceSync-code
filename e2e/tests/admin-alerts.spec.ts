@@ -239,3 +239,44 @@ test.describe('告警规则配置（T253-2.2）', () => {
     await expect(adminMessage(page)).toContainText('全局规则保存成功')
   })
 })
+
+/**
+ * T351：医护进「告警管理」不再被两张 admin 专属配置 Tab 带出 403。
+ *
+ * 现场（staging 已部署包 + doctor_li，见 docs/tasks/iris/T351-截图）：进页面即
+ * `403 GET /api/v1/admin/alert-rules` → 一条红条 + 控制台一条 403；点「流程配置」再补一条
+ * `403 GET /api/v1/admin/flow/templates`。网关那两条是 adminOnlyPatterns 的正确行为，
+ * 而 PRD §7D.11 给医护的是「🚨 告警管理 ✅（仅本团队患者）」= 页面级准入 ⇒ 页面要能进、
+ * 配置面按角色摘掉。
+ *
+ * mock 模式下没有真 403 可抓，所以这里锁的是 DOM 形态（Tab 数量 + 配置面板不渲染）；
+ * 「Network 无 403」那半条判据在 e2e-real/tests/03-alerts.spec.ts 的 3b 段。
+ */
+test.describe('医护角色进告警管理（T351）', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'doctor')
+    await page.goto(adminRoutes.alerts)
+  })
+
+  test('列表照常渲染，两张 admin 专属配置 Tab 不出现', async ({ page }) => {
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
+    await expect(tableRows(page)).toHaveCount(7)
+
+    await expect(page.getByRole('tab', { name: '告警列表' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: '处理流程' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: '告警规则配置' })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: '流程配置' })).toHaveCount(0)
+    // 页面级准入没被一起摘掉 ⇒ 也不该冒出一条错误提示
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
+  })
+
+  // 反证：上一条的「配置 Tab 数为 0」不能是选择器写错的永真断言 —— 运营角色下这四张 Tab
+  // 必须全在（且第一张之外的能点出 20 格网格，见上面「告警规则配置」段）。
+  test('反证：运营角色四张 Tab 齐全（同一段选择器在 admin 下数到 4）', async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.alerts)
+    await expect(page.getByRole('tab')).toHaveCount(4)
+    await page.getByRole('tab', { name: '告警规则配置' }).click()
+    await expect(page.locator('.alert-grid .grid-cell')).toHaveCount(20)
+  })
+})

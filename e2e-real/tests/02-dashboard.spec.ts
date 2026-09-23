@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { realLogin, adminMessage, pickSelectOption, realRoutes } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 02 Dashboard 数据概览（真实模式）
@@ -111,5 +112,79 @@ test.describe('02-Dashboard 数据概览', () => {
         expect(msgType).not.toContain('error')
       }
     })
+  })
+})
+
+/**
+ * T348 - 医护角色进数据概览（真实模式）
+ *
+ * 现场（T341 验收缺陷 D-1）：doctor_li 下 6 个 dashboard 端点全 200，但页面一个数都不渲染，
+ * 因为旧实现用 Promise.all 附带了一个 admin 专属的 GET /api/v1/teams（网关 rbac.go
+ * adminOnlyPatterns）⇒ 403 让整页数据全弃。修法是本页不再依赖 /teams，
+ * 「各团队管理患者数」改用同页 staff 权限内的 team-ranking。
+ *
+ * 这条用例把验收标准钉成门禁：医生视角下不得再出现 /teams 请求、dashboard/* 必须全 200、
+ * KPI/图表/排行必须有内容、不得有红色 toast。staging 未部署该构建前按 post-deploy 显式跳过。
+ */
+test.describe('02b-Dashboard 医护角色（T348）', () => {
+  test('2.4 doctor_li：无 /teams 请求 + dashboard 端点全 200 + 6 KPI/4 canvas/排行有行', async ({ page }) => {
+    const teamRequests: string[] = []
+    const dashboardResponses: { status: number; path: string }[] = []
+    page.on('request', (req) => {
+      const url = req.url()
+      if (url.includes('/api/v1/teams')) teamRequests.push(`${req.method()} ${url}`)
+    })
+    page.on('response', (res) => {
+      const url = res.url()
+      if (url.includes('/api/v1/admin/dashboard/')) {
+        dashboardResponses.push({ status: res.status(), path: new URL(url).pathname + new URL(url).search })
+      }
+    })
+
+    await realLogin(page, 'doctor_li', 'admin123')
+    await page.goto(realRoutes.dashboard, { waitUntil: 'domcontentloaded' })
+
+    await requireDeployedBuild(page, {
+      marker: 'T348-dashboard-teams-403',
+      why: 'T348 修的是「医生进数据概览整页空白」，staging 旧构建下医生拿不到 KPI 卡片',
+      probe: async (p) => (await p.locator('.kpi-card').count()) >= 6,
+    })
+
+    await expect(page.locator('.kpi-card')).toHaveCount(6, { timeout: 20_000 })
+    const doctorKpiLabels = [
+      '累计患者',
+      '今日活跃佩戴',
+      '今日告警次数',
+      '平均佩戴时长',
+      '设备在线率',
+      '本月新增患者',
+    ]
+    for (const label of doctorKpiLabels) {
+      await expect(page.locator('.kpi-card').filter({ hasText: label })).toHaveCount(1)
+    }
+    await expect(page.locator('.dashboard canvas')).toHaveCount(4, { timeout: 20_000 })
+
+    // 两张排行表都得有行：旧包这里是 0 行 + 两个「暂无数据」
+    const teamRankRows = page
+      .locator('.page-card')
+      .filter({ hasText: '团队佩戴达标排行' })
+      .locator('.el-table__body-wrapper tbody tr')
+    const docRankRows = page
+      .locator('.page-card')
+      .filter({ hasText: '医生管理患者排行' })
+      .locator('.el-table__body-wrapper tbody tr')
+    await expect(teamRankRows.first()).toBeVisible({ timeout: 15_000 })
+    await expect(docRankRows.first()).toBeVisible({ timeout: 15_000 })
+    // 旧包现场就是两张表各一个「暂无数据」（el-table 的空态是 .el-table__empty-block，不是 .el-empty）
+    expect(await page.locator('.dashboard .el-table__empty-block').count(), '两张排行表都不得是空态').toBe(0)
+
+    // 403 的源头必须真的从本页消失
+    expect(teamRequests, `医生下数据概览不应再请求 /api/v1/teams，实际发了：${teamRequests.join(', ')}`).toHaveLength(0)
+    expect(dashboardResponses.length).toBeGreaterThanOrEqual(6)
+    const nonOk = dashboardResponses.filter((r) => r.status !== 200)
+    expect(nonOk, `dashboard 端点应全 200，实际：${JSON.stringify(nonOk)}`).toHaveLength(0)
+
+    const errMsg = page.locator('.el-message--error')
+    expect(await errMsg.isVisible().catch(() => false), '不应有红色错误 toast').toBe(false)
   })
 })

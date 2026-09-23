@@ -108,6 +108,22 @@ func assertAdminOrSelf(c *gin.Context, patientID string) bool {
 	return true
 }
 
+// assertPatientExists T353：按 patientId 查询的读端点，「查无此人」要与「有此人但暂无数据」
+// 在 HTTP 面上可区分（口径同 data-service T340：404 加 CodeNotFound 10404）。
+// 必须放在水平鉴权之后 —— 存在性不泄露给无权调用方。返回 false 时响应已写出。
+func (h *Handler) assertPatientExists(c *gin.Context, patientID string) bool {
+	row, err := h.store.GetPatient(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("get patient failed"))
+		return false
+	}
+	if row == nil {
+		fail(c, model.ErrNotFound("patient not found: %s", patientID))
+		return false
+	}
+	return true
+}
+
 // scopeBindPrefix T159：绑定态 JWT sub 前缀（标记 scope=bind）。
 // 与 services/gateway/cmd/server/scope_authz.go scopeBindPrefix 同名同值（双侧契约）。
 // wxLogin 签发 bindToken 时把 openid 包成 "openid_<raw>"；bindPhone 消费侧用
@@ -1365,6 +1381,9 @@ func (h *Handler) listPlans(c *gin.Context) {
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
 		return
 	}
+	if !h.assertPatientExists(c, patientID) { // T353：查无此人 404
+		return
+	}
 	rows, err := h.store.ListPlans(c.Request.Context(), patientID)
 	if err != nil {
 		fail(c, model.ErrInternal("list orthosis plans failed"))
@@ -1500,6 +1519,9 @@ func (h *Handler) listFeelingLogs(c *gin.Context) {
 		}
 	}
 
+	if !h.assertPatientExists(c, patientID) { // T353：查无此人 404
+		return
+	}
 	rows, err := h.store.ListFeelingLogs(c.Request.Context(), patientID)
 	if err != nil {
 		fail(c, model.ErrInternal("list feeling logs failed"))

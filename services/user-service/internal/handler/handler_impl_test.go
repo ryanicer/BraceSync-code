@@ -261,10 +261,16 @@ func (f *fakeStore) GetPatient(_ context.Context, pid string) (*repo.PatientRow,
 	if f.patientErr != nil {
 		return nil, f.patientErr
 	}
-	if f.patient != nil && f.patient.PatientID != pid {
-		return nil, nil // 忠实模拟按 patient_id 主键查询：ID 不符即无行
+	if f.patient != nil && f.patient.PatientID == pid {
+		return f.patient, nil
 	}
-	return f.patient, nil
+	// T353：patients 列表预置（f.patients）里的患者同样算「有档案行」，供存在性判定使用
+	for i := range f.patients {
+		if f.patients[i].PatientID == pid {
+			return &f.patients[i], nil
+		}
+	}
+	return nil, nil // 忠实模拟按 patient_id 主键查询：ID 不符即无行
 }
 func (f *fakeStore) ListTeams(_ context.Context) ([]repo.TeamRow, error) { return f.teams, f.teamsErr }
 func (f *fakeStore) TeamExists(_ context.Context, _ string) (bool, error) {
@@ -1425,6 +1431,7 @@ func TestProcessFeedback(t *testing.T) {
 
 func TestListPlansAndSave(t *testing.T) {
 	e := newEnv(t, true, true)
+	e.store.patient = &repo.PatientRow{PatientID: "P1"} // T353：列表端点先判患者存在
 	e.store.plans = []repo.OrthosisPlanRow{{
 		PlanID: 9, PatientID: "P1", DoctorID: "D1", Content: "方案A", Version: "v1.2",
 		CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
@@ -1505,6 +1512,7 @@ func TestListPlansAndSave(t *testing.T) {
 
 func TestFeelingLogsAndReply(t *testing.T) {
 	e := newEnv(t, true, true)
+	e.store.patient = &repo.PatientRow{PatientID: "P1"} // T353：列表端点先判患者存在
 	score := 4.0
 	reply := "建议观察"
 	replyTime := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
@@ -1557,6 +1565,8 @@ func TestFeelingLogsAndReply(t *testing.T) {
 // 口径同 data-service getDailyWear / 本包 listReviewRecords。
 func TestListFeelingLogs_HorizontalAuthz(t *testing.T) {
 	e := newEnv(t, false, false)
+	e.store.patient = nil // T353：改用 patients 列表预置两名患者（admin 查任意患者需都存在）
+	e.store.patients = []repo.PatientRow{{PatientID: "P001"}, {PatientID: "P002"}}
 	e.store.feelings = []repo.FeelingLogRow{{
 		LogID: 5, PatientID: "P001", LogDate: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
 	}}
@@ -1621,6 +1631,8 @@ func doAsJWT(t *testing.T, addr, path, jwt string, signer *token.Signer) (int, s
 // t.Logf 输出的 curl 命令与响应体即脱敏证据原文（CI -v 日志可查）。
 func TestFeelingLogs_HorizontalAuthz_RealWire(t *testing.T) {
 	e := newEnv(t, true, false)
+	// T353：本人 200 那一路要先过患者存在性判定（B 越权路 403 在前，无需 P0000002 有档案行）
+	e.store.patients = []repo.PatientRow{{PatientID: "P0000001"}}
 	score := 4.0
 	e.store.feelings = []repo.FeelingLogRow{{
 		LogID: 5, PatientID: "P0000001", LogDate: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),

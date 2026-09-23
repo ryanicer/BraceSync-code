@@ -320,6 +320,20 @@ func (s *NotifyService) GetQuota(ctx context.Context, patientID string) (*model.
 }
 
 // ─────────────────────────────────────────────────────────────
+// 患者档案存在性（T353，只读）
+// ─────────────────────────────────────────────────────────────
+
+// PatientExists 区分「查无此人」与「有此人但无偏好行/无通知记录」。
+// 患者档案 owner 是 user-service，本服务只读判存在（口径同 data-service T340）。
+func (s *NotifyService) PatientExists(ctx context.Context, patientID string) (bool, error) {
+	exists, err := s.store.PatientExists(ctx, patientID)
+	if err != nil {
+		return false, model.ErrInternal("patient lookup: %v", err)
+	}
+	return exists, nil
+}
+
+// ─────────────────────────────────────────────────────────────
 // 3. 佩戴提醒（验收 3）
 // ─────────────────────────────────────────────────────────────
 

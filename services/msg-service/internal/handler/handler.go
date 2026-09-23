@@ -142,6 +142,23 @@ func requireAdmin(c *gin.Context) bool {
 	return true
 }
 
+// assertPatientExists T353：「查无此人」要与「有此人但无偏好行/无通知记录」在 HTTP 面上可区分
+// （口径同 data-service T340：404 加 10404，患者档案 owner 是 user-service，本服务只读判存在）。
+// 放在 requireSelfScope 之后 —— 存在性不泄露给无权调用方。返回 false 时响应已写出。
+func (h *Handler) assertPatientExists(c *gin.Context) bool {
+	patientID := c.Param("patientId")
+	exists, err := h.svc.PatientExists(c.Request.Context(), patientID)
+	if err != nil {
+		failAppErr(c, err)
+		return false
+	}
+	if !exists {
+		fail(c, model.ErrPatientNotFound(patientID))
+		return false
+	}
+	return true
+}
+
 // ─────────────────────────────────────────────────────────────
 // 请求 DTO（camelCase，对齐契约 SendAlertNotificationRequest 等）
 // ─────────────────────────────────────────────────────────────
@@ -210,6 +227,9 @@ func (h *Handler) getQuota(c *gin.Context) {
 	if !requireSelfScope(c) {
 		return
 	}
+	if !h.assertPatientExists(c) { // T353：查无此人 404
+		return
+	}
 	quota, err := h.svc.GetQuota(c.Request.Context(), c.Param("patientId"))
 	if err != nil {
 		failAppErr(c, err)
@@ -243,6 +263,9 @@ func (h *Handler) getWearReminder(c *gin.Context) {
 	if !requireSelfScope(c) {
 		return
 	}
+	if !h.assertPatientExists(c) { // T353：查无此人 404
+		return
+	}
 	settings, err := h.svc.GetWearReminder(c.Request.Context(), c.Param("patientId"))
 	if err != nil {
 		failAppErr(c, err)
@@ -274,6 +297,9 @@ func (h *Handler) updateWearReminder(c *gin.Context) {
 // T185 水平鉴权：患者仅可查本人记录，admin 任意。
 func (h *Handler) getPatientNotifications(c *gin.Context) {
 	if !requireSelfScope(c) {
+		return
+	}
+	if !h.assertPatientExists(c) { // T353：查无此人 404（不再回 200 空页）
 		return
 	}
 	page, pageSize := pageParams(c)
