@@ -24,32 +24,58 @@ type mockQuerier struct {
 	docRank    []service.DoctorRankingDTO
 	dist       []service.WearDistributionBucket
 	err        *model.AppError
+
+	// scopes T350：各端点最近一次实收的数据范围（handler → service 透传断言用）
+	scopes map[string]model.TeamScope
 }
 
-func (m *mockQuerier) GetKPI(ctx context.Context, period string) (*service.DashboardKPIDTO, *model.AppError) {
+func (m *mockQuerier) see(op string, scope model.TeamScope) {
+	if m.scopes == nil {
+		m.scopes = map[string]model.TeamScope{}
+	}
+	m.scopes[op] = scope
+}
+
+func (m *mockQuerier) GetKPI(ctx context.Context, period string, scope model.TeamScope) (*service.DashboardKPIDTO, *model.AppError) {
+	m.see("GetKPI", scope)
 	return m.kpi, m.err
 }
-func (m *mockQuerier) GetWearTrend(ctx context.Context, days int) ([]service.WearTrendPoint, *model.AppError) {
+func (m *mockQuerier) GetWearTrend(ctx context.Context, days int, scope model.TeamScope) ([]service.WearTrendPoint, *model.AppError) {
+	m.see("GetWearTrend", scope)
 	return m.wearTrend, m.err
 }
-func (m *mockQuerier) GetAlertTrend(ctx context.Context, days int) ([]service.AlertTrendPoint, *model.AppError) {
+func (m *mockQuerier) GetAlertTrend(ctx context.Context, days int, scope model.TeamScope) ([]service.AlertTrendPoint, *model.AppError) {
+	m.see("GetAlertTrend", scope)
 	return m.alertTrend, m.err
 }
-func (m *mockQuerier) GetTeamRanking(ctx context.Context) ([]service.TeamRankingDTO, *model.AppError) {
+func (m *mockQuerier) GetTeamRanking(ctx context.Context, scope model.TeamScope) ([]service.TeamRankingDTO, *model.AppError) {
+	m.see("GetTeamRanking", scope)
 	return m.teamRank, m.err
 }
-func (m *mockQuerier) GetDoctorRanking(ctx context.Context) ([]service.DoctorRankingDTO, *model.AppError) {
+func (m *mockQuerier) GetDoctorRanking(ctx context.Context, scope model.TeamScope) ([]service.DoctorRankingDTO, *model.AppError) {
+	m.see("GetDoctorRanking", scope)
 	return m.docRank, m.err
 }
-func (m *mockQuerier) GetWearDistribution(ctx context.Context) ([]service.WearDistributionBucket, *model.AppError) {
+func (m *mockQuerier) GetWearDistribution(ctx context.Context, scope model.TeamScope) ([]service.WearDistributionBucket, *model.AppError) {
+	m.see("GetWearDistribution", scope)
 	return m.dist, m.err
 }
 
 // newRouterWithMockQuerier 创建带 Mock Querier 的 Router（直接使用 Handler 自建的 Gin Engine）
 func newRouterWithMockQuerier(q DashboardQuerier) *gin.Engine {
+	return newRouterWithScopeDeps(q, nil)
+}
+
+// newRouterWithScopeDeps T350：Dashboard 范围推导要读 patients/doctors，故一并注入 PatientLookup。
+func newRouterWithScopeDeps(q DashboardQuerier, lookup PatientLookup) *gin.Engine {
 	svc := &service.RecordService{}
 	h := New(svc)
-	h.SetDashboardQuerier(q)
+	if q != nil {
+		h.SetDashboardQuerier(q)
+	}
+	if lookup != nil {
+		h.SetPatientLookup(lookup)
+	}
 	return h.Router() // return the engine created inside Handler#Router()
 }
 

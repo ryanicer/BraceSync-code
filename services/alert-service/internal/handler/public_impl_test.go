@@ -55,6 +55,18 @@ type fakePublicStore struct {
 	exportErr   error
 	exportLimit int
 	exportHits  int
+
+	// T350 医护团队范围推导（DoctorTeamByAdmin 替身）
+	doctorTeam     string
+	doctorTeamOK   bool
+	doctorTeamErr  error
+	doctorTeamHits int
+}
+
+// DoctorTeamByAdmin T350：默认返回「查不到团队」，即受限身份 + 空团队 = 空集
+func (s *fakePublicStore) DoctorTeamByAdmin(_ context.Context, _ string) (string, bool, error) {
+	s.doctorTeamHits++
+	return s.doctorTeam, s.doctorTeamOK, s.doctorTeamErr
 }
 
 func (s *fakePublicStore) ListAlerts(_ context.Context, f repo.AlertQueryFilter) ([]repo.AlertRow, int64, error) {

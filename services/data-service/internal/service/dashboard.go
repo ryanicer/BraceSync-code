@@ -112,9 +112,11 @@ type WearDistributionBucket struct {
 // ─────────────────────────────────────────────────────────────
 
 // DashboardCache KPI 缓存依赖（repo.DashboardCache 实现）
+//
+// T350：键含数据范围（repo.KeyDashboardKPI），否则医生会命中运营回填的全院数字。
 type DashboardCache interface {
-	GetKPI(ctx context.Context, period string) (string, error)
-	SetKPI(ctx context.Context, period, valueJSON string, ttl time.Duration) error
+	GetKPI(ctx context.Context, period string, scope model.TeamScope) (string, error)
+	SetKPI(ctx context.Context, period string, scope model.TeamScope, valueJSON string, ttl time.Duration) error
 }
 
 // DashboardService Dashboard 查询编排（store 由 main 注入 repo.DashboardRepo）
@@ -148,14 +150,17 @@ func (s *DashboardService) periodWindow(period string) (fromDate string, fromTim
 
 // GetKPI 契约 getDashboardKPI：缓存命中直返；未命中查库并回填（TTL 60s，§4.7）。
 // Redis 故障降级直查 DB（可用性优先）。
-func (s *DashboardService) GetKPI(ctx context.Context, period string) (*DashboardKPIDTO, *model.AppError) {
+//
+// scope 由 handler 从网关身份推导（T350：ROLE_DOCTOR → 本团队，其余全院），
+// 当前窗与对比窗必须同一 scope，否则「较昨日」变成跨团队比较。
+func (s *DashboardService) GetKPI(ctx context.Context, period string, scope model.TeamScope) (*DashboardKPIDTO, *model.AppError) {
 	fromDate, fromTime, days, appErr := s.periodWindow(period)
 	if appErr != nil {
 		return nil, appErr
 	}
 
 	if s.cache != nil {
-		if cached, err := s.cache.GetKPI(ctx, period); err != nil {
+		if cached, err := s.cache.GetKPI(ctx, period, scope); err != nil {
 			log.Warn().Err(err).Str("period", period).Msg("dashboard kpi cache read failed, fallback to DB")
 		} else if cached != "" {
 			var dto DashboardKPIDTO
@@ -167,7 +172,7 @@ func (s *DashboardService) GetKPI(ctx context.Context, period string) (*Dashboar
 	}
 
 	monthStart := time.Date(fromTime.Year(), fromTime.Month(), 1, 0, 0, 0, 0, model.CSTZone())
-	row, err := s.store.KPI(ctx, fromDate, fromTime, monthStart)
+	row, err := s.store.KPI(ctx, fromDate, fromTime, monthStart, scope)
 	if err != nil {
 		log.Error().Err(err).Str("period", period).Msg("query dashboard kpi failed")
 		return nil, model.ErrInternal("query dashboard kpi failed")
@@ -185,14 +190,14 @@ func (s *DashboardService) GetKPI(ctx context.Context, period string) (*Dashboar
 	prevStart := fromTime.AddDate(0, 0, -days)
 	prevMonthStart := monthStart.AddDate(0, -1, 0)
 	cmp, cmpErr := s.store.KPICompare(ctx, prevStart.Format("2006-01-02"), fromDate,
-		prevStart, fromTime, monthStart, prevMonthStart)
+		prevStart, fromTime, monthStart, prevMonthStart, scope)
 	if cmpErr != nil {
 		log.Error().Err(cmpErr).Str("period", period).Msg("query dashboard kpi compare failed, comparison omitted")
 	} else {
 		fillKPIComparison(dto, cmp)
 	}
 	if data, mErr := json.Marshal(dto); mErr == nil && s.cache != nil {
-		if sErr := s.cache.SetKPI(ctx, period, string(data), kpiCacheTTL); sErr != nil {
+		if sErr := s.cache.SetKPI(ctx, period, scope, string(data), kpiCacheTTL); sErr != nil {
 			log.Warn().Err(sErr).Str("period", period).Msg("dashboard kpi cache backfill failed")
 		}
 	}
@@ -211,7 +216,7 @@ func validateDays(days int) (int, *model.AppError) {
 }
 
 // GetWearTrend 契约 getWearTrend：近 days 日平均佩戴小时（缺失日补 0）
-func (s *DashboardService) GetWearTrend(ctx context.Context, days int) ([]WearTrendPoint, *model.AppError) {
+func (s *DashboardService) GetWearTrend(ctx context.Context, days int, scope model.TeamScope) ([]WearTrendPoint, *model.AppError) {
 	days, appErr := validateDays(days)
 	if appErr != nil {
 		return nil, appErr
@@ -219,7 +224,7 @@ func (s *DashboardService) GetWearTrend(ctx context.Context, days int) ([]WearTr
 	to := s.now().In(model.CSTZone())
 	from := time.Date(to.Year(), to.Month(), to.Day()-(days-1), 0, 0, 0, 0, model.CSTZone())
 
-	rows, err := s.store.WearTrend(ctx, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	rows, err := s.store.WearTrend(ctx, from.Format("2006-01-02"), to.Format("2006-01-02"), scope)
 	if err != nil {
 		log.Error().Err(err).Msg("query wear trend failed")
 		return nil, model.ErrInternal("query wear trend failed")
@@ -237,7 +242,7 @@ func (s *DashboardService) GetWearTrend(ctx context.Context, days int) ([]WearTr
 }
 
 // GetAlertTrend 契约 getAlertTrend：近 days 日告警数（业务时区切日，缺失日补 0）
-func (s *DashboardService) GetAlertTrend(ctx context.Context, days int) ([]AlertTrendPoint, *model.AppError) {
+func (s *DashboardService) GetAlertTrend(ctx context.Context, days int, scope model.TeamScope) ([]AlertTrendPoint, *model.AppError) {
 	days, appErr := validateDays(days)
 	if appErr != nil {
 		return nil, appErr
@@ -245,7 +250,7 @@ func (s *DashboardService) GetAlertTrend(ctx context.Context, days int) ([]Alert
 	to := s.now().In(model.CSTZone())
 	from := time.Date(to.Year(), to.Month(), to.Day()-(days-1), 0, 0, 0, 0, model.CSTZone())
 
-	rows, err := s.store.AlertTrend(ctx, from)
+	rows, err := s.store.AlertTrend(ctx, from, scope)
 	if err != nil {
 		log.Error().Err(err).Msg("query alert trend failed")
 		return nil, model.ErrInternal("query alert trend failed")
@@ -269,8 +274,8 @@ func (s *DashboardService) rankingFromDate() string {
 }
 
 // GetTeamRanking 契约 getTeamRanking:团队排行 Top 10(近 7 日窗口)
-func (s *DashboardService) GetTeamRanking(ctx context.Context) ([]TeamRankingDTO, *model.AppError) {
-	rows, err := s.store.TeamRanking(ctx, s.rankingFromDate(), model.WearTargetMinutes)
+func (s *DashboardService) GetTeamRanking(ctx context.Context, scope model.TeamScope) ([]TeamRankingDTO, *model.AppError) {
+	rows, err := s.store.TeamRanking(ctx, s.rankingFromDate(), model.WearTargetMinutes, scope)
 	if err != nil {
 		log.Error().Err(err).Msg("query team ranking failed")
 		return nil, model.ErrInternal("query team ranking failed")
@@ -292,8 +297,8 @@ func (s *DashboardService) GetTeamRanking(ctx context.Context) ([]TeamRankingDTO
 }
 
 // GetDoctorRanking 契约 getDoctorRanking:医生排行 Top 10(近 7 日窗口)
-func (s *DashboardService) GetDoctorRanking(ctx context.Context) ([]DoctorRankingDTO, *model.AppError) {
-	rows, err := s.store.DoctorRanking(ctx, s.rankingFromDate(), model.WearTargetMinutes)
+func (s *DashboardService) GetDoctorRanking(ctx context.Context, scope model.TeamScope) ([]DoctorRankingDTO, *model.AppError) {
+	rows, err := s.store.DoctorRanking(ctx, s.rankingFromDate(), model.WearTargetMinutes, scope)
 	if err != nil {
 		log.Error().Err(err).Msg("query doctor ranking failed")
 		return nil, model.ErrInternal("query doctor ranking failed")
@@ -327,8 +332,8 @@ var wearDistributionRanges = []struct {
 }
 
 // GetWearDistribution 契约 getWearDistribution：按患者近 7 日日均佩戴时长分桶计数
-func (s *DashboardService) GetWearDistribution(ctx context.Context) ([]WearDistributionBucket, *model.AppError) {
-	avgs, err := s.store.PatientAvgWearMinutes(ctx, s.rankingFromDate())
+func (s *DashboardService) GetWearDistribution(ctx context.Context, scope model.TeamScope) ([]WearDistributionBucket, *model.AppError) {
+	avgs, err := s.store.PatientAvgWearMinutes(ctx, s.rankingFromDate(), scope)
 	if err != nil {
 		log.Error().Err(err).Msg("query wear distribution failed")
 		return nil, model.ErrInternal("query wear distribution failed")

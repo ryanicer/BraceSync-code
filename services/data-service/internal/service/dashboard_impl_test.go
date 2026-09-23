@@ -35,39 +35,56 @@ type mockDashboardStore struct {
 	docRows   []repo.RankingRow
 	avgWears  []float64
 	err       error
+
+	// scopes T350：各方法最近一次实收的数据范围，供 team_scope 用例断言透传
+	scopes map[string]model.TeamScope
 }
 
-func (m *mockDashboardStore) KPI(ctx context.Context, from string, alertFrom, monthStart time.Time) (*repo.KPIRow, error) {
+// see 记录一次实收 scope（结构体以字面量构造，map 懒初始化）
+func (m *mockDashboardStore) see(op string, scope model.TeamScope) {
+	if m.scopes == nil {
+		m.scopes = map[string]model.TeamScope{}
+	}
+	m.scopes[op] = scope
+}
+
+func (m *mockDashboardStore) KPI(ctx context.Context, from string, alertFrom, monthStart time.Time, scope model.TeamScope) (*repo.KPIRow, error) {
+	m.see("KPI", scope)
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.kpiRow, nil
 }
-func (m *mockDashboardStore) WearTrend(ctx context.Context, fromDate, toDate string) ([]repo.TrendRow, error) {
+func (m *mockDashboardStore) WearTrend(ctx context.Context, fromDate, toDate string, scope model.TeamScope) ([]repo.TrendRow, error) {
+	m.see("WearTrend", scope)
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.wearRows, nil
 }
-func (m *mockDashboardStore) AlertTrend(ctx context.Context, from time.Time) ([]repo.TrendRow, error) {
+func (m *mockDashboardStore) AlertTrend(ctx context.Context, from time.Time, scope model.TeamScope) ([]repo.TrendRow, error) {
+	m.see("AlertTrend", scope)
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.alertRows, nil
 }
-func (m *mockDashboardStore) TeamRanking(ctx context.Context, fromDate string, wearTargetMin int) ([]repo.RankingRow, error) {
+func (m *mockDashboardStore) TeamRanking(ctx context.Context, fromDate string, wearTargetMin int, scope model.TeamScope) ([]repo.RankingRow, error) {
+	m.see("TeamRanking", scope)
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.teamRows, nil
 }
-func (m *mockDashboardStore) DoctorRanking(ctx context.Context, fromDate string, wearTargetMin int) ([]repo.RankingRow, error) {
+func (m *mockDashboardStore) DoctorRanking(ctx context.Context, fromDate string, wearTargetMin int, scope model.TeamScope) ([]repo.RankingRow, error) {
+	m.see("DoctorRanking", scope)
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.docRows, nil
 }
-func (m *mockDashboardStore) PatientAvgWearMinutes(ctx context.Context, fromDate string) ([]float64, error) {
+func (m *mockDashboardStore) PatientAvgWearMinutes(ctx context.Context, fromDate string, scope model.TeamScope) ([]float64, error) {
+	m.see("PatientAvgWear", scope)
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -78,11 +95,11 @@ func TestServicePeriodWindow(t *testing.T) {
 	store := &mockDashboardStore{kpiRow: &repo.KPIRow{TotalPatients: 1}}
 	svc := NewDashboardService(store, nil)
 	// today 周期合法，直接返回数据（无缓存）
-	dto, appErr := svc.GetKPI(context.Background(), "today")
+	dto, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
 	require.Nil(t, appErr)
 	assert.Equal(t, int64(1), dto.TotalPatients)
 	// invalid period → ErrQueryParam
-	_, appErr = svc.GetKPI(context.Background(), "year")
+	_, appErr = svc.GetKPI(context.Background(), "year", model.ScopeAll())
 	assert.NotNil(t, appErr)
 }
 
@@ -93,7 +110,7 @@ func TestServiceGetKPI_Error(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return time.Now() }
 
-	_, appErr := svc.GetKPI(context.Background(), "today")
+	_, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
 	require.NotNil(t, appErr)
 	assert.Contains(t, appErr.Message, "query dashboard kpi failed") // ErrInternal
 }
@@ -103,7 +120,7 @@ func TestServiceGetWearTrend_Error(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return time.Now() }
 
-	_, appErr := svc.GetWearTrend(context.Background(), 7)
+	_, appErr := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.NotNil(t, appErr)
 	assert.Contains(t, appErr.Message, "query wear trend failed") // ErrInternal
 }
@@ -113,7 +130,7 @@ func TestServiceGetAlertTrend_Error(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return time.Now() }
 
-	_, appErr := svc.GetAlertTrend(context.Background(), 7)
+	_, appErr := svc.GetAlertTrend(context.Background(), 7, model.ScopeAll())
 	require.NotNil(t, appErr)
 	assert.Contains(t, appErr.Message, "query alert trend failed") // ErrInternal
 }
@@ -123,7 +140,7 @@ func TestServiceGetTeamRanking_Error(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return time.Now() }
 
-	_, appErr := svc.GetTeamRanking(context.Background())
+	_, appErr := svc.GetTeamRanking(context.Background(), model.ScopeAll())
 	require.NotNil(t, appErr)
 	assert.Contains(t, appErr.Message, "query team ranking failed") // ErrInternal
 }
@@ -133,7 +150,7 @@ func TestServiceGetDoctorRanking_Error(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return time.Now() }
 
-	_, appErr := svc.GetDoctorRanking(context.Background())
+	_, appErr := svc.GetDoctorRanking(context.Background(), model.ScopeAll())
 	require.NotNil(t, appErr)
 	assert.Contains(t, appErr.Message, "query doctor ranking failed") // ErrInternal
 }
@@ -143,7 +160,7 @@ func TestServiceGetWearDistribution_Error(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return time.Now() }
 
-	_, appErr := svc.GetWearDistribution(context.Background())
+	_, appErr := svc.GetWearDistribution(context.Background(), model.ScopeAll())
 	require.NotNil(t, appErr)
 	assert.Contains(t, appErr.Message, "query wear distribution failed") // ErrInternal
 }
@@ -178,16 +195,16 @@ func TestServiceGetKPICacheHit(t *testing.T) {
 	require.NoError(t, err)
 
 	// 先回写缓存
-	err = svc.cache.SetKPI(ctx, "week", string(data), kpiCacheTTL)
+	err = svc.cache.SetKPI(ctx, "week", model.ScopeAll(), string(data), kpiCacheTTL)
 	require.NoError(t, err)
 
 	// 调用时缓存命中，store 不应被访问（mockStore 应保持不变）
-	dto, appErr := svc.GetKPI(ctx, "week")
+	dto, appErr := svc.GetKPI(ctx, "week", model.ScopeAll())
 	require.Nil(t, appErr)
 	assert.Equal(t, kpiDTO.TotalPatients, dto.TotalPatients)
 
 	// 验证 TTL 已设置
-	ttl := mr.TTL(repo.KeyDashboardKPI("week"))
+	ttl := mr.TTL(repo.KeyDashboardKPI("week", model.ScopeAll()))
 	assert.Less(t, ttl.Seconds(), float64(kpiCacheTTL.Seconds()+2))
 }
 
@@ -200,7 +217,7 @@ func TestServiceGetKPIDegradation(t *testing.T) {
 	// Redis 故障：mr.Stop() 模拟不可用
 	mr.Close()
 
-	dto, appErr := svc.GetKPI(ctx, "today")
+	dto, appErr := svc.GetKPI(ctx, "today", model.ScopeAll())
 	require.Nil(t, appErr) // 降级成功
 	assert.Equal(t, int64(999), dto.TotalPatients)
 }
@@ -231,7 +248,7 @@ func TestServiceGetWearTrend_GapFilling(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	list, err := svc.GetWearTrend(context.Background(), 7)
+	list, err := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.Nil(t, err)
 	assert.Len(t, list, 7) // 填充 7 天（含今日）
 	// 检查最近的一天（今天是 8/11）格式 MM-DD
@@ -255,7 +272,7 @@ func TestServiceGetAlertTrend_TimezoneCutDay(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	list, err := svc.GetAlertTrend(context.Background(), 2)
+	list, err := svc.GetAlertTrend(context.Background(), 2, model.ScopeAll())
 	require.Nil(t, err)
 	assert.Len(t, list, 2)
 	// 业务时区切日：CST 03:00 属于当日（8/11），因此只有一条
@@ -280,7 +297,7 @@ func TestServiceGetTeamRanking_Top10(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	list, err := svc.GetTeamRanking(context.Background())
+	list, err := svc.GetTeamRanking(context.Background(), model.ScopeAll())
 	require.Nil(t, err)
 	assert.Len(t, list, 10) // 只返回 Top 10
 	for i, r := range list {
@@ -300,7 +317,7 @@ func TestServiceGetDoctorRanking_ComplianceRate(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	list, err := svc.GetDoctorRanking(context.Background())
+	list, err := svc.GetDoctorRanking(context.Background(), model.ScopeAll())
 	require.Nil(t, err)
 	assert.Len(t, list, 2)
 	// doctor-ranking 按 compliance_rate DESC 排序（由 SQL 控制）
@@ -318,7 +335,7 @@ func TestServiceGetWearDistribution_Buckets(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	dist, err := svc.GetWearDistribution(context.Background())
+	dist, err := svc.GetWearDistribution(context.Background(), model.ScopeAll())
 	require.Nil(t, err)
 	assert.Len(t, dist, 5) // 5 个固定桶
 	// 基本断言：总数等于输入长度
@@ -384,7 +401,7 @@ func TestServiceGetWearTrend_SinglePatientOverCap(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	list, err := svc.GetWearTrend(context.Background(), 7)
+	list, err := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.Nil(t, err)
 	// 最后一天是 09-02，avgHours 应 ≤ 24（24h 物理上限）
 	assert.LessOrEqual(t, list[6].AvgHours, 24.0, "avgHours 不应超过 24h 物理上限")
@@ -404,7 +421,7 @@ func TestServiceGetWearTrend_MultiPatientOneAbnormal(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	list, err := svc.GetWearTrend(context.Background(), 7)
+	list, err := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.Nil(t, err)
 	assert.Equal(t, 24.0, list[6].AvgHours, "1440/60=24h，刚好等于物理上限")
 }
@@ -420,7 +437,7 @@ func TestServiceGetWearTrend_NormalDay(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	list, err := svc.GetWearTrend(context.Background(), 7)
+	list, err := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.Nil(t, err)
 	assert.Equal(t, 12.0, list[6].AvgHours, "正常值不应被 cap")
 }
@@ -439,7 +456,7 @@ func TestServiceGetKPI_AvgWearHoursCap(t *testing.T) {
 	}}
 	svc := NewDashboardService(mockStore, nil)
 
-	dto, appErr := svc.GetKPI(ctx, "today")
+	dto, appErr := svc.GetKPI(ctx, "today", model.ScopeAll())
 	require.Nil(t, appErr)
 	assert.LessOrEqual(t, dto.AvgWearHours, 24.0, "KPI AvgWearHours 不应超过 24h")
 	assert.Equal(t, 24.0, dto.AvgWearHours)
@@ -458,7 +475,7 @@ func TestServiceGetTeamRanking_AvgDailyWearCap(t *testing.T) {
 	svc := NewDashboardService(store, nil)
 	svc.now = func() time.Time { return nowTS }
 
-	list, err := svc.GetTeamRanking(ctx)
+	list, err := svc.GetTeamRanking(ctx, model.ScopeAll())
 	require.Nil(t, err)
 	assert.Len(t, list, 2)
 	assert.LessOrEqual(t, list[0].AvgDailyWear, 24.0, "异常值应被 cap 到 24h")

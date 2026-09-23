@@ -24,13 +24,15 @@ import (
 )
 
 // DashboardQuerier Dashboard 查询契约（service.DashboardService 实现）
+//
+// 末位 scope：T350 数据范围，由 handler 从网关身份推导（医生 = 本团队，其余 = 全院）。
 type DashboardQuerier interface {
-	GetKPI(ctx context.Context, period string) (*service.DashboardKPIDTO, *model.AppError)
-	GetWearTrend(ctx context.Context, days int) ([]service.WearTrendPoint, *model.AppError)
-	GetAlertTrend(ctx context.Context, days int) ([]service.AlertTrendPoint, *model.AppError)
-	GetTeamRanking(ctx context.Context) ([]service.TeamRankingDTO, *model.AppError)
-	GetDoctorRanking(ctx context.Context) ([]service.DoctorRankingDTO, *model.AppError)
-	GetWearDistribution(ctx context.Context) ([]service.WearDistributionBucket, *model.AppError)
+	GetKPI(ctx context.Context, period string, scope model.TeamScope) (*service.DashboardKPIDTO, *model.AppError)
+	GetWearTrend(ctx context.Context, days int, scope model.TeamScope) ([]service.WearTrendPoint, *model.AppError)
+	GetAlertTrend(ctx context.Context, days int, scope model.TeamScope) ([]service.AlertTrendPoint, *model.AppError)
+	GetTeamRanking(ctx context.Context, scope model.TeamScope) ([]service.TeamRankingDTO, *model.AppError)
+	GetDoctorRanking(ctx context.Context, scope model.TeamScope) ([]service.DoctorRankingDTO, *model.AppError)
+	GetWearDistribution(ctx context.Context, scope model.TeamScope) ([]service.WearDistributionBucket, *model.AppError)
 }
 
 // SetDashboardQuerier 注入 Dashboard 数据源（生产由 main 注入；未注入时端点返回 500）
@@ -54,7 +56,11 @@ func (h *Handler) getDashboardKPI(c *gin.Context) {
 		return
 	}
 	period := c.DefaultQuery("period", "today")
-	dto, appErr := h.dashboard.GetKPI(c.Request.Context(), period)
+	scope, allowed := h.dashboardScope(c) // T350：医生只看本团队患者
+	if !allowed {
+		return
+	}
+	dto, appErr := h.dashboard.GetKPI(c.Request.Context(), period, scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -86,7 +92,11 @@ func (h *Handler) getWearTrend(c *gin.Context) {
 		fail(c, appErr)
 		return
 	}
-	list, appErr := h.dashboard.GetWearTrend(c.Request.Context(), days)
+	scope, allowed := h.dashboardScope(c) // T350：医生只看本团队患者
+	if !allowed {
+		return
+	}
+	list, appErr := h.dashboard.GetWearTrend(c.Request.Context(), days, scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -105,7 +115,11 @@ func (h *Handler) getAlertTrend(c *gin.Context) {
 		fail(c, appErr)
 		return
 	}
-	list, appErr := h.dashboard.GetAlertTrend(c.Request.Context(), days)
+	scope, allowed := h.dashboardScope(c) // T350：医生只看本团队患者
+	if !allowed {
+		return
+	}
+	list, appErr := h.dashboard.GetAlertTrend(c.Request.Context(), days, scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -119,7 +133,11 @@ func (h *Handler) getTeamRanking(c *gin.Context) {
 		fail(c, model.ErrInternal("dashboard querier not configured"))
 		return
 	}
-	list, appErr := h.dashboard.GetTeamRanking(c.Request.Context())
+	scope, allowed := h.dashboardScope(c) // T350：医生只看本团队那一行
+	if !allowed {
+		return
+	}
+	list, appErr := h.dashboard.GetTeamRanking(c.Request.Context(), scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -133,7 +151,11 @@ func (h *Handler) getDoctorRanking(c *gin.Context) {
 		fail(c, model.ErrInternal("dashboard querier not configured"))
 		return
 	}
-	list, appErr := h.dashboard.GetDoctorRanking(c.Request.Context())
+	scope, allowed := h.dashboardScope(c) // T350：医生只看本科室医生
+	if !allowed {
+		return
+	}
+	list, appErr := h.dashboard.GetDoctorRanking(c.Request.Context(), scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -147,7 +169,11 @@ func (h *Handler) getWearDistribution(c *gin.Context) {
 		fail(c, model.ErrInternal("dashboard querier not configured"))
 		return
 	}
-	list, appErr := h.dashboard.GetWearDistribution(c.Request.Context())
+	scope, allowed := h.dashboardScope(c) // T350：医生只看本团队患者的分布
+	if !allowed {
+		return
+	}
+	list, appErr := h.dashboard.GetWearDistribution(c.Request.Context(), scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return

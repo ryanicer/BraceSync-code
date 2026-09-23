@@ -46,6 +46,9 @@ func (h *Handler) getHealthReports(c *gin.Context) {
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
 		return
 	}
+	if !h.assertTeamScope(c, patientID) { // T350：医护仅限本团队患者
+		return
+	}
 	if !h.assertPatientExists(c, patientID) { // T340
 		return
 	}

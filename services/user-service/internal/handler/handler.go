@@ -745,17 +745,25 @@ func toPatientDTO(r repo.PatientRow) model.AdminPatientDTO {
 }
 
 // listPatients GET /api/v1/admin/patients —— 分页 + keyword/teamId 筛选（姓名 join）
+//
+// T350 数据范围（PRD §7D.11）：teamId 查询参数只对不受团队限制的角色（运营 / 客服）生效；
+// 医护一律按 doctors.team_id 推导出的所属团队过滤，客户端自报 teamId 被忽略。
 func (h *Handler) listPatients(c *gin.Context) {
 	page, pageSize, appErr := parsePaging(c)
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
 	rows, total, err := h.store.ListPatients(c.Request.Context(), repo.PatientFilter{
-		Keyword:  strings.TrimSpace(c.Query("keyword")),
-		TeamID:   c.Query("teamId"),
-		Page:     page,
-		PageSize: pageSize,
+		Keyword:    strings.TrimSpace(c.Query("keyword")),
+		TeamID:     scope.filterTeamID(strings.TrimSpace(c.Query("teamId"))),
+		TeamScoped: scope.limited,
+		Page:       page,
+		PageSize:   pageSize,
 	})
 	if err != nil {
 		fail(c, model.ErrInternal("list patients failed"))
@@ -769,7 +777,13 @@ func (h *Handler) listPatients(c *gin.Context) {
 }
 
 // getPatient GET /api/v1/admin/patients/:patientId —— 详情，不存在 404
+//
+// T350：医护访问非本团队患者 → 403（水平越权优先于 404，与 gateway proxy_services.go:64 同口径）。
 func (h *Handler) getPatient(c *gin.Context) {
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
 	row, err := h.store.GetPatient(c.Request.Context(), c.Param("patientId"))
 	if err != nil {
 		fail(c, model.ErrInternal("get patient failed"))
@@ -777,6 +791,10 @@ func (h *Handler) getPatient(c *gin.Context) {
 	}
 	if row == nil {
 		fail(c, model.ErrNotFound("patient not found: %s", c.Param("patientId")))
+		return
+	}
+	if !scope.allowsPatient(patientTeamID(row.TeamID)) {
+		denyCrossTeam(c, c.Param("patientId"))
 		return
 	}
 	ok(c, toPatientDTO(*row))
@@ -1654,6 +1672,7 @@ func (h *Handler) getTeamStats(c *gin.Context) {
 
 // listFeelingLogsAdmin GET /api/v1/admin/feeling-logs —— 跨患者感受日志流（T256 #2）
 // 支持 keyword / startDate / endDate / feeling 筛选 + 分页。
+// T350：医护只可见本团队患者的日志（团队维度由身份推导，不接受客户端参数）。
 func (h *Handler) listFeelingLogsAdmin(c *gin.Context) {
 	page, pageSize, appErr := parsePaging(c)
 	if appErr != nil {
@@ -1665,13 +1684,19 @@ func (h *Handler) listFeelingLogsAdmin(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid feeling: %s (fitted|discomfort)", feeling))
 		return
 	}
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
 	rows, total, err := h.store.ListFeelingLogsAdmin(c.Request.Context(), repo.FeelingLogAdminFilter{
-		Keyword:   strings.TrimSpace(c.Query("keyword")),
-		StartDate: strings.TrimSpace(c.Query("startDate")),
-		EndDate:   strings.TrimSpace(c.Query("endDate")),
-		Feeling:   feeling,
-		Page:      page,
-		PageSize:  pageSize,
+		Keyword:    strings.TrimSpace(c.Query("keyword")),
+		StartDate:  strings.TrimSpace(c.Query("startDate")),
+		EndDate:    strings.TrimSpace(c.Query("endDate")),
+		Feeling:    feeling,
+		TeamID:     scope.filterTeamID(""),
+		TeamScoped: scope.limited,
+		Page:       page,
+		PageSize:   pageSize,
 	})
 	if err != nil {
 		fail(c, model.ErrInternal("list feeling logs failed"))
