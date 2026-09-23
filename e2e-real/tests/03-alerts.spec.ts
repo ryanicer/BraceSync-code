@@ -245,7 +245,13 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
     await requireDeployedBuild(page, {
       marker: 'T351-alerts-role-403',
       why: '同上——旧包运营侧也是四张 Tab，本条只锁「按角色分叉没把运营一起摘掉」',
-      probe: async (p) => (await p.getByRole('tab').count()) === 4,
+      // T358 同族（与 02-dashboard 2.4 一条形状）：toHaveURL 只代表路由换了，懒加载 chunk 里的
+      // Tab 未必已挂载，一次性 count() 会把「已部署」读成「未部署」。先有界等齐 4 张再取计数。
+      probe: async (p) => {
+        const tabs = p.getByRole('tab')
+        await tabs.nth(3).waitFor({ state: 'attached', timeout: 25_000 }).catch(() => {})
+        return (await tabs.count()) === 4
+      },
     })
 
     await expect(page.getByRole('tab')).toHaveCount(4)
