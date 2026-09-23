@@ -1,9 +1,13 @@
-// Package main — T274 流程画布端点的网关侧登记验证。
+// Package main — T274 流程画布端点的网关侧登记验证（T359 按读/写重切模板一档）。
 //
-// 派发单口径：「网关是默认拒绝策略，新端点不登记就 403」。本文件把 10 条 flow 路由拆成
-// 两组断言方向：
-//   - 模板 5 条（配置级，同 sys_config / alert_rules 一档）→ 仅 ROLE_ADMIN；
+// 派发单口径：「网关是默认拒绝策略，新端点不登记就 403」。本文件把 10 条 flow 路由拆成三组：
+//   - 模板写 3 条（配置级，同 sys_config / alert_rules 一档）→ 仅 ROLE_ADMIN；
+//   - 模板读 2 条（T359：运行态选模板 + 画布取图结构）→ staff 放行、patient 拒；
 //   - 实例 5 条（运行态处置，同 POST /alerts/:id/process 一档）→ staff 放行、patient 拒。
+//
+// T359 的成因：模板两条读端点原与写端点同挤在 adminOnlyPatterns，医护点开告警「处理流程」Tab
+// 必吃 403 红条 + 空白画布，而同 Tab 的实例五条早已按 T274 归 staff —— 同一屏两套口径。
+// 判据是「运行态要不要用」，不是「路径带不带 admin 前缀」。
 //
 // 走真实 setupRouter 链（jwtAuth → roleAuthz → 反代），并核对「未登记差集」由
 // TestRBAC_T190_AllAdminRoutesAreGated 全表兜底。
@@ -17,15 +21,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var t274FlowAdminRoutes = []struct{ method, path string }{
-	{http.MethodGet, "/api/v1/admin/flow/templates"},
+type flowRoute struct{ method, path string }
+
+var t274FlowTemplateWriteRoutes = []flowRoute{
 	{http.MethodPost, "/api/v1/admin/flow/templates"},
-	{http.MethodGet, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4"},
 	{http.MethodPut, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4"},
 	{http.MethodDelete, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4"},
 }
 
-var t274FlowStaffRoutes = []struct{ method, path string }{
+var t359FlowTemplateReadRoutes = []flowRoute{
+	{http.MethodGet, "/api/v1/admin/flow/templates"},
+	{http.MethodGet, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4"},
+}
+
+var t274FlowStaffRoutes = []flowRoute{
 	{http.MethodPost, "/api/v1/admin/flow/instances"},
 	{http.MethodGet, "/api/v1/admin/flow/instances"},
 	{http.MethodGet, "/api/v1/admin/flow/instances/FLOW_I0A1B2C3D4/nodes"},
@@ -34,10 +43,15 @@ var t274FlowStaffRoutes = []struct{ method, path string }{
 }
 
 func TestRBAC_T274_FlowRoutesLandInIntendedMatrix(t *testing.T) {
-	for _, c := range t274FlowAdminRoutes {
-		assert.True(t, matchRBACPattern(c.method, c.path), "模板路由应命中 admin-only：%s %s", c.method, c.path)
+	for _, c := range t274FlowTemplateWriteRoutes {
+		assert.True(t, matchRBACPattern(c.method, c.path), "模板写路由应命中 admin-only：%s %s", c.method, c.path)
 		assert.False(t, matchStaffOnlyPattern(c.method, c.path),
-			"模板路由不得同时命中 staff-only（会放开给患者以外的全部 staff）：%s %s", c.method, c.path)
+			"模板写路由不得同时命中 staff-only（会放开给患者以外的全部 staff）：%s %s", c.method, c.path)
+	}
+	for _, c := range t359FlowTemplateReadRoutes {
+		assert.True(t, matchStaffOnlyPattern(c.method, c.path), "模板读路由应命中 staff-only：%s %s", c.method, c.path)
+		assert.False(t, matchRBACPattern(c.method, c.path),
+			"模板读路由不该仍留在 admin-only（staffOnly 判完还会落这道检查，非 admin 照旧 403）：%s %s", c.method, c.path)
 	}
 	for _, c := range t274FlowStaffRoutes {
 		assert.True(t, matchStaffOnlyPattern(c.method, c.path), "实例路由应命中 staff-only：%s %s", c.method, c.path)
@@ -46,24 +60,62 @@ func TestRBAC_T274_FlowRoutesLandInIntendedMatrix(t *testing.T) {
 	}
 }
 
-func TestRBAC_T274_FlowTemplatesAdminOnly(t *testing.T) {
+func TestRBAC_T274_FlowTemplateWritesAdminOnly(t *testing.T) {
 	backend, received := captureBackend(t)
 	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
 
 	for _, role := range []string{roleDoctor, roleCS, roleTech, rolePatient, "", "ROLE_GHOST"} {
-		for _, c := range t274FlowAdminRoutes {
+		for _, c := range t274FlowTemplateWriteRoutes {
 			code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
 			assert.Equal(t, http.StatusForbidden, code, "role=%q %s %s 应 403", role, c.method, c.path)
 			assert.Contains(t, body, `"code":403`)
 		}
 	}
-	assert.Empty(t, *received, "非 admin 的模板读写不得触达后端")
+	assert.Empty(t, *received, "非 admin 的模板写不得触达后端")
 
-	for _, c := range t274FlowAdminRoutes {
+	for _, c := range t274FlowTemplateWriteRoutes {
 		code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, roleAdmin))
 		assert.Equal(t, http.StatusOK, code, "admin %s %s 不应被误伤，body=%s", c.method, c.path, body)
 	}
-	assert.Len(t, *received, len(t274FlowAdminRoutes), "admin 请求应全部转发后端")
+	assert.Len(t, *received, len(t274FlowTemplateWriteRoutes), "admin 模板写应全部转发后端")
+}
+
+// TestRBAC_T359_FlowTemplateReadsStaffAllowed 本卡的正向判据：四类 staff 都能读模板列表与详情
+// （医护的运行态画布与起流程要靠它），患者/空角色/未知角色仍 403。
+func TestRBAC_T359_FlowTemplateReadsStaffAllowedPatientDenied(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	for _, role := range []string{roleAdmin, roleDoctor, roleCS, roleTech} {
+		for _, c := range t359FlowTemplateReadRoutes {
+			code, body := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusOK, code, "role=%s %s %s 应放行，body=%s", role, c.method, c.path, body)
+		}
+	}
+	assert.Len(t, *received, len(t359FlowTemplateReadRoutes)*4, "staff 4 角色 × 2 条模板读应全部转发后端")
+
+	for _, role := range []string{rolePatient, "", "ROLE_GHOST"} {
+		for _, c := range t359FlowTemplateReadRoutes {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusForbidden, code, "role=%q %s %s 应 403（fail-closed）", role, c.method, c.path)
+		}
+	}
+	assert.Len(t, *received, len(t359FlowTemplateReadRoutes)*4, "患者/未知角色的模板读不得新增触达后端")
+}
+
+// TestRBAC_T359_TemplateReadOpenDoesNotLeakWrites 防「为了放开读顺手把整段挪走」：
+// 同一角色能读模板，不等于能改模板。
+func TestRBAC_T359_TemplateReadOpenDoesNotLeakWrites(t *testing.T) {
+	backend, received := captureBackend(t)
+	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
+
+	for _, role := range []string{roleDoctor, roleCS, roleTech} {
+		for _, c := range t274FlowTemplateWriteRoutes {
+			code, _ := httpDoFull(t, c.method, gw.URL+c.path, `{}`, rbacToken(t, role))
+			assert.Equal(t, http.StatusForbidden, code, "读已放行的 role=%s 打 %s %s 仍应 403", role, c.method, c.path)
+		}
+	}
+	assert.Empty(t, *received, "非 admin 的模板写一条不得触达后端（哪怕其读已放行）")
 }
 
 func TestRBAC_T274_FlowInstancesStaffAllowedPatientDenied(t *testing.T) {
@@ -92,7 +144,8 @@ func TestRBAC_T274_ForgedRoleCannotEscalateFlowTemplates(t *testing.T) {
 	gw := startFullGateway(t, backend.URL, backend.URL, backend.URL, backend.URL, backend.URL, testJWTSecretMain)
 
 	tok := signTestJWT(t, testJWTSecretMain, "P20260002", rolePatient, time.Now().Add(time.Hour).Unix())
-	for _, c := range t274FlowAdminRoutes {
+	allTemplateRoutes := append(append([]flowRoute{}, t274FlowTemplateWriteRoutes...), t359FlowTemplateReadRoutes...)
+	for _, c := range allTemplateRoutes {
 		h := map[string]string{
 			"Authorization": "Bearer " + tok,
 			"X-Role":        roleAdmin,
