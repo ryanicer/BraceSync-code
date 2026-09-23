@@ -142,7 +142,8 @@ interface MenuItem {
   icon: string
 }
 
-// 侧边栏菜单：12 页按当前角色权限过滤（PRD §7D.11）
+// 侧边栏菜单：pageRoutes 全集按当前角色权限过滤（PRD §7D.11）
+// 条数不写死在这里 —— 由 test/permissions.spec.ts 的 PAGE_MODULES 基数断言把关（T345）
 const visibleMenus = computed<MenuItem[]>(() => {
   return pageRoutes
     .filter((r) => canAccess(auth.role ?? '', r.path))

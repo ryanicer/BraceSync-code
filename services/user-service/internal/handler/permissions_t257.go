@@ -23,8 +23,13 @@ import (
 // permissionCatalog 子权限目录。
 //
 // 词表来源：设计稿 权限控制.html:121-187 的 9 个 .perm-group 与 23 个 .perm-item（逐条抄录，
-// 未增未减）；module 取值沿用 roles.permissions_json.modules 既有词表（seed.sql:8-13），
-// 因此「数据概览」= dashboard、「权限控制」= perm、「系统配置」= config，不新造模块名。
+// 未增未减）；module 取值沿用 roles.permissions_json.modules 既有词表（seed.sql 预置角色插入块，
+// 补键后终态见迁移 000026），因此「数据概览」= dashboard、「权限控制」= perm、「系统配置」= config，
+// 不新造模块名。
+//
+// T345 裁定（PM 2026-09-23 23:02）：目录**保持 9 组 23 项不扩**。页面级模块键全集随 T345 扩到 15
+// （新增 review / review_tpl / doctor_acct），但这三页设计稿没画组内勾选项 ⇒ 按上面「不凭空造
+// item」的口径它们只有页面级权限。二者基数不同是刻意状态，不是漏配（断言见 permissions_t257_test.go）。
 //
 // 设计稿另有 3 个 seed 模块（orthosis / install / tech）在本树里没有分组——设计稿未给子权限，
 // 保持只有页面级；给它们凭空造 item 会让前端渲染出设计稿上不存在的勾选项。
