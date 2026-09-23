@@ -7,7 +7,10 @@
 import type { Doctor, PhoneState } from '@bracesync/shared-types'
 import { mockDoctors } from './org'
 
-/** 设计稿 :131/:282 职称词表（doctors.title，预置 4 项、可扩展；≠ 登录角色） */
+/**
+ * 设计稿 :284 职称预置词表（doctors.title，:283 注明「预置 4 项、可扩展」；≠ 登录角色）。
+ * T360：本数组只是下拉词表的前缀，页面下拉取「预置 ∪ 库内出现过的职称」⇒ 见 utils/medicalTitles.ts。
+ */
 export const MEDICAL_TITLES = ['主任医师', '主治医师', '康复师', '护士']
 
 /**
