@@ -37,6 +37,19 @@ func NewRollupService(stats repo.DailyWearStatsStore, cache repo.CacheStore, con
 	}
 }
 
+// wearingThresholdN 佩戴帧判定阈值（T352：与上报链路同源，走 sys_configs
+// wearing_pressure_threshold，读不到回退 model 默认）。
+// 旧实现按 sys_configs collect_interval_minutes（默认 30 分钟）折算佩戴分钟，
+// 实际上报间隔约 31 秒，单日可放大近 58 倍，故改为时间跨度口径、不再读采集间隔。
+func (s *RollupService) wearingThresholdN(ctx context.Context) float64 {
+	if ts, ok := s.configs.(repo.ThresholdStore); ok {
+		if th, err := ts.GetPressureThresholds(ctx); err == nil {
+			return th.WearingN
+		}
+	}
+	return model.WearingThresholdN
+}
+
 // RunDailyRollup 聚合昨日（Asia/Shanghai）所有患者明细 → daily_wear_stats UPSERT
 func (s *RollupService) RunDailyRollup(ctx context.Context) {
 	now := s.now().In(model.CSTZone())
@@ -100,17 +113,11 @@ func (s *RollupService) ProcessBackfillQueue(ctx context.Context) {
 
 // aggregateAndUpsert 聚合指定日期的全部患者并 UPSERT
 func (s *RollupService) aggregateAndUpsert(ctx context.Context, date time.Time, dateStr string) error {
-	interval, _, cfgErr := s.configs.GetDeviceConfig(ctx)
-	if cfgErr != nil {
-		log.Warn().Err(cfgErr).Msg("read device config failed for rollup, fallback 30min")
-		interval = 30
-	}
-
 	// UTC 时间窗口：CST 当日 00:00 ~ 次日 00:00
 	from := date.UTC()
 	to := date.AddDate(0, 0, 1).UTC()
 
-	stats, err := s.stats.AggregateDate(ctx, from, to, interval)
+	stats, err := s.stats.AggregateDate(ctx, from, to, s.wearingThresholdN(ctx))
 	if err != nil {
 		return err
 	}
@@ -135,16 +142,10 @@ func (s *RollupService) aggregateAndUpsert(ctx context.Context, date time.Time, 
 
 // aggregatePatientDate 聚合指定患者+日期并重算 UPSERT
 func (s *RollupService) aggregatePatientDate(ctx context.Context, date time.Time, patientID string) error {
-	interval, _, cfgErr := s.configs.GetDeviceConfig(ctx)
-	if cfgErr != nil {
-		log.Warn().Err(cfgErr).Msg("read device config failed for backfill rollup, fallback 30min")
-		interval = 30
-	}
-
 	from := date.UTC()
 	to := date.AddDate(0, 0, 1).UTC()
 
-	stats, err := s.stats.AggregateDate(ctx, from, to, interval)
+	stats, err := s.stats.AggregateDate(ctx, from, to, s.wearingThresholdN(ctx))
 	if err != nil {
 		return err
 	}

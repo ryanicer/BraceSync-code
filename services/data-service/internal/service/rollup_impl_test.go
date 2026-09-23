@@ -42,7 +42,7 @@ func (f *fakeDailyWearStatsStore) Upsert(_ context.Context, stats []model.DailyW
 	return nil
 }
 
-func (f *fakeDailyWearStatsStore) AggregateDate(_ context.Context, _, _ time.Time, _ int) ([]model.DailyWearStats, error) {
+func (f *fakeDailyWearStatsStore) AggregateDate(_ context.Context, _, _ time.Time, _ float64) ([]model.DailyWearStats, error) {
 	if f.aggErr != nil {
 		return nil, f.aggErr
 	}
@@ -377,7 +377,7 @@ func TestRollupService_TimeZoneDayBoundary(t *testing.T) {
 // 确保 AggregateDate 接收 from/to 参数（UTC 时间窗口）
 func TestRollupService_AggregateDateCalledWithUTCWindow(t *testing.T) {
 	var capturedFrom, capturedTo time.Time
-	stats := &captureAggStore{capture: func(from, to time.Time) {
+	stats := &captureAggStore{capture: func(from, to time.Time, _ float64) {
 		capturedFrom, capturedTo = from, to
 	}}
 	cache := newFakeCache()
@@ -395,12 +395,12 @@ func TestRollupService_AggregateDateCalledWithUTCWindow(t *testing.T) {
 }
 
 type captureAggStore struct {
-	capture func(from, to time.Time)
+	capture func(from, to time.Time, wearingThresholdN float64)
 }
 
 func (c *captureAggStore) Upsert(_ context.Context, _ []model.DailyWearStats) error { return nil }
-func (c *captureAggStore) AggregateDate(_ context.Context, from, to time.Time, _ int) ([]model.DailyWearStats, error) {
-	c.capture(from, to)
+func (c *captureAggStore) AggregateDate(_ context.Context, from, to time.Time, wearingThresholdN float64) ([]model.DailyWearStats, error) {
+	c.capture(from, to, wearingThresholdN)
 	return nil, nil
 }
 func (c *captureAggStore) QueryRange(_ context.Context, _ string, _, _ time.Time) ([]model.DailyWearStats, error) {
@@ -408,6 +408,60 @@ func (c *captureAggStore) QueryRange(_ context.Context, _ string, _, _ time.Time
 }
 func (c *captureAggStore) ListPatientsWithStats(_ context.Context, _, _ time.Time) ([]string, error) {
 	return nil, nil
+}
+
+// t352ThresholdConfigs 同时实现 ConfigStore 与 ThresholdStore（生产 ConfigRepo 的形态）
+type t352ThresholdConfigs struct {
+	intervalMinutes       int
+	wearingN              float64
+	thresholdCalls, devNm int
+}
+
+func (c *t352ThresholdConfigs) GetDeviceConfig(context.Context) (int, int, error) {
+	c.devNm++
+	return c.intervalMinutes, 1, nil
+}
+
+func (c *t352ThresholdConfigs) GetPressureThresholds(context.Context) (model.PressureThresholds, error) {
+	c.thresholdCalls++
+	th := model.DefaultPressureThresholds()
+	th.WearingN = c.wearingN
+	return th, nil
+}
+
+// T352：rollup 不再按「帧数 × 配置采集间隔」折分钟，佩戴判定阈值改读 sys_configs
+func TestRollupService_AggregateUsesConfiguredWearingThresholdNotInterval(t *testing.T) {
+	var gotThreshold float64
+	called := 0
+	stats := &captureAggStore{capture: func(_, _ time.Time, wearingThresholdN float64) {
+		gotThreshold = wearingThresholdN
+		called++
+	}}
+	cfg := &t352ThresholdConfigs{intervalMinutes: 30, wearingN: 0.42}
+
+	svc := NewRollupService(stats, newFakeCache(), cfg)
+	svc.now = func() time.Time { return time.Date(2026, 8, 10, 16, 10, 0, 0, time.UTC) }
+
+	svc.RunDailyRollup(context.Background())
+
+	require.Equal(t, 1, called)
+	assert.InDelta(t, 0.42, gotThreshold, 1e-9, "佩戴阈值取配置 WearingN")
+	assert.Equal(t, 1, cfg.thresholdCalls)
+	assert.Zero(t, cfg.devNm, "rollup 不再读 collect_interval_minutes")
+}
+
+// 配置不可用（未实现 ThresholdStore）时回退默认阈值，不因取配置失败而中断聚合
+func TestRollupService_FallsBackToDefaultWearingThreshold(t *testing.T) {
+	var gotThreshold float64
+	stats := &captureAggStore{capture: func(_, _ time.Time, wearingThresholdN float64) {
+		gotThreshold = wearingThresholdN
+	}}
+	svc := NewRollupService(stats, newFakeCache(), &fakeConfigs{interval: 30, version: 1})
+	svc.now = func() time.Time { return time.Date(2026, 8, 10, 16, 10, 0, 0, time.UTC) }
+
+	svc.RunDailyRollup(context.Background())
+
+	assert.InDelta(t, model.WearingThresholdN, gotThreshold, 1e-9)
 }
 
 // 确保 repo 接口编译正确
