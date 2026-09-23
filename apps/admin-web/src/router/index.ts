@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouterHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { canAccess, landingPathFor } from './permissions'
+import { isChunkLoadError, shouldRecoverTo, clearRecoverFlag } from './navRecovery'
 
 // 业务页路由（对齐架构 §5.4 / PRD §7D，meta.title 用于顶栏与菜单，菜单顺序即此数组顺序）
 export const pageRoutes: RouteRecordRaw[] = [
@@ -67,7 +68,27 @@ export function createAppRouter(history?: RouterHistory) {
     routes,
   })
   registerPermissionGuard(router)
+  registerNavigationRecovery(router)
   return router
+}
+
+/**
+ * T355：懒加载 chunk 拉取失败会让导航静默中断（停在 /login、无任何提示）。
+ * onError 记录现场并对该类错误做「单次防环」整页重载（重试时 chunk 已缓存即落地）；
+ * afterEach 成功落地后清占位。只处理 chunk-load 类错误，普通运行时异常不靠 reload 掩盖。
+ */
+export function registerNavigationRecovery(router: ReturnType<typeof createRouter>): void {
+  router.onError((error, to) => {
+    // 可观测性：控制台留一手现场（本包无远程日志通道）。串里的 T355-nav-recovery 同时是
+    // e2e-real 部署守卫在「已部署 bundle」里做的存在性标记，删了就变成永远 skip 的假门禁。
+    console.error('[router] 导航失败 [T355-nav-recovery]:', error?.message ?? error, '目标:', to?.fullPath ?? to)
+    if (isChunkLoadError(error) && shouldRecoverTo(sessionStorage, to?.fullPath || '')) {
+      // resolve().href 已含构建 base（/admin/…），整页重载重新拉取入口与 chunk
+      const href = to ? router.resolve(to).href : window.location.href
+      window.location.assign(href)
+    }
+  })
+  router.afterEach(() => clearRecoverFlag(sessionStorage))
 }
 
 export const router = createAppRouter()
