@@ -172,6 +172,9 @@ type TeamDTO struct {
 	Leader     *string `json:"leader"`
 	LeaderName *string `json:"leaderName"`
 	CreatedAt  string  `json:"createdAt"` // T333-5：团队管理页「创建时间」列，RFC3339 UTC（库列非空）
+	// T337：与 TeamDetailDTO 同列同口径（详情一直有、列表漏带；shared-types Team 已声明这两项）
+	Description string `json:"description"`
+	Status      string `json:"status"`
 }
 
 // DoctorDTO 医生（契约 getDoctors，对齐 shared-types Doctor）

@@ -176,6 +176,8 @@ type TeamRow struct {
 	PatientCount int
 	Leader       string // 负责人 doctor_id，无负责人为空串（T333）
 	LeaderName   string // 负责人姓名（join doctors.name），无负责人为空串（T333）
+	Description  string // T337：与 TeamDetailRow 同列，列表此前漏带
+	Status       string // T337："active"（一期固定；预留软删除字段）
 	CreatedAt    time.Time
 }
 

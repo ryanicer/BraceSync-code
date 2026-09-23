@@ -813,6 +813,8 @@ func (h *Handler) listTeams(c *gin.Context) {
 			Leader:       nilIfBlank(r.Leader),     // T333：负责人 doctor_id
 			LeaderName:   nilIfBlank(r.LeaderName), // T333：join doctors.name
 			CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+			Description:  r.Description, // T337：契约已声明、详情已带，列表补齐
+			Status:       r.Status,
 		})
 	}
 	ok(c, list)

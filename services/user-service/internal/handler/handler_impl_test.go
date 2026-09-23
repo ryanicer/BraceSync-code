@@ -992,8 +992,9 @@ func TestListTeams(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.teams = []repo.TeamRow{
 		{TeamID: "TEAM01", Name: "一组", MemberCount: 2, PatientCount: 3, Leader: "D01", LeaderName: "医生甲",
+			Description: "脊柱侧弯保守组", Status: "active",
 			CreatedAt: time.Date(2026, 8, 3, 1, 2, 3, 0, time.UTC)},
-		{TeamID: "TEAM02", Name: "二组", MemberCount: 1, PatientCount: 1,
+		{TeamID: "TEAM02", Name: "二组", MemberCount: 1, PatientCount: 1, Status: "active",
 			CreatedAt: time.Date(2026, 8, 4, 9, 8, 7, 0, time.UTC)}, // 无负责人
 	}
 	w, resp := e.do(http.MethodGet, "/api/v1/teams", nil, nil)
@@ -1013,10 +1014,13 @@ func TestListTeams(t *testing.T) {
 	// T333-5：createdAt 一并透出（团队管理页「创建时间」列此前恒空），RFC3339 UTC
 	var items []json.RawMessage
 	require.NoError(t, json.Unmarshal(resp.Data, &items))
+	// T337：description / status 同为契约 Team 声明列（详情一直有、列表此前漏带）
 	assert.JSONEq(t, `{"teamId":"TEAM02","name":"二组","memberCount":1,"patientCount":1,
-		"leader":null,"leaderName":null,"createdAt":"2026-08-04T09:08:07Z"}`, string(items[1]))
+		"leader":null,"leaderName":null,"createdAt":"2026-08-04T09:08:07Z",
+		"description":"","status":"active"}`, string(items[1]))
 	assert.JSONEq(t, `{"teamId":"TEAM01","name":"一组","memberCount":2,"patientCount":3,
-		"leader":"D01","leaderName":"医生甲","createdAt":"2026-08-03T01:02:03Z"}`, string(items[0]))
+		"leader":"D01","leaderName":"医生甲","createdAt":"2026-08-03T01:02:03Z",
+		"description":"脊柱侧弯保守组","status":"active"}`, string(items[0]))
 
 	e.store.teamsErr = errors.New("db")
 	w, _ = e.do(http.MethodGet, "/api/v1/teams", nil, nil)
