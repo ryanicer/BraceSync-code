@@ -981,13 +981,30 @@ func TestGetPatient(t *testing.T) {
 
 func TestListTeams(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.teams = []repo.TeamRow{{TeamID: "TEAM01", Name: "一组", MemberCount: 2, PatientCount: 3}}
+	e.store.teams = []repo.TeamRow{
+		{TeamID: "TEAM01", Name: "一组", MemberCount: 2, PatientCount: 3, Leader: "D01", LeaderName: "医生甲"},
+		{TeamID: "TEAM02", Name: "二组", MemberCount: 1, PatientCount: 1}, // 无负责人
+	}
 	w, resp := e.do(http.MethodGet, "/api/v1/teams", nil, nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	var list []model.TeamDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &list))
-	require.Len(t, list, 1)
+	require.Len(t, list, 2)
 	assert.Equal(t, 3, list[0].PatientCount)
+
+	// T333：负责人列回填 —— 有负责人回 doctor_id 与姓名
+	require.NotNil(t, list[0].Leader)
+	assert.Equal(t, "D01", *list[0].Leader)
+	require.NotNil(t, list[0].LeaderName)
+	assert.Equal(t, "医生甲", *list[0].LeaderName)
+
+	// 无负责人：两列均为 JSON null（不是空串——前端 row.leaderName ?? '-' 只认 null）
+	var items []json.RawMessage
+	require.NoError(t, json.Unmarshal(resp.Data, &items))
+	assert.JSONEq(t, `{"teamId":"TEAM02","name":"二组","memberCount":1,"patientCount":1,
+		"leader":null,"leaderName":null}`, string(items[1]))
+	assert.JSONEq(t, `{"teamId":"TEAM01","name":"一组","memberCount":2,"patientCount":3,
+		"leader":"D01","leaderName":"医生甲"}`, string(items[0]))
 
 	e.store.teamsErr = errors.New("db")
 	w, _ = e.do(http.MethodGet, "/api/v1/teams", nil, nil)

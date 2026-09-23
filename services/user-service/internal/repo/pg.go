@@ -385,8 +385,15 @@ func (s *PGStore) GetPatient(ctx context.Context, patientID string) (*PatientRow
 // ─────────────────────────────────────────────────────────────
 
 // ListTeams 团队概要（member_count/patient_count 为 teams 表维护列）
+// T333：负责人两列同 teamDetailSelect 的 LEFT JOIN doctors 口径——
+// 列表页「负责人」列与编辑弹窗回显都直接读列表行，缺这两列就是结构上带不出来。
 func (s *PGStore) ListTeams(ctx context.Context) ([]TeamRow, error) {
-	rows, err := s.pool.Query(ctx, `SELECT team_id, name, member_count, patient_count FROM teams ORDER BY team_id`)
+	rows, err := s.pool.Query(ctx, `
+SELECT t.team_id, t.name, t.member_count, t.patient_count,
+       COALESCE(t.leader, ''), COALESCE(d.name, '')
+FROM teams t
+LEFT JOIN doctors d ON d.doctor_id = t.leader
+ORDER BY t.team_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +401,8 @@ func (s *PGStore) ListTeams(ctx context.Context) ([]TeamRow, error) {
 	var list []TeamRow
 	for rows.Next() {
 		var t TeamRow
-		if scanErr := rows.Scan(&t.TeamID, &t.Name, &t.MemberCount, &t.PatientCount); scanErr != nil {
+		if scanErr := rows.Scan(&t.TeamID, &t.Name, &t.MemberCount, &t.PatientCount,
+			&t.Leader, &t.LeaderName); scanErr != nil {
 			return nil, scanErr
 		}
 		list = append(list, t)

@@ -167,6 +167,10 @@ type TeamDTO struct {
 	Name         string `json:"name"`
 	MemberCount  int    `json:"memberCount"`
 	PatientCount int    `json:"patientCount"`
+	// T333：负责人两列（对齐 shared-types Team 的可选声明）。无负责人回 null 而非空串——
+	// 前端列表用 row.leaderName ?? '-' 渲染、编辑弹窗用 row.leader ?? '' 回显，空串会渲成空白格。
+	Leader     *string `json:"leader"`
+	LeaderName *string `json:"leaderName"`
 }
 
 // DoctorDTO 医生（契约 getDoctors，对齐 shared-types Doctor）

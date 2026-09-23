@@ -174,6 +174,8 @@ type TeamRow struct {
 	Name         string
 	MemberCount  int
 	PatientCount int
+	Leader       string // 负责人 doctor_id，无负责人为空串（T333）
+	LeaderName   string // 负责人姓名（join doctors.name），无负责人为空串（T333）
 }
 
 // TeamStatsRow 团队维度聚合投影（T256 5.1，设计稿 团队管理.html:87-90 四张统计卡）。

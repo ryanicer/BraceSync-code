@@ -786,6 +786,14 @@ func (h *Handler) getPatientProfile(c *gin.Context) {
 // 团队 / 医生（T030 #10）
 // ─────────────────────────────────────────────────────────────
 
+// nilIfBlank 空串回 nil（T333：序列化成 JSON null，前端的 ?? 兜底只在 null/undefined 上生效）
+func nilIfBlank(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // listTeams GET /api/v1/teams —— 团队概要
 func (h *Handler) listTeams(c *gin.Context) {
 	rows, err := h.store.ListTeams(c.Request.Context())
@@ -795,7 +803,14 @@ func (h *Handler) listTeams(c *gin.Context) {
 	}
 	list := make([]model.TeamDTO, 0, len(rows))
 	for _, r := range rows {
-		list = append(list, model.TeamDTO{TeamID: r.TeamID, Name: r.Name, MemberCount: r.MemberCount, PatientCount: r.PatientCount})
+		list = append(list, model.TeamDTO{
+			TeamID:       r.TeamID,
+			Name:         r.Name,
+			MemberCount:  r.MemberCount,
+			PatientCount: r.PatientCount,
+			Leader:       nilIfBlank(r.Leader),     // T333：负责人 doctor_id
+			LeaderName:   nilIfBlank(r.LeaderName), // T333：join doctors.name
+		})
 	}
 	ok(c, list)
 }

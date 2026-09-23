@@ -496,3 +496,42 @@ func TestITTeamsAndDoctors(t *testing.T) {
 	require.Len(t, teamDocs, 1)
 	assert.Equal(t, itDoctor, teamDocs[0].DoctorID)
 }
+
+// TestITListTeamsLeader T333：列表投影带出负责人 doctor_id 与姓名（有/无负责人两种都要覆盖）
+func TestITListTeamsLeader(t *testing.T) {
+	ctx := context.Background()
+
+	findTeam := func(teamID string) TeamRow {
+		list, err := itStore.ListTeams(ctx)
+		require.NoError(t, err)
+		for _, r := range list {
+			if r.TeamID == teamID {
+				return r
+			}
+		}
+		t.Fatalf("team %s 不在 ListTeams 结果中", teamID)
+		return TeamRow{}
+	}
+
+	// seed 团队无负责人：两列空串（handler 侧转 JSON null，前端才落到占位符）
+	before := findTeam(itTeam)
+	assert.Empty(t, before.Leader)
+	assert.Empty(t, before.LeaderName)
+
+	_, err := itStore.pool.Exec(ctx, `UPDATE teams SET leader = $1 WHERE team_id = $2`, itDoctor, itTeam)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = itStore.pool.Exec(ctx, `UPDATE teams SET leader = NULL WHERE team_id = $1`, itTeam)
+	})
+
+	after := findTeam(itTeam)
+	assert.Equal(t, itDoctor, after.Leader)
+	assert.Equal(t, "集成医生", after.LeaderName, "leaderName 来自 LEFT JOIN doctors.name")
+
+	// LEFT JOIN 不得让行数翻倍（doctors.doctor_id 唯一）
+	list, err := itStore.ListTeams(ctx)
+	require.NoError(t, err)
+	var total int
+	require.NoError(t, itStore.pool.QueryRow(ctx, `SELECT COUNT(*) FROM teams`).Scan(&total))
+	assert.Len(t, list, total)
+}
