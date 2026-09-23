@@ -734,10 +734,22 @@ func (s *PGStore) CreatePlan(ctx context.Context, patientID, doctorID, content, 
 // 感受日志
 // ─────────────────────────────────────────────────────────────
 
+// feelingLogColumns 感受日志统一投影（单患者读 + 写端点回读共用；T333 同型思路：
+// 读写两处共用一份列清单，避免写侧回读与列表少列）。patient_name 占位空串，
+// 跨患者流的姓名列由 ListFeelingLogsAdmin 自己的 join 投影负责。
+const feelingLogColumns = `log_id, patient_id, '' AS patient_name, log_date, comfort_score, comfort_level, discomfort_areas, notes, reply_content, reply_time, created_at`
+
+func scanFeelingLog(scanner interface{ Scan(dest ...any) error }) (FeelingLogRow, error) {
+	var f FeelingLogRow
+	err := scanner.Scan(&f.LogID, &f.PatientID, &f.PatientName, &f.LogDate, &f.ComfortScore,
+		&f.ComfortLevel, &f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime, &f.CreatedAt)
+	return f, err
+}
+
 // ListFeelingLogs 患者感受日志（按日期倒序）
 func (s *PGStore) ListFeelingLogs(ctx context.Context, patientID string) ([]FeelingLogRow, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT log_id, patient_id, '' AS patient_name, log_date, comfort_score, comfort_level, discomfort_areas, notes, reply_content, reply_time, created_at
+		`SELECT `+feelingLogColumns+`
 		 FROM feeling_logs WHERE patient_id = $1 ORDER BY log_date DESC, log_id DESC`, patientID)
 	if err != nil {
 		return nil, err
@@ -745,14 +757,43 @@ func (s *PGStore) ListFeelingLogs(ctx context.Context, patientID string) ([]Feel
 	defer rows.Close()
 	var list []FeelingLogRow
 	for rows.Next() {
-		var f FeelingLogRow
-		if scanErr := rows.Scan(&f.LogID, &f.PatientID, &f.PatientName, &f.LogDate, &f.ComfortScore,
-			&f.ComfortLevel, &f.DiscomfortAreas, &f.Notes, &f.ReplyContent, &f.ReplyTime, &f.CreatedAt); scanErr != nil {
+		f, scanErr := scanFeelingLog(rows)
+		if scanErr != nil {
 			return nil, scanErr
 		}
 		list = append(list, f)
 	}
 	return list, rows.Err()
+}
+
+// SaveFeelingLog T188 患者端录入（方案 A，Boss 2026-09-23 18:55 裁定两档）。
+// uk（patient_id, log_date）⇒ 同患者同日覆盖更新 comfort_level / discomfort_areas / notes，
+// 显式不写 reply_content 与 reply_time（PM 采纳的 Q3 口径：覆盖当日行但保留医生已写的回复）。
+// comfort_score 不写（PRD V3.17 已注明旧星级口径作废，写入口径以 comfort_level 为准）。
+// patient_id 外键不命中 → ErrPatientNotFound，与 T311 建反馈同口径，不裸抛 500。
+func (s *PGStore) SaveFeelingLog(ctx context.Context, in FeelingLogSaveInput) (FeelingLogRow, error) {
+	areas := in.DiscomfortAreas
+	if areas == nil {
+		areas = []string{}
+	}
+	row := s.pool.QueryRow(ctx,
+		`INSERT INTO feeling_logs (patient_id, log_date, comfort_level, discomfort_areas, notes)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (patient_id, log_date) DO UPDATE
+		 SET comfort_level    = EXCLUDED.comfort_level,
+		     discomfort_areas = EXCLUDED.discomfort_areas,
+		     notes            = EXCLUDED.notes
+		 RETURNING `+feelingLogColumns,
+		in.PatientID, in.LogDate, in.ComfortLevel, areas, in.Notes)
+	out, err := scanFeelingLog(row)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return FeelingLogRow{}, ErrPatientNotFound
+		}
+		return FeelingLogRow{}, err
+	}
+	return out, nil
 }
 
 // ReplyFeelingLog 医生回复写入（重复回复覆盖）；返回日志是否存在
