@@ -73,10 +73,38 @@ type Handler struct {
 	reports   ReportLister     // T030 健康报告查询（SetReportLister 注入；nil 时该端点 500）
 	dashboard DashboardQuerier // T033 Dashboard 聚合查询（SetDashboardQuerier 注入；nil 时端点 500）
 	dailyWear DailyWearQuerier // T076 患者日佩戴聚合（SetDailyWearQuerier 注入；nil 时端点 500）
+	patients  PatientLookup    // T340 患者档案存在性（SetPatientLookup 注入；nil 时患者域查询端点 500）
 }
 
 // New 创建 Handler
 func New(svc *service.RecordService) *Handler { return &Handler{svc: svc} }
+
+// PatientLookup 患者档案存在性查询契约（repo.PatientRepo 实现，patients 表只读）
+type PatientLookup interface {
+	PatientExists(ctx context.Context, patientID string) (bool, error)
+}
+
+// SetPatientLookup 注入患者档案存在性数据源（生产由 main 注入）
+func (h *Handler) SetPatientLookup(l PatientLookup) { h.patients = l }
+
+// assertPatientExists T340：「查无此人」必须与「有此人但暂无数据」在 HTTP 面上可区分。
+// 放在水平鉴权之后 —— 存在性不该泄露给无权调用方。返回 false 时响应已写出。
+func (h *Handler) assertPatientExists(c *gin.Context, patientID string) bool {
+	if h.patients == nil {
+		fail(c, model.ErrInternal("patient lookup not configured"))
+		return false
+	}
+	exists, err := h.patients.PatientExists(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("patient lookup failed"))
+		return false
+	}
+	if !exists {
+		fail(c, model.ErrPatientNotFound(patientID))
+		return false
+	}
+	return true
+}
 
 // Router 组装路由（可测试）
 func (h *Handler) Router() *gin.Engine {
@@ -155,6 +183,9 @@ func (h *Handler) getHistory(c *gin.Context) {
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
 		return
 	}
+	if !h.assertPatientExists(c, patientID) { // T340
+		return
+	}
 	period := c.DefaultQuery("period", "day")
 	date := c.DefaultQuery("date", "")
 	if date == "" {
@@ -195,6 +226,9 @@ func (h *Handler) getHistory(c *gin.Context) {
 func (h *Handler) getRealtime(c *gin.Context) {
 	patientID := c.Param("patientId")
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
+		return
+	}
+	if !h.assertPatientExists(c, patientID) { // T340：未绑定设备与查无此人此前在 :477 被折叠成同一个空快照
 		return
 	}
 	resp, appErr := h.svc.GetRealtime(c.Request.Context(), patientID)
@@ -240,6 +274,9 @@ func (h *Handler) getDailyWear(c *gin.Context) {
 			fail(c, model.ErrForbidden("may only query your own daily-wear stats"))
 			return
 		}
+	}
+	if !h.assertPatientExists(c, patientID) { // T340
+		return
 	}
 
 	start := c.Query("start")
