@@ -74,6 +74,10 @@ type fakeStore struct {
 	feedbackIn       repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
 	feedbackID       int64                    // T311：CreateFeedback 返回的自增 id
 	feedbackErr      error                    // T311：CreateFeedback 注入错误
+	feelingSaveIn    repo.FeelingLogSaveInput // T188：SaveFeelingLog 落库入参
+	feelingSaveCalls int                      // T188：SaveFeelingLog 被调次数（校验短路用）
+	feelingSaved     repo.FeelingLogRow       // T188：SaveFeelingLog 回读行
+	feelingSaveErr   error                    // T188：SaveFeelingLog 注入错误
 	processOK        bool
 	processErr       error
 	plans            []repo.OrthosisPlanRow
@@ -318,6 +322,16 @@ func (f *fakeStore) ListFeelingLogs(_ context.Context, patientID string) ([]repo
 func (f *fakeStore) ReplyFeelingLog(_ context.Context, _ int64, reply string) (bool, error) {
 	f.lastReply = reply
 	return f.replyOK, f.replyErr
+}
+
+// T188 患者端录入：记录入参并回读调用方预置的行（覆盖语义由 repo 集成测试守）
+func (f *fakeStore) SaveFeelingLog(_ context.Context, in repo.FeelingLogSaveInput) (repo.FeelingLogRow, error) {
+	f.feelingSaveCalls++
+	f.feelingSaveIn = in
+	if f.feelingSaveErr != nil {
+		return repo.FeelingLogRow{}, f.feelingSaveErr
+	}
+	return f.feelingSaved, nil
 }
 
 // T256 #1 团队统计卡 + #2 跨患者感受日志桩

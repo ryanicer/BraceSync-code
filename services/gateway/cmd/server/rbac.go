@@ -259,8 +259,11 @@ var publicPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/feedbacks"),
 
 	// 患者数据域（各服务 handler 层均已实现 admin-or-self 水平鉴权）
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/daily-wear"),         // data-service getDailyWear
-	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/feeling-logs"),       // user-service listFeelingLogs
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/daily-wear"),   // data-service getDailyWear
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/feeling-logs"), // user-service listFeelingLogs
+	// T188 患者端录入佩戴感受：user-service createFeelingLog 走 assertAdminOrSelf
+	// （患者仅能为本人写，staff 可代录）。同日重复提交按覆盖更新，非新建。
+	rbacOf(http.MethodPost, "/api/v1/patients/:patientId/feeling-logs"),
 	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/review-records"),     // user-service listReviewRecords
 	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/wear-reminder"),      // msg-service requireSelfScope
 	rbacOf(http.MethodPut, "/api/v1/patients/:patientId/wear-reminder"),      // msg-service requireSelfScope

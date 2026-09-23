@@ -288,6 +288,17 @@ type FeelingLogDTO struct {
 	CreatedAt string `json:"createdAt"` // RFC3339，取 created_at（非 logDate，logDate 是业务日期）
 }
 
+// CreateFeelingLogRequest 患者端佩戴感受录入（T188，契约 submitFeelingLog）。
+// 口径按 Boss 2026-09-23 裁决方案 A：佩戴感受两档（fitted 贴合 / discomfort 不适），
+// 独立的「支具贴合度」控件随 A 取消 ⇒ 本请求不含 fitLevel。
+// patientId 取自路径（与读端点 /patients/:patientId/feeling-logs 同址），不在体内重复。
+type CreateFeelingLogRequest struct {
+	LogDate         string   `json:"logDate"`         // 可选 YYYY-MM-DD，缺省为服务端当日（Asia/Shanghai 切日）
+	Feeling         string   `json:"feeling"`         // 必填 fitted | discomfort
+	DiscomfortAreas []string `json:"discomfortAreas"` // 可选，设计稿 8 区中文原词
+	Notes           string   `json:"notes"`           // 可选，详细描述 ≤200 字
+}
+
 // AdminRoleDTO RBAC 角色行（契约 getAdminRoles，对齐 shared-types AdminRole）
 type AdminRoleDTO struct {
 	RoleID      string `json:"roleId"`

@@ -21,6 +21,7 @@
 //	GET  /api/v1/patients/:patientId/orthosis-plans      矫形方案历史
 //	POST /api/v1/patients/:patientId/orthosis-plans      保存新方案（版本递增）
 //	GET  /api/v1/patients/:patientId/feeling-logs        佩戴感受日志
+//	POST /api/v1/patients/:patientId/feeling-logs        患者端录入佩戴感受（T188，同日覆盖）
 //	POST /api/v1/feeling-logs/:logId/reply               医生回复感受日志
 //	GET  /api/v1/admin/roles                             RBAC 角色列表
 //	GET  /api/v1/admin/roles/:roleId/permissions         权限矩阵读
@@ -260,6 +261,8 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/patients/:patientId/orthosis-plans", h.listPlans)
 		v1.POST("/patients/:patientId/orthosis-plans", h.savePlan)
 		v1.GET("/patients/:patientId/feeling-logs", h.listFeelingLogs)
+		// T188 患者端录入佩戴感受（同患者同日覆盖）；水平鉴权在 handler 层 assertAdminOrSelf。
+		v1.POST("/patients/:patientId/feeling-logs", h.createFeelingLog)
 		v1.POST("/feeling-logs/:logId/reply", h.replyFeelingLog)
 		v1.GET("/admin/feeling-logs", h.listFeelingLogsAdmin) // T256 #2 跨患者感受日志流
 
@@ -1487,6 +1490,86 @@ func (h *Handler) listFeelingLogs(c *gin.Context) {
 		list = append(list, toFeelingDTO(r))
 	}
 	ok(c, list)
+}
+
+// feeling 两档码值（T256 #3 落库口径，Boss 2026-09-23 方案 A 确认沿用）。
+var feelingLevels = map[string]bool{"fitted": true, "discomfort": true}
+
+// feelingAreaLabels 设计稿 docs/design/patient/feelings.html「不适部位（可多选）」8 区，
+// PM T188 裁定 Q4：直接存中文原词、不做码值转换。列宽 VARCHAR(16) 足够。
+// 若 Peter 按方案 A 回写 PRD §7A.7 时改动区名，改这一处即可（单测会立刻判红）。
+var feelingAreaLabels = map[string]bool{
+	"右肩": true, "左肩": true, "胸椎": true, "右侧腰": true,
+	"左侧腰": true, "骶骨": true, "右髂嵴": true, "左髂嵴": true,
+}
+
+const feelingNotesMaxLen = 200 // feeling_logs.notes VARCHAR(200)
+
+// createFeelingLog POST /api/v1/patients/:patientId/feeling-logs —— 患者端录入佩戴感受（T188）。
+// 水平鉴权同读端点：staff 可代录，其他角色仅 X-User-Id == patientId。
+// 同患者同日重复提交按 Q3 裁定覆盖更新当日行（不清医生回复位），不返 409。
+func (h *Handler) createFeelingLog(c *gin.Context) {
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+	if !assertAdminOrSelf(c, patientID) {
+		return
+	}
+	var req model.CreateFeelingLogRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	feeling := trimStr(req.Feeling)
+	if feeling == "" {
+		fail(c, model.ErrInvalidParam("feeling is required"))
+		return
+	}
+	if !feelingLevels[feeling] {
+		fail(c, model.ErrInvalidParam("invalid feeling: %s (fitted|discomfort)", feeling))
+		return
+	}
+	for _, area := range req.DiscomfortAreas {
+		if !feelingAreaLabels[area] {
+			fail(c, model.ErrInvalidParam("invalid discomfortArea: %s (右肩|左肩|胸椎|右侧腰|左侧腰|骶骨|右髂嵴|左髂嵴)", area))
+			return
+		}
+	}
+	notes := trimStr(req.Notes)
+	if runeLen(notes) > feelingNotesMaxLen {
+		fail(c, model.ErrInvalidParam("notes exceeds %d chars", feelingNotesMaxLen))
+		return
+	}
+	logDate := trimStr(req.LogDate)
+	if logDate == "" {
+		logDate = time.Now().In(cstLoc).Format("2006-01-02")
+	} else if _, err := time.Parse("2006-01-02", logDate); err != nil {
+		fail(c, model.ErrInvalidParam("invalid logDate: %s (YYYY-MM-DD)", logDate))
+		return
+	}
+	var notesPtr *string
+	if notes != "" {
+		notesPtr = &notes
+	}
+
+	row, err := h.store.SaveFeelingLog(c.Request.Context(), repo.FeelingLogSaveInput{
+		PatientID:       patientID,
+		LogDate:         logDate,
+		ComfortLevel:    feeling,
+		DiscomfortAreas: req.DiscomfortAreas,
+		Notes:           notesPtr,
+	})
+	if err != nil {
+		if errors.Is(err, repo.ErrPatientNotFound) {
+			fail(c, model.ErrNotFound("patient not found: %s", patientID))
+			return
+		}
+		fail(c, model.ErrInternal("save feeling log failed"))
+		return
+	}
+	ok(c, toFeelingDTO(row))
 }
 
 type replyRequest struct {
