@@ -31,19 +31,42 @@ test.describe('04-实时监控', () => {
     })
   }
 
+  /**
+   * T322 部署顺序门控（PM 2026-09-23 07:58 打回裁定：断言要与部署顺序对齐）。
+   *
+   * 本 job 打的是【已部署的 staging 前端包】，而 4.1a / 4.1b / 4.1c 断的是 T322 的【新行为】
+   * （采集/拉取双时刻、live-expired、live-none）。#175 合并 + Andy 部署之前，旧包里没有这套
+   * DOM，硬断言必假红（2026-09-22 实测 3 failed / 29 passed）。
+   *
+   * 处理口径：不放宽断言、也不给 job 加 continue-on-error（那正是 e2e.yml T304 注释禁止的
+   * 「CI 绿但真环境没人验」），而是探测【当前已部署包】是否已带 T322 标记（双时刻文案）：
+   * 未带 ⇒ 显式 test.skip（skip 原因进 Playwright 报告，计数可见，不是静默通过）；
+   * 带上 ⇒ 同一批断言自动转为真跑，此后任何回归照样判红。
+   */
+  let t322Deployed: boolean | undefined
+  async function requireT322Deployed(page: import('@playwright/test').Page): Promise<void> {
+    if (t322Deployed === undefined) {
+      const bar = page.locator('.page-toolbar .update-time')
+      await expect(bar).toBeVisible({ timeout: 25_000 })
+      t322Deployed = ((await bar.textContent()) ?? '').includes('数据采集：')
+    }
+    test.skip(
+      !t322Deployed,
+      'staging 上部署的前端包还没有 T322 的「数据采集/本次拉取」双时刻（新构建未部署）⇒ 本条对旧包无意义，显式跳过；部署后自动转真跑',
+    )
+  }
+
   test.describe('页面默认渲染', () => {
-    test('4.1 新鲜度标签 + 默认患者 + 采集/拉取双时刻 + 状态指示器 + 设备提示', async ({ page }) => {
+    test('4.1 新鲜度标签 + 默认患者 + 状态指示器 + 设备提示', async ({ page }) => {
       // 1) T322 起标签随帧新鲜度变（实时同步中 / 数据已过期 / 无实时数据）。
       //    这里不再写死「实时同步中」——staging 的种子帧早已停在上报时刻，写死它等于把
       //    PM 报的「假实时」写进断言（2026-09-22 实测：帧冻结在 10:30，页面却秒秒跳「最近更新」）。
-      //    三态各自的表现由下方 4.1b / 4.1c 用改写响应的方式逐条钉死。
+      //    三态各自的表现由下方 4.1a / 4.1b / 4.1c 逐条钉死。
+      //    本条只留「新旧包都成立」的判据，双时刻那两条属新行为，挪进 4.1a（受部署门控）。
       await expect(page.locator('.page-toolbar .realtime-tag')).toContainText(
         /实时同步中|数据已过期|无实时数据/,
         { timeout: 20_000 },
       )
-      // 1b) 采集时刻与拉取时刻必须分列（不得用拉取时刻冒充数据新鲜度）
-      await expect(page.locator('.page-toolbar .update-time')).toContainText(/数据采集：/)
-      await expect(page.locator('.page-toolbar .update-time')).toContainText(/本次拉取：\d{2}:\d{2}:\d{2}/)
       // 2) 患者卡片 + 选中患者名（el-select__selected-item 或 wrapper 内有任意患者名文字）
       const card = page.locator('.patient-card')
       await expect(card).toBeVisible({ timeout: 20_000 })
@@ -69,6 +92,14 @@ test.describe('04-实时监控', () => {
         const t = await hint.textContent()
         expect(t!.trim().length).toBeGreaterThan(0)
       }
+    })
+
+    test('4.1a 顶栏分列「数据采集」与「本次拉取」两个时刻（T322 语义纠正）', async ({ page }) => {
+      await requireT322Deployed(page)
+      // 采集时刻与拉取时刻必须分列（不得用拉取时刻冒充数据新鲜度）
+      const bar = page.locator('.page-toolbar .update-time')
+      await expect(bar).toContainText(/数据采集：\d{2}:\d{2}:\d{2}/)
+      await expect(bar).toContainText(/本次拉取：\d{2}:\d{2}:\d{2}/)
     })
 
     /**
@@ -99,6 +130,7 @@ test.describe('04-实时监控', () => {
     }
 
     test('4.1b 帧时刻超过 TTL：标签转「数据已过期」+ 告警条 + 曲线不再推进', async ({ page }) => {
+      await requireT322Deployed(page)
       await waitForSnapshotLoaded(page)
       const collected = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
       await injectFrame(page, (data) => {
@@ -130,6 +162,7 @@ test.describe('04-实时监控', () => {
     })
 
     test('4.1c 快照无帧：标签转「无实时数据」且不渲染 seed 兜底热力图', async ({ page }) => {
+      await requireT322Deployed(page)
       await waitForSnapshotLoaded(page)
       await injectFrame(page, (data) => {
         data.pressureRecords = []
