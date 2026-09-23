@@ -312,38 +312,6 @@ func BuildHeatmap(points [PointCount]float32) []HeatmapPoint {
 	return out
 }
 
-// SeedHeatmap 根据 patientID 生成带梯度的 20 点兜底热力图（无真实帧时用）
-// 策略：按字符 hash 定最大点位置与强度，每行递增加 6N 基础 + 列 sin 波动（参考设计实时监控.html）
-// heatmapMaxN 色阶上界（可配置，T173）
-func SeedHeatmap(patientID string, heatmapMaxN float64) []HeatmapPoint {
-	var seed uint32
-	for _, r := range patientID {
-		seed = seed*31 + uint32(r)
-	}
-	if seed == 0 {
-		seed = 0x9e3779b1
-	}
-	var pts [PointCount]float32
-	maxIdx := int(seed % PointCount)
-	for i := 0; i < PointCount; i++ {
-		r := i / 5
-		c := i % 5
-		// 基础 + 行梯度 + 列波动 + hash 扰动（10–50N）
-		base := float32(12 + r*6)
-		wave := float32(float64(seed>>uint((c+1)*3)&7) / 7.0 * 8) // 0–8
-		loc := float32(0)
-		if i == maxIdx {
-			loc = 18 // 最大点额外+18N
-		}
-		v := base + wave + loc
-		if v > float32(heatmapMaxN) {
-			v = float32(heatmapMaxN) - 2
-		}
-		pts[i] = v
-	}
-	return BuildHeatmap(pts)
-}
-
 // PressureRecordDTO 对齐 shared-types PressureRecord（camelCase）
 type PressureRecordDTO struct {
 	RecordID   string        `json:"recordId"`
@@ -451,7 +419,7 @@ type RealtimeSnapshot struct {
 	Events          int                 `json:"events"`  // 今日异常值
 	PressureRecords []PressureRecordDTO `json:"pressureRecords"`
 	Alerts          []any               `json:"alerts"`          // 今日告警摘要，明细由 alert-service 提供
-	PressureHeatmap []HeatmapPoint      `json:"pressureHeatmap"` // 热力图 20 点（独立数据源，有 seed 兜底）
+	PressureHeatmap []HeatmapPoint      `json:"pressureHeatmap"` // 热力图 20 点；T325：只在有真实帧时下发，无帧为空数组（不再 seed 兜底）
 	// HeatmapMaxN / PressureHighN 展示口径（T296）：与告警引擎同源的可配置阈值，
 	// 供前端色阶上界与分级渲染用——写死常量会与 sys_configs 漂移（T203 前端即因写死 60/45 滞后一个量级）。
 	HeatmapMaxN   float64 `json:"heatmapMaxN"`

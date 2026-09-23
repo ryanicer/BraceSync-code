@@ -452,12 +452,15 @@ func (s *RecordService) calibratedRecordDTO(ctx context.Context, th model.Pressu
 }
 
 // GetRealtime 实时快照：DB 优先（pressure_records 最新行），无 DB reader 时走 Redis 回退
+// T325 口径：有真帧→真值，无真帧→空。未绑定设备 / 无上报记录 / 帧解析失败时
+// pressureHeatmap 返回空数组（JSON 仍为 []，不再是按 patientID 造的梯度网格）。
 func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*model.RealtimeSnapshot, *model.AppError) {
 	th := s.pressureThresholds(ctx)
 	snapshot := &model.RealtimeSnapshot{
 		Status:          "offline",
 		MaxPoint:        "",
 		PressureRecords: []model.PressureRecordDTO{},
+		PressureHeatmap: []model.HeatmapPoint{}, // T325：无真实帧即空，绝不下发伪造网格
 		Alerts:          []any{},
 		HeatmapMaxN:     th.HeatmapMaxN,
 		PressureHighN:   th.PressureHighN,
@@ -472,8 +475,7 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 	log.Info().Str("patient_id", patientID).Str("device_id", deviceID).Bool("bound", exists).
 		Msg("realtime: snapshot device resolved (T200)")
 	if !exists {
-		snapshot.PressureHeatmap = model.SeedHeatmap(patientID, th.HeatmapMaxN)
-		return snapshot, nil // 未绑定设备
+		return snapshot, nil // 未绑定设备：热力图保持空（T325 无真帧不造假数据）
 	}
 
 	// DB 优先路径（*repo.RecordRepo 实现 GetLatestRecord 时）
@@ -495,8 +497,7 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 		return nil, model.ErrInternal("read latest record: %v", err)
 	}
 	if !hasRecord {
-		snapshot.PressureHeatmap = model.SeedHeatmap(patientID, th.HeatmapMaxN)
-		return snapshot, nil // 有设备但无上报记录
+		return snapshot, nil // 有设备但无上报记录：热力图保持空（T325）
 	}
 
 	res := s.calibrate(ctx, deviceID, rec.Points)
@@ -552,8 +553,9 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 }
 
 // getRealtimeFromRedis Redis 回退路径（issue 879 前旧逻辑，测试 stub 走此路径）
-// T173：rt:frame 为 ÷1000 后 raw 值，读侧统一减偏移（与 DB 分支同源）；
-// 佩戴（allDead）判定同样基于减偏移后值 + 可配置阈值。
+// T173：rt:frame 为 ÷1000 后 raw 值，读侧统一减偏移（与 DB 分支同源）。
+// T325：帧能解析出 20 点就下发真值（未佩戴时就是接近 0 的真值），解析不出就不渲染热力图——
+// 不再按 allDead 判「无有效帧」后塞 seed（那是无数据造数据）。
 func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
 	// 状态推导：abnormal 优先，其次 lastseen ≤2h 判 online
 	if dbStatus == "abnormal" {
@@ -568,7 +570,7 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 		return nil, model.ErrInternal("read rt:frame: %v", err)
 	}
 	var hmPoints [model.PointCount]float32
-	heatmapReady := false
+	frameValid := false
 	if frameJSON != "" {
 		var rf realtimeFrame
 		if jsonErr := json.Unmarshal([]byte(frameJSON), &rf); jsonErr == nil {
@@ -579,15 +581,7 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 				}
 				res := s.calibrate(ctx, deviceID, raw)
 				hmPoints = res.Points
-				allDead := true
-				for i := 0; i < model.PointCount; i++ {
-					if float64(res.Points[i]) >= th.WearingN { // PRD §8.1（减偏移后值，T173）
-						allDead = false
-					}
-				}
-				if !allDead {
-					heatmapReady = true
-				}
+				frameValid = true
 				log.Info().Str("device_id", deviceID).Bool("redis_fallback", true).
 					Str("rt_frame_offset_state", map[bool]string{true: "calibrated", false: "raw"}[res.Applied]).
 					Msg("calibration: realtime redis fallback frame processed (T173-dbg)")
@@ -602,13 +596,11 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 				snapshot.Battery = rf.Battery
 			}
 		} else {
-			log.Warn().Err(jsonErr).Str("device_id", deviceID).Msg("invalid rt:frame json, heatmap fall back to seed")
+			log.Warn().Err(jsonErr).Str("device_id", deviceID).Msg("invalid rt:frame json, heatmap stays empty (T325: no seed fallback)")
 		}
 	}
-	if heatmapReady {
+	if frameValid {
 		snapshot.PressureHeatmap = model.BuildHeatmap(hmPoints)
-	} else {
-		snapshot.PressureHeatmap = model.SeedHeatmap(patientID, th.HeatmapMaxN)
 	}
 
 	// 今日统计（stat:today）

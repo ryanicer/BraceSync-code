@@ -974,38 +974,54 @@ func TestGetRealtime_HeatmapFromFrame(t *testing.T) {
 	assert.Equal(t, 1, isMaxCount)
 }
 
-func TestGetRealtime_HeatmapSeedFallback(t *testing.T) {
-	// 绑定设备 + rt:frame 为空 → 走 seed 兜底
+func TestGetRealtime_HeatmapEmptyWhenNoFrame(t *testing.T) {
+	// T325：绑定设备 + rt:frame 为空 → 热力图为空，派生字段同样不得造假
 	env := newTestEnv()
 	env.cache.rtFrame[testDevice] = ""
 
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
 	require.Nil(t, appErr)
-	require.Len(t, snap.PressureHeatmap, model.PointCount)
+	assert.Empty(t, snap.PressureHeatmap, "无真实帧必须返回空，不得下发伪造网格")
+	assert.Empty(t, snap.PressureRecords)
+	assert.Equal(t, 0.0, snap.MaxPressure)
+	assert.Empty(t, snap.MaxPoint)
 
-	// seed 有合理范围（≥10N，非全 0）
-	minV := snap.PressureHeatmap[0].PressureValue
-	for _, p := range snap.PressureHeatmap {
-		if p.PressureValue < minV {
-			minV = p.PressureValue
-		}
-		assert.NotEmpty(t, p.PointID)
-		assert.NotEmpty(t, p.Label)
-	}
-	assert.GreaterOrEqual(t, minV, 2.0) // T203 ÷10：SeedHeatmap 基础值被 heatmapMaxN=6 截断到 ~4N
-
-	// IsMax 唯一
-	isMaxCount := 0
-	for _, p := range snap.PressureHeatmap {
-		if p.IsMax {
-			isMaxCount++
-		}
-	}
-	assert.Equal(t, 1, isMaxCount)
+	// JSON 形状稳定：空热力图序列化成 []，不是 null（前端按数组长度判有无帧）
+	raw, err := json.Marshal(snap)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"pressureHeatmap":[]`)
 }
 
-func TestGetRealtime_HeatmapInvalidPointsFallback(t *testing.T) {
-	// rt:frame 的 Points 长度不足 20 → seed
+// T325：无帧时按设备/DB 两条路径同样返回空（与 Redis 回退分支口径一致）
+func TestGetRealtime_HeatmapEmptyWhenNoFrame_DBPath(t *testing.T) {
+	env := newTestEnv()
+	env.useDBPath()
+
+	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient) // 无上报记录
+	require.Nil(t, appErr)
+	assert.Empty(t, snap.PressureHeatmap)
+	assert.Empty(t, snap.PressureRecords)
+}
+
+// T325：有真实帧但整帧低于佩戴阈值（未佩戴）→ 下发真实值，不再走 seed
+func TestGetRealtime_HeatmapRealValuesWhenUnwornFrame(t *testing.T) {
+	env := newTestEnv()
+	env.useDBPath()
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.01, 0.02)))
+	require.Nil(t, appErr)
+
+	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
+	require.Nil(t, appErr)
+	require.Len(t, snap.PressureHeatmap, model.PointCount, "有帧即下发真值（不再按佩戴阈值改判为无帧）")
+	assert.InDelta(t, 0.01, snap.PressureHeatmap[0].PressureValue, 1e-6)
+	assert.InDelta(t, 0.02, snap.PressureHeatmap[1].PressureValue, 1e-6)
+	for _, p := range snap.PressureHeatmap[2:] {
+		assert.InDelta(t, 0.0, p.PressureValue, 1e-6, "未佩戴帧的其余点位为真实 0，不得被 seed 抬高")
+	}
+}
+
+func TestGetRealtime_HeatmapInvalidPointsEmpty(t *testing.T) {
+	// rt:frame 的 Points 长度不足 20 → 视为无有效帧，返回空（T325 不再 seed）
 	env := newTestEnv()
 	shortFrame := realtimeFrame{
 		DeviceID:  testDevice,
@@ -1021,24 +1037,6 @@ func TestGetRealtime_HeatmapInvalidPointsFallback(t *testing.T) {
 
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
 	require.Nil(t, appErr)
-	require.Len(t, snap.PressureHeatmap, model.PointCount)
-
-	// seed 不会全部等于 0
-	anyNonZero := false
-	for _, p := range snap.PressureHeatmap {
-		if p.PressureValue > 0.1 {
-			anyNonZero = true
-			break
-		}
-	}
-	assert.True(t, anyNonZero, "seed heatmap should have non-zero values")
-
-	// IsMax 唯一
-	isMaxCount := 0
-	for _, p := range snap.PressureHeatmap {
-		if p.IsMax {
-			isMaxCount++
-		}
-	}
-	assert.Equal(t, 1, isMaxCount)
+	assert.Empty(t, snap.PressureHeatmap, "帧点数不足 = 无有效帧，返回空")
+	assert.Empty(t, snap.PressureRecords)
 }
