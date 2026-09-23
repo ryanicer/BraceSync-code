@@ -147,7 +147,15 @@ test.describe('02b-Dashboard 医护角色（T348）', () => {
     await requireDeployedBuild(page, {
       marker: 'T348-dashboard-teams-403',
       why: 'T348 修的是「医生进数据概览整页空白」，staging 旧构建下医生拿不到 KPI 卡片',
-      probe: async (p) => (await p.locator('.kpi-card').count()) >= 6,
+      // T358：KPI 卡是接口回来才 v-for 出来的，domcontentloaded 那一刻恒为 0 张
+      // （2026-09-24 现网实测 5/5 读到 0，101–154ms 后才满 6 张）。一次性 count()
+      // 会把「已部署」读成「未部署」⇒ strict 阶段天天判红。与 04-monitor 的探针同姿势：
+      // 先有界等到第 6 张出现，再取计数；等不到才返回未检出。
+      probe: async (p) => {
+        const cards = p.locator('.kpi-card')
+        await cards.nth(5).waitFor({ state: 'attached', timeout: 25_000 }).catch(() => {})
+        return (await cards.count()) >= 6
+      },
     })
 
     await expect(page.locator('.kpi-card')).toHaveCount(6, { timeout: 20_000 })
