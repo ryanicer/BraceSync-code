@@ -86,6 +86,11 @@ type Store interface {
 	// ── 佩戴达标只读（daily_wear_stats rollup 层，禁扫明细，架构 §5）──
 	// TodayWearMinutes 当日佩戴分钟数；无 rollup 行返回 0（视为未达标）
 	TodayWearMinutes(ctx context.Context, patientID string, bizDate string) (int, error)
+
+	// ── 患者档案只读存在性（patients 表，owner: user-service）──
+	// PatientExists T353：区分「查无此人」与「有此人但无偏好/无记录行」。
+	// 查无此人返回 (false, nil)，不是 error。
+	PatientExists(ctx context.Context, patientID string) (bool, error)
 }
 
 // PGStore Store 的 pgxpool 实现
@@ -598,4 +603,16 @@ func (r *PGStore) TodayWearMinutes(ctx context.Context, patientID string, bizDat
 		return 0, fmt.Errorf("today wear minutes: %w", err)
 	}
 	return minutes, nil
+}
+
+// PatientExists T353：patients 表只读存在性（口径同 data-service repo.PatientExists）
+func (r *PGStore) PatientExists(ctx context.Context, patientID string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM patients WHERE patient_id = $1)`,
+		patientID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("patient exists: %w", err)
+	}
+	return exists, nil
 }
