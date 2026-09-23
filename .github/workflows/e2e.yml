@@ -265,6 +265,20 @@ jobs:
     #   本卡构建部署上 staging 后两条自动转真跑 ⇒ 预期 38 passed / 5 skipped。
     #   部署前已用「本地构建产物 + 挂载点同语义仿真服务器（/api 反代真 staging）」实测 2 passed（两向反证都在交件说明）。
     #   ⇒ 本卡合并后必须走一次 staging 部署，否则下一次定时 run 会因缺标记判红（这是设计意图，不是误报）。
+    # T353 再加三条（tests/11-patient-exists.spec.ts，全 GET 只读、不自建数据）：
+    #   11.1 断的是 data-service T340 已上线口径 ⇒ 无守卫，每次 run 真跑。
+    #   11.2 / 11.3 断的是本卡给 user-service / msg-service 补的「查无此人 404」，标记
+    #   T353-user-patient-404 / T353-msg-patient-404（两条链路分开探，部署进度可以不同）。
+    #   2026-09-24 01:1x–01:2x 本机打现网三向实测（不是推算）：
+    #     · 常规阶段（E2E_POST_DEPLOY_STRICT 未置）⇒ 1 passed / 2 skipped，
+    #       日志两行 `[post-deploy] skip T353-user-patient-404` / `... skip T353-msg-patient-404`；
+    #       11.1 的 8 次请求逐条打了 `GET http://106.52.39.208:81/api/v1/patients/... -> HTTP 404 code=10404`
+    #       / `-> HTTP 200 code=0`，可据此核对确实打了 staging 而非空地址。
+    #     · 置 E2E_POST_DEPLOY_STRICT=1（定时/手动阶段）⇒ 2 failed，报「部署守卫判红」，行为未部署不会被静默放行。
+    #     · 把两条 probe 临时改成恒 true（模拟「已部署」）⇒ 仍 2 failed，红的是断言本身而不是守卫：
+    #       报 "不存在患者应 404 + 业务码 10404 + data:null，实际偏差：orthosis-plans HTTP=200；
+    #       …；feeling-logs …；review-records …"（6 个端点逐条列全），证明跳过掩盖的不是空判据。
+    #   ⇒ 本卡合并后同样必须走一次 staging 部署，否则定时 run 判红；部署后这 2 条自动转真跑（各 +1 passed）。
     # job 级并发锁：顶部 workflow 级 concurrency 按 PR 分组，多个 PR 的真跑会同时打 staging。
     # 写用例里 8.2 是「读现值 → +1 → 写回读到的值」，两条 run 交错会把 maxPatients 留在别人的
     # baseline 上（值仍合法但再也回不去 seed）。故所有 run 串行排队，不取消在跑的旧 run。

@@ -28,7 +28,8 @@ type FakeStore struct {
 	nextID      int64
 	queue       map[int64]model.RetryQueueItem
 	nextQueueID int64
-	wearMinutes map[string]int // patientID:bizDate → 佩戴分钟数
+	wearMinutes map[string]int  // patientID:bizDate → 佩戴分钟数
+	patientGone map[string]bool // T353：显式声明「patients 表无此行」的患者集合（默认视为存在，见 PatientExists）
 }
 
 // 编译期断言：FakeStore 实现 repo.Store
@@ -48,6 +49,7 @@ func NewFakeStore() *FakeStore {
 		queue:       map[int64]model.RetryQueueItem{},
 		nextQueueID: 1,
 		wearMinutes: map[string]int{},
+		patientGone: map[string]bool{},
 	}
 }
 
@@ -398,4 +400,19 @@ func (s *FakeStore) TodayWearMinutes(_ context.Context, patientID string, bizDat
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.wearMinutes[patientID+":"+bizDate], nil
+}
+
+// SeedPatientGone T353：声明该患者在 patients 表无行（PG 里 patient_preferences 有 FK，
+// 故已配置额度/提醒的患者必然存在；默认按存在处理，只有要验「查无此人 404」的用例才显式声明）。
+func (s *FakeStore) SeedPatientGone(patientID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.patientGone[patientID] = true
+}
+
+// PatientExists 见 repo.Store.PatientExists（T353）
+func (s *FakeStore) PatientExists(_ context.Context, patientID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.patientGone[patientID], nil
 }

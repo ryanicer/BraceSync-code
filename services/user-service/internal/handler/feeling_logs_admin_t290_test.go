@@ -100,6 +100,7 @@ func TestFeelingLogsAdmin_RejectsUnknownFeeling(t *testing.T) {
 // 前端回落 patientId；同时守住「补字段没在没查姓名的路径上凭空造值」。
 func TestFeelingLogs_SinglePatientHasNoName(t *testing.T) {
 	e := newEnv(t, false, false)
+	e.store.patient = &repo.PatientRow{PatientID: "P0000001"} // T353：列表端点先判患者存在
 	e.store.feelings = []repo.FeelingLogRow{feelingAdminRow(21, "P0000001", "", 5, "fitted")}
 
 	w, resp := e.do(http.MethodGet, "/api/v1/patients/P0000001/feeling-logs", nil,

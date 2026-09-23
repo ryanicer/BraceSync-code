@@ -13,6 +13,7 @@ import (
 // TestT264_ListPlans_Authz 矫形方案列表水平鉴权
 func TestT264_ListPlans_Authz(t *testing.T) {
 	e := newEnv(t, true, true)
+	e.store.patient = &repo.PatientRow{PatientID: "P1"} // T353：列表端点先判患者存在，鉴权用例需有档案行
 	e.store.plans = []repo.OrthosisPlanRow{{PlanID: 1, PatientID: "P1"}}
 	path := "/api/v1/patients/P1/orthosis-plans"
 

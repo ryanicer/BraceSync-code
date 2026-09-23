@@ -114,6 +114,8 @@ func TestCreateReviewRecord_Success(t *testing.T) {
 // TestListReviewRecords_HorizontalAuthz 水平鉴权：患者仅可查本人，admin 可查任意
 func TestListReviewRecords_HorizontalAuthz(t *testing.T) {
 	e := newEnv(t, false, false)
+	// T353：列表端点先判患者存在（本人 200 与 admin 查任意患者两条都要有档案行）
+	e.store.patients = []repo.PatientRow{{PatientID: "P001"}, {PatientID: "P002"}}
 
 	now := time.Now().UTC()
 	e.store.reviewRows = []repo.ReviewRecordRow{{
@@ -153,6 +155,7 @@ func TestListReviewRecords_HorizontalAuthz(t *testing.T) {
 // TestListReviewRecords_ReturnsList 成功返回复查记录列表
 func TestListReviewRecords_ReturnsList(t *testing.T) {
 	e := newEnv(t, false, false)
+	e.store.patients = []repo.PatientRow{{PatientID: "P001"}} // T353：列表端点先判患者存在
 
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	fileID := "FILE001"

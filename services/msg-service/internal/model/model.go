@@ -109,6 +109,7 @@ const (
 	CodeInvalidParam     = 50400 // 参数非法（未知告警类型 / 非法渠道 / Idempotency-Key 缺失）
 	CodeForbidden        = 50403 // 越权访问（水平越权：患者传他人 patientId / 非 admin 调权益写端点）
 	CodeNotFound         = 50404 // 消息域资源不存在（规则 / 通知记录）
+	CodePatientNotFound  = 10404 // 患者档案不存在（T353：档案 owner 是 user-service，与 data-service CodePatientNotFound / user-service CodeNotFound 同码，不落在本域 5xxxx 分段）
 	CodeQuotaExhausted   = 54002 // 订阅额度耗尽（T017 review 定稿：落在消息域分段）
 	CodeInternal         = 90001 // 系统内部错误
 	CodeInternalDisabled = 50001 // 内部接口鉴权失败（X-Internal-Service 缺失）
@@ -140,6 +141,11 @@ func ErrForbidden(format string, args ...any) *AppError {
 // ErrNotFound 消息域资源不存在（404）
 func ErrNotFound(format string, args ...any) *AppError {
 	return newAppError(CodeNotFound, 404, format, args...)
+}
+
+// ErrPatientNotFound T353：查无要与「有此人但无偏好行/无记录」在 HTTP 面上可区分，状态位显式 404。
+func ErrPatientNotFound(patientID string) *AppError {
+	return newAppError(CodePatientNotFound, 404, "patient %q not found", patientID)
 }
 
 // ErrQuotaExhausted 订阅额度耗尽（200 受理降级场景不抛此错；仅对外查询/显式拒绝时用）

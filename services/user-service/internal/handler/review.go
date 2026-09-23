@@ -103,6 +103,9 @@ func (h *Handler) listReviewRecords(c *gin.Context) {
 		}
 	}
 
+	if !h.assertPatientExists(c, patientID) { // T353：查无此人 404
+		return
+	}
 	rows, err := h.store.ListReviewRecordsByPatient(c.Request.Context(), patientID)
 	if err != nil {
 		fail(c, model.ErrInternal("list review records failed: %v", err))
