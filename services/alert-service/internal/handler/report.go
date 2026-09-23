@@ -106,8 +106,13 @@ func (h *Handler) parseReportQuery(w http.ResponseWriter, r *http.Request) (repo
 		h.reject(w, codeInvalidParam, "end must be >= start")
 		return reportQuery{}, false
 	}
+	filter := repo.AlertQueryFilter{PatientID: patientID, StartTs: &startDay, EndTs: &endTs}
+	// T350：异常报告同样是跨患者聚合，医护按所属团队收口（越界患者聚合结果为空）
+	if !h.applyDoctorTeamScope(w, r, &filter) {
+		return reportQuery{}, false
+	}
 	return reportQuery{
-		filter:    repo.AlertQueryFilter{PatientID: patientID, StartTs: &startDay, EndTs: &endTs},
+		filter:    filter,
 		patientID: patientID,
 		start:     startStr,
 		end:       endStr,

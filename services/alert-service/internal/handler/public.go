@@ -81,6 +81,8 @@ type PublicAlertStore interface {
 	// T300 异常报告汇总/导出（GET /admin/abnormal-reports[/export]）
 	SummarizeAlerts(ctx context.Context, f repo.AlertQueryFilter) ([]repo.AlertSummaryRow, error)
 	ListAlertsForExport(ctx context.Context, f repo.AlertQueryFilter, limit int) ([]repo.AlertRow, bool, error)
+	// DoctorTeamByAdmin T350：admin_id → 医护所属团队（数据范围推导，doctors 表只读）
+	DoctorTeamByAdmin(ctx context.Context, adminID string) (teamID string, ok bool, err error)
 }
 
 // AlertItem 公开查询返回的告警记录（字段名对齐 shared-types Alert）
@@ -182,6 +184,9 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		filter.PatientID = userID // 强制覆盖，不接受调用方传入的 patientId
+	} else if !h.applyDoctorTeamScope(w, r, &filter) {
+		// T350：医护按所属团队过滤（运营 / 客服不收紧，与改前逐字一致）
+		return
 	}
 	if filter.Type != "" {
 		if _, ok := validAlertTypes[filter.Type]; !ok {

@@ -32,10 +32,15 @@ type AlertQueryFilter struct {
 	// StartTs/EndTs T300：采集时间范围，半开区间 [StartTs, EndTs)。
 	// 由 handler 把「北京日历日」换算成时刻（末日次日 00:00 为 EndTs），
 	// nil = 该端不限。与 ts 的索引序 (patient_id, ts DESC) 同向，不额外扫表。
-	StartTs  *time.Time
-	EndTs    *time.Time
-	Page     int
-	PageSize int
+	StartTs *time.Time
+	EndTs   *time.Time
+	// TeamID/TeamScoped T350 数据范围：医护（ROLE_DOCTOR）按 doctors.team_id 限定可见患者。
+	// TeamScoped 为真且 TeamID 为空 = 该医护无团队归属 ⇒ 空集，不能当成「不按团队过滤」。
+	// 只由 handler 按网关身份头落值，不接受客户端自报。
+	TeamID     string
+	TeamScoped bool
+	Page       int
+	PageSize   int
 }
 
 // NormalizePage 补齐/钳制分页参数：缺省 page=1 / pageSize=20，pageSize 上限 100。
@@ -71,6 +76,19 @@ func buildAlertWhere(f AlertQueryFilter) (string, []any) {
 	if f.Status != "" {
 		args = append(args, f.Status)
 		conds = append(conds, "a.process_status = $"+strconv.Itoa(len(args)))
+	}
+	// T350 数据范围（PRD §7D.11）：医护只可见本团队患者的告警。
+	// 用 EXISTS 子查询而非 JOIN —— COUNT 语句是 `FROM alerts AS a` + 同一 WHERE，
+	// 加 JOIN 会让总数与当页错位。TeamScoped 且团队为空（医护无归属）落恒假，绝不退化成不过滤。
+	if f.TeamScoped {
+		if f.TeamID == "" {
+			conds = append(conds, "false")
+		} else {
+			args = append(args, f.TeamID)
+			conds = append(conds,
+				"EXISTS (SELECT 1 FROM patients AS pt WHERE pt.patient_id = a.patient_id"+
+					" AND pt.team_id = $"+strconv.Itoa(len(args))+")")
+		}
 	}
 	// T300：日期范围为半开区间 [start, end)，end 落在「末日次日 00:00」，
 	// 用 < 而非 <= 才能既含末日 23:59:59 又不依赖 ts 的小数秒精度。
