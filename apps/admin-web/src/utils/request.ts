@@ -1,5 +1,15 @@
 import type { ApiResponse } from '@bracesync/shared-types'
-import { getToken, removeToken } from './token'
+import { getToken } from './token'
+import { AUTH_EXPIRED_MESSAGE, handleAuthExpired, isAuthExpired } from './sessionExpiry'
+
+/**
+ * T357：会话失效处置的唯一出口——清凭据 + 整页回登录页（带 redirect 回原页），并抛中文文案，
+ * 让调用方把「登录已过期」提示给用户，而不是把网关英文原样渲染（同 T326 技师端口径）。
+ */
+function expiredSession(): never {
+  handleAuthExpired()
+  throw new Error(AUTH_EXPIRED_MESSAGE)
+}
 
 // MOCK 开关：构建时通过 VITE_USE_MOCK 环境变量控制（默认 true=mock，部署构建注入 false 走真实 API）
 // 例：VITE_USE_MOCK=false npm run build -w apps/admin-web
@@ -48,18 +58,16 @@ export async function request<T>(options: RequestOptions): Promise<T> {
   if (!res.ok) {
     // 后端校验失败以 HTTP 4xx + 信封返回，文案（如「collectIntervalSeconds must be...」）要透出给用户
     const errBody = (await res.json().catch(() => null)) as ApiResponse<unknown> | null
+    // T357：401 必须先于「透出后端文案」处置掉——旧写法在这里无条件 throw，
+    // 把下面那段清凭据回登录页变成了死代码。
+    if (isAuthExpired(res.status, errBody?.code)) expiredSession()
     throw new Error(errBody?.message || `HTTP ${res.status}`)
   }
   const body = (await res.json()) as ApiResponse<T>
   if (body.code === 0) {
     return body.data
   }
-  if (body.code === 40101) {
-    // token 失效：清凭据回登录页（对齐网关鉴权错误码）
-    // T336：整页跳转要自带挂载前缀（BASE_URL 恒以 / 结尾），写死 /login 在 staging 会被
-    // nginx 302 到 /admin/ ⇒ 丢 redirect 参数、落到首页
-    removeToken()
-    window.location.href = `${import.meta.env.BASE_URL}login`
-  }
+  // 200 + 业务鉴权码（服务层可能这样回）走同一个出口；401 的判定在上面 !res.ok 分支已完成
+  if (isAuthExpired(res.status, body.code)) expiredSession()
   throw new Error(body.message || 'Request failed')
 }
