@@ -1,5 +1,6 @@
 // 组织域 mock 数据（对齐 api-contracts.ts getTeams/getDoctors/getTechnicians/getInstallRecords）
 import type { Team, TeamDetail, TeamMember, TeamStats, Doctor, Technician, InstallRecordRow, InstallRecordDetail } from '@bracesync/shared-types'
+import { PHONE_PLACEHOLDER } from '../utils/phoneField'
 import { mockPatients, mockPatientDetail } from './patients'
 
 /** T059 成员管理视图（GET /teams/:teamId/members 本地类型；shared-types.TeamMembers 为一期只读契约，此处用 TeamMember 统一字段） */
@@ -20,23 +21,25 @@ const TEAMS: Team[] = [
 ]
 
 const DOCTORS: Doctor[] = [
-  { doctorId: 'DOC-001', name: '张建国', title: '主任医师', department: '脊柱外科', teamId: 'TEAM-001', phoneMasked: '138****2201', patientCount: 68, status: 'enabled' },
-  { doctorId: 'DOC-002', name: '陈小芳', title: '副主任医师', department: '脊柱外科', teamId: 'TEAM-002', phoneMasked: '139****3302', patientCount: 72, status: 'enabled' },
-  { doctorId: 'DOC-003', name: '李明华', title: '主治医师', department: '康复科', teamId: 'TEAM-003', phoneMasked: '137****4403', patientCount: 55, status: 'enabled' },
-  { doctorId: 'DOC-004', name: '王磊', title: '主治医师', department: '小儿骨科', teamId: 'TEAM-004', phoneMasked: '136****5504', patientCount: 84, status: 'enabled' },
-  { doctorId: 'DOC-005', name: '赵敏', title: '副主任医师', department: '骨科', teamId: 'TEAM-005', phoneMasked: '135****6605', patientCount: 63, status: 'disabled' },
+  { doctorId: 'DOC-001', name: '张建国', title: '主任医师', department: '脊柱外科', teamId: 'TEAM-001', phoneMasked: '138****2201', phoneState: 'masked', patientCount: 68, status: 'enabled' },
+  { doctorId: 'DOC-002', name: '陈小芳', title: '副主任医师', department: '脊柱外科', teamId: 'TEAM-002', phoneMasked: '139****3302', phoneState: 'masked', patientCount: 72, status: 'enabled' },
+  { doctorId: 'DOC-003', name: '李明华', title: '主治医师', department: '康复科', teamId: 'TEAM-003', phoneMasked: '137****4403', phoneState: 'masked', patientCount: 55, status: 'enabled' },
+  { doctorId: 'DOC-004', name: '王磊', title: '主治医师', department: '小儿骨科', teamId: 'TEAM-004', phoneMasked: '136****5504', phoneState: 'masked', patientCount: 84, status: 'enabled' },
+  { doctorId: 'DOC-005', name: '赵敏', title: '副主任医师', department: '骨科', teamId: 'TEAM-005', phoneMasked: '135****6605', phoneState: 'masked', patientCount: 63, status: 'disabled' },
   // T059 团队管理写功能：张主任（骨科一组 leader）/ 王康复师（可作负责人）/ 刘医生（可添加成员）/ 王护士（骨科一组，可移除）
-  { doctorId: 'DOC-101', name: '张主任', title: '主任医师', department: '骨科', teamId: 'TEAM-101', phoneMasked: '138****1101', patientCount: 36, status: 'enabled' },
-  { doctorId: 'DOC-102', name: '王护士', title: '护士', department: '骨科', teamId: 'TEAM-101', phoneMasked: '139****2202', patientCount: 12, status: 'enabled' },
-  { doctorId: 'DOC-103', name: '王康复师', title: '康复师', department: '康复科', teamId: 'TEAM-102', phoneMasked: '137****3303', patientCount: 28, status: 'enabled' },
-  { doctorId: 'DOC-104', name: '刘医生', title: '主治医师', department: '骨科', teamId: null, phoneMasked: '136****4404', patientCount: 0, status: 'enabled' },
+  { doctorId: 'DOC-101', name: '张主任', title: '主任医师', department: '骨科', teamId: 'TEAM-101', phoneMasked: '138****1101', phoneState: 'masked', patientCount: 36, status: 'enabled' },
+  // T361：DOC-102 承载「有密文但解不开」这一格（staging seed 三行医护手机号就是这一形态），
+  // 展示串固定为占位符 '***'，编辑弹窗不得把它当原值预填。
+  { doctorId: 'DOC-102', name: '王护士', title: '护士', department: '骨科', teamId: 'TEAM-101', phoneMasked: PHONE_PLACEHOLDER, phoneState: 'unreadable', patientCount: 12, status: 'enabled' },
+  { doctorId: 'DOC-103', name: '王康复师', title: '康复师', department: '康复科', teamId: 'TEAM-102', phoneMasked: '137****3303', phoneState: 'masked', patientCount: 28, status: 'enabled' },
+  { doctorId: 'DOC-104', name: '刘医生', title: '主治医师', department: '骨科', teamId: null, phoneMasked: '136****4404', phoneState: 'masked', patientCount: 0, status: 'enabled' },
 ]
 
 const TECHNICIANS: Technician[] = [
-  { techId: 'TECH-001', name: '周师傅', phoneMasked: '138****5678', teamId: 'TEAM-001', installCount: 46, status: 'enabled', authStatus: 'authorized', createdAt: '2026-05-15T00:00:00+08:00' },
-  { techId: 'TECH-002', name: '吴师傅', phoneMasked: '139****6789', teamId: 'TEAM-002', installCount: 38, status: 'enabled', authStatus: 'authorized', createdAt: '2026-06-01T00:00:00+08:00' },
-  { techId: 'TECH-003', name: '郑师傅', phoneMasked: '137****7890', teamId: 'TEAM-003', installCount: 29, status: 'enabled', authStatus: 'unauthorized', createdAt: '2026-06-20T00:00:00+08:00' },
-  { techId: 'TECH-004', name: '冯师傅', phoneMasked: '136****8901', teamId: 'TEAM-004', installCount: 52, status: 'disabled', authStatus: 'authorized', createdAt: '2026-07-01T00:00:00+08:00' },
+  { techId: 'TECH-001', name: '周师傅', phoneMasked: '138****5678', phoneState: 'masked', teamId: 'TEAM-001', installCount: 46, status: 'enabled', authStatus: 'authorized', createdAt: '2026-05-15T00:00:00+08:00' },
+  { techId: 'TECH-002', name: '吴师傅', phoneMasked: '139****6789', phoneState: 'masked', teamId: 'TEAM-002', installCount: 38, status: 'enabled', authStatus: 'authorized', createdAt: '2026-06-01T00:00:00+08:00' },
+  { techId: 'TECH-003', name: '郑师傅', phoneMasked: '137****7890', phoneState: 'masked', teamId: 'TEAM-003', installCount: 29, status: 'enabled', authStatus: 'unauthorized', createdAt: '2026-06-20T00:00:00+08:00' },
+  { techId: 'TECH-004', name: '冯师傅', phoneMasked: '136****8901', phoneState: 'masked', teamId: 'TEAM-004', installCount: 52, status: 'disabled', authStatus: 'authorized', createdAt: '2026-07-01T00:00:00+08:00' },
 ]
 
 const INSTALL_RECORDS: InstallRecordRow[] = [
@@ -139,6 +142,7 @@ export function mockCreateTechnician(input: { name: string; phone: string; teamI
     techId: `TECH-${String(TECHNICIANS.length + 1).padStart(3, '0')}`,
     name: input.name,
     phoneMasked: maskPhoneLocal(input.phone),
+    phoneState: input.phone ? 'masked' : 'absent',
     teamId: input.teamId,
     installCount: 0,
     status: 'enabled',
@@ -154,7 +158,11 @@ export function mockUpdateTechnician(techId: string, input: Partial<{ name: stri
   if (idx === -1) throw new Error('技师不存在')
   if (input.name) TECHNICIANS[idx].name = input.name
   if (input.teamId) TECHNICIANS[idx].teamId = input.teamId
-  if (input.phone) TECHNICIANS[idx].phoneMasked = maskPhoneLocal(input.phone)
+  // 与真实端点一致：PUT 的 phone 为空 = 不改（技师页编辑态该输入框本就 disabled，不下发该键）
+  if (input.phone) {
+    TECHNICIANS[idx].phoneMasked = maskPhoneLocal(input.phone)
+    TECHNICIANS[idx].phoneState = 'masked'
+  }
   return { ...TECHNICIANS[idx] }
 }
 
@@ -179,6 +187,7 @@ function toDoctorMember(d: Doctor, joinTimeFallback: string | undefined): TeamMe
     role: d.title,
     title: d.department,
     phoneMasked: d.phoneMasked,
+    phoneState: d.phoneState,
     patientCount: d.patientCount,
     joinTime: joinTimeFallback ?? new Date().toISOString(),
     status: d.status,
@@ -193,6 +202,7 @@ function toTechMember(t: Technician, joinTimeFallback: string | undefined): Team
     role: null,
     title: null,
     phoneMasked: t.phoneMasked,
+    phoneState: t.phoneState,
     patientCount: 0,
     joinTime: joinTimeFallback ?? new Date().toISOString(),
     status: t.status,

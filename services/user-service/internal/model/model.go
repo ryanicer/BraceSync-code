@@ -146,7 +146,7 @@ type AdminPatientDTO struct {
 	DeviceID   *string  `json:"deviceId"` // 当前绑定设备(devices.patient_id 只读关联)；非 patients.device_id(T151 方案1)
 	TeamID     *string  `json:"teamId"`
 	DoctorID   *string  `json:"doctorId"`
-	Phone      string   `json:"phone"` // 脱敏手机号（138****8000），由 handler.Masked(PhoneEnc) 生成
+	Phone      string   `json:"phone"` // 脱敏手机号（138****8000），仅写响应回填；读侧 patientSelect 不投影 phone_enc ⇒ 恒为空串（T361 登记）
 	Status     string   `json:"status"`
 	CreatedAt  string   `json:"createdAt"`
 	UpdatedAt  string   `json:"updatedAt"`
@@ -185,6 +185,7 @@ type DoctorDTO struct {
 	Department   string  `json:"department"`
 	TeamID       *string `json:"teamId"`
 	PhoneMasked  string  `json:"phoneMasked"`
+	PhoneState   string  `json:"phoneState"` // T361：absent|masked|unreadable，见 phone.PhoneState；前端据此决定回显占位符还是脱敏号
 	PatientCount int     `json:"patientCount"`
 	Status       string  `json:"status"`
 	// T314 医护账号页的 admins 侧三列：PRD §7D.10（1）「登录账号 / 创建时间」不在 doctors 表，
@@ -202,6 +203,7 @@ type TechnicianDTO struct {
 	TechID       string  `json:"techId"`
 	Name         string  `json:"name"`
 	PhoneMasked  string  `json:"phoneMasked"`
+	PhoneState   string  `json:"phoneState"` // T361：absent|masked|unreadable
 	TeamID       string  `json:"teamId"`
 	TeamName     *string `json:"teamName"`
 	InstallCount int     `json:"installCount"`
@@ -486,6 +488,7 @@ type TeamMemberDTO struct {
 	Role         string `json:"role"`
 	Title        string `json:"title"`
 	PhoneMasked  string `json:"phoneMasked"`
+	PhoneState   string `json:"phoneState"` // T361：absent|masked|unreadable
 	PatientCount int    `json:"patientCount"`
 	JoinTime     string `json:"joinTime"`
 	Status       string `json:"status"`

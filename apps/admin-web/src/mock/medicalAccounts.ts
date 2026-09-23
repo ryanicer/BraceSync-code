@@ -4,10 +4,13 @@
 // 与「团队管理」等页共用同一批档案，避免同一医生在两页显示不同职称。
 // 账号侧字段（登录账号 / 创建时间）落在 admins 表，真实端点已由 T314 并入
 // GET /api/v1/doctors 同一行 ⇒ 真实模式走服务端，本模块只服务本地 mock 模式。
-import type { Doctor } from '@bracesync/shared-types'
+import type { Doctor, PhoneState } from '@bracesync/shared-types'
 import { mockDoctors } from './org'
 
-/** 设计稿 :131/:282 职称词表（doctors.title，预置 4 项、可扩展；≠ 登录角色） */
+/**
+ * 设计稿 :284 职称预置词表（doctors.title，:283 注明「预置 4 项、可扩展」；≠ 登录角色）。
+ * T360：本数组只是下拉词表的前缀，页面下拉取「预置 ∪ 库内出现过的职称」⇒ 见 utils/medicalTitles.ts。
+ */
 export const MEDICAL_TITLES = ['主任医师', '主治医师', '康复师', '护士']
 
 /**
@@ -23,6 +26,11 @@ export interface MedicalAccount {
   name: string
   /** 服务端即已脱敏；空串 ⇒ 列表显示「—」（设计稿 :299 maskPhone） */
   phoneMasked: string
+  /**
+   * T361：与 phoneMasked 配套 —— 'masked' 才有真号，'unreadable' 的展示串是占位符，
+   * 'absent' 是确实没填。编辑弹窗据此决定提示文案，且任何状态下都不预填脱敏串。
+   */
+  phoneState: PhoneState
   department: string
   teamId: string | null
   title: string
@@ -44,6 +52,8 @@ export interface CreateMedicalAccountInput {
 
 /**
  * 编辑入参。Phone 三态（对齐后端 PUT 的指针语义）：缺席 = 不改，'' = 清空，非空 = 换新号。
+ * T361：页面只下发「缺席」或「换新号」两种；''=清空 在 UI 上没有对应控件（设计稿无「清除手机号」
+ * 按钮），该通道保留给 API 调用方，避免运营误清把真号洗成 NULL。
  * Status 服务端 PUT 不收，由 api 层转成 /status 请求（设计稿 :378 编辑态可改状态）。
  */
 export type UpdateMedicalAccountInput = Partial<CreateMedicalAccountInput>
@@ -61,11 +71,13 @@ const CREATED_AT: Record<string, string> = {
 }
 
 function fromDoctor(doctor: Doctor, index: number): MedicalAccount {
+  const blanked = EMPTY_PHONE_DOCTORS.has(doctor.doctorId)
   return {
     doctorId: doctor.doctorId,
     username: `doc${String(index + 1).padStart(5, '0')}`,
     name: doctor.name,
-    phoneMasked: EMPTY_PHONE_DOCTORS.has(doctor.doctorId) ? '' : doctor.phoneMasked,
+    phoneMasked: blanked ? '' : doctor.phoneMasked,
+    phoneState: blanked ? 'absent' : doctor.phoneState,
     department: doctor.department,
     teamId: doctor.teamId,
     title: doctor.title,
@@ -107,6 +119,7 @@ export function mockCreateMedicalAccount(input: CreateMedicalAccountInput): { ac
     username: nextUsername(),
     name: input.name,
     phoneMasked: input.phone ? maskPhone(input.phone) : '',
+    phoneState: input.phone ? 'masked' : 'absent',
     department: input.department,
     teamId: input.teamId,
     title: input.title,
@@ -126,8 +139,11 @@ export function mockUpdateMedicalAccount(doctorId: string, input: UpdateMedicalA
   if (input.teamId) row.teamId = input.teamId
   if (input.title) row.title = input.title
   if (input.status) row.status = input.status
-  // 手机号三态与真实端点一致：key 缺席不改，'' 清空，非空换新号
-  if (input.phone !== undefined) row.phoneMasked = input.phone ? maskPhone(input.phone) : ''
+  // 手机号三态与真实端点一致：key 缺席不改，'' 清空（T361 起页面不再下发 ''），非空换新号
+  if (input.phone !== undefined) {
+    row.phoneMasked = input.phone ? maskPhone(input.phone) : ''
+    row.phoneState = input.phone ? 'masked' : 'absent'
+  }
   return { ...row }
 }
 

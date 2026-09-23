@@ -283,6 +283,20 @@ jobs:
     #     那 7 条 skip = 5 条不可逆写用例（3.4 / 5.4 / 5.5 / 6.4 / 7.3）+ 本卡 2 条 post-deploy。
     #     对上 T336 那行的 38/5：本卡 +1 passed +2 skipped，且 T336 的 1.7/1.8 已因线上包已追平而转真跑。
     #     T353 部署上 staging 后预期 41 passed / 5 skipped。
+    # T359 再加三条（tests/03-alerts.spec.ts 的 describe「03c-告警处理流程 · 医护可读」）：
+    #   3c.3（ops_admin 进 Tab3 不退化）无守卫，每次 run 真跑。
+    #   3c.1 / 3c.2 断的是本卡「模板读对 staff 放行」，标记 T359-flow-templates-staff-read（API 口径，
+    #   只需网关 + user-service 新包）/ T359-process-tab-no-403（UI 口径，还要 admin-web 新包）
+    #   ⇒ 两条分开探，部署进度可以不同。
+    #   本 PR CI 实跑（code PR #197，两个 green run：35908163255 / job 107344338537 与
+    #     35910903878 / job 107350177697）：都是 **44 passed / 0 failed**，skip 从 8 条变 9 条 ——
+    #     多的那条是期间 main 新合入的 12.1（T355），与本卡无关。
+    #     本卡在其中固定贡献 1 passed（3c.3 无守卫）+ 2 skipped，日志两行
+    #     `[post-deploy] skip T359-flow-templates-staff-read` / `... skip T359-process-tab-no-403`。
+    #     （余下 skip 属别的卡：5 条不可逆写用例 + T348 的 2.4；T353 那 2 条到这两个 run 已转真跑
+    #     ⇒ 上面 T353 段末尾那两行的 39/7 与 41/5 是当时的口径，现已不适用。）
+    #   ⇒ 本卡合并后必须走一次 staging 部署（网关 + user-service + admin-web 三件都要新包），
+    #     否则定时 run 会因缺标记判红（设计意图，不是误报）；部署后本卡 2 条自动转真跑（各 +1 passed）。
     # job 级并发锁：顶部 workflow 级 concurrency 按 PR 分组，多个 PR 的真跑会同时打 staging。
     # 写用例里 8.2 是「读现值 → +1 → 写回读到的值」，两条 run 交错会把 maxPatients 留在别人的
     # baseline 上（值仍合法但再也回不去 seed）。故所有 run 串行排队，不取消在跑的旧 run。

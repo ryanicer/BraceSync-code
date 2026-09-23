@@ -52,13 +52,44 @@ func TestMask(t *testing.T) {
 	assert.Equal(t, "***", Mask(""))
 }
 
-func TestMaskedFallback(t *testing.T) {
+// TestViewThreeStates T361：接口层三态可辨 —— 旧 Masked 把 absent 与 unreadable 压成
+// 两种「看起来都像占位符」的字符串，导致前端把脱敏串当可编辑值预填、清空即洗掉真号。
+func TestViewThreeStates(t *testing.T) {
 	c, err := NewCipher(testKey)
 	require.NoError(t, err)
-	assert.Equal(t, "", c.Masked(nil))
-	assert.Equal(t, "***", c.Masked([]byte("corrupted")))
-	enc, _ := c.Encrypt("13800001111")
-	assert.Equal(t, "138****1111", c.Masked(enc))
+
+	// absent：密文列 NULL / 零长 ⇒ 展示串仍为空（与改造前逐字相同，前端渲染破折号）
+	assert.Equal(t, PhoneView{State: PhoneStateAbsent}, View(c, nil))
+	assert.Equal(t, PhoneView{State: PhoneStateAbsent}, View(c, []byte{}))
+
+	// masked：可解密 ⇒ 脱敏号文案不变
+	enc, err := c.Encrypt("13800001111")
+	require.NoError(t, err)
+	assert.Equal(t, PhoneView{State: PhoneStateMasked, Masked: "138****1111"}, View(c, enc))
+
+	// unreadable：seed 占位密文（scripts/db/seed/seed.sql 写 '\x00'::bytea，1 字节 < 12 字节 nonce）
+	assert.Equal(t, PhoneView{State: PhoneStateUnreadable, Masked: MaskUnavailable}, View(c, []byte{0}))
+	// unreadable：长度够 nonce 但认证失败（密钥轮换 / 数据损坏）
+	assert.Equal(t, PhoneView{State: PhoneStateUnreadable, Masked: MaskUnavailable}, View(c, make([]byte, 32)))
+}
+
+// TestViewWithNilCipher 密钥未配置（PHONE_ENC_KEY 缺失）时不得伪装成「该账号没填手机号」
+func TestViewWithNilCipher(t *testing.T) {
+	assert.Equal(t, PhoneView{State: PhoneStateAbsent}, View(nil, nil))
+	assert.Equal(t, PhoneView{State: PhoneStateUnreadable, Masked: MaskUnavailable}, View(nil, []byte{0}))
+}
+
+// TestSeedPlaceholderUnreadableUnderAnyKey T361 定性证据：seed 的三行医护手机号密文是占位
+// bytea，换任何一把合法密钥都解不开（而该密钥自己的密文能正常解 ⇒ 排除「密钥本身不可用」）。
+// ⇒ 现网 "***" 是种子数据形态，不是加密密钥漂移，不需要动库。
+func TestSeedPlaceholderUnreadableUnderAnyKey(t *testing.T) {
+	other, err := NewCipher("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+	require.NoError(t, err)
+	assert.Equal(t, PhoneStateUnreadable, View(other, []byte{0}).State)
+
+	enc, err := other.Encrypt("13800001111")
+	require.NoError(t, err)
+	assert.Equal(t, PhoneStateMasked, View(other, enc).State)
 }
 
 func TestHashDeterministic(t *testing.T) {
