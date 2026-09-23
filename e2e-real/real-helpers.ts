@@ -1,7 +1,7 @@
 import { expect, type Page, type Locator } from '@playwright/test'
-// gotoMenu 在本文件下方要被直接调用，故必须真 import 一份——
-// 下面那串 `export { gotoMenu } from '../e2e/admin-helpers'` 只转发给消费者，不产生本地绑定。
-import { gotoMenu } from '../e2e/admin-helpers'
+// gotoMenu / isLoginPath 在本文件下方要被直接调用，故必须真 import 一份——
+// 下面那串 `export { ... } from '../e2e/admin-helpers'` 只转发给消费者，不产生本地绑定。
+import { gotoMenu, isLoginPath } from '../e2e/admin-helpers'
 
 /*
  * ⚠️ 本文件为「真实模式」E2E 专用 helper（T053）。
@@ -25,20 +25,25 @@ export {
   topBarUserName,
   adminLogout,
   adminLogout as realLogout,
+  isLoginPath,
+  ADMIN_MOUNT as REAL_MOUNT,
 } from '../e2e/admin-helpers'
 
 // ─────────────────────────────────────────────────────────────
-// 真实模式「staging 路由」全量常量（baseURL 是根，staging 前端挂在 Nginx /admin/ 下）
-// Nginx /admin/ location strip 前缀后交根路径 router（createWebHistory() 无 base，pageRoutes 全根路径）
-// 故 realRoutes 带 /admin/ 前缀对齐浏览器 URL；登录成功 router push /dashboard → 浏览器 URL /admin/dashboard
+// 真实模式「staging 路由」全量常量（前端挂在 Nginx /admin/ 下）
 //
-// 🔴 T279 复跑实测（2026-09-21，staging 已换 root-base 构建）：上述结论已不成立——
-//   登录后浏览器实际停在根路径 /dashboard（不是 /admin/dashboard），
-//   而两种深链形态都进不了目标页（headless 实测，均已登录状态）：
+// 挂载点契约（T336）：admin-web 以 vite base=/admin/ 构建，vue-router 的 history base 取同一
+// 前缀（createWebHistory(import.meta.env.BASE_URL)），路由表内部仍是根路径（/patients），
+// 浏览器地址是 ${base}patients（/admin/patients）。所以 realRoutes 带 /admin/ 前缀是对的。
+//
+// 历史口径变更（留档，避免又被改回去）：
+//   T279 复跑实测（2026-09-21，staging 当时是 root-base 构建）：
 //     /admin/patients、/admin/settings → 回落到 /dashboard
 //     /patients、/settings            → 打回 /login?redirect=/dashboard
-//   ⇒ 深链只能到「登录页或数据概览」，进具体页必须登录 → 点侧边栏（见 gotoMenuAndWaitTable）。
-//   保留本常量：/admin/login 仍能落到登录页（SPA 会重写成 /login?redirect=/dashboard）。
+//   ⇒ 那时「深链只能到登录页或数据概览，进具体页必须登录 → 点侧边栏」（见 gotoMenuAndWaitTable）。
+//   那是 root-base 构建挂在 /admin/ 下的必然结果，不是 nginx 的问题（它的 try_files 一直回 index.html）。
+//   T336 把前端 base 改成 /admin/ 后深链/刷新/登录后回原页恢复；带标记的部署守卫用例见
+//   tests/01-login.spec.ts 的「挂载点与深链」——staging 未部署该构建前按 post-deploy 跳过。
 // ─────────────────────────────────────────────────────────────
 export const realRoutes = {
   login: '/admin/login',
@@ -113,7 +118,18 @@ export async function realLogin(
   await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
   // 等待登录卡片渲染
   await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
+  await submitRealLoginForm(page, username, password)
+}
 
+/**
+ * 在「已经停在登录页」的表单上填凭据并提交（不 goto —— T336 深链用例要保住
+ * 登录页 URL 上的 redirect 参数，重新 goto 就等于换了个目标页，回填验不准）。
+ */
+export async function submitRealLoginForm(
+  page: Page,
+  username: string = DEFAULT_REAL_USERNAME,
+  password: string = DEFAULT_REAL_PASSWORD,
+): Promise<void> {
   // 用户名：.login-form 下「未带 type=password」的第一个可输入 input
   const usernameInput = page.locator('.login-form input:not([type="password"])').first()
   const passwordInput = page.locator('.login-form input[type="password"]')
@@ -136,13 +152,11 @@ export async function realLogin(
 
   await loginBtn.click()
 
-  // 登录成功：离开 /admin/login（router push 根路径 /dashboard，浏览器 URL /admin/dashboard）
+  // 登录成功：离开登录页（T336 后浏览器地址是 /admin/dashboard；旧构建是根路径 /dashboard，
+  // 故判定写成「路径尾部是 login」而不是 startsWith('/login')——带挂载前缀时也成立）
   // 失败也会变 URL，但这里用 waitForURL 非登录页路径 + 同时用 ElMessage 兜底）
   try {
-    await page.waitForURL(
-      (url) => !url.pathname.startsWith('/login'),
-      { timeout: 20_000 },
-    )
+    await page.waitForURL((url) => !isLoginPath(url.pathname), { timeout: 20_000 })
   } catch {
     // 兜底：如果被 redirect 回 /login（账号异常），不抛，由上层断言判断
   }

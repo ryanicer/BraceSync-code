@@ -6,17 +6,19 @@
 // 复用 admin-web E2E 稳定选择器（Element Plus .el-table__body-wrapper tbody tr 等），
 // 登录走真实分支（POST /api/v1/auth/login：.login-form 用户名/密码）。
 import { test, expect, type Page } from '@playwright/test'
+import { isLoginPath } from './real-helpers'
 
 const USERNAME = process.env.ADMIN_USERNAME ?? ''
 const PASSWORD = process.env.ADMIN_PASSWORD ?? ''
 
 /** admin-web 真实登录（对应用户名/密码双输入，按钮文案含空格的「登 录」） */
 async function adminLoginReal(page: Page): Promise<void> {
-  await page.goto('/login')
+  // T336：前端以 /admin/ 为 base 构建，登录页在挂载点内（根路径 /login 会被 nginx 302 到 /admin/）
+  await page.goto('/admin/login')
   await page.locator('.login-form input[autocomplete="username"]').fill(USERNAME)
   await page.locator('.login-form input[autocomplete="current-password"]').fill(PASSWORD)
   await page.locator('.login-form').getByRole('button', { name: /登\s*录/ }).click()
-  await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 15_000 })
+  await page.waitForURL((url) => !isLoginPath(url.pathname), { timeout: 15_000 })
 }
 
 /** 表格行（Element Plus el-table body 行） */

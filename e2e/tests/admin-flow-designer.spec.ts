@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { adminRoutes, adminLogin, adminMessage, pickSelectOption } from '../admin-helpers'
+import { adminRoutes, adminLogin, adminMessage, pickSelectOption, ADMIN_MOUNT } from '../admin-helpers'
 
 /**
  * T276 2.4 拖拽式流程设计器（USE_MOCK=true，模板 CRUD 走 src/mock/flow.ts 的可写存储）
@@ -468,14 +468,15 @@ test.describe('流程设计器', () => {
     await page.getByRole('button', { name: '保存', exact: true }).click()
     await expect(adminMessage(page)).toContainText('流程模板已保存')
 
-    const stored = await page.evaluate(async (tplName) => {
-      const mod = await import('/src/api/flow.ts')
+    // 浏览器侧动态 import 取 dev server 的源码模块，路径须带挂载前缀（T336：vite base=/admin/）
+    const stored = await page.evaluate(async ({ modPath, tplName }) => {
+      const mod = await import(modPath)
       // 列表接口不带图数据（契约 :1082），属性透传只能查详情
       const row = (await mod.fetchFlowTemplates(tplName)).find((t: { name: string }) => t.name === tplName)
       const tpl = row ? await mod.fetchFlowTemplate(row.templateId) : null
       const handle = tpl?.nodes.find((n: { text?: { value?: string } }) => n.text?.value === '医生确认')
       return { name: tpl?.name, nodes: tpl?.nodes.length ?? 0, props: handle?.properties ?? null }
-    }, name)
+    }, { modPath: `${ADMIN_MOUNT}/src/api/flow.ts`, tplName: name })
     expect(stored.name).toBe(name)
     expect(stored.nodes).toBe(3)
     // design-* 已收成内置形状名（type 在 serializeGraph 里）；属性键按 T285 §2.3，

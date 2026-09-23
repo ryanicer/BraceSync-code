@@ -18,25 +18,36 @@ export const ROLE_ACCOUNT: Record<AdminRole, { name: string; label: string }> = 
   cs: { name: '客服小美', label: '客服' },
 }
 
+/**
+ * 挂载前缀（T336）：admin-web 的 vite base 是 /admin/（与 nginx location /admin/ 对齐），
+ * dev server 同样挂在 /admin/ 下 —— 浏览器地址是 /admin/patients，而 router.push 用的是根路径 /patients。
+ * 用例走浏览器地址，故 goto 一律带前缀；常量取自 apps/admin-web/src/utils/mount.ts（改那边会撞 base-mount-contract 门禁）。
+ */
+export const ADMIN_MOUNT = '/admin'
+export const adminPath = (routePath: string): string => `${ADMIN_MOUNT}${routePath}`
+
+/** 当前是否停在登录页（挂载前缀无关，供 waitForURL 用） */
+export const isLoginPath = (pathname: string): boolean => pathname === '/login' || pathname.endsWith('/login')
+
 /** 15 页路由（对齐 router/index.ts pageRoutes，T130 复查报告 / T135 复查模板管理 / T315 医护账号） */
 export const adminRoutes = {
-  login: '/login',
-  forbidden: '/403',
-  dashboard: '/dashboard',
-  monitor: '/monitor',
-  patients: '/patients',
-  teams: '/teams',
-  devices: '/devices',
-  alerts: '/alerts',
-  communication: '/communication',
-  orthosisLog: '/orthosis-log',
-  installRecords: '/install-records',
-  reviewRecords: '/review-records',
-  reviewTemplates: '/review-templates', // T135 复查模板管理
-  technicians: '/technicians',
-  doctorAccounts: '/doctor-accounts', // T315 医护账号
-  roles: '/roles',
-  settings: '/settings',
+  login: adminPath('/login'),
+  forbidden: adminPath('/403'),
+  dashboard: adminPath('/dashboard'),
+  monitor: adminPath('/monitor'),
+  patients: adminPath('/patients'),
+  teams: adminPath('/teams'),
+  devices: adminPath('/devices'),
+  alerts: adminPath('/alerts'),
+  communication: adminPath('/communication'),
+  orthosisLog: adminPath('/orthosis-log'),
+  installRecords: adminPath('/install-records'),
+  reviewRecords: adminPath('/review-records'),
+  reviewTemplates: adminPath('/review-templates'), // T135 复查模板管理
+  technicians: adminPath('/technicians'),
+  doctorAccounts: adminPath('/doctor-accounts'), // T315 医护账号
+  roles: adminPath('/roles'),
+  settings: adminPath('/settings'),
 } as const
 
 /** admin 全量 15 页路径（权限矩阵 ROLE_PAGE_MATRIX.admin，T315 新增 /doctor-accounts） */
@@ -44,11 +55,11 @@ export const ADMIN_PAGES: string[] = [
   '/dashboard', '/monitor', '/patients', '/teams', '/devices', '/alerts',
   '/communication', '/orthosis-log', '/install-records', '/review-records', '/review-templates',
   '/technicians', '/doctor-accounts', '/roles', '/settings',
-]
+].map(adminPath)
 
 /** doctor 可见 6 页 / cs 可见 1 页（ROLE_PAGE_MATRIX，T130 新增 /review-records，T135 新增 /review-templates） */
-export const DOCTOR_PAGES: string[] = ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records', '/review-templates']
-export const CS_PAGES: string[] = ['/communication']
+export const DOCTOR_PAGES: string[] = ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records', '/review-templates'].map(adminPath)
+export const CS_PAGES: string[] = ['/communication'].map(adminPath)
 
 /**
  * 在当前可见的 Element Plus 下拉面板中选择选项。
@@ -73,8 +84,8 @@ export async function adminLogin(page: Page, role: AdminRole): Promise<void> {
   }
   await page.locator('.login-form input[type="password"]').fill('mock-password')
   await page.locator('.login-form').getByRole('button', { name: '登录' }).click()
-  // 登录成功即离开 /login（cs 默认落地 /403，admin/doctor 落地 /dashboard）
-  await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 10_000 })
+  // 登录成功即离开登录页（cs 默认落地 /403，admin/doctor 落地 /dashboard）
+  await page.waitForURL((url) => !isLoginPath(url.pathname), { timeout: 10_000 })
 }
 
 /** ElMessage 全局提示（teleport 到 body；多条消息会堆叠，取最新一条） */

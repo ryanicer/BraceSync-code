@@ -6,7 +6,12 @@ import {
   topBarUserName,
   LS_TOKEN_KEY,
   realRoutes,
+  tableRows,
+  isLoginPath,
+  REAL_MOUNT,
+  submitRealLoginForm,
 } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 01 登录模块（真实模式：用户名/密码 + JWT）
@@ -14,6 +19,7 @@ import {
  *
  * T279 补：1.5 = 验收卡 A-FLOW-03 步骤 4「空用户名前端拦截」（docs/tests/acceptance/admin/核心流程.md:68）。
  *          mock 侧结构上验不了（登录页只有角色下拉，没有用户名框），故只能在真实模式补。
+ * T336 补：1.7 / 1.8 = 挂载点深链与刷新（前端 base 改 /admin/ 后的行为，带部署守卫）。
  */
 test.describe('01-登录模块', () => {
 
@@ -35,7 +41,7 @@ test.describe('01-登录模块', () => {
   test.describe('真实账号登录成功', () => {
     test('1.2 ops_admin 登录 → Dashboard + localStorage JWT + 顶栏用户名', async ({ page }) => {
       await realLogin(page)
-      // 1) 跳转到 /dashboard（应用 vue-router base=/，根路径）
+      // 1) 跳转到 dashboard（T336 后带挂载前缀 /admin/dashboard；旧构建是根路径 /dashboard，故只匹配尾部）
       await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 })
       // 2) ElMessage 欢迎提示（非空即可，文案为「欢迎，xxx」）
       await expect(adminMessage(page)).toBeVisible({ timeout: 10_000 })
@@ -92,8 +98,9 @@ test.describe('01-登录模块', () => {
       expect(urlAfter).toMatch(/redirect=/)
       // ⚠️ T279 实测（headless，未登录 new context 逐个试过 /admin/patients、/patients、/admin/teams）：
       //    三者一律落到 /login?redirect=/dashboard —— redirect 恒为 /dashboard，从不回填原目标页。
-      //    ⇒ 本用例守的是「未登录进不去 + 会跳回登录页」；「登录后回跳到原目标页」这半步在 staging
-      //    根本不可能成立，故未断言，已作为缺陷登记（T279 报告 F-2）。别把本条读成 A-FLOW-02 的回跳已覆盖。
+      //    ⇒ 本用例守的是「未登录进不去 + 会跳回登录页」，不绑死 redirect 的具体值。
+      //    T336 已定性根因（前端 root-base 构建挂在 /admin/ 下），修好后 redirect 就是原目标页，
+      //    「登录后回原页」那半步由下面 1.7 守（带部署守卫：staging 换构建前按 post-deploy 跳过）。
     })
   })
 
@@ -129,7 +136,8 @@ test.describe('01-登录模块', () => {
       await expect(adminMessage(page)).toHaveCount(0)
 
       // 4) 仍停在登录页，没有进入任何后台页
-      expect(new URL(page.url()).pathname).toBe('/login')
+      // 挂载前缀无关（T336）：新构建停在 /admin/login，未部署时停在 /login
+      expect(isLoginPath(new URL(page.url()).pathname)).toBe(true)
       await expect(page.locator('.el-menu')).toHaveCount(0)
     })
   })
@@ -166,10 +174,64 @@ test.describe('01-登录模块', () => {
       expect(noSuchUser).toMatch(/用户名或密码错误/)
 
       // 2) 未签发登录态
-      expect(new URL(page.url()).pathname).toBe('/login')
+      // 挂载前缀无关（T336）：新构建停在 /admin/login，未部署时停在 /login
+      expect(isLoginPath(new URL(page.url()).pathname)).toBe(true)
       const token = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
       expect(token).toBeFalsy()
       await expect(page.locator('.el-menu')).toHaveCount(0)
+    })
+  })
+
+  test.describe('挂载点与深链（T336）', () => {
+    /**
+     * 这两条要 staging 部署「以 /admin/ 为 base 构建」的前端包才成立。
+     * PR 门禁阶段线上还是旧的 root-base 包，故走 T324 部署守卫：
+     *   旧包 ⇒ 标注 post-deploy 显式跳过（报告可反查归属卡号）；
+     *   部署后自动转真跑；部署后回归阶段仍缺标记 ⇒ 判红。
+     * 判据本身一条不放宽。
+     */
+    const mountedAtAdmin = (page: Page): boolean =>
+      new URL(page.url()).pathname.startsWith(`${REAL_MOUNT}/`)
+
+    test('1.7 未登录直访 /admin/patients → 带前缀的登录页 + redirect 原目标页 + 登录后回原页', async ({ page }) => {
+      await page.goto(realRoutes.patients, { waitUntil: 'domcontentloaded' })
+      await page.waitForURL((url) => isLoginPath(url.pathname), { timeout: 25_000 })
+      await requireDeployedBuild(page, {
+        marker: 'T336-admin-base-path',
+        why: '深链与登录后回原页要 staging 换上带 /admin/ base 的构建',
+        probe: async (p) => mountedAtAdmin(p),
+      })
+
+      // 1) 登录页本身也在挂载点内（旧包会被 SPA 改写成根路径 /login）
+      expect(new URL(page.url()).pathname).toBe(`${REAL_MOUNT}/login`)
+      // 2) 守卫记住了原目标页（router 内部根路径，不含前缀 —— 回填时直接 push）
+      expect(new URL(page.url()).searchParams.get('redirect')).toBe('/patients')
+
+      // 3) 登录 → 回到原目标页，而不是首页
+      await submitRealLoginForm(page)
+      await expect(page).toHaveURL(new RegExp(`${REAL_MOUNT}/patients$`), { timeout: 25_000 })
+      await expect(tableRows(page).first()).toBeVisible({ timeout: 25_000 })
+    })
+
+    test('1.8 已登录直访子路由 + 刷新：地址不跳走、登录态不丢', async ({ page }) => {
+      await realLogin(page)
+      await requireDeployedBuild(page, {
+        marker: 'T336-admin-base-path',
+        why: '登录后落地页带 /admin/ 前缀同样要新构建',
+        probe: async (p) => mountedAtAdmin(p),
+      })
+
+      await page.goto(realRoutes.patients, { waitUntil: 'domcontentloaded' })
+      await expect(page).toHaveURL(new RegExp(`${REAL_MOUNT}/patients$`), { timeout: 25_000 })
+      const tokenBefore = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
+      expect(tokenBefore).toBeTruthy()
+
+      await page.reload({ waitUntil: 'domcontentloaded' })
+
+      expect(new URL(page.url()).pathname, '刷新不该把用户弹回首页').toBe(`${REAL_MOUNT}/patients`)
+      const tokenAfter = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
+      expect(tokenAfter).toBe(tokenBefore)
+      await expect(tableRows(page).first()).toBeVisible({ timeout: 25_000 })
     })
   })
 })
