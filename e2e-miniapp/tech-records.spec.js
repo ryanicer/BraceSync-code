@@ -3,13 +3,15 @@
 // 断言数据正确性（非仅路由跳转）：
 //   1) Node 侧 tech/login 拿 token → 直连 GET /install-records，断言返回真实非空列表（结构正确）
 //   2) 小程序 UI：驱动安装记录页渲染，断言其 page.data 里确实落有后端返回的真实 installId（非空）
+//   3) T326：把 storage 里的 token 换成失效凭据再进本页 ⇒ 必须回落登录页并清掉该 token，
+//      不得停在本页把网关英文文案渲染成错误态（旧缺陷：只认业务码 40101，网关 401 无人处置）
 //
 // 独立可跑（不依赖 tech-bind 先行写数；但 staging 需已存在安装记录）。对「空列表」——
 // 若 staging 确实无任何安装记录，则如实 FAIL（不造假数据、不自欺空态当通过）。
 //
 // 用法：node e2e-miniapp/tech-records.spec.js
 const cfg = require('./real-miniapp.config')
-/* global getCurrentPages */
+/* global getCurrentPages, wx */
 const helpers = require('./real-mp-helpers')
 
 const PHONE = process.env.TECH_PHONE || '13800138000'
@@ -54,6 +56,20 @@ helpers.runSpec(cfg, {
     const f2 = route === 'pages/records/index' && !!uiAnchor
     logStep(result, 'ui-records-render', f2, { route, anchor, uiAnchor: !!uiAnchor })
 
-    return f1 && f2
+    // [3] T326 失效 token：换掉 storage 里的凭据再进本页
+    //     判据落到「路由 + storage」两项可反查事实，不靠文案匹配（英文文案正是旧缺陷的表现）
+    await helpers.withTimeout(mp.evaluate(function (bad) {
+      wx.setStorageSync('bracesync_tech_token', bad)
+    }, 'mock-tech-token-001'), 10_000, 'set stale token')
+    await helpers.withTimeout(mp.reLaunch('/pages/records/index'), 15_000, 'reLaunch records (stale)')
+    await new Promise((r) => setTimeout(r, 6000))
+    const staleRoute = await pageRoute(mp)
+    const tokenAfter = await helpers.withTimeout(mp.evaluate(function () {
+      return wx.getStorageSync('bracesync_tech_token') || ''
+    }), 10_000, 'read token after')
+    const f3 = staleRoute === 'pages/login/index' && tokenAfter === ''
+    logStep(result, 'stale-token-relogin', f3, { staleRoute, tokenCleared: tokenAfter === '' })
+
+    return f1 && f2 && f3
   },
 })
