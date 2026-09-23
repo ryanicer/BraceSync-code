@@ -72,7 +72,7 @@ const (
 	CodeDeviceNotFound   = 20404 // device_id 未注册
 	CodeDeviceUnbound    = 20409 // 设备未绑定患者
 	CodeRateLimited      = 20429 // 限流（设备按 Retry-After 退避）
-	CodePatientNotFound  = 10404 // 患者档案不存在（档案域 owner 是 user-service，同 device-service 的 10404 口径；T340）
+	CodePatientNotFound  = 10404 // 患者档案不存在（档案 owner 是 user-service：同其 CodeNotFound / device-service CodeUserResNotFound 的 10404；T340）
 	CodeQueryParam       = 30001 // 数据域：查询参数非法
 	CodeForbidden        = 403   // 越权访问（水平越权 / 无数据权限）
 	CodeInternal         = 90001 // 系统内部错误
