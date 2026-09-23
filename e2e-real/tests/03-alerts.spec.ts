@@ -1,14 +1,17 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import {
   realLogin,
+  gotoMenu,
   gotoMenuAndWaitTable,
   adminMessage,
   pickSelectOption,
   tableRows,
+  menuItems,
   E2E_REPLY_PREFIX,
   uniqueName,
   getAllTagTexts,
 } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 03 告警管理（真实模式）
@@ -174,5 +177,80 @@ test.describe('03-告警管理', () => {
       await expect(adminMessage(page)).toHaveText('处理成功', { timeout: 15_000 })
       await expect(dialog).toBeHidden({ timeout: 5_000 })
     })
+  })
+})
+
+/**
+ * T351 · 医护进「告警管理」不再被 admin 专属配置端点带出 403 红条
+ *
+ * 修前现场（staging 已部署包 + doctor_li，2026-09-24 01:4x 实测，见
+ * docs/tasks/iris/T351-截图/网络原文-01-doctor-staging修前.txt）：
+ *   进页面 = 200 GET /api/v1/alerts?page=1&pageSize=10 + 403 GET /api/v1/admin/alert-rules
+ *   ⇒ 一条红色 toast「forbidden: role not allowed for this endpoint」+ 控制台一条 403
+ *   再点「流程配置」= 403 GET /api/v1/admin/flow/templates?pageSize=100（同一条规则的第二枪）
+ *
+ * 修法 = 卡片选项 (a)：两张配置 Tab 背后的端点都在网关 rbac.go 的 adminOnlyPatterns 内
+ * （网关行为正确，不动），而 PRD §7D.11 给医护的是「🚨 告警管理 ✅（仅本团队患者）」页面级准入
+ * ⇒ 前端按角色把配置面摘掉：不渲染 Tab、也不发那两个请求。
+ *
+ * 监听器在进本页之前才挂、并在切页时清空：doctor 的落地页是数据概览，那里在 T348 部署前
+ * 会自己打一发 403 GET /api/v1/teams —— 那是另一张卡的现场，不能算进本条判据。
+ */
+test.describe('03b-告警管理 · 角色分叉（T351）', () => {
+  test('3b.1 doctor_li：两张配置 Tab 不出现、页面零 4xx/5xx、无红条', async ({ page }) => {
+    const apiRows: string[] = []
+    page.on('response', (res) => {
+      if (!res.url().includes('/api/')) return
+      const u = new URL(res.url())
+      if (res.status() >= 400) apiRows.push(`${res.status()} ${res.request().method()} ${u.pathname}`)
+    })
+    const sentPaths: string[] = []
+    page.on('request', (req) => {
+      if (req.url().includes('/api/')) sentPaths.push(new URL(req.url()).pathname)
+    })
+
+    await realLogin(page, 'doctor_li')
+    await expect(menuItems(page).first()).toBeVisible({ timeout: 20_000 })
+    await gotoMenu(page, '告警管理')
+    await expect(page).toHaveURL(/\/alerts$/, { timeout: 15_000 })
+
+    await requireDeployedBuild(page, {
+      marker: 'T351-alerts-role-403',
+      why: 'T351 合并 + 部署前，已部署包里医护仍能看到两张 admin 专属配置 Tab',
+      probe: async (p) => (await p.getByRole('tab', { name: '告警规则配置' }).count()) === 0,
+    })
+
+    // 页面级准入没被一起摘掉：列表照常有数据
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 20_000 })
+    expect(await tableRows(page).count()).toBeGreaterThanOrEqual(1)
+
+    await expect(page.getByRole('tab', { name: '告警列表' })).toHaveCount(1)
+    await expect(page.getByRole('tab', { name: '处理流程' })).toHaveCount(1)
+    await expect(page.getByRole('tab', { name: '告警规则配置' })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: '流程配置' })).toHaveCount(0)
+
+    // 验收口径「Network 无 403」：本页零 4xx/5xx，且根本没发出那两枪
+    expect(apiRows).toEqual([])
+    expect(sentPaths.filter((p) => p.includes('/admin/alert-rules'))).toEqual([])
+    expect(sentPaths.filter((p) => p.includes('/admin/flow/templates'))).toEqual([])
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
+  })
+
+  test('3b.2 ops_admin：四张 Tab 齐全，规则网格照常渲染（运营不退化）', async ({ page }) => {
+    await realLogin(page)
+    await expect(menuItems(page).first()).toBeVisible({ timeout: 20_000 })
+    await gotoMenu(page, '告警管理')
+    await expect(page).toHaveURL(/\/alerts$/, { timeout: 15_000 })
+
+    await requireDeployedBuild(page, {
+      marker: 'T351-alerts-role-403',
+      why: '同上——旧包运营侧也是四张 Tab，本条只锁「按角色分叉没把运营一起摘掉」',
+      probe: async (p) => (await p.getByRole('tab').count()) === 4,
+    })
+
+    await expect(page.getByRole('tab')).toHaveCount(4)
+    await page.getByRole('tab', { name: '告警规则配置' }).click()
+    await expect(page.locator('.alert-grid .grid-cell')).toHaveCount(20)
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
 })

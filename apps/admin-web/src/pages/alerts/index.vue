@@ -96,7 +96,7 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="告警规则配置" name="rules">
+      <el-tab-pane v-if="canConfigure" label="告警规则配置" name="rules">
         <div class="page-card" v-loading="rulesLoading">
           <div class="card-title">按采集点设置告警阈值</div>
           <div class="rule-tip">💡 在 4×5 网格中点击格子勾选需监控的采集点，下方设置统一的压力阈值上下限。触发告警后将通知对应团队医生。</div>
@@ -188,7 +188,7 @@
         <FlowRuntime v-else-if="activeTab === 'process'" :alert="currentAlert" />
       </el-tab-pane>
 
-      <el-tab-pane label="流程配置" name="designer">
+      <el-tab-pane v-if="canConfigure" label="流程配置" name="designer">
         <FlowDesigner v-if="activeTab === 'designer'" />
       </el-tab-pane>
     </el-tabs>
@@ -234,10 +234,16 @@ import {
   fetchAlertRules, saveAlertPointRulesApi, resetAlertPointRulesApi, saveAlertGlobalRulesApi,
 } from '../../api'
 import type { AlertPointRule, AlertGlobalRules } from '../../mock/alerts'
+import { useAuthStore } from '../../stores/auth'
+import { canConfigureAlerts } from '../../utils/alertPageAccess'
 import FlowRuntime from './flow/FlowRuntime.vue'
 import FlowDesigner from './flow/designer/FlowDesigner.vue'
 
 const activeTab = ref('list')
+
+// T351：网关把 alert-rules / flow templates 收口为 admin 专属，医护进本页必发 403 ⇒ 按角色分叉
+const auth = useAuthStore()
+const canConfigure = computed(() => canConfigureAlerts(auth.role))
 
 // ===== Tab1 告警列表 =====
 const list = ref<Alert[]>([])
@@ -366,6 +372,8 @@ const selectedCount = computed(() => rules.value.points.filter((p) => p.monitore
 const monitoredPoints = computed(() => rules.value.points.filter((p) => p.monitored))
 
 async function loadRules() {
+  // 端点在网关的 adminOnlyPatterns 内 ⇒ 非 admin 不发这一枪（T351 的红条就是它无条件发出来的）
+  if (!canConfigure.value) return
   rulesLoading.value = true
   try {
     const res = await fetchAlertRules()
