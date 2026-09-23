@@ -170,9 +170,13 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     const dialog = page.locator('.el-dialog:visible')
     await expect(dialog).toContainText('编辑技师') // 标题不是「新建技师」
     const name = dialog.locator('input[placeholder="技师姓名"]')
-    const phone = dialog.locator('input[placeholder="11 位手机号"]')
+    // T361：编辑态的占位文案由服务端 phoneState 决定（不再是固定的「11 位手机号」）
+    // ⇒ 按表单项 label 定位。锁定/回显口径不变：disabled + masked 态只读展示脱敏号。
+    const phone = dialog.locator('.el-form-item').filter({ hasText: '手机号' }).locator('input')
     await expect(name).toHaveValue('周师傅') // 姓名回填
     await expect(phone).toBeDisabled() // 编辑态手机号锁定（实现口径：改号不在本期）
+    await expect(phone).toHaveValue('138****5678') // phoneState=masked ⇒ 回显的是脱敏号
+    await expect(phone).toHaveAttribute('placeholder', '编辑时不可修改手机号')
     await expect(dialog.locator('.el-select')).toContainText(teamBefore) // 团队回填=列表同列值
     await expect(dialog.getByRole('button', { name: '保存修改' })).toBeVisible()
     await expect(dialog.getByRole('button', { name: '确认创建' })).toHaveCount(0)
