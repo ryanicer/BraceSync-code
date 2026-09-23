@@ -97,15 +97,33 @@ func TestITT352RollupSpanAvgAndAbnormal(t *testing.T) {
 	assert.InDelta(t, (frames[0].pointSum()+frames[1].pointSum())/20.0/2.0,
 		float64(got2.AvgPressure), 1e-4, "日均压力只统计阈值以上帧")
 
-	// 写读闭环：按 RollupService 的窗口口径落库再读回，abnormal_count 不再恒 0
+	// 写读闭环：按 RollupService 的窗口口径落库再读回，abnormal_count 不再恒 0。
+	// 容器 session timezone 为 UTC（见下方 Log），而 StatDate 按生产口径写 CST 日界——
+	// 读端若依赖 session timezone 隐式转换 DATE 就会整日丢行（run 35891822503 实测 0 行），
+	// 故 queryRangeSQL 显式换算 Asia/Shanghai 后再截 date，本用例即该修复的回归守卫。
+	var sessTZ string
+	require.NoError(t, pool.QueryRow(ctx, `SHOW timezone`).Scan(&sessTZ))
+	t.Logf("容器 session timezone = %s（读端日期边界不得依赖它）", sessTZ)
+
 	got.StatDate = time.Date(2026, 8, 15, 0, 0, 0, 0, model.CSTZone())
 	require.NoError(t, r.Upsert(ctx, []model.DailyWearStats{*got}))
 	rows, err := r.QueryRange(ctx, patient, t352From, t352To)
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
+	require.Len(t, rows, 1, "CST 2026-08-15 的聚合行必须落在该 UTC 窗口内")
 	assert.Equal(t, 360, rows[0].WearMinutes)
 	assert.Equal(t, 2, rows[0].AbnormalCount, "落库后读回应保持告警口径计数")
 	assert.InDelta(t, wantAvg, float64(rows[0].AvgPressure), 1e-4)
+	assert.Equal(t, "2026-08-15", rows[0].StatDate.In(model.CSTZone()).Format("2006-01-02"))
+
+	// 边界：整段窗口前移一天应为空（读端不漏日也不越日）
+	prev, err := r.QueryRange(ctx, patient, t352From.AddDate(0, 0, -1), t352To.AddDate(0, 0, -1))
+	require.NoError(t, err)
+	assert.Empty(t, prev, "相邻日不得串数据")
+
+	// 报告链路同口径：按 CST 周窗口应枚举出本患者
+	patients, err := r.ListPatientsWithStats(ctx, t352From, t352To.AddDate(0, 0, 7))
+	require.NoError(t, err)
+	assert.Contains(t, patients, patient, "listPatientsSQL 的日期边界同样不依赖 session timezone")
 }
 
 // TestITT352RollupSingleWearingFrameIsZero 单帧日：无跨度可确立，按 0 计而不用配置间隔臆造 30 分钟

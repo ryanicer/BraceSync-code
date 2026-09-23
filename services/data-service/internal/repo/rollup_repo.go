@@ -188,11 +188,16 @@ func wearMinutesFromSpan(wearingFrames int, spanSeconds float64) int {
 	return min(minutes, model.MaxWearMinutesPerDay)
 }
 
+// queryRangeSQL 的日期比较先做 CST 换算再截date：stat_date 是 DATE，而调用方传的是
+// CST 日界对应的 timestamptz，直接比较会由 PG 按 **session timezone** 隐式转换 DATE，
+// 容器时区为 UTC 时整日丢行（T352 集成测试实测）。切日口径与 dashboard_repo 一致：业务时区固定 Asia/Shanghai。
 const queryRangeSQL = `
 SELECT patient_id, stat_date, wear_minutes, avg_pressure, max_pressure,
        COALESCE(max_point, ''), frame_count, abnormal_count, updated_at
 FROM daily_wear_stats
-WHERE patient_id = $1 AND stat_date >= $2 AND stat_date < $3
+WHERE patient_id = $1
+  AND stat_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+  AND stat_date <  ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
 ORDER BY stat_date ASC`
 
 // QueryRange 查询日期范围内的日聚合数据
@@ -215,9 +220,11 @@ func (r *RollupRepo) QueryRange(ctx context.Context, patientID string, from, to 
 	return stats, rows.Err()
 }
 
+// listPatientsSQL 同 queryRangeSQL：日期边界先换算到 Asia/Shanghai 再截 date，不依赖 session timezone
 const listPatientsSQL = `
 SELECT DISTINCT patient_id FROM daily_wear_stats
-WHERE stat_date >= $1 AND stat_date < $2
+WHERE stat_date >= ($1::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+  AND stat_date <  ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
 ORDER BY patient_id`
 
 // ListPatientsWithStats 列出日期范围内有聚合数据的患者
