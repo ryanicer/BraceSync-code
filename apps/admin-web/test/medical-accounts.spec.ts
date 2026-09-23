@@ -180,33 +180,76 @@ describe('医护账号页 模态框与写操作（PRD §7D.10 八字段）', () 
     wrapper.unmount()
   })
 
-  it('编辑：手机号回显的是脱敏串，不动它也能保存（不拿星号串覆盖真号）', async () => {
+  it('编辑：手机号框永不预填脱敏串，留空保存 ⇒ 库内号码原样保留（T361 回归）', async () => {
     const wrapper = mountPage()
     await flushAll()
     clickByText(wrapper.findAll('tbody tr')[0].element, '编辑')
     await flushAll()
     const dlg = dialogIn(wrapper.element)
-    expect((formItem(dlg, '手机号').querySelector('input') as HTMLInputElement).value).toBe('138****2201')
+    const phoneInput = formItem(dlg, '手机号').querySelector('input') as HTMLInputElement
+    // 缺陷原貌：这里预填的是列表的 '138****2201'，运营清掉它保存即把真号写成 NULL
+    expect(phoneInput.value).toBe('')
+    expect(phoneInput.placeholder).toBe('已绑定手机号，留空即不修改')
     typeInto(dlg, '姓名', '张建国')
     clickByText(dlg, '保存修改')
     await flushToast(400) // 写请求 150ms + 列表刷新 150ms 之后才弹 toast
     expect(toastText()).not.toContain('手机号需为 11 位号码')
     expect(toastText()).toContain('修改成功')
-    expect(mockMedicalAccounts().find((r) => r.doctorId === 'DOC-001')?.phoneMasked).toBe('138****2201')
+    const row = mockMedicalAccounts().find((r) => r.doctorId === 'DOC-001')
+    expect(row?.phoneMasked).toBe('138****2201')
+    expect(row?.phoneState).toBe('masked')
     wrapper.unmount()
   })
 
-  it('编辑：删掉回显的脱敏号再保存 ⇒ 该号被清空（「清空」不等于「不改」，后端按指针语义区分）', async () => {
+  it('编辑：填 11 位新号才换号（列表回显新脱敏串、状态转 masked）', async () => {
     const wrapper = mountPage()
     await flushAll()
     clickByText(wrapper.findAll('tbody tr')[0].element, '编辑')
     await flushAll()
     const dlg = dialogIn(wrapper.element)
-    typeInto(dlg, '手机号', '')
+    typeInto(dlg, '手机号', '13900002222')
     clickByText(dlg, '保存修改')
     await flushToast(400)
     expect(toastText()).toContain('修改成功')
-    expect(mockMedicalAccounts().find((r) => r.doctorId === 'DOC-001')?.phoneMasked).toBe('')
+    const row = mockMedicalAccounts().find((r) => r.doctorId === 'DOC-001')
+    expect(row?.phoneMasked).toBe('139****2222')
+    expect(row?.phoneState).toBe('masked')
+    wrapper.unmount()
+  })
+
+  it('编辑：填了非 11 位号码停在提示上，不发写请求（号码不变）', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    clickByText(wrapper.findAll('tbody tr')[0].element, '编辑')
+    await flushAll()
+    const dlg = dialogIn(wrapper.element)
+    typeInto(dlg, '手机号', '138****2201') // 有人仍会把星号串敲进去
+    clickByText(dlg, '保存修改')
+    await flushToast(400)
+    expect(toastText()).toContain('手机号需为 11 位号码，或留空')
+    const row = mockMedicalAccounts().find((r) => r.doctorId === 'DOC-001')
+    expect(row?.phoneMasked).toBe('138****2201')
+    wrapper.unmount()
+  })
+
+  it('编辑：读不出的行（unreadable）提示「号码读取失败」，保存既不回填 *** 也不洗掉密文', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    const row = wrapper.findAll('tbody tr').find((r) => r.text().includes('王护士'))
+    expect(row).toBeTruthy()
+    expect(row!.text()).toContain('***') // 列表按占位符展示，页面上不假装是号码
+    clickByText(row!.element, '编辑')
+    await flushAll()
+    const dlg = dialogIn(wrapper.element)
+    const phoneInput = formItem(dlg, '手机号').querySelector('input') as HTMLInputElement
+    expect(phoneInput.value).toBe('')
+    expect(phoneInput.placeholder).toBe('号码读取失败（***），留空即不修改；填 11 位新号可覆盖')
+    clickByText(dlg, '保存修改')
+    await flushToast(400)
+    expect(toastText()).toContain('修改成功')
+    const after = mockMedicalAccounts().find((r) => r.doctorId === 'DOC-102')
+    expect(after?.phoneMasked).toBe('***')
+    expect(after?.phoneState).toBe('unreadable') // 不是 absent：解不开 ≠ 没有
     wrapper.unmount()
   })
 

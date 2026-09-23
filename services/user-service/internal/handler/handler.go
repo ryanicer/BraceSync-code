@@ -857,18 +857,22 @@ func (h *Handler) listTeams(c *gin.Context) {
 	ok(c, list)
 }
 
+// phoneView 密文 → 手机号三态视图（T361）。h.phone 为 nil（PHONE_ENC_KEY 未配置）时，
+// 库里无密文仍判 absent、有密文判 unreadable，不退化成「没填手机号」。
+func (h *Handler) phoneView(enc []byte) phone.PhoneView {
+	return phone.View(h.phone, enc)
+}
+
 func (h *Handler) toDoctorDTO(r repo.DoctorRow) model.DoctorDTO {
-	masked := ""
-	if h.phone != nil {
-		masked = h.phone.Masked(r.PhoneEnc)
-	}
+	v := h.phoneView(r.PhoneEnc)
 	return model.DoctorDTO{
 		DoctorID:     r.DoctorID,
 		Name:         r.Name,
 		Title:        strOr(r.Title, ""),
 		Department:   strOr(r.Department, ""),
 		TeamID:       r.TeamID,
-		PhoneMasked:  masked,
+		PhoneMasked:  v.Masked,
+		PhoneState:   string(v.State),
 		PatientCount: r.PatientCount,
 		Status:       r.Status,
 		// T314：admins 侧三列指针原样透出（未绑账号 = nil = JSON null，不得填成空串冒充有值）
@@ -889,14 +893,12 @@ func timePtrRFC3339(t *time.Time) *string {
 }
 
 func (h *Handler) toTechDTO(r repo.TechnicianRow) model.TechnicianDTO {
-	masked := ""
-	if h.phone != nil {
-		masked = h.phone.Masked(r.PhoneEnc)
-	}
+	v := h.phoneView(r.PhoneEnc)
 	return model.TechnicianDTO{
 		TechID:       r.TechID,
 		Name:         r.Name,
-		PhoneMasked:  masked,
+		PhoneMasked:  v.Masked,
+		PhoneState:   string(v.State),
 		TeamID:       strOr(r.TeamID, ""),
 		TeamName:     r.TeamName,
 		InstallCount: r.InstallCount,
@@ -2187,7 +2189,7 @@ func (h *Handler) createPatient(c *gin.Context) {
 	// 用 preparePhone 生成的 enc 脱敏（store 返回行可能未回填 PhoneEnc）
 	dto := toPatientDTO(*row)
 	if h.phone != nil {
-		dto.Phone = h.phone.Masked(enc)
+		dto.Phone = h.phoneView(enc).Masked
 	}
 	ok(c, dto)
 }
@@ -2219,7 +2221,9 @@ func (h *Handler) assignPatientTeam(c *gin.Context) {
 	}
 	dto := toPatientDTO(*row)
 	if h.phone != nil {
-		dto.Phone = h.phone.Masked(row.PhoneEnc)
+		// T361：AdminPatientDTO 只有单列 phone、无三态字段 —— 患者域无「编辑手机号」入口（admin-web
+		// 患者页只有新建），且读侧 pg.go patientSelect 根本不投影 phone_enc，加 state 也只会恒报 absent。
+		dto.Phone = phone.View(h.phone, row.PhoneEnc).Masked
 	}
 	ok(c, dto)
 }
@@ -2288,15 +2292,17 @@ func toTeamDetailDTO(r repo.TeamDetailRow) model.TeamDetailDTO {
 	}
 }
 
-// toTeamMemberDTO 将 TeamMemberRow 转为 TeamMemberDTO（phone 脱敏由 handler 补充）
-func toTeamMemberDTO(r repo.TeamMemberRow) model.TeamMemberDTO {
+// toTeamMemberDTO 将 TeamMemberRow 转为 TeamMemberDTO（phone 在 handler 层脱敏并给三态）
+func (h *Handler) toTeamMemberDTO(r repo.TeamMemberRow) model.TeamMemberDTO {
+	v := h.phoneView(r.PhoneEnc)
 	return model.TeamMemberDTO{
 		MemberID:     r.MemberID,
 		MemberType:   r.MemberType,
 		Name:         r.Name,
 		Role:         r.Role,
 		Title:        r.Title,
-		PhoneMasked:  r.PhoneMasked,
+		PhoneMasked:  v.Masked,
+		PhoneState:   string(v.State),
 		PatientCount: r.PatientCount,
 		JoinTime:     r.JoinTime.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		Status:       r.Status,
@@ -2453,11 +2459,7 @@ func (h *Handler) addTeamMember(c *gin.Context) {
 		fail(c, model.ErrInternal("add member failed"))
 		return
 	}
-	dto := toTeamMemberDTO(*row)
-	if h.phone != nil && row.PhoneEnc != nil {
-		dto.PhoneMasked = h.phone.Masked(row.PhoneEnc)
-	}
-	ok(c, dto)
+	ok(c, h.toTeamMemberDTO(*row))
 }
 
 // updateTeamMember PUT /api/v1/teams/:teamId/members/:memberId —— 编辑成员
@@ -2490,11 +2492,7 @@ func (h *Handler) updateTeamMember(c *gin.Context) {
 		fail(c, model.ErrInternal("update member failed"))
 		return
 	}
-	dto := toTeamMemberDTO(*row)
-	if h.phone != nil && row.PhoneEnc != nil {
-		dto.PhoneMasked = h.phone.Masked(row.PhoneEnc)
-	}
-	ok(c, dto)
+	ok(c, h.toTeamMemberDTO(*row))
 }
 
 // removeTeamMember DELETE /api/v1/teams/:teamId/members/:memberId?memberType=doctor —— 移除成员（幂等）

@@ -45,6 +45,7 @@ function fromDoctorRow(d: DoctorWithAccount): MedicalAccount {
     username: d.username ?? '',
     name: d.name,
     phoneMasked: d.phoneMasked,
+    phoneState: d.phoneState,
     department: d.department,
     teamId: d.teamId,
     title: d.title,

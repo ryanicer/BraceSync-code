@@ -16,7 +16,10 @@ export interface Patient {
   /**
    * T337 契约补账：以下 6 项后端 PatientDTO 一直在回（GET /admin/patients 列表与详情同口径），
    * 此前只有前端摸样用、契约没写。声明为可选只为不打破既有 mock，实际读到的行都带这些键。
-   * phone 是脱敏串（138****8000，handler.Masked 生成），库里无手机号时为空串，永不是明文。
+   * phone 是脱敏串（138****8000），库里无手机号时为空串，永不是明文。
+   * T361 登记：患者域没有三态字段，也没有「编辑手机号」入口 —— 读侧 repo/pg.go 的 patientSelect
+   * 根本不投影 phone_enc，所以列表与详情的 phone 恒为空串（只有 POST /admin/patients 与
+   * PUT /admin/patients/:id/team 两个写响应用当场生成的密文回填）。声明保留为可选，别按它有值来写页面。
    */
   phone?: string;                     // 脱敏手机号
   heightCm?: number | null;           // T226 患者自助资料
@@ -26,6 +29,18 @@ export interface Patient {
   emergencyContactRelation?: string | null; // T226
 }
 
+/**
+ * T361 手机号读侧三态（后端 services/user-service/internal/phone.PhoneState 同值）。
+ *
+ * 改造前接口只回 phoneMasked 一个字符串，「库里没有手机号」= 空串、「有密文但解不开」= "***"，
+ * 调用方无法分辨，于是医护账号页把脱敏串预填进可编辑输入框，运营清空保存即把真号洗成 NULL。
+ *  - absent：密文列 NULL，确实没有手机号
+ *  - masked：密文可解密，phoneMasked 是脱敏号
+ *  - unreadable：有密文但解不开（seed 占位 bytea / 密钥轮换 / 数据损坏），或密钥未配置
+ *    ⇒ phoneMasked 固定为占位符 '***'（后端常量 phone.MaskUnavailable），编辑态必须禁止把它当可编辑的原值回传
+ */
+export type PhoneState = 'absent' | 'masked' | 'unreadable';
+
 export interface Doctor {
   doctorId: string;
   name: string;
@@ -33,6 +48,7 @@ export interface Doctor {
   department: string;
   teamId: string | null;         // DB doctors.team_id 可空
   phoneMasked: string;           // 展示脱敏（与 Technician 一致），联系走微信客服
+  phoneState: PhoneState;        // T361：与 phoneMasked 配套，区分「没有」与「读不出」
   patientCount: number;
   status: 'enabled' | 'disabled';
 }
@@ -41,6 +57,7 @@ export interface Technician {
   techId: string;
   name: string;
   phoneMasked: string;           // 展示脱敏（138****5678）
+  phoneState: PhoneState;        // T361
   teamId: string;
   installCount: number;
   status: 'enabled' | 'disabled';
@@ -101,6 +118,7 @@ export interface TeamMember {
   role: string | null;           // 角色（doctor.title 更新值，technician 无则 null）
   title: string | null;          // 职称/科室
   phoneMasked: string;
+  phoneState: PhoneState;        // T361
   patientCount: number;
   joinTime: string;
   status: 'enabled' | 'disabled';

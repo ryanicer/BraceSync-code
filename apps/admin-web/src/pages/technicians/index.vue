@@ -71,7 +71,7 @@
         <el-form-item label="手机号" required>
           <el-input
             v-model="form.phone"
-            placeholder="11 位手机号"
+            :placeholder="phoneHint"
             maxlength="11"
             :disabled="editing"
           />
@@ -98,9 +98,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import type { Technician, Team } from '@bracesync/shared-types'
+import type { PhoneState, Technician, Team } from '@bracesync/shared-types'
+import { PHONE_PLACEHOLDER, PHONE_RE } from '../../utils/phoneField'
 import {
   fetchTechnicians, toggleTechnicianApi, teamNameOf,
   createTechnicianApi, updateTechnicianApi, fetchTeams,
@@ -119,6 +120,16 @@ const editing = ref(false)
 const submitting = ref(false)
 const editingId = ref('')
 const form = ref({ name: '', phone: '', teamId: '' })
+/** 编辑态手机号的读侧状态（T361）：决定这格禁用输入框显示什么，而不是把脱敏串当可编辑原值 */
+const editingPhoneState = ref<PhoneState>('masked')
+// 技师编辑态的手机号是禁用框（设计稿 技师管理.html:245 编辑流程不改号码），
+// 所以文案不能复用医护账号页那句「留空即不修改」—— 这里根本没有可填的入口。
+const phoneHint = computed(() => {
+  if (!editing.value) return '11 位手机号'
+  if (editingPhoneState.value === 'unreadable') return `号码读取失败（${PHONE_PLACEHOLDER}）`
+  if (editingPhoneState.value === 'absent') return '未登记手机号'
+  return '编辑时不可修改手机号'
+})
 
 async function loadData() {
   loading.value = true
@@ -167,13 +178,20 @@ function openCreate() {
 function openEdit(row: Technician) {
   editing.value = true
   editingId.value = row.techId
-  form.value = { name: row.name, phone: row.phoneMasked, teamId: row.teamId }
+  editingPhoneState.value = row.phoneState
+  // T361：脱敏串不是「原值」。只在服务端确实读得到号码（masked）时把它作为只读展示回填；
+  // absent/unreadable 一律空串，避免星号串被当成号码再次写回。
+  form.value = {
+    name: row.name,
+    phone: row.phoneState === 'masked' ? row.phoneMasked : '',
+    teamId: row.teamId,
+  }
   formVisible.value = true
 }
 
 async function submitForm() {
   if (!form.value.name.trim()) { ElMessage.warning('请填写姓名'); return }
-  if (!editing.value && !/^1\d{10}$/.test(form.value.phone)) {
+  if (!editing.value && !PHONE_RE.test(form.value.phone)) {
     ElMessage.warning('请填写正确的 11 位手机号'); return
   }
   if (!form.value.teamId) { ElMessage.warning('请选择所属团队'); return }
