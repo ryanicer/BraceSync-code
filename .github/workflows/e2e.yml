@@ -258,8 +258,8 @@ jobs:
     #   含 1.3/1.6 两次失败登录）；另 4 条是上面列到的真写用例 6.2 / 6.3 / 6.5 / 8.2，只在 CI 里跑。
     #   10.1（T334 中文写入字节面防回归）自建自删，每次 run 真跑。
     # T336 再加两条（01-login.spec.ts 的 1.7 深链回原页 / 1.8 子路由刷新）：标记 T336-admin-base-path。
-    #   这两条判的是 staging 上「前端构建 base 是否已是 /admin/」，PR 阶段线上仍是 root-base 旧包 ⇒ post-deploy 跳过
-    #   （在上面两组计数上各加 2 条 skip）；合并并部署后自动转真跑。
+    #   这两条判的是 staging 上「前端构建 base 是否已是 /admin/」，PR 阶段线上仍是 root-base 旧包 ⇒ post-deploy 跳过，
+    #   上面两组计数随之变 32 passed / 11 skipped（部署后两条都真跑 ⇒ 38 passed / 5 skipped）。
     #   部署前已用「本地构建产物 + 挂载点仿真服务器」实测 2 passed（见 T336 交件说明）。
     #   ⇒ 本卡合并后必须走一次 staging 部署，否则下一次定时 run 会因缺标记判红（这是设计意图，不是误报）。
     # job 级并发锁：顶部 workflow 级 concurrency 按 PR 分组，多个 PR 的真跑会同时打 staging。
