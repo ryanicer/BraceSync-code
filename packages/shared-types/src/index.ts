@@ -13,6 +13,17 @@ export interface Patient {
   status: 'active' | 'pending';  // 活跃/待分配（对齐 DB patients.status）
   createdAt: string;
   updatedAt: string;
+  /**
+   * T337 契约补账：以下 6 项后端 PatientDTO 一直在回（GET /admin/patients 列表与详情同口径），
+   * 此前只有前端摸样用、契约没写。声明为可选只为不打破既有 mock，实际读到的行都带这些键。
+   * phone 是脱敏串（138****8000，handler.Masked 生成），库里无手机号时为空串，永不是明文。
+   */
+  phone?: string;                     // 脱敏手机号
+  heightCm?: number | null;           // T226 患者自助资料
+  weightKg?: number | null;           // T226
+  emergencyContactName?: string | null;    // T226
+  emergencyContactPhone?: string | null;   // T226
+  emergencyContactRelation?: string | null; // T226
 }
 
 export interface Doctor {
@@ -35,6 +46,7 @@ export interface Technician {
   status: 'enabled' | 'disabled';
   authStatus: 'authorized' | 'unauthorized';  // 对齐 DB technicians.auth_status
   createdAt?: string;            // T247 10.4: 创建时间（设计稿 技师管理.html:102）
+  teamName?: string | null;      // T337 契约补账：T278-② 起后端 join 带出（未入队为 null，前端回落显示 teamId）
 }
 
 export interface Device {
@@ -373,6 +385,7 @@ export interface NotificationRecord {
   retryCount: number;             // 重试次数
   sentAt: string | null;          // ISO 8601，实际发送时间
   createdAt: string;              // 创建时间
+  patientName?: string | null;   // T337 契约补账：T278-③ 起后端 join 带出，患者行缺失为 null（前端回落 patientId）
 }
 
 // ===== 统计 / 看板 =====
@@ -498,6 +511,14 @@ export interface SystemSettings {
   collectIntervalSeconds: number;    // T256 #4：采集间隔（秒，设计稿口径；内部存储 collect_interval_minutes）
   retentionDays: number;             // T256 #4：数据保留天数（data_retention_days）
   maxPatients: number;               // T256 #4：最大患者数（max_patients）
+  /**
+   * T337 契约补账：T302 补的三项配置，后端 SystemSettingsDTO 一直没有对应的 shared-types 声明。
+   * 三项共用同一个带 omitempty 的 DTO（PUT「省略即不改该键」），故类型上写可选；
+   * GET 侧恒回数值（库里缺行按默认值），前端读取时不必判缺失。
+   */
+  calibrationOffsetN?: number | null; // threshold_calibration_offset（空载校准偏差上限，N）
+  wechatTemplateId?: string | null;   // notify_wechat_template_id
+  smsTemplateId?: string | null;      // notify_sms_template_id
 }
 
 /** 运营后台登录响应（T030 #9：user-service 签发，gateway Phase 1 JWT 校验消费） */
