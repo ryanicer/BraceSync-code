@@ -194,7 +194,7 @@ function lastRequest(): { url: string; method?: string; data?: Record<string, un
 const backendTeamRow: Team = { teamId: 'TEAM01', name: '脊柱矫形一组', memberCount: 3, patientCount: 12 }
 const backendDoctorRow: Doctor = {
   doctorId: 'D0001', name: '李医师', title: '主治医师', department: '脊柱外科',
-  teamId: 'TEAM01', phoneMasked: '138****0001', patientCount: 5, status: 'enabled',
+  teamId: 'TEAM01', phoneMasked: '138****0001', phoneState: 'masked', patientCount: 5, status: 'enabled',
 }
 
 /** 后端 SystemSettingsDTO 字段名（services/user-service/internal/model/model.go；
@@ -340,6 +340,9 @@ describe('T338 医护账号真实模式守卫', () => {
       username: 'doctor_li',
       name: '李医师',
       phoneMasked: '138****0001',
+      // T361：三态由服务端判定、真实模式必须原样透传（页面靠它决定编辑态文案，
+      // 缺了就会被当成「无手机号」，运营覆盖保存即把真号洗成 NULL）
+      phoneState: 'masked',
       department: '脊柱外科',
       teamId: 'TEAM01',
       title: '主治医师',

@@ -92,8 +92,11 @@
           <el-input v-model="form.name" placeholder="医护姓名" maxlength="20" />
         </el-form-item>
         <el-form-item label="手机号">
-          <el-input v-model="form.phone" placeholder="选填，11位手机号" maxlength="11" />
-          <span class="form-help">选填：登录账号由系统生成，手机号不承担登录职责；列表按 §9.2 脱敏展示。</span>
+          <el-input v-model="form.phone" :placeholder="phoneHint" maxlength="11" />
+          <span class="form-help">
+            选填：登录账号由系统生成，手机号不承担登录职责；列表按 §9.2 脱敏展示。
+            编辑时此处不回显原号 —— 留空即保持库内号码不变，要换号请填 11 位新号。
+          </span>
         </el-form-item>
         <el-form-item label="登录账号">
           <el-input :model-value="acctHint" readonly disabled />
@@ -137,8 +140,9 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Team } from '@bracesync/shared-types'
+import type { PhoneState, Team } from '@bracesync/shared-types'
 import { fetchTeams, teamNameOf } from '../../api'
+import { PHONE_RE, phonePatch, phonePlaceholder } from '../../utils/phoneField'
 import {
   MEDICAL_TITLES,
   createMedicalAccountApi,
@@ -164,11 +168,18 @@ const formVisible = ref(false)
 const editing = ref(false)
 const submitting = ref(false)
 const editingId = ref('')
-/** 编辑态回显的脱敏号，用于判断用户是否真的改过手机号 */
-const originalPhone = ref('')
+/**
+ * 编辑态手机号的读侧状态（T361）：只用于挑占位提示文案。
+ * 🔴 输入框永不预填 row.phoneMasked —— 那串是可展示脱敏值不是可编辑原值，
+ * 一旦预填，「清空它」就会被服务端按写语义理解成「删掉真号」（不可回滚）。
+ */
+const editingPhoneState = ref<PhoneState>('absent')
 /** 编辑态原状态：服务端 PUT 不收 status，只有真改过才另发 /status */
 const originalStatus = ref<'enabled' | 'disabled'>('enabled')
 const form = ref({ name: '', phone: '', department: '', teamId: '', title: '', status: 'enabled' as 'enabled' | 'disabled' })
+
+/** 手机号输入框占位提示：三态各一句，全部是「提示」而非「值」 */
+const phoneHint = computed(() => phonePlaceholder(editingPhoneState.value))
 
 const list = computed(() => {
   const kw = keyword.value.trim()
@@ -219,7 +230,7 @@ async function loadTeams() {
 function openCreate() {
   editing.value = false
   editingId.value = ''
-  originalPhone.value = ''
+  editingPhoneState.value = 'absent'
   originalStatus.value = 'enabled'
   form.value = { name: '', phone: '', department: '', teamId: '', title: '', status: 'enabled' }
   formVisible.value = true
@@ -228,11 +239,12 @@ function openCreate() {
 function openEdit(row: MedicalAccount) {
   editing.value = true
   editingId.value = row.doctorId
-  originalPhone.value = row.phoneMasked
+  editingPhoneState.value = row.phoneState
   originalStatus.value = row.status
   form.value = {
     name: row.name,
-    phone: row.phoneMasked,
+    // T361：留空 = 不改动手机号（要改必须填 11 位新号；页面无「清除手机号」控件）
+    phone: '',
     department: row.department,
     teamId: row.teamId ?? '',
     title: row.title,
@@ -246,20 +258,12 @@ function validateForm(): boolean {
   if (!form.value.department.trim()) { ElMessage.warning('请填写科室'); return false }
   if (!form.value.teamId) { ElMessage.warning('请选择所属团队'); return false }
   if (!form.value.title) { ElMessage.warning('请选择职称'); return false }
-  // 手机号选填（设计稿 :221）；编辑态回显的是脱敏值，未改动就不提交，改动过才要求填新号码
-  if (form.value.phone && form.value.phone !== originalPhone.value && !/^1\d{10}$/.test(form.value.phone)) {
+  // 手机号选填（设计稿 :221）：填了就必须是合法新号，留空一律按「不改」处理（T361）
+  if (form.value.phone && !PHONE_RE.test(form.value.phone)) {
     ElMessage.warning('手机号需为 11 位号码，或留空')
     return false
   }
   return true
-}
-
-/**
- * 编辑态手机号三态：未碰过 ⇒ undefined（服务端「给了才改」，回传 undefined 之外的值都可能覆盖真号），
- * 清空 ⇒ ''（后端据此落 NULL），改过 ⇒ 新号码。
- */
-function phonePatch(): string | undefined {
-  return form.value.phone === originalPhone.value ? undefined : form.value.phone.trim()
 }
 
 async function submitForm() {
@@ -269,7 +273,7 @@ async function submitForm() {
     if (editing.value) {
       const patch: UpdateMedicalAccountInput = {
         name: form.value.name.trim(),
-        phone: phonePatch(),
+        phone: phonePatch(form.value.phone),
         department: form.value.department.trim(),
         teamId: form.value.teamId,
         title: form.value.title,

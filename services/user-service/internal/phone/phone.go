@@ -72,16 +72,48 @@ func (c *Cipher) Decrypt(data []byte) (string, error) {
 	return string(plain), nil
 }
 
-// Masked 解密失败或明文过短时返回 "***"，避免泄漏密文
-func (c *Cipher) Masked(enc []byte) string {
+// PhoneState 手机号读侧三态（T361）。
+//
+// 缺陷原貌：旧 Cipher.Masked 把「库里没有手机号」和「有密文但解不开」压成两个不同的空语义
+// （前者 ""、后者 "***"），而调用方拿到字符串无法反推是哪一种。前端医护账号页把脱敏串
+// 直接预填进可编辑输入框（admin-web pages/doctors/index.vue 的 originalPhone 比对），
+// 运营只要清空那个「看起来像占位符」的框保存，服务端按「空串即清空」的写语义把两列落 NULL
+// —— 真号被洗掉。解不开时必须让前端有能力显示占位符并禁止「未填写=清空」。
+type PhoneState string
+
+const (
+	// PhoneStateAbsent 密文列为 NULL/零长 ⇒ 该账号确实没有手机号
+	PhoneStateAbsent PhoneState = "absent"
+	// PhoneStateMasked 密文可解密，Masked 里是脱敏号（138****1111）
+	PhoneStateMasked PhoneState = "masked"
+	// PhoneStateUnreadable 密文非空但解不开（seed 占位 bytea / 密钥轮换 / 数据损坏），
+	// 或加密密钥未配置却库里存了密文。当前值不可知，前端不得回显成可编辑值。
+	PhoneStateUnreadable PhoneState = "unreadable"
+)
+
+// MaskUnavailable 解不开时的占位符；与改造前 Masked 的 "***" 逐字相同（只加语义不改文案）
+const MaskUnavailable = "***"
+
+// PhoneView 手机号读侧视图：状态 + 展示串
+type PhoneView struct {
+	State  PhoneState
+	Masked string
+}
+
+// View 密文 → 三态视图。c 允许为 nil（PHONE_ENC_KEY 未配置）：此时库里无密文仍判 absent，
+// 有密文判 unreadable —— 密钥缺失是环境问题，不得伪装成「该用户没填手机号」。
+func View(c *Cipher, enc []byte) PhoneView {
 	if len(enc) == 0 {
-		return ""
+		return PhoneView{State: PhoneStateAbsent}
+	}
+	if c == nil {
+		return PhoneView{State: PhoneStateUnreadable, Masked: MaskUnavailable}
 	}
 	plain, err := c.Decrypt(enc)
 	if err != nil {
-		return "***"
+		return PhoneView{State: PhoneStateUnreadable, Masked: MaskUnavailable}
 	}
-	return Mask(plain)
+	return PhoneView{State: PhoneStateMasked, Masked: Mask(plain)}
 }
 
 // Mask 手机号脱敏（138****5678）；非 11 位号码首尾各留 1 位，过短返回 "***"

@@ -211,8 +211,7 @@ type TeamMemberRow struct {
 	Name         string
 	Role         string // doctor.title（technician 无 title 字段则空）
 	Title        string // 保留字段：科室/职称（与 Role 字段语义对齐设计源成员表角色）
-	PhoneEnc     []byte // AES-GCM 密文，handler 层脱敏
-	PhoneMasked  string // handler 装配时脱敏（避免在 repo 层依赖 phone.Cipher）
+	PhoneEnc     []byte // AES-GCM 密文，handler 层脱敏并给三态（T361）
 	PatientCount int    // 仅 doctor 有意义（technician 用 InstallCount，预留位）
 	JoinTime     time.Time
 	Status       string
