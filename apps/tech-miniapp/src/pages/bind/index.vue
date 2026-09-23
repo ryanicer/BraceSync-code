@@ -25,7 +25,7 @@
           </view>
           <view class="form-group">
             <text class="form-label">患者 ID<span class="required">*</span></text>
-            <input class="form-input" type="text" placeholder="例: pat-001" v-model="patientId" />
+            <input class="form-input" type="text" :placeholder="PATIENT_ID_PLACEHOLDER" v-model="patientId" />
           </view>
           <view :class="['btn-primary', { 'btn-disabled': binding }]" @click="bindManual">
             <text>{{ binding ? '绑定中...' : '绑定设备' }}</text>
@@ -73,6 +73,9 @@ import { useDeviceStore } from '../../stores/device'
 import { useInstallStore } from '../../stores/install'
 import { discoverDevices, initBluetooth, connectDevice, readDeviceInfo, registerBleStateListener, closeBLEConnection } from '../../utils/ble'
 import { bleLog } from '../../utils/ble-log'
+import { readQrCode } from '../../utils/scan'
+import { PATIENT_ID_PLACEHOLDER, SCAN_TOAST } from '../../utils/bind-copy'
+import { logger } from '../../utils/logger'
 import { bindDevice, type BindResult } from '../../api/device'
 import { createInstall } from '../../api/install'
 import { getPatient } from '../../api/patient'
@@ -99,10 +102,20 @@ function goHome() {
   uni.navigateBack({ fail: () => uni.reLaunch({ url: '/pages/home/index' }) })
 }
 
-function scanDevice() {
-  // T089-MOCK: 真机用 uni.scanCode，mock 模式直接填入
-  manualDeviceId.value = 'PRS-ML05-RC-001'
-  uni.showToast({ title: '扫码成功（mock）', icon: 'none' })
+async function scanDevice() {
+  // T362: 去掉 T089 的 mock 硬编码（原先无条件把设备 ID 写成 PRS-ML05-RC-001 并提示成功），
+  //       改真机 uni.scanCode。H5 无相机链路，走 failed 分支提示手动输入。
+  const outcome = await readQrCode((opts) => uni.scanCode(opts))
+  if (outcome.kind === 'ok') {
+    manualDeviceId.value = outcome.value
+    uni.showToast({ title: SCAN_TOAST.success, icon: 'none' })
+    return
+  }
+  if (outcome.kind === 'failed') {
+    // 真机排查用：扫码失败只有 toast 用户不会回报，日志才能远程反查
+    logger.warn('bind 扫码失败 errMsg=' + (outcome.message || '(无 errMsg)'))
+  }
+  uni.showToast({ title: SCAN_TOAST[outcome.kind], icon: 'none' })
 }
 
 // T299 一患者一设备：后端 409 带 occupiedDeviceId 时，按 PRD §7C.3 弹「是否换绑？」

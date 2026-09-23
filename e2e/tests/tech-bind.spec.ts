@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   techRoutes, fillTechInput,
-  MOCK_DEVICE_ID,
+  MOCK_DEVICE_ID, SEED_PATIENT_ID,
   forceTechLoginMock, doTechRealLogin, mockTechBLE,
 } from '../tech-helpers'
 
@@ -40,9 +40,19 @@ test.describe('设备绑定', () => {
     await page.goto(techRoutes.bind)
   })
 
-  test('扫码绑定自动填入设备 ID', async ({ page }) => {
+  test('患者ID 输入框示例为真实形态（T362：不再是 pat-001）', async ({ page }) => {
+    // uni-app H5 把 placeholder 渲染成 div.uni-input-placeholder，原生 input 上没有该属性
+    const ph = page.locator('.section').nth(1).locator('.form-input').nth(1).locator('.uni-input-placeholder')
+    await expect(ph).toHaveText(/^例: P\d{4}[0-9a-f]{12}$/)
+  })
+
+  test('扫码入口走真实 uni.scanCode，不再注入假设备 ID', async ({ page }) => {
+    const deviceInput = page.locator('.section').nth(1).locator('.form-input').first()
     await page.locator('.scan-card').click()
-    await expect(page.locator('uni-toast')).toContainText('扫码成功', { timeout: 5_000 })
+    // H5 构建里 uni.scanCode 是 createUnsupportedAsyncApi（必然 reject），
+    // 所以真机上唯一的成功路径不可能在这里出现：断言「没有假成功」而不是断言旧 mock 的「扫码成功」
+    await expect(page.locator('uni-toast')).toContainText('扫码失败，请手动输入设备 ID', { timeout: 5_000 })
+    await expect(deviceInput.locator('input')).toHaveValue('')
   })
 
   test('手动输入设备 ID + 患者 ID 绑定成功并跳转 install', async ({ page }) => {
@@ -50,7 +60,7 @@ test.describe('设备绑定', () => {
     const deviceInput = page.locator('.section').nth(1).locator('.form-input').first()
     await fillTechInput(deviceInput, MOCK_DEVICE_ID)
     const patientInput = page.locator('.section').nth(1).locator('.form-input').nth(1)
-    await fillTechInput(patientInput, 'pat-001')
+    await fillTechInput(patientInput, SEED_PATIENT_ID)
 
     await page.locator('.btn-primary', { hasText: '绑定设备' }).click()
     // bind 页自实现 toast（非 uni.showToast），跳转 install 前显示 1.2s
