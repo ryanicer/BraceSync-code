@@ -50,7 +50,9 @@ test.describe('05-患者管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
     // T279：裸等表格行会命中上一页（数据概览）的排行表 → 本页 0 行就开断言（5.1/5.2 实跑失效根因）
-    await gotoMenuAndWaitTable(page, '患者管理', 'patients')
+    // T358：本页自 T289 起有第二张会出数的表（批量患者-团队绑定），全局等待会被它先满足，
+    //        5.1 因此间歇读到 0 行 ⇒ 等待作用域收到患者列表卡自己身上，与 5.1 断言的是同一张表
+    await gotoMenuAndWaitTable(page, '患者管理', 'patients', patientTable(page))
   })
 
   // 记录本文件新建的患者名，末尾清理
@@ -431,5 +433,41 @@ test.describe('05-患者管理', () => {
         expect(t).not.toMatch(/失败|错误|error|500|404/)
       }
     })
+  })
+})
+
+/**
+ * T358 回归守卫：本页「已就绪」的信号必须锚在患者列表卡自己身上。
+ *
+ * 成因（CI run 35884021247 实跑判红 + 本地注入 4/4 复现）：本页自 T289 起有两张各发各请求的表
+ * （列表 pageSize=10 / 批量绑定卡 pageSize=100），而等待条件是「页面里任意一行表格可见」，
+ * 批量卡先返回时条件即被它满足，紧跟其后的一次性 rows.count() 读到 0。
+ *
+ * 本用例把 CI 里的那次响应顺序固定下来：只给列表那一枪加 1.2s 延迟，批量卡不加。
+ * 修好了（等待带卡作用域）⇒ 照旧出数；作用域被人摘回去 ⇒ 同一条注入立刻判红。
+ * 只读：route 只加延迟后 continue，不改响应体、不写数据。
+ */
+test.describe('05b-列表就绪等待作用域（T358 竞态回归）', () => {
+  test('批量卡先出数时，等待仍锚在患者列表卡：一次性读行数不得为 0', async ({ page }) => {
+    let delayed = 0
+    await page.route('**/api/v1/admin/patients*', async (route) => {
+      // 只延迟列表那一枪（pageSize=10）；批量卡的 pageSize=100 原样放行
+      if (/[?&]pageSize=10(&|$)/.test(route.request().url())) {
+        delayed++
+        await new Promise((r) => setTimeout(r, 1_200))
+      }
+      await route.continue()
+    })
+
+    await realLogin(page)
+    await gotoMenuAndWaitTable(page, '患者管理', 'patients', patientTable(page))
+
+    const rows = tableRows(page, patientTable(page))
+    expect(
+      await rows.count(),
+      '等待放行时患者列表卡就该已经出数；读到 0 说明等待又被同页另一张表满足了（T358 回归）',
+    ).toBeGreaterThanOrEqual(5)
+    // 注入没命中就等于本用例什么都没守（列表请求形状变了）⇒ 判红并要求同步更新
+    expect(delayed, '延迟注入未命中 pageSize=10 那一枪，判据已失效').toBeGreaterThanOrEqual(1)
   })
 })

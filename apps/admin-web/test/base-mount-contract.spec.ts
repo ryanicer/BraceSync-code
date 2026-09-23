@@ -22,6 +22,7 @@ const readIn = (dir: string, rel: string): string => readFileSync(join(dir, rel)
 const viteConfig = readIn(appRoot, 'vite.config.ts')
 const routerSrc = readIn(appRoot, 'src/router/index.ts')
 const requestSrc = readIn(appRoot, 'src/utils/request.ts')
+const expirySrc = readIn(appRoot, 'src/utils/sessionExpiry.ts')
 const nginxConf = readIn(join(repoRoot, 'scripts/deploy'), 'nginx.conf')
 
 describe('T336 挂载点契约：前端构建 base 与 nginx 挂载点必须同值', () => {
@@ -41,9 +42,15 @@ describe('T336 挂载点契约：前端构建 base 与 nginx 挂载点必须同�
     expect(routerSrc).not.toMatch(/createWebHistory\(\s*\)/)
   })
 
-  it('401 整页跳转带挂载前缀（不写死根路径 /login）', () => {
-    expect(requestSrc).toMatch(/window\.location\.href\s*=\s*`\$\{import\.meta\.env\.BASE_URL\}login`/)
-    expect(requestSrc).not.toMatch(/window\.location\.href\s*=\s*'\/login'/)
+  it('失效整页跳转带挂载前缀（不写死根路径 /login），且只发生在 sessionExpiry 一处', () => {
+    // T357 把 401 处置从 request.ts 的 `if (!res.ok) throw` 之后搬到可达位置，落点即 sessionExpiry.ts；
+    // 本条守的是 T336 契约本身：跳转地址的前缀取构建期 BASE_URL，谁改成写死 /login 这里就红。
+    expect(expirySrc).toMatch(/baseUrl:\s*import\.meta\.env\.BASE_URL/)
+    expect(expirySrc).toMatch(/\$\{base\}login/)
+    expect(expirySrc).not.toMatch(/location\.(href|assign)\(\s*['"]\/login['"]\s*\)/)
+    expect(expirySrc).not.toMatch(/location\.href\s*=\s*['"]\/login['"]/)
+    // 反证：request.ts 不再自己摸 window.location（两处各写一半 = 下一次漂移）
+    expect(requestSrc).not.toMatch(/window\.location/)
   })
 
   it('API 请求仍是根绝对 /api/：挂载点不得污染接口前缀', () => {
