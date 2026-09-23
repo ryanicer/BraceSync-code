@@ -113,10 +113,13 @@ func t366Day(dateCST string) time.Time {
 // seedT366Patient 造患者+设备并注册清理（帧由用例自己按点铺）
 func seedT366Patient(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
+	// 同一个占位符既落 varchar 列又进 md5()，PG 会推出两种类型而报 42P08
+	// inconsistent types deduced；在 md5 侧写 ::text 并**不能**消除（本地 PG14 实测），
+	// 必须是两个占位符（或 ::varchar）。
 	_, err := pool.Exec(ctx, `
 		INSERT INTO patients (patient_id, name, phone_enc, phone_hash, status)
-		VALUES ($1, 'T366 患者', '\x00'::bytea, md5($1::text) || repeat('0', 32), 'active')
-		ON CONFLICT (patient_id) DO NOTHING`, t366Patient)
+		VALUES ($1, 'T366 患者', '\x00'::bytea, md5($2) || repeat('0', 32), 'active')
+		ON CONFLICT (patient_id) DO NOTHING`, t366Patient, t366Patient)
 	require.NoError(t, err, "seed patient")
 
 	_, err = pool.Exec(ctx, `
