@@ -245,9 +245,12 @@ test.describe('告警规则配置（T253-2.2）', () => {
  *
  * 现场（staging 已部署包 + doctor_li，见 docs/tasks/iris/T351-截图）：进页面即
  * `403 GET /api/v1/admin/alert-rules` → 一条红条 + 控制台一条 403；点「流程配置」再补一条
- * `403 GET /api/v1/admin/flow/templates`。网关那两条是 adminOnlyPatterns 的正确行为，
+ * `403 GET /api/v1/admin/flow/templates`。网关那两条当时都登记在 adminOnlyPatterns，
  * 而 PRD §7D.11 给医护的是「🚨 告警管理 ✅（仅本团队患者）」= 页面级准入 ⇒ 页面要能进、
  * 配置面按角色摘掉。
+ *
+ * 口径更新（T359）：模板「读」（列表 + 详情）改判 staff 可读 —— Tab3 运行态要按模板渲染流程；
+ * 模板「写」三条仍 adminOnly。本段锁的仍是 Tab4 整块不可见（canConfigureAlerts），不受该放行影响。
  *
  * mock 模式下没有真 403 可抓，所以这里锁的是 DOM 形态（Tab 数量 + 配置面板不渲染）；
  * 「Network 无 403」那半条判据在 e2e-real/tests/03-alerts.spec.ts 的 3b 段。

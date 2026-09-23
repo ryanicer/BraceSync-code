@@ -10,6 +10,7 @@ import {
   E2E_REPLY_PREFIX,
   uniqueName,
   getAllTagTexts,
+  getAuthToken,
 } from '../real-helpers'
 import { requireDeployedBuild } from '../deploy-guard'
 
@@ -257,6 +258,130 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
     await expect(page.getByRole('tab')).toHaveCount(4)
     await page.getByRole('tab', { name: '告警规则配置' }).click()
     await expect(page.locator('.alert-grid .grid-cell')).toHaveCount(20)
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
+  })
+})
+
+/**
+ * T359 · 医护点开告警「处理流程」（Tab3 运行态）不再 403
+ *
+ * 修前现场（staging 现网，2026-09-24 凌晨全只读 GET 实测，数值同 TAPD T359 卡 02:42:20 那条登记）：
+ *   doctor_li  GET /api/v1/admin/flow/instances?alertId=…       200   ← 运行态本就归 staff（T274）
+ *   doctor_li  GET /api/v1/admin/flow/templates?pageSize=100    403   ← 同屏第二枪，红条就来自这里
+ *   doctor_li  GET /api/v1/doctors                              403
+ *   ops_admin  以上三条全 200
+ *
+ * 修法分两半（口径判定见 TAPD T359 卡 2026-09-24 02:42:20 那条【Joe】登记）：
+ *   · 模板的两条「读」随运行态一起放行 staff（网关 rbac.go：读进 staffOnlyPatterns，写仍 admin 专属）；
+ *   · 医护名录刻意不放开——设计稿 Tab3 没有这个下拉，控件本身可手输账号 ID，后端也只校验长度。
+ *     非 admin 前端根本不发这一枪（utils/alertPageAccess.ts:canReadDoctorRoster）。
+ *
+ * 三条用例的分工：
+ *   3c.1 接口层锁网关口径（含「名录仍 403」这条反向锁，防后来人顺手放开）；
+ *   3c.2 UI 层锁医护点开 Tab3 全程零 4xx，并证明判据非空转：模板那一枪必须真的发出去过；
+ *   3c.3 运营侧不退化（名录照发、照 200）。
+ *
+ * 部署守卫：3c.1 探网关那一半（marker T359-flow-templates-staff-read），3c.2 探前端包那一半
+ * （marker T359-process-tab-no-403）—— 两条链路可分别部署，一起探会把「只上了一半」盖掉。
+ */
+test.describe('03c-告警处理流程 · 医护可读（T359）', () => {
+  test('3c.1 doctor_li：模板读放行、名录读仍 403（网关口径）', async ({ page }) => {
+    await realLogin(page, 'doctor_li')
+    const token = await getAuthToken(page)
+    expect(token, '应拿到 doctor 的 JWT').toBeTruthy()
+    const headers = { Authorization: `Bearer ${token}` }
+    const req = page.request
+
+    await requireDeployedBuild(page, {
+      marker: 'T359-flow-templates-staff-read',
+      why: 'staging 现部署的网关仍把模板读收在 admin-only（doctor 打 /admin/flow/templates 回 403）',
+      probe: async () =>
+        (await req.get('/api/v1/admin/flow/templates?pageSize=1', { headers })).status() === 200,
+    })
+
+    const list = await req.get('/api/v1/admin/flow/templates?pageSize=100', { headers })
+    const listBody = await list.json().catch(() => null)
+    console.log(`[e2e-real][t359] GET /api/v1/admin/flow/templates -> HTTP ${list.status()} code=${listBody?.code}`)
+    expect(list.status(), '医护应能列出模板候选').toBe(200)
+    expect(listBody?.code, '业务码应为 0').toBe(0)
+
+    const templateId = String(listBody?.data?.list?.[0]?.templateId ?? '')
+    expect(templateId.length, 'staging 应至少有一个流程模板').toBeGreaterThan(0)
+    const detail = await req.get(`/api/v1/admin/flow/templates/${templateId}`, { headers })
+    const detailBody = await detail.json().catch(() => null)
+    console.log(`[e2e-real][t359] GET /api/v1/admin/flow/templates/{模板号} -> HTTP ${detail.status()} code=${detailBody?.code}`)
+    expect(detail.status(), '运行态画布要按实例的模板号取图结构，必须可读').toBe(200)
+    expect(Array.isArray(detailBody?.data?.nodes), '详情应回 nodes 数组').toBe(true)
+
+    // 反向锁：本卡只放开模板读，全院医护名录仍属团队管理页的 admin 域。
+    // （「写仍 admin 专属」不在现网探——POST 一旦判据失手就会在 staging 留下脏模板，
+    //   该方向由网关单测 TestRBAC_T359_TemplateReadOpenDoesNotLeakWrites 覆盖。）
+    const roster = await req.get('/api/v1/doctors', { headers })
+    console.log(`[e2e-real][t359] GET /api/v1/doctors -> HTTP ${roster.status()}`)
+    expect(roster.status(), '医护名录未随本卡放开，仍应 403').toBe(403)
+  })
+
+  test('3c.2 doctor_li：点开「流程」进 Tab3 全程零 4xx、无红条、不发名录枪', async ({ page }) => {
+    await realLogin(page, 'doctor_li')
+    await expect(menuItems(page).first()).toBeVisible({ timeout: 20_000 })
+    await gotoMenu(page, '告警管理')
+    await expect(page).toHaveURL(/\/alerts$/, { timeout: 15_000 })
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 20_000 })
+
+    // 监听器必须在落到本页之后才挂：doctor 的落地页数据概览会自己打一发 403 GET /api/v1/teams
+    // （T349 新发现 B 的现场，另一张卡），算进本条判据就变成拿别人的缺陷判我的红。
+    const badRows: string[] = []
+    const sentPaths: string[] = []
+    page.on('response', (res) => {
+      if (!res.url().includes('/api/')) return
+      if (res.status() >= 400) badRows.push(`${res.status()} ${res.request().method()} ${new URL(res.url()).pathname}`)
+    })
+    page.on('request', (r) => {
+      if (r.url().includes('/api/')) sentPaths.push(new URL(r.url()).pathname)
+    })
+
+    await tableRows(page).first().getByRole('button', { name: '流程' }).click()
+    await expect(page.getByRole('tab', { name: '处理流程' })).toHaveCount(1)
+    await page.waitForTimeout(2_500)
+
+    await requireDeployedBuild(page, {
+      marker: 'T359-process-tab-no-403',
+      why: '已部署包里医护点开 Tab3 仍会打模板列表与医护名录，两枪都 403',
+      probe: async () => badRows.length === 0,
+    })
+
+    expect(badRows, `医护点开处理流程后不得出现任何 4xx：${badRows.join('；')}`).toEqual([])
+    // 判据非空转：模板那一枪必须真的发出去过（否则「零 4xx」是被根本没请求骗出来的）
+    expect(sentPaths.some((p) => p.includes('/admin/flow/templates')), '应真的请求过模板端点').toBe(true)
+    // 名录那一枪按角色摘掉（前端降级），不是靠网关放行
+    expect(sentPaths.filter((p) => p === '/api/v1/doctors'), '医护不应发出名录请求').toEqual([])
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
+  })
+
+  test('3c.3 ops_admin：Tab3 照常可用，名录照发（运营不退化）', async ({ page }) => {
+    await realLogin(page)
+    await expect(menuItems(page).first()).toBeVisible({ timeout: 20_000 })
+    await gotoMenu(page, '告警管理')
+    await expect(page).toHaveURL(/\/alerts$/, { timeout: 15_000 })
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 20_000 })
+
+    // 同 3c.2：监听器只覆盖本页，别把上一屏的现场算进来
+    const badRows: string[] = []
+    const sentPaths: string[] = []
+    page.on('response', (res) => {
+      if (!res.url().includes('/api/')) return
+      if (res.status() >= 400) badRows.push(`${res.status()} ${res.request().method()} ${new URL(res.url()).pathname}`)
+    })
+    page.on('request', (r) => {
+      if (r.url().includes('/api/')) sentPaths.push(new URL(r.url()).pathname)
+    })
+
+    await tableRows(page).first().getByRole('button', { name: '流程' }).click()
+    await page.waitForTimeout(2_500)
+
+    expect(badRows, `运营侧出现 4xx：${badRows.join('；')}`).toEqual([])
+    expect(sentPaths.some((p) => p === '/api/v1/doctors'), '运营的转派候选人名录应照发').toBe(true)
+    expect(sentPaths.some((p) => p.includes('/admin/flow/templates')), '运营应能读模板列表').toBe(true)
     await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
 })

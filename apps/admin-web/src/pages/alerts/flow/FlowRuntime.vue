@@ -78,6 +78,9 @@
               <el-select v-model="targetOperator" filterable allow-create default-first-option placeholder="转派给（选择或输入账号 ID）" size="small">
                 <el-option v-for="d in doctors" :key="d.doctorId" :label="`${d.name}（${d.doctorId}）`" :value="d.doctorId" />
               </el-select>
+              <div v-if="!canReadRoster" class="rp-muted rp-transfer-hint">
+                直接输入对方后台账号 ID（如 A0002）即可转派；医护名录仅运营管理员可查。
+              </div>
             </el-form>
 
             <div v-if="branchOptions.length" class="rp-branch">
@@ -156,10 +159,17 @@ import {
   type FlowInstance, type FlowNodeAction, type FlowNodeState, type FlowTemplate, type FlowActionType,
 } from '../../../api/flow'
 import { fetchDoctors, presignFile, uploadFileDirect, completeUpload } from '../../../api'
+import { useAuthStore } from '../../../stores/auth'
+import { canReadDoctorRoster } from '../../../utils/alertPageAccess'
 import { registerFlowElements } from './canvas'
 import { buildRuntimeGraph, deadlineOf, FLOW_STATUS_LABEL, type FlowStatus } from './flowGraph'
 
 const props = defineProps<{ alert: Alert | null }>()
+
+// T359：转派候选人名录（GET /api/v1/doctors）是 admin 域端点，非 admin 照打必 403 红条 —— 见
+// utils/alertPageAccess.ts 的 canReadDoctorRoster 注释。本组件其余请求都在 staff 域内，照打不误。
+const auth = useAuthStore()
+const canReadRoster = computed(() => canReadDoctorRoster(auth.role))
 
 const ACTIONS: { value: FlowActionType; label: string; primary: boolean }[] = [
   { value: 'confirm', label: '确认处理', primary: true },
@@ -420,6 +430,7 @@ function reset() {
 
 onMounted(async () => {
   await load()
+  if (!canReadRoster.value) { doctors.value = []; return }
   try {
     doctors.value = await fetchDoctors()
   } catch {
@@ -485,6 +496,7 @@ onBeforeUnmount(() => {
 .rp-op-btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .rp-op-btn-row .is-picked { box-shadow: 0 0 0 2px rgba(59, 130, 246, .35); }
 .rp-transfer { margin-top: 8px; }
+.rp-transfer-hint { margin-top: 4px; }
 .rp-branch { margin-top: 4px; }
 .op-upload {
   margin-top: 10px; padding: 10px; border: 1px dashed #cbd5e1; border-radius: 6px;

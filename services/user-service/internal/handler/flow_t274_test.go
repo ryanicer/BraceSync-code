@@ -190,10 +190,45 @@ func TestT274_FlowTemplate_List_Paged(t *testing.T) {
 	assert.Equal(t, 3, page.List[0].InstanceCount)
 }
 
-func TestT274_FlowTemplate_List_NonAdmin403(t *testing.T) {
-	e := flowEnv(t)
-	w, _ := e.do(http.MethodGet, "/api/v1/admin/flow/templates", nil, hdr("ROLE_DOCTOR", "D0001"))
-	assert.Equal(t, http.StatusForbidden, w.Code)
+// T359：模板「读」在 handler 兜底层与网关同口径放宽到 staff（漏一侧就是网关放行后仍 403），
+// 模板「写」三条仍锁 admin。患者/未知角色一律 403（fail-closed）。
+func TestT359_FlowTemplate_ReadsStaffAllowed(t *testing.T) {
+	for _, role := range []string{flowRoleAdmin, "ROLE_DOCTOR", "ROLE_CS", "technician"} {
+		e := flowEnv(t)
+		w, resp := e.do(http.MethodGet, "/api/v1/admin/flow/templates", nil, hdr(role, "X1"))
+		assert.Equal(t, http.StatusOK, w.Code, "role=%s 模板列表不应被误伤：%s", role, resp.Message)
+
+		e = flowEnv(t)
+		w, resp = e.do(http.MethodGet, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4", nil, hdr(role, "X1"))
+		assert.Equal(t, http.StatusOK, w.Code, "role=%s 模板详情不应被误伤：%s", role, resp.Message)
+	}
+	for _, role := range []string{"patient", "ROLE_GHOST", ""} {
+		for _, path := range []string{"/api/v1/admin/flow/templates", "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4"} {
+			e := flowEnv(t)
+			w, _ := e.do(http.MethodGet, path, nil, hdr(role, "P20260002"))
+			assert.Equal(t, http.StatusForbidden, w.Code, "role=%q GET %s 应 403", role, path)
+		}
+	}
+}
+
+func TestT359_FlowTemplate_WritesStillAdminOnly(t *testing.T) {
+	for _, role := range []string{"ROLE_DOCTOR", "ROLE_CS", "technician", "patient"} {
+		e := flowEnv(t)
+		w, _ := e.do(http.MethodPost, "/api/v1/admin/flow/templates",
+			map[string]any{"name": "不该落库"}, hdr(role, "X1"))
+		assert.Equal(t, http.StatusForbidden, w.Code, "role=%s POST 模板应 403", role)
+		assert.Empty(t, e.store.flow.lastTplName, "403 不得落库")
+
+		e = flowEnv(t)
+		w, _ = e.do(http.MethodPut, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4",
+			map[string]any{"name": "不该改写"}, hdr(role, "X1"))
+		assert.Equal(t, http.StatusForbidden, w.Code, "role=%s PUT 模板应 403", role)
+		assert.Nil(t, e.store.flow.lastUpdName, "403 不得改写")
+
+		e = flowEnv(t)
+		w, _ = e.do(http.MethodDelete, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4", nil, hdr(role, "X1"))
+		assert.Equal(t, http.StatusForbidden, w.Code, "role=%s DELETE 模板应 403", role)
+	}
 }
 
 func TestT274_FlowTemplate_Get_NotFound404(t *testing.T) {

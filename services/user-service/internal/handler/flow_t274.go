@@ -2,9 +2,9 @@
 //
 // 路由（网关 RBAC 见 services/gateway/cmd/server/rbac.go，本文件另做 handler 层兜底判定）：
 //
-//	GET    /api/v1/admin/flow/templates                              模板列表（adminOnly）
+//	GET    /api/v1/admin/flow/templates                              模板列表（staff，T359 由 adminOnly 放宽）
 //	POST   /api/v1/admin/flow/templates                              新建模板（adminOnly）
-//	GET    /api/v1/admin/flow/templates/:templateId                   模板详情（adminOnly）
+//	GET    /api/v1/admin/flow/templates/:templateId                   模板详情（staff，T359 由 adminOnly 放宽）
 //	PUT    /api/v1/admin/flow/templates/:templateId                   保存模板（adminOnly）
 //	DELETE /api/v1/admin/flow/templates/:templateId                   删除模板（adminOnly）
 //	POST   /api/v1/admin/flow/instances                              启动实例（staff）
@@ -323,9 +323,12 @@ func failFlowInstanceErr(c *gin.Context, msg string, err error) {
 // ─────────────────────────────────────────────────────────────
 
 // listFlowTemplates GET /api/v1/admin/flow/templates
+//
+// T359：读侧从 admin 放宽到 staff（与网关 rbac.go 同口径，两侧必须一起改，
+// 否则网关放行后 handler 兜底仍 403）。写侧三条维持 requireAdminRole 不变。
 func (h *Handler) listFlowTemplates(c *gin.Context) {
-	if !requireAdminRole(c) {
-		fail(c, model.ErrForbidden("only admin can manage flow templates"))
+	if !requireFlowStaff(c) {
+		fail(c, model.ErrForbidden("only staff can read flow templates"))
 		return
 	}
 	page, pageSize, appErr := parsePaging(c)
@@ -346,9 +349,12 @@ func (h *Handler) listFlowTemplates(c *gin.Context) {
 }
 
 // getFlowTemplate GET /api/v1/admin/flow/templates/:templateId
+//
+// T359：详情回显的是完整图数据，但 2.3 运行态画布本就要按模板渲染流程，
+// 而实例域（节点状态/时间线）T274 起即 staff 可读 ⇒ 读图不给 staff 就无法看处理流程。
 func (h *Handler) getFlowTemplate(c *gin.Context) {
-	if !requireAdminRole(c) {
-		fail(c, model.ErrForbidden("only admin can manage flow templates"))
+	if !requireFlowStaff(c) {
+		fail(c, model.ErrForbidden("only staff can read flow templates"))
 		return
 	}
 	row, err := h.store.GetFlowTemplate(c.Request.Context(), c.Param("templateId"))

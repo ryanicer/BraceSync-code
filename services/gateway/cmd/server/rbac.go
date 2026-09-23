@@ -74,10 +74,12 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPut, "/api/v1/admin/alert-rules/global"),
 	rbacOf(http.MethodGet, "/api/v1/admin/audit-logs"),
 	// T274 2.4 流程模板设计器：模板是可被任意告警实例化的流程定义，改一条即改全部在途/未来
-	// 流程 ⇒ 与 sys_config / alert_rules 同级的「配置变更」，收口 admin-only（设计稿 流程模板 页仅 admin 可见）。
-	rbacOf(http.MethodGet, "/api/v1/admin/flow/templates"),
+	// 流程 ⇒ 与 sys_config / alert_rules 同级的「配置变更」，三条写路由收口 admin-only（设计稿 流程模板 页仅 admin 可见）。
+	// 🔴 T359 订正：本段理由只约束**改**。两条**读**（列表 = 医护起流程前选模板、详情 = 运行态画布取图结构）
+	// 是 T274 已归 staff 的运行态域必需的，留在本矩阵会让医护点开 Tab3 必吃 403 红条、画布空白。
+	// 两条读已移至 staffOnlyPatterns（患者与未知角色仍 403）；放开读不外溢：列表契约本身 nodes/edges
+	// 恒为空数组，图数据只在详情返回（docs/api/api-contracts.ts「模板列表」段）。
 	rbacOf(http.MethodPost, "/api/v1/admin/flow/templates"),
-	rbacOf(http.MethodGet, "/api/v1/admin/flow/templates/:templateId"),
 	rbacOf(http.MethodPut, "/api/v1/admin/flow/templates/:templateId"),
 	rbacOf(http.MethodDelete, "/api/v1/admin/flow/templates/:templateId"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notify-rules"),
@@ -217,6 +219,14 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/alerts/:alertId/processing"),
 	// T274 2.3 运行态画布：与上面告警处理同域同口径（告警详情内发起流程、点节点按钮、看时间线）。
 	// 患者不得访问——流程节点里含处理人姓名/意见/附件，属内部处置信息。
+	//
+	// T359：模板的两条读端点同属这一域，一并 staff 放行（原登记在 adminOnlyPatterns，
+	// 医护点开告警「处理流程」Tab 必 403）。判据是「运行态要不要用」，不是「路径带不带 admin 前缀」：
+	//   GET 列表 → 无实例的告警要起流程，必须能列出候选模板（起流程的 POST 本就是 staff）；
+	//   GET 详情 → 运行态画布按 instance.templateId 取 nodes/edges，取不到就没有节点可渲染。
+	// 三条写路由（新建/保存/移除）仍留在 adminOnlyPatterns 不动。
+	rbacOf(http.MethodGet, "/api/v1/admin/flow/templates"),
+	rbacOf(http.MethodGet, "/api/v1/admin/flow/templates/:templateId"),
 	rbacOf(http.MethodPost, "/api/v1/admin/flow/instances"),
 	rbacOf(http.MethodGet, "/api/v1/admin/flow/instances"),
 	rbacOf(http.MethodGet, "/api/v1/admin/flow/instances/:instanceId/nodes"),
