@@ -48,7 +48,17 @@ export async function requireDeployedBuild(
 
   let present = probeCache.get(marker)
   if (present === undefined) {
-    present = await probe(page)
+    try {
+      present = await probe(page)
+    } catch (e) {
+      // 探测只该问「在不在」，不该抛（抛了这里就无法区分「旧包缺元素」与「页面真坏了」）。
+      // 但作者写错成业务断言时也得看得懂，故原样带上现场信息再抛——判红是对的，别降级成跳过。
+      const msg = e instanceof Error ? e.message : String(e)
+      throw new Error(
+        `requireDeployedBuild(${marker}) 探测抛错，未当作「未部署」处理：probe 只能做存在性探测` +
+        `（用 .count() / .isVisible().catch(() => false)，不要在旧包上 await 一个不存在的元素）。原始错误：${msg}`,
+      )
+    }
     probeCache.set(marker, present)
   }
   if (present) return
