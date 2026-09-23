@@ -79,10 +79,28 @@
               <el-option v-for="p in patients" :key="p.patientId" :label="`${p.name}（${p.patientId}）`" :value="p.patientId" />
             </el-select>
             <el-tag v-if="auth.role === 'doctor'" type="info" effect="plain">医生工作台：仅本团队患者（PRD §7D.11）</el-tag>
+            <!-- T344 第 4 块：稿面（矫形日志.html #wsSendAdvice）只定形态与位置 = 未选患者禁用 + 点击占位提示。
+                 模板消息无对外端点（卡内已报 PM），故本按钮本轮不触达患者。 -->
+            <el-button class="send-advice-btn" type="primary" :disabled="!patientId" @click="sendAdvice">发送建议给患者</el-button>
           </div>
 
           <template v-if="patientId">
-            <el-tabs v-model="activeTab">
+            <!-- T344 第 1 块 · 患者基本信息卡（稿面 #wsProfile，PRD §7D.8 视图② 7 字段 + 稿面另加患者ID） -->
+            <div class="page-card profile-card">
+              <div class="page-card-title">患者基本信息</div>
+              <el-descriptions v-if="profile" :column="4" border size="small">
+                <el-descriptions-item label="姓名">{{ profile.name }}</el-descriptions-item>
+                <el-descriptions-item label="年龄">{{ profile.age !== null ? `${profile.age} 岁` : '—' }}</el-descriptions-item>
+                <el-descriptions-item label="性别">{{ genderLabel(profile.gender) }}</el-descriptions-item>
+                <el-descriptions-item label="诊断">{{ profile.diagnosis || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="Cobb 角度">{{ profile.cobbAngle !== null ? `${profile.cobbAngle}°` : '—' }}</el-descriptions-item>
+                <el-descriptions-item label="绑定设备">{{ profile.deviceId || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="绑定团队">{{ profileTeamName }}</el-descriptions-item>
+                <el-descriptions-item label="患者ID">{{ profile.patientId }}</el-descriptions-item>
+              </el-descriptions>
+              <el-empty v-else description="暂无患者档案" :image-size="60" />
+            </div>
+            <el-tabs v-model="activeTab" @tab-change="onWsTabChange">
               <!-- 矫形方案 -->
               <el-tab-pane label="矫形方案" name="plans">
                 <div class="page-card">
@@ -172,6 +190,83 @@
                 </div>
                 <el-empty v-if="reports.length === 0" description="暂无健康报告" :image-size="60" />
               </el-tab-pane>
+
+              <!-- T344 第 2/3 块 · 数据视图（稿面 #wsData：Boss 2026-09-23 裁定问题 2 的第 2、3、4 项）
+                   内层 Tab 顺序照稿面「追加末位不重排」。 -->
+              <el-tab-pane label="数据视图" name="data">
+                <div class="page-card chart-card" v-loading="wearLoading">
+                  <div class="chart-head">
+                    <span class="page-card-title">压力趋势图</span>
+                    <el-radio-group v-model="wearRange" size="small" @change="onRangeChange">
+                      <el-radio-button :value="7">7 天</el-radio-button>
+                      <el-radio-button :value="14">14 天</el-radio-button>
+                      <el-radio-button :value="30">30 天</el-radio-button>
+                    </el-radio-group>
+                  </div>
+                  <div v-if="!seriesIsEmpty(wearSeries)" class="chart-container">
+                    <Line :data="pressureChartData" :options="pressureOptions" />
+                  </div>
+                  <el-empty v-else-if="!wearLoading" description="暂无日佩戴统计" :image-size="60" />
+                  <div class="axis-note">
+                    纵轴 = 日均压力（N），横轴 = 日期（后端按 Asia/Shanghai 切日）。
+                    <span v-if="thresholds">虚线为压力上限线，当前取系统配置 {{ thresholds.pressureHighThresholdN }}N（PRD §7D.12，不写死数值）。</span>
+                    <span v-else>虚线为压力上限线，取值来自系统配置（PRD §7D.12），不写死数值。</span>
+                  </div>
+                </div>
+
+                <div class="page-card chart-card" v-loading="wearLoading">
+                  <div class="chart-head">
+                    <span class="page-card-title">每日佩戴时长统计</span>
+                    <span class="chart-unit">单位：小时</span>
+                  </div>
+                  <div v-if="!seriesIsEmpty(wearSeries)" class="chart-container">
+                    <Bar :data="wearChartData" :options="wearOptions" />
+                  </div>
+                  <el-empty v-else-if="!wearLoading" description="暂无日佩戴统计" :image-size="60" />
+                  <div class="axis-note">
+                    虚线为佩戴目标线，
+                    <span v-if="thresholds">当前取系统配置 {{ thresholds.dailyWearTargetHours }}h（PRD §7D.12）</span>
+                    <span v-else>取值来自系统配置（PRD §7D.12）</span>
+                    。时间范围跟随上方趋势图的 7/14/30 天选择。
+                  </div>
+                </div>
+
+                <div class="page-card chart-card" v-loading="alertsLoading">
+                  <div class="chart-head">
+                    <span class="page-card-title">告警记录列表</span>
+                    <span class="list-count">{{ alertCountText }}</span>
+                  </div>
+                  <el-table v-if="wsAlerts.length > 0" :data="wsAlerts" size="small">
+                    <el-table-column label="时间" width="150">
+                      <template #default="{ row }">{{ formatDateTime(row.timestamp) }}</template>
+                    </el-table-column>
+                    <el-table-column label="告警类型" width="150">
+                      <template #default="{ row }">
+                        <el-tag :type="severityType(row.type)" size="small">{{ alertTypeLabel(row.type) }}</el-tag>
+                      </template>
+                    </el-table-column>
+                    <!-- 稿面 5 列含「等级」，但 Alert 契约无等级/严重度字段（shared-types index.ts:126-146），
+                         PRD 也只在 §7D.8 视图② 提过一次、§7D.6 未定义 ⇒ 占位，不拿类型着色冒充（卡内已报 PM） -->
+                    <el-table-column label="等级" width="90">
+                      <template #default>—</template>
+                    </el-table-column>
+                    <el-table-column label="处理状态" width="110">
+                      <template #default="{ row }">
+                        <el-tag :type="processStatusType(row.processStatus)" size="small">
+                          {{ processStatusLabel(row.processStatus) }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column prop="detail" label="说明" min-width="220" show-overflow-tooltip />
+                  </el-table>
+                  <el-empty v-else-if="!alertsLoading" description="该患者暂无告警记录" :image-size="60" />
+                  <div class="axis-note">
+                    告警类型词表按 PRD §7D.6 现行四类；「压力波动」已由 Boss 2026-09-23 裁定问题 4 砍除，
+                    但历史行仍在库里，本页不隐藏它们（与「告警管理」页同一口径：只砍写入口，不删历史）。
+                    「详情」「恢复态」两轴由「告警管理」页承载，此处不重复。
+                  </div>
+                </div>
+              </el-tab-pane>
             </el-tabs>
           </template>
           <el-empty v-else description="请选择患者开始诊断评估" class="empty-placeholder" />
@@ -198,15 +293,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import type { Patient, OrthosisPlan, FeelingLog, HealthReport } from '@bracesync/shared-types'
 import {
-  fetchPatients, fetchOrthosisPlans, saveOrthosisPlanApi,
-  fetchFeelingLogs, fetchFeelingLogsAdmin, fetchHealthReports, replyFeelingLogApi,
-  patientNameOf,
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement,
+  Tooltip, Legend, Filler, type ChartData, type ChartOptions,
+} from 'chart.js'
+import { Line, Bar } from 'vue-chartjs'
+import { alertTypeLabel } from '@bracesync/shared-utils'
+import type { Alert, FeelingLog, HealthReport, OrthosisPlan, Patient } from '@bracesync/shared-types'
+import {
+  fetchPatients, fetchPatientDetail, fetchTeams, fetchAlerts, fetchSystemSettings,
+  fetchOrthosisPlans, saveOrthosisPlanApi,
+  fetchFeelingLogs, fetchFeelingLogsAdmin, fetchPatientDailyWear, fetchHealthReports, replyFeelingLogApi,
+  patientNameOf, teamNameOf,
 } from '../../api'
+import type { SystemSettings } from '../../mock/system'
+import {
+  alignWearSeries, constantLine, rangeForDays, seriesIsEmpty,
+  type DailyWearDay, type WearRangeDays, type WearSeries,
+} from '../../utils/workbenchData'
 import { useAuthStore } from '../../stores/auth'
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
 
 const auth = useAuthStore()
 const viewMode = ref<'logs' | 'workspace'>('logs')
@@ -220,6 +329,25 @@ const newPlanContent = ref('')
 const savingPlan = ref(false)
 const replyDrafts = ref<Record<string, string>>({})
 const replyingId = ref<string | null>(null)
+
+// ===== T344 工作台区块 =====
+/** 患者基本信息卡（稿面 #wsProfile）：后端 join 出 teamName 时优先用它，否则查组织字典 */
+type PatientRow = Patient & { teamName?: string | null }
+const profile = ref<PatientRow | null>(null)
+const wearRange = ref<WearRangeDays>(7)
+const wearRows = ref<DailyWearDay[]>([])
+const wearLoading = ref(false)
+const wsAlerts = ref<Alert[]>([])
+const alertTotal = ref(0)
+const alertsLoading = ref(false)
+/** 稿面两条虚线的取值：一律来自 §7D.12 系统配置，不写死 */
+const thresholds = ref<Pick<SystemSettings, 'dailyWearTargetHours' | 'pressureHighThresholdN'> | null>(null)
+/** 数据视图按需加载：首屏不进工作台不该打这三个请求 */
+const dataLoaded = ref(false)
+/** 稿面 #wsAlertBody 取数上限：后端 alerts 分页 pageSize ≤ 100 */
+const ALERT_PAGE_SIZE = 100
+/** 「最近 N 条」的 N：稿面样例 3 行、未定 N，取工作台一屏可读量 20 条 */
+const ALERT_SHOW_COUNT = 20
 
 // T289 8.1 跨患者日志流
 const logs = ref<FeelingLog[]>([])
@@ -302,6 +430,11 @@ function trendTagType(trend: HealthReport['trendJudgment']): 'success' | 'info' 
 }
 
 async function loadPatientData() {
+  dataLoaded.value = false
+  profile.value = null
+  wearRows.value = []
+  wsAlerts.value = []
+  alertTotal.value = 0
   if (!patientId.value) return
   try {
     const [plansRes, feelingsRes, reportsRes] = await Promise.all([
@@ -315,6 +448,179 @@ async function loadPatientData() {
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   }
+  loadProfile()
+  // 内层 Tab 停在数据视图时切患者：该页内容当场就要有数
+  if (activeTab.value === 'data') ensureDataView()
+}
+
+/** 稿面 #wsProfile 取数：GET /api/v1/admin/patients/:patientId（患者管理详情同源，不新建端点） */
+async function loadProfile() {
+  try {
+    profile.value = await fetchPatientDetail(patientId.value) as PatientRow | null
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载患者档案失败')
+  }
+}
+
+async function ensureDataView() {
+  if (dataLoaded.value) return
+  dataLoaded.value = true
+  await Promise.all([loadWearSeries(), loadWsAlerts()])
+}
+
+function onWsTabChange(name: string | number) {
+  if (name === 'data') ensureDataView()
+}
+
+async function loadWearSeries() {
+  if (!patientId.value) return
+  wearLoading.value = true
+  try {
+    const { start, end } = rangeForDays(wearRange.value)
+    const [rows, settings] = await Promise.all([
+      fetchPatientDailyWear(patientId.value, start, end),
+      thresholds.value ? Promise.resolve(null) : fetchSystemSettings(),
+    ])
+    if (settings) {
+      thresholds.value = {
+        dailyWearTargetHours: settings.dailyWearTargetHours,
+        pressureHighThresholdN: settings.pressureHighThresholdN,
+      }
+    }
+    wearRows.value = rows
+  } catch (e: unknown) {
+    dataLoaded.value = false
+    ElMessage.error(e instanceof Error ? e.message : '加载日佩戴统计失败')
+  } finally {
+    wearLoading.value = false
+  }
+}
+
+async function loadWsAlerts() {
+  if (!patientId.value) return
+  alertsLoading.value = true
+  try {
+    const res = await fetchAlerts({ patientId: patientId.value, page: 1, pageSize: ALERT_PAGE_SIZE })
+    // 稿面 wsAlertCount 注：「实现按最近 N 条取数」⇒ 不做时间窗，只按时间倒序截断。
+    // 倒序在前端兜一次：告警页也这么排，且不依赖后端返回序（后端无 order 参数）。
+    wsAlerts.value = [...res.list]
+      .sort((x, y) => (x.timestamp < y.timestamp ? 1 : -1))
+      .slice(0, ALERT_SHOW_COUNT)
+    alertTotal.value = res.total
+  } catch (e: unknown) {
+    dataLoaded.value = false
+    ElMessage.error(e instanceof Error ? e.message : '加载告警记录失败')
+  } finally {
+    alertsLoading.value = false
+  }
+}
+
+/** 区间切换只影响两张图：稿面 wsSetRange（矫形日志.html:625）只重绘趋势与时长，告警列表是「最近 N 条」不随区间变 */
+function onRangeChange() {
+  loadWearSeries()
+}
+
+const wearSeries = computed<WearSeries>(() => alignWearSeries(wearRows.value, rangeForDays(wearRange.value)))
+
+const pressureChartData = computed<ChartData<'line'>>(() => ({
+  labels: wearSeries.value.dates,
+  datasets: [
+    {
+      label: '日均压力（N）',
+      data: wearSeries.value.avgPressure,
+      borderColor: '#409eff',
+      backgroundColor: 'rgba(64, 158, 255, 0.12)',
+      fill: true,
+      tension: 0.25,
+      spanGaps: false,
+    },
+    {
+      label: `压力上限线（${thresholds.value?.pressureHighThresholdN ?? '—'}N）`,
+      data: constantLine(thresholds.value?.pressureHighThresholdN ?? 0, wearSeries.value.dates.length),
+      borderColor: '#f56c6c',
+      borderDash: [6, 4],
+      pointRadius: 0,
+      fill: false,
+    },
+  ],
+}))
+
+/**
+ * 柱图里叠一条虚线目标线（chart.js 混合图）。TS 侧 ChartData<'bar'> 不接受
+ * type: 'line' 的数据集，故整对象做一次窄化断言，运行时由 chart.js 按 dataset.type 分派。
+ */
+const wearChartData = computed(() => ({
+  labels: wearSeries.value.dates,
+  datasets: [
+    {
+      label: '佩戴时长（小时）',
+      data: wearSeries.value.wearHours,
+      backgroundColor: 'rgba(64, 158, 255, 0.55)',
+    },
+    {
+      type: 'line' as const,
+      label: `佩戴目标线（${thresholds.value?.dailyWearTargetHours ?? '—'}h）`,
+      data: constantLine(thresholds.value?.dailyWearTargetHours ?? 0, wearSeries.value.dates.length),
+      borderColor: '#f56c6c',
+      borderDash: [6, 4],
+      pointRadius: 0,
+      fill: false,
+    },
+  ],
+}) as unknown as ChartData<'bar'>)
+
+const pressureOptions: ChartOptions<'line'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'bottom' } },
+  scales: { y: { beginAtZero: false, title: { display: true, text: 'N' } } },
+}
+
+const wearOptions: ChartOptions<'bar'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'bottom' } },
+  scales: { y: { beginAtZero: true, title: { display: true, text: '小时' } } },
+}
+
+const alertCountText = computed(() => {
+  if (alertTotal.value === 0) return '共 0 条'
+  if (alertTotal.value <= ALERT_SHOW_COUNT) return `共 ${alertTotal.value} 条`
+  return `共 ${alertTotal.value} 条，显示最近 ${ALERT_SHOW_COUNT} 条`
+})
+
+/** 档案卡 8 格用同一个占位符：teamNameOf 的 '-' 是列表页列内的旧口径，不适用于本卡 */
+const profileTeamName = computed(() => {
+  const p = profile.value
+  if (!p) return '—'
+  const name = p.teamName || (p.teamId ? teamNameOf(p.teamId) : '')
+  return name && name !== '-' ? name : '—'
+})
+
+function genderLabel(gender: Patient['gender']): string {
+  if (gender === 'male') return '男'
+  if (gender === 'female') return '女'
+  return '未填'
+}
+
+/** 与「告警管理」页同词表（该页函数是页内局部实现，未收口到共享层，收口属另一张卡的范围） */
+function severityType(type: string): 'danger' | 'warning' {
+  if (type === 'pressure_high' || type === 'wear_interrupt') return 'danger'
+  return 'warning'
+}
+
+function processStatusLabel(status: string): string {
+  return { pending: '待处理', processing: '处理中', processed: '已处理' }[status] || status
+}
+
+function processStatusType(status: string): 'warning' | 'primary' | 'success' {
+  if (status === 'processed') return 'success'
+  return status === 'processing' ? 'primary' : 'warning'
+}
+
+/** 稿面 #wsSendAdvice：模板消息端点尚未建（卡内已报 PM），本轮只给占位提示 */
+function sendAdvice() {
+  ElMessage.info('发送建议给患者的模板消息通道待后端建端点（见 T344 卡内登记）')
 }
 
 async function savePlan() {
@@ -351,6 +657,8 @@ async function submitReply(row: FeelingLog) {
 
 onMounted(async () => {
   loadLogs()
+  // 真实模式的团队名靠 fetchTeams 填组织字典（api/index.ts teamNameOf），否则基本信息卡只能显示 TEAM01 编号
+  fetchTeams().catch(() => undefined)
   try {
     const res = await fetchPatients({ page: 1, pageSize: 50 })
     patients.value = res.list
@@ -450,5 +758,36 @@ onMounted(async () => {
   color: #1a6db5;
   font-size: 13px;
   line-height: 1.5;
+}
+.send-advice-btn {
+  margin-left: auto;
+}
+.profile-card :deep(.el-descriptions__label) {
+  width: 96px;
+}
+.chart-card {
+  margin-bottom: 16px;
+}
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.chart-unit {
+  font-size: 12px;
+  color: #999;
+}
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 240px;
+}
+.axis-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #999;
+  line-height: 1.6;
 }
 </style>

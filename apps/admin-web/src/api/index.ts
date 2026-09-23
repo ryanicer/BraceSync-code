@@ -20,6 +20,7 @@ import * as reviewMock from '../mock/review'
 import * as systemMock from '../mock/system'
 import type { RealtimeSnapshot } from '../mock/patients'
 import type { SystemSettings, AdminRoleRow } from '../mock/system'
+import type { DailyWearDay } from '../utils/workbenchData'
 
 /** mock 模式模拟网络延迟 */
 function delay(ms = 150): Promise<void> {
@@ -99,6 +100,17 @@ export async function fetchPatientRealtime(patientId: string): Promise<RealtimeS
   if (USE_MOCK) { await delay(80); return patientMock.mockPatientRealtime(patientId) }
   // 契约已定（api-contracts.ts getPatientRealtime，data-service）
   return request<RealtimeSnapshot>({ url: `/api/v1/patients/${patientId}/realtime` })
+}
+
+/**
+ * T344 工作台「数据视图」取数：按日佩戴聚合（data-service getDailyWear，T076）。
+ * start/end 为东八区闭区间；一个端点同时供压力趋势（avgPressure）与每日佩戴时长（wearMinutes）。
+ * 不用 /records：它的 period 只有 day/week/month 三档自然周期且 date 必填
+ * （services/data-service/internal/service/record.go:689-708），给不出稿面要的滚动 7/14/30 天。
+ */
+export async function fetchPatientDailyWear(patientId: string, start: string, end: string): Promise<DailyWearDay[]> {
+  if (USE_MOCK) { await delay(); return patientMock.mockPatientDailyWear(patientId, start, end) }
+  return request<DailyWearDay[]>({ url: `/api/v1/patients/${patientId}/daily-wear`, data: { start, end } })
 }
 
 // T057 患者写功能

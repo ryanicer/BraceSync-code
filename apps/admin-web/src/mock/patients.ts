@@ -1,5 +1,6 @@
 // 患者域 mock 数据（对齐 api-contracts.ts getPatients/getPatientDetail/getPatientRealtime）
 import type { Patient, PressureRecord, SensorPoint, Alert } from '@bracesync/shared-types'
+import { listDates, type DailyWearDay } from '../utils/workbenchData'
 
 function makePoints(maxValue: number): SensorPoint[] {
   const points: SensorPoint[] = []
@@ -101,6 +102,38 @@ export function mockPatients(params: { keyword?: string; teamId?: string; page?:
 
 export function mockPatientDetail(patientId: string): Patient | null {
   return PATIENTS.find((p) => p.patientId === patientId) ?? null
+}
+
+/** FNV-1a 归一化到 0-1：同一患者同一天每次调用出同一组数，用例才钉得住 */
+function dayNoise(seed: string): number {
+  let h = 0x811c9dc5
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0) / 0xffffffff
+}
+
+/**
+ * mock 日佩戴聚合（GET /api/v1/patients/:id/daily-wear，闭区间逐日出数）。
+ * 未绑定设备的患者返回 []，对齐后端「无统计行即空数组」，也让工作台图表有空态可测。
+ */
+export function mockPatientDailyWear(patientId: string, start: string, end: string): DailyWearDay[] {
+  const patient = PATIENTS.find((p) => p.patientId === patientId)
+  if (!patient?.deviceId) return []
+  return listDates({ start, end }).map((date) => {
+    const a = dayNoise(`${patientId}|${date}`)
+    const b = dayNoise(`${date}|${patientId}`)
+    return {
+      date,
+      wearMinutes: Math.round(360 + a * 840),
+      avgPressure: Number((22 + a * 18).toFixed(1)),
+      maxPressure: Number((38 + b * 26).toFixed(1)),
+      maxPoint: `P${String(1 + Math.floor(b * 20)).padStart(2, '0')}`,
+      frameCount: Math.round(600 + a * 900),
+      abnormalCount: b > 0.82 ? 1 : 0,
+    }
+  })
 }
 
 export interface RealtimeSnapshot {
