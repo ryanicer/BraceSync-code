@@ -4,7 +4,8 @@ import { defineConfig, devices } from '@playwright/test'
  * 运营后台 Playwright E2E 配置（T029 admin-web）
  *
  * 测试目标：apps/admin-web（Vue3 + Element Plus 标准 Vite Web，USE_MOCK=true 数据）
- * - 本机：dev server 默认跑在 http://localhost:5175（可用 E2E_PORT 改端口，多 worktree 并存时互不复用）
+ * - 本机：dev server 默认跑在 http://localhost:5175/admin/（T336 起 vite base=/admin/；
+ *   可用 E2E_PORT 改端口，多 worktree 并存时互不复用）
  * - CI：由 webServer.command 拉起 dev server
  *
  * 与患者端（playwright.config.ts）/技师端（tech-playwright.config.ts）隔离：
@@ -44,7 +45,8 @@ export default defineConfig({
     // --strictPort 禁止端口被占时自动回退（回退会让用例连到别的端的构建上）
     // 直接从 workspace 目录启动 vite，CLI --port 覆盖 vite.config.ts 内的默认端口
     command: `cd apps/admin-web && npx vite --port ${port} --strictPort`,
-    url: baseUrl,
+    // T336：vite base 改为 /admin/ 后，根路径只做 302（不是 2xx），就绪探测要看挂载点本身
+    url: `${baseUrl}/admin/`,
     cwd: '..',
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,

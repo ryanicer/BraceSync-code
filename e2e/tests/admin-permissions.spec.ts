@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import {
-  adminRoutes, adminLogin, menuItems, ADMIN_PAGES, DOCTOR_PAGES, CS_PAGES,
+  adminRoutes, adminLogin, menuItems, ADMIN_PAGES, DOCTOR_PAGES, CS_PAGES, adminPath,
 } from '../admin-helpers'
 
 /**
@@ -85,7 +85,7 @@ test.describe('cs 受限权限', () => {
       await page.goto(path)
       await expect(page.locator('.forbidden-card')).toHaveCount(0)
     }
-    for (const path of ['/dashboard', '/alerts', '/patients', '/monitor']) {
+    for (const path of ['/dashboard', '/alerts', '/patients', '/monitor'].map(adminPath)) {
       await page.goto(path)
       await expect(page).toHaveURL(/\/403/)
     }
@@ -93,7 +93,7 @@ test.describe('cs 受限权限', () => {
 
   test('未知路径按角色落地（cs → 患者沟通，不再被弹进 403）（T269 D3）', async ({ page }) => {
     await adminLogin(page, 'cs')
-    await page.goto('/not-exist-page')
+    await page.goto(adminPath('/not-exist-page'))
     await expect(page).toHaveURL(/\/communication/)
     await expect(page.locator('.forbidden-card')).toHaveCount(0)
   })

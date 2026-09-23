@@ -11,7 +11,8 @@ import { defineConfig, devices } from '@playwright/test'
  *      · CI 打 staging 公开入口 http://106.52.39.208:81
  *      · 本机走隧道：ssh -N -L 2080:127.0.0.1:81 ubuntu@106.52.39.208
  *        再 E2E_STAGING_URL=http://localhost:2080 npx playwright test --config=...
- *      · 各路由由 realRoutes.xxx 提供 /admin/ 前缀，Nginx strip 后 router 见根路径
+ *      · 各路由由 realRoutes.xxx 提供 /admin/ 前缀（T336：前端以 /admin/ 为 base 构建，
+ *        nginx 不做 strip，深链由 SPA 自己按 base 匹配）
  *  - 无 webServer 字段：不启动本地 vite，直连 staging 真实服务
  *  - 串行执行（workers=1）：避免真实接口数据竞争
  *  - 范围：运营后台 Web 5 模块（登录/Dashboard/告警/监控/患者/团队/沟通）

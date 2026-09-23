@@ -7,7 +7,7 @@
 #   3. admin-web vite build → 产物复制到部署目录
 #   4. 增量执行未跑过的 migration（幂等，schema_migrations 表跟踪）
 #   5. docker compose up -d 重建变更服务
-#   6. 冒烟：healthz → 登录 → 受保护端点 → 全过才输出 DEPLOY OK
+#   6. 冒烟：healthz → 登录 → 受保护端点 → 挂载前缀/深链（T336）→ 全过才输出 DEPLOY OK
 #   7. 任一环节失败即退出非零中止；幂等可重入；不碰生产 /opt/bracesync
 set -euo pipefail
 
@@ -191,6 +191,17 @@ if [ "$ADMIN_CODE" != "200" ]; then
   fail "admin-web 检查失败 (HTTP $ADMIN_CODE)"
 fi
 log "   ✅ admin-web /admin/ → 200"
+
+# T336：挂载点部署期实检 —— 构建 base 与 nginx location 必须同值，否则深链/刷新会被弹回首页。
+# 静态契约在 apps/admin-web/test/base-mount-contract.spec.ts，这里管「这次构建真的带上前缀」。
+if ! curl -sS "$ADMIN_URL" 2>/dev/null | grep -q 'src="/admin/assets/'; then
+  fail "admin-web 入口 HTML 未引用 /admin/assets/ 资源（vite base 与 nginx 挂载点不一致 ⇒ 子路由深链必坏）"
+fi
+DEEP_CODE=$(curl -sS -o /dev/null -w '%{http_code}' "${ADMIN_URL}patients" 2>/dev/null || echo "000")
+if [ "$DEEP_CODE" != "200" ]; then
+  fail "admin-web 深链 /admin/patients 检查失败 (HTTP $DEEP_CODE)"
+fi
+log "   ✅ 入口资源带 /admin/ 前缀 + 深链 /admin/patients → 200"
 
 # ⑦ 清理 + 完成
 log "⑦ 清理部署残留 ..."

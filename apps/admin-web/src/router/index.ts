@@ -61,7 +61,9 @@ export function registerPermissionGuard(router: ReturnType<typeof createRouter>)
 
 export function createAppRouter(history?: RouterHistory) {
   const router = createRouter({
-    history: history ?? createWebHistory(),
+    // T336：history base 取构建 base（vite.config.ts 的 base = ADMIN_BASE），路由表本身仍是根路径
+    // （/patients），浏览器地址则是 ${base}patients（/admin/patients）——深链与刷新才能匹配到本页。
+    history: history ?? createWebHistory(import.meta.env.BASE_URL),
     routes,
   })
   registerPermissionGuard(router)

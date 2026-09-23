@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { adminRoutes, adminLogin } from '../admin-helpers'
+import { adminRoutes, adminLogin, ADMIN_MOUNT } from '../admin-helpers'
 
 /**
  * admin-web 系统配置输入边界：T270 补齐 README §5 第一类缺口 A-SET-03
@@ -253,7 +253,8 @@ test.describe('系统配置 · 压力阈值三档与医生默认阈值（T289 12
     await expect(pointCard(page).locator('.page-card-title')).toHaveText('医生默认阈值')
     await expect(pointCard(page).locator('.card-desc')).toContainText('未逐点改过时的回退默认值')
     await expect(pointCard(page).locator('.card-link')).toHaveText('告警管理 · 告警规则配置')
-    await expect(pointCard(page).locator('.card-link')).toHaveAttribute('href', '/alerts')
+    // router-link 渲染的 href 自带挂载前缀（T336：vite base=/admin/），点它才到得了告警页
+    await expect(pointCard(page).locator('.card-link')).toHaveAttribute('href', `${ADMIN_MOUNT}/alerts`)
     const notes = await pointCard(page).locator('.threshold-notes li').allInnerTexts()
     expect(notes.some((n) => n.includes('不列解剖名'))).toBe(true)
     expect(notes.some((n) => n.includes('T203'))).toBe(true)

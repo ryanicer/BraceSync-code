@@ -56,8 +56,10 @@ export async function request<T>(options: RequestOptions): Promise<T> {
   }
   if (body.code === 40101) {
     // token 失效：清凭据回登录页（对齐网关鉴权错误码）
+    // T336：整页跳转要自带挂载前缀（BASE_URL 恒以 / 结尾），写死 /login 在 staging 会被
+    // nginx 302 到 /admin/ ⇒ 丢 redirect 参数、落到首页
     removeToken()
-    window.location.href = '/login'
+    window.location.href = `${import.meta.env.BASE_URL}login`
   }
   throw new Error(body.message || 'Request failed')
 }
