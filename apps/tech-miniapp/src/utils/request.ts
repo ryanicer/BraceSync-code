@@ -1,4 +1,5 @@
 import { getToken, removeToken } from './token'
+import { AUTH_EXPIRED_MESSAGE, forceRelogin, isAuthFailure } from './authError'
 import { logger } from './logger'
 
 // 环境变量通过 vite.config.ts 的 define 静态注入（绕开 uni 插件对 import.meta.env 的破坏）
@@ -57,6 +58,21 @@ export async function request<T>(options: RequestOptions): Promise<T> {
       header,
       success: (res) => {
         const data = res.data as { code: number; message: string; data: T }
+        // T326：token 失效（网关 401 / 服务层 10401）一律清凭据回登录页。
+        // 登录请求本身除外 —— 密码错同样是 401 + 10401，回登录页会和「手机号或密码错误」提示打架。
+        if (!isLoginRequest && isAuthFailure(res.statusCode, data?.code)) {
+          // 会话过期是预期分支，用 warn：e2e-miniapp/real-mp-helpers 的 attachConsole 会把
+          // 任何 console.error 记进 result.errors，误判成失败（fail-closed）。
+          logger.warn('[T326]', `auth failure ← ${options.method || 'GET'} ${options.url}` +
+            ` status=${res.statusCode} code=${data?.code}`)
+          forceRelogin({
+            removeToken,
+            toast: (msg) => uni.showToast({ title: msg, icon: 'none' }),
+            reLaunch: (url) => uni.reLaunch({ url }),
+          })
+          reject(new Error(AUTH_EXPIRED_MESSAGE))
+          return
+        }
         // T208: 响应日志
         if (data.code === 0) {
           logger.info('[T208]', `response ← ${options.method || 'GET'} ${options.url}`, {
@@ -67,23 +83,17 @@ export async function request<T>(options: RequestOptions): Promise<T> {
           logger.error('[T208]', `response fail ← ${options.method || 'GET'} ${options.url}`, {
             statusCode: res.statusCode, code: data.code, message: data.message,
           })
-          if (data.code === 40101) {
-            removeToken()
-            uni.reLaunch({ url: '/pages/login/index' })
-            reject(new Error(data.message || '登录已过期，请重新登录'))
-          } else {
-            // T173：透传业务码/HTTP 状态，供调用方区分语义（如基线 409 = 20409）
-            // T299：一并透传响应 data，供调用方读结构化附带字段（如 409 的 occupiedDeviceId）而非解析文案
-            const err = new Error(data.message || '请求失败') as Error & {
-              code?: number
-              httpStatus?: number
-              data?: unknown
-            }
-            err.code = data.code
-            err.httpStatus = res.statusCode
-            err.data = data.data
-            reject(err)
+          // T173：透传业务码/HTTP 状态，供调用方区分语义（如基线 409 = 20409）
+          // T299：一并透传响应 data，供调用方读结构化附带字段（如 409 的 occupiedDeviceId）而非解析文案
+          const err = new Error(data.message || '请求失败') as Error & {
+            code?: number
+            httpStatus?: number
+            data?: unknown
           }
+          err.code = data.code
+          err.httpStatus = res.statusCode
+          err.data = data.data
+          reject(err)
         }
       },
       fail: (err) => {
