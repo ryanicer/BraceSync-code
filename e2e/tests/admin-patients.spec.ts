@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import { readFileSync } from 'fs'
+import QRCode from 'qrcode'
 import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
@@ -224,6 +225,38 @@ test.describe('详情抽屉', () => {
     // 只数列表那一张表：T300 后抽屉里还有两张汇总表、4.2 后本页还有批量绑定表，
     // 全局 .el-table 选择器会把它们算进来 ⇒ scope 到 .patient-list-card
     await expect(listRows(page)).toHaveCount(rowCount) // 关抽屉不改变列表（未触发筛选/翻页）
+  })
+
+  /**
+   * T327 患者ID 二维码：真实浏览器里也要出图，且图形必须由该患者的 patientId 现编，
+   * 不是占位图 / 写死的矢量。载荷解码证据（截图 + 扫码结果）随交件说明提供。
+   */
+  test('抽屉首位有患者ID二维码，图形随该患者ID变化（T327）', async ({ page }) => {
+    const target = listRows(page).first()
+    const patientId = (await target.locator('td').nth(0).textContent())?.trim() ?? ''
+    expect(patientId, '首行患者ID列要有值').not.toBe('')
+
+    await target.locator('td').nth(1).click()
+    const drawer = page.locator('.el-drawer')
+    await expect(drawer).toBeVisible()
+
+    const card = drawer.locator('.pid-card')
+    await expect(card).toBeVisible()
+    // 设计稿 患者管理.html:186-199：卡片在「基本信息」描述表之前
+    await expect(card).toHaveCount(1)
+    await expect(drawer.locator('.pid-value')).toHaveText(patientId)
+    await expect(drawer.locator('.qr-cap')).toHaveText('扫描二维码录入患者ID')
+
+    const svg = drawer.locator('.qr-frame svg')
+    await expect(svg).toHaveAttribute('width', '144')
+    // 码图 == 用同一 ID 在 node 侧编出来的矩阵 ⇒ 证明载荷就是这个 patientId
+    const qr = QRCode.create(patientId, { errorCorrectionLevel: 'M' })
+    const dark = Array.from(qr.modules.data).filter(Boolean).length
+    const d = await svg.locator('path').getAttribute('d')
+    expect(d, '二维码要有实际图形').toBeTruthy()
+    const runDark = [...(d ?? '').matchAll(/h(\d+)/g)].reduce((n, s) => n + Number(s[1]), 0)
+    expect(runDark, '暗模块数须等于该ID的 QR 矩阵').toBe(dark)
+    await expect(svg).toHaveAttribute('viewBox', `0 0 ${qr.modules.size} ${qr.modules.size}`)
   })
 
   test('抽屉可关闭', async ({ page }) => {

@@ -105,6 +105,31 @@
 
     <!-- 患者详情抽屉 -->
     <el-drawer v-model="drawerVisible" :title="detail ? `${detail.name}（${detail.patientId}）` : ''" size="420px">
+      <!-- T327 患者ID 二维码（设计稿 患者管理.html:186-199）：抽屉正文首位，在「基本信息」之前 -->
+      <div v-if="detail" class="pid-card">
+        <div class="pid-meta">
+          <div class="label">患者ID</div>
+          <div class="pid-value">{{ detail.patientId }}</div>
+          <div class="pid-note">技师端「绑定」页扫码即自动填入患者ID，避免手输长ID出错。</div>
+        </div>
+        <div class="qr-box">
+          <div class="qr-frame">
+            <svg
+              v-if="qrMatrix"
+              width="144"
+              height="144"
+              :viewBox="`0 0 ${qrMatrix.size} ${qrMatrix.size}`"
+              shape-rendering="crispEdges"
+              role="img"
+              aria-label="患者ID 二维码"
+            >
+              <path :d="qrMatrix.path" fill="#333333" />
+            </svg>
+          </div>
+          <div class="qr-cap">扫描二维码录入患者ID</div>
+        </div>
+      </div>
+
       <el-descriptions v-if="detail" :column="1" border size="small">
         <el-descriptions-item label="性别">{{ detail.gender === 'male' ? '男' : detail.gender === 'female' ? '女' : '-' }}</el-descriptions-item>
         <el-descriptions-item label="年龄">{{ detail.age ?? '-' }}</el-descriptions-item>
@@ -222,6 +247,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
+import QRCode from 'qrcode'
 import type { Patient, Team, Doctor } from '@bracesync/shared-types'
 import type { AbnormalReport } from '../../mock/alerts'
 import {
@@ -245,6 +271,7 @@ const teamFilter = ref('')
 const loading = ref(false)
 const drawerVisible = ref(false)
 const detail = ref<PatientRow | null>(null)
+const qrMatrix = ref<{ size: number; path: string } | null>(null)
 
 // 新建患者
 const createVisible = ref(false)
@@ -355,10 +382,40 @@ function handleSearch() {
   loadData()
 }
 
+/** 暗模块合成一条 SVG path：同一行内连续的暗模块并成一段水平描边（设计稿 markup 同形） */
+function qrPathFrom(data: Uint8Array, size: number) {
+  const seg: string[] = []
+  for (let y = 0; y < size; y++) {
+    let x = 0
+    while (x < size) {
+      if (!data[y * size + x]) {
+        x++
+        continue
+      }
+      let run = 0
+      while (x + run < size && data[y * size + x + run]) run++
+      seg.push(`M${x} ${y}h${run}v1h-${run}z`)
+      x += run
+    }
+  }
+  return seg.join('')
+}
+
+/**
+ * 码内载荷 = 患者ID 明文本体（设计稿 患者管理.html:152 建议，不加 URL/scheme 前缀）。
+ * 图形不留静区（margin 0），静区由 .qr-frame 的 8px 内白 + 白底卡片承载，见设计稿:150「尺寸」行。
+ */
+function showPatientQr(patientId: string) {
+  const qr = QRCode.create(patientId, { errorCorrectionLevel: 'M' })
+  qrMatrix.value = { size: qr.modules.size, path: qrPathFrom(qr.modules.data, qr.modules.size) }
+}
+
 function viewDetail(row: PatientRow) {
   detail.value = row
   report.value = null
   drawerVisible.value = true
+  qrMatrix.value = null
+  showPatientQr(row.patientId)
   loadReport()
 }
 
@@ -541,6 +598,60 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* T327 患者ID 二维码卡片：尺寸/配色照设计稿 患者管理.html:59-67，左文本右码、顶部对齐 */
+.pid-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid #e8ecf0;
+  border-radius: 12px;
+  background: #fcfdff;
+}
+.pid-meta {
+  flex: 1;
+  min-width: 0;
+}
+.pid-meta .label {
+  font-size: 12px;
+  color: #999;
+}
+.pid-value {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #333;
+  word-break: break-all;
+}
+.pid-note {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #999;
+}
+.qr-box {
+  width: 160px;
+  flex-shrink: 0;
+}
+/* 外框 160×160 含 8px 内白（静区，不可裁），内里图形 144×144 */
+.qr-frame {
+  box-sizing: border-box;
+  width: 160px;
+  height: 160px;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fff;
+}
+.qr-cap {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+  color: #666;
+}
 .search-input {
   width: 220px;
 }
