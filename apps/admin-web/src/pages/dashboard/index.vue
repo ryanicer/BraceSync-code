@@ -110,10 +110,10 @@ import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement,
   BarElement, ArcElement, Tooltip, Legend, Filler,
 } from 'chart.js'
-import type { DashboardKPI, TeamRanking, DoctorRanking, Team } from '@bracesync/shared-types'
+import type { DashboardKPI, TeamRanking, DoctorRanking } from '@bracesync/shared-types'
 import {
   fetchDashboardKPI, fetchWearTrend, fetchAlertTrend, fetchTeamRanking,
-  fetchDoctorRanking, fetchWearDistribution, fetchTeams,
+  fetchDoctorRanking, fetchWearDistribution,
 } from '../../api'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, ArcElement, Tooltip, Legend, Filler)
@@ -129,7 +129,6 @@ const alertTrend = ref<{ date: string; count: number }[]>([])
 const teamRanking = ref<TeamRanking[]>([])
 const doctorRanking = ref<DoctorRanking[]>([])
 const distribution = ref<{ range: string; count: number }[]>([])
-const teams = ref<Team[]>([])
 
 interface KpiCard {
   label: string
@@ -177,13 +176,16 @@ const alertTrendData = computed(() => {
   }
 })
 
+// 各团队管理患者数取团队排行而非 GET /teams：设计稿 数据概览.html:237,239 这张图的 labels/data
+// 就是同页「团队佩戴达标排行」表的团队名与患者数列（154-162），且 team-ranking 在 staff 读权限内
+// （/teams 是 admin 专属，医护角色打它必 403）。
 const teamChartData = computed(() => {
-  if (teams.value.length === 0) return null
+  if (teamRanking.value.length === 0) return null
   return {
-    labels: teams.value.map((t) => t.name),
+    labels: teamRanking.value.map((t) => t.teamName),
     datasets: [{
       label: '患者数',
-      data: teams.value.map((t) => t.patientCount),
+      data: teamRanking.value.map((t) => t.patientCount),
       backgroundColor: PALETTE,
       borderRadius: 6,
     }],
@@ -212,27 +214,33 @@ function complianceTagType(rate: number): 'success' | 'primary' | 'warning' {
   return 'warning'
 }
 
-async function loadData() {
-  try {
-    const [kpiRes, wearRes, alertRes, teamRes, doctorRes, distRes, teamsRes] = await Promise.all([
-      fetchDashboardKPI(period.value),
-      fetchWearTrend(7),
-      fetchAlertTrend(7),
-      fetchTeamRanking(),
-      fetchDoctorRanking(),
-      fetchWearDistribution(),
-      fetchTeams(),
-    ])
-    kpi.value = kpiRes
-    wearTrend.value = wearRes
-    alertTrend.value = alertRes
-    teamRanking.value = teamRes
-    doctorRanking.value = doctorRes
-    distribution.value = distRes
-    teams.value = teamsRes
-  } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+// 局部失败不清盘：Promise.all 是「一个 reject 全盘弃」，T348 现场就是被一个非核心请求的 403
+// 带走了 6 张 KPI、4 张图和 2 张排行表。改为逐项落盘，失败项聚成一条提示。
+function applySettled<T>(res: PromiseSettledResult<T>, set: (value: T) => void, errors: string[]) {
+  if (res.status === 'fulfilled') {
+    set(res.value)
+    return
   }
+  errors.push(res.reason instanceof Error ? res.reason.message : String(res.reason))
+}
+
+async function loadData() {
+  const [kpiRes, wearRes, alertRes, teamRankRes, doctorRes, distRes] = await Promise.allSettled([
+    fetchDashboardKPI(period.value),
+    fetchWearTrend(7),
+    fetchAlertTrend(7),
+    fetchTeamRanking(),
+    fetchDoctorRanking(),
+    fetchWearDistribution(),
+  ])
+  const errors: string[] = []
+  applySettled(kpiRes, (v) => { kpi.value = v }, errors)
+  applySettled(wearRes, (v) => { wearTrend.value = v }, errors)
+  applySettled(alertRes, (v) => { alertTrend.value = v }, errors)
+  applySettled(teamRankRes, (v) => { teamRanking.value = v }, errors)
+  applySettled(doctorRes, (v) => { doctorRanking.value = v }, errors)
+  applySettled(distRes, (v) => { distribution.value = v }, errors)
+  if (errors.length > 0) ElMessage.error(errors.join('；'))
 }
 
 onMounted(loadData)
