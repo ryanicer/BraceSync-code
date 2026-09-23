@@ -130,6 +130,10 @@ func main() {
 	// T030：健康报告查询端点数据源注入（契约 getHealthReports）
 	h.SetReportLister(reportRepo)
 
+	// T340：患者档案存在性数据源（patients 表只读）——四个 patientId 查询端点据此区分
+	// 「查无此人 404」与「有此人但暂无数据 200」
+	h.SetPatientLookup(repo.NewPatientRepo(pool))
+
 	// T033：admin Dashboard 6 聚合查询端点（daily_wear_stats + kpi:dashboard 缓存）
 	dashboardSvc := service.NewDashboardService(repo.NewDashboardRepo(pool), repo.NewDashboardCache(rdbClient))
 	h.SetDashboardQuerier(dashboardSvc)

@@ -46,6 +46,9 @@ func (h *Handler) getHealthReports(c *gin.Context) {
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
 		return
 	}
+	if !h.assertPatientExists(c, patientID) { // T340
+		return
+	}
 	rows, err := h.reports.ListReports(c.Request.Context(), patientID)
 	if err != nil {
 		fail(c, model.ErrInternal("list health reports failed"))

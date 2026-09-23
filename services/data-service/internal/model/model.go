@@ -72,6 +72,7 @@ const (
 	CodeDeviceNotFound   = 20404 // device_id 未注册
 	CodeDeviceUnbound    = 20409 // 设备未绑定患者
 	CodeRateLimited      = 20429 // 限流（设备按 Retry-After 退避）
+	CodePatientNotFound  = 10404 // 患者档案不存在（档案域 owner 是 user-service，同 device-service 的 10404 口径；T340）
 	CodeQueryParam       = 30001 // 数据域：查询参数非法
 	CodeForbidden        = 403   // 越权访问（水平越权 / 无数据权限）
 	CodeInternal         = 90001 // 系统内部错误
@@ -105,6 +106,11 @@ func ErrDeviceIDMismatch() *AppError {
 
 func ErrDeviceNotFound(deviceID string) *AppError {
 	return newAppError(CodeDeviceNotFound, 404, "device %q not registered", deviceID)
+}
+
+// ErrPatientNotFound T340：查无此人必须与「有此人但暂无数据」在 HTTP 面上可区分，故状态位显式 404。
+func ErrPatientNotFound(patientID string) *AppError {
+	return newAppError(CodePatientNotFound, 404, "patient %q not found", patientID)
 }
 
 func ErrDeviceUnbound(deviceID string) *AppError {

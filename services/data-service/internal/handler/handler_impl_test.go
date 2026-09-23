@@ -47,6 +47,7 @@ func TestGetDailyWear_HappyPath(t *testing.T) {
 		},
 	}
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	h.SetDailyWearQuerier(q)
 
 	req := httptest.NewRequest(http.MethodGet,
@@ -77,6 +78,7 @@ func TestGetDailyWear_AdminBypass(t *testing.T) {
 	// ROLE_ADMIN 可查任意患者（X-User-Id ≠ patientId）
 	q := &fakeDailyWearQuerier{list: []*model.DailyWearDayDTO{}}
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	h.SetDailyWearQuerier(q)
 
 	req := httptest.NewRequest(http.MethodGet,
@@ -105,6 +107,7 @@ func TestGetDailyWear_NilQuerier_500(t *testing.T) {
 func TestGetDailyWear_ForbiddenOtherPatient(t *testing.T) {
 	q := &fakeDailyWearQuerier{list: []*model.DailyWearDayDTO{}}
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	h.SetDailyWearQuerier(q)
 
 	// ROLE_PATIENT 请求非自身 patientId
@@ -131,6 +134,7 @@ func TestGetDailyWear_ForbiddenMissingHeaders(t *testing.T) {
 	// 缺失 X-User-Id / X-Role → fail-closed
 	q := &fakeDailyWearQuerier{list: []*model.DailyWearDayDTO{}}
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	h.SetDailyWearQuerier(q)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/patients/P1/daily-wear", nil)
@@ -143,6 +147,7 @@ func TestGetDailyWear_ForbiddenMissingHeaders(t *testing.T) {
 func TestGetDailyWear_BadParam_400(t *testing.T) {
 	q := &fakeDailyWearQuerier{list: []*model.DailyWearDayDTO{}}
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	h.SetDailyWearQuerier(q)
 
 	// 错误日期格式
@@ -166,6 +171,7 @@ func TestGetDailyWear_EmptyData_ReturnsArray(t *testing.T) {
 	// 空数据 → data: [] 而非 null（前端空态渲染依赖非 null）
 	q := &fakeDailyWearQuerier{list: nil}
 	h := New(nil)
+	h.SetPatientLookup(&stubPatientLookup{}) // T340：生产由 main 注入，测试镜像该装配
 	h.SetDailyWearQuerier(q)
 
 	req := httptest.NewRequest(http.MethodGet,

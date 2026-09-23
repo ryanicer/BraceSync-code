@@ -83,6 +83,11 @@ func TestAppError_Constructors(t *testing.T) {
 	e = ErrDeviceUnbound("D1")
 	assert.Equal(t, CodeDeviceUnbound, e.Code)
 
+	e = ErrPatientNotFound("P1") // T340
+	assert.Equal(t, CodePatientNotFound, e.Code)
+	assert.Equal(t, 404, e.HTTPStatus)
+	assert.Contains(t, e.Error(), `patient "P1" not found`)
+
 	e = ErrRateLimited(2)
 	assert.Equal(t, CodeRateLimited, e.Code)
 	assert.Equal(t, 429, e.HTTPStatus)
