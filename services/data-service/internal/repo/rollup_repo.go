@@ -188,9 +188,10 @@ func wearMinutesFromSpan(wearingFrames int, spanSeconds float64) int {
 	return min(minutes, model.MaxWearMinutesPerDay)
 }
 
-// queryRangeSQL 的日期比较先做 CST 换算再截date：stat_date 是 DATE，而调用方传的是
-// CST 日界对应的 timestamptz，直接比较会由 PG 按 **session timezone** 隐式转换 DATE，
-// 容器时区为 UTC 时整日丢行（T352 集成测试实测）。切日口径与 dashboard_repo 一致：业务时区固定 Asia/Shanghai。
+// queryRangeSQL 的日期边界先换算到 Asia/Shanghai 再截 date：调用方传的是「CST 日界 UTC 化」的
+// time.Time，而 stat_date 是 DATE。直接比较会让窗口整体早一天——问 [X,X] 只回 X-1 的行、
+// 区间最后一天永远取不到（T352：CI 集成测试实测 0 行；staging 只读探针实测同样偏一天）。
+// 切日口径与 dashboard_repo 一致：业务时区固定 Asia/Shanghai，不依赖会话时区/参数隐式转换。
 const queryRangeSQL = `
 SELECT patient_id, stat_date, wear_minutes, avg_pressure, max_pressure,
        COALESCE(max_point, ''), frame_count, abnormal_count, updated_at
@@ -220,7 +221,7 @@ func (r *RollupRepo) QueryRange(ctx context.Context, patientID string, from, to 
 	return stats, rows.Err()
 }
 
-// listPatientsSQL 同 queryRangeSQL：日期边界先换算到 Asia/Shanghai 再截 date，不依赖 session timezone
+// listPatientsSQL 同 queryRangeSQL：日期边界显式换算 Asia/Shanghai 后再截 date，不整体早一天
 const listPatientsSQL = `
 SELECT DISTINCT patient_id FROM daily_wear_stats
 WHERE stat_date >= ($1::timestamptz AT TIME ZONE 'Asia/Shanghai')::date

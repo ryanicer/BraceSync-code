@@ -98,15 +98,26 @@ func TestITT352RollupSpanAvgAndAbnormal(t *testing.T) {
 		float64(got2.AvgPressure), 1e-4, "日均压力只统计阈值以上帧")
 
 	// 写读闭环：按 RollupService 的窗口口径落库再读回，abnormal_count 不再恒 0。
-	// 容器 session timezone 为 UTC（见下方 Log），而 StatDate 按生产口径写 CST 日界——
-	// 读端若依赖 session timezone 隐式转换 DATE 就会整日丢行（run 35891822503 实测 0 行），
-	// 故 queryRangeSQL 显式换算 Asia/Shanghai 后再截 date，本用例即该修复的回归守卫。
+	// 修复前：调用方传的是「CST 日界 UTC 化」的 time.Time，直接和 DATE 列比较会让边界整体早一天——
+	// CI 容器实测整日丢行（run 35891822503 返回 0 行），staging 只读探针实测「问 [09-15,09-15] 只回 09-14」。
+	// 现按 dashboard_repo 口径显式换算 Asia/Shanghai 后再截 date，本用例即该修复的回归守卫。
 	var sessTZ string
 	require.NoError(t, pool.QueryRow(ctx, `SHOW timezone`).Scan(&sessTZ))
 	t.Logf("容器 session timezone = %s（读端日期边界不得依赖它）", sessTZ)
 
 	got.StatDate = time.Date(2026, 8, 15, 0, 0, 0, 0, model.CSTZone())
 	require.NoError(t, r.Upsert(ctx, []model.DailyWearStats{*got}))
+
+	// 先量一次「CST 日界 time.Time 写进 DATE 列」实际落成了哪一天（pgx 编码语义），
+	// 再判断读端窗口对不对——避免把编码问题误当成切日问题。
+	var storedDate string
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT to_char(stat_date, 'YYYY-MM-DD') FROM daily_wear_stats WHERE patient_id = $1`,
+		patient).Scan(&storedDate))
+	t.Logf("StatDate=CST 2026-08-15 00:00+08 落库后 stat_date = %s（容器 session TZ=%s）", storedDate, sessTZ)
+	assert.Equal(t, "2026-08-15", storedDate,
+		"写端按 Go 侧 CST 日历日落 DATE 列，与会话时区无关（错一天就会写成 08-14）")
+
 	rows, err := r.QueryRange(ctx, patient, t352From, t352To)
 	require.NoError(t, err)
 	require.Len(t, rows, 1, "CST 2026-08-15 的聚合行必须落在该 UTC 窗口内")
