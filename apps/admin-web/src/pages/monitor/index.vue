@@ -1,12 +1,16 @@
 <template>
   <div class="monitor">
-    <!-- 顶部刷新栏 -->
+    <!-- 顶部刷新栏（T322：数据侧采集时刻与前端拉取时刻分列，不再用拉取时刻冒充数据新鲜度） -->
     <div class="page-toolbar">
-      <span class="realtime-tag">
+      <span class="realtime-tag" :class="`live-${liveState}`">
         <span class="realtime-dot" />
-        实时同步中
+        {{ liveLabel }}
       </span>
-      <span class="update-time">最近更新：{{ lastUpdated || '-' }}</span>
+      <span class="update-time">
+        数据采集：{{ frameCollectedText }}<template v-if="frame.collectedAt !== null">（{{ frameAgeText }}）</template>
+        <span class="time-split">|</span>
+        本次拉取：{{ pullTime || '-' }}
+      </span>
       <el-button size="small" type="primary" @click="refreshTick">立即刷新</el-button>
     </div>
 
@@ -38,13 +42,18 @@
       </div>
     </div>
 
+    <!-- 帧新鲜度告警条（T322：无帧 / 过期必须显式说，不能把陈旧值当实时展示） -->
+    <div v-if="frameNotice" class="frame-notice" :class="`notice-${liveState}`" role="alert">
+      {{ frameNotice }}
+    </div>
+
     <!-- 患者摘要卡片（设计稿 实时监控.html:133-150） -->
     <div class="page-card peak-card">
       <div class="card-title">
         患者摘要
-        <span class="realtime-tag small">
+        <span class="realtime-tag small" :class="`live-${liveState}`">
           <span class="realtime-dot" />
-          实时累计
+          {{ liveState === 'fresh' ? '实时累计' : liveState === 'expired' ? '已过期' : '无实时帧' }}
         </span>
       </div>
       <div class="peak-grid">
@@ -54,8 +63,9 @@
         </div>
         <div class="peak-cell peak-value">
           <div class="peak-label">当前最大压力</div>
-          <div class="peak-num" :style="{ color: hmColor(curFrameValue, hmMaxN) }">
-            {{ fmtN(curFrameValue) }} N
+          <!-- 帧派生值：无帧时不得显示 0.0 N（后端此刻给的是 seed 兜底），只能给占位 -->
+          <div class="peak-num" :style="{ color: showFrame ? hmColor(curFrameValue, hmMaxN) : undefined }">
+            {{ showFrame ? fmtN(curFrameValue) + ' N' : '--' }}
           </div>
         </div>
         <div class="peak-cell">
@@ -77,9 +87,9 @@
       <div class="page-card chart-card">
         <div class="card-title">
           实时压力曲线
-          <span class="realtime-tag small">
+          <span class="realtime-tag small" :class="`live-${liveState}`">
             <span class="realtime-dot" />
-            实时
+            {{ liveState === 'fresh' ? '实时' : liveState === 'expired' ? '已过期' : '无实时帧' }}
           </span>
         </div>
         <div class="chart-container">
@@ -89,6 +99,8 @@
             :data="chartData"
             :options="chartOptions"
           />
+          <!-- T322：曲线只画本轮真实帧，开局/无帧/过期都要说清楚，不给「有曲线」的错觉 -->
+          <div v-if="chartNotice" class="chart-empty">{{ chartNotice }}</div>
         </div>
       </div>
 
@@ -96,20 +108,21 @@
       <div class="page-card heatmap-card">
         <div class="card-title">
           采集点实时热力图
-          <span class="realtime-tag small">
+          <span class="realtime-tag small" :class="`live-${liveState}`">
             <span class="realtime-dot" />
-            每秒刷新
+            {{ liveState === 'fresh' ? '每秒刷新' : liveState === 'expired' ? '已过期' : '无实时帧' }}
           </span>
           <span v-if="frameStamp" class="hm-frame-stamp" title="本帧采集时刻（数据侧时间戳）">本帧 {{ frameStamp }}</span>
         </div>
         <div class="heatmap-wrap">
           <div class="hm-size-hint">压力片 4×5 网格 (40mm × 50mm)</div>
-          <div class="hm-grid">
+          <div v-if="!showFrame" class="hm-empty">{{ emptyFrameText }}</div>
+          <div v-else class="hm-grid">
             <div v-for="row in heatmapRows" :key="'r'+row[0]?.row" class="hm-row">
               <div
                 v-for="pt in row"
                 :key="pt.pointId"
-                :class="['hm-cell', { 'hm-cell-max': pt.isMax, 'hm-cell-pulse': pt.isMax }]"
+                :class="['hm-cell', { 'hm-cell-max': pt.isMax, 'hm-cell-pulse': pt.isMax && liveState === 'fresh' }]"
                 :style="{ background: hmColor(pt.pressureValue, hmMaxN) }"
                 :title="`${pt.pointId} (${pt.label}): ${fmtN(pt.pressureValue, 2)} N`"
                 @click="selectHeatmapPoint(pt)"
@@ -134,7 +147,10 @@
     <div class="bottom-row">
       <!-- 采集点表 -->
       <div class="page-card">
-        <div class="card-title">采集点实时数值表</div>
+        <div class="card-title">
+          采集点实时数值表
+          <span v-if="liveState !== 'fresh'" class="tbl-note">{{ tableNote }}</span>
+        </div>
         <div class="points-table-wrap">
           <table class="points-table">
             <thead>
@@ -156,7 +172,7 @@
                 </td>
               </tr>
               <tr v-if="flatHeatmap.length === 0">
-                <td colspan="4" class="empty-cell">—</td>
+                <td colspan="4" class="empty-cell">{{ emptyFrameText }}</td>
               </tr>
             </tbody>
           </table>
@@ -215,7 +231,15 @@ import type { Patient } from '@bracesync/shared-types'
 import { alertTypeLabel } from '@bracesync/shared-utils'
 import { fetchPatients, fetchPatientRealtime } from '../../api'
 import type { RealtimeSnapshot, PressureHeatmapPoint } from '../../mock/patients'
-
+import {
+  FRAME_TAG_TEXT,
+  FRAME_TTL_MS,
+  formatClock,
+  formatFrameAge,
+  frameFreshness,
+  type FrameFreshness,
+} from '../../utils/frameFreshness'
+import { normalizeFramePressure } from '../../utils/pressureValue'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
 // ====== 常量 ======
@@ -239,17 +263,63 @@ const patients = ref<PatientOption[]>([])
 const selectedPatientId = ref<string>('')
 const currentPatientId = ref<string>('') // 防竞态：正在请求的患者
 const snapshot = ref<RealtimeSnapshot | null>(null)
-const lastUpdated = ref('')
+// T322：帧新鲜度（后端数据侧）与拉取时刻（前端侧）分开存，二者再不同义混用
+const frame = ref<FrameFreshness>({ state: 'none', collectedAt: null, ageMs: 0 })
+const pullTime = ref('')
 const pressureHistory = ref<HistoryPoint[]>([])
 const heatmapSelected = ref<PressureHeatmapPoint | null>(null)
 const chartReady = ref(false)
 const chartRef = ref<InstanceType<typeof Line> | null>(null)
 const todayPeak = ref<TodayPeak | null>(null)
 const curFrameValue = ref(0)
+let lastFrameAt: number | null | undefined // 同一帧每秒会被重读一次，曲线不能靠轮询把平线「推活」
 let timer: ReturnType<typeof setInterval> | null = null
 
 // ====== 计算属性 ======
 const patientOptions = computed(() => patients.value)
+
+/** 快照未到 = pending；到达后完全听 frameFreshness 的三态判定 */
+const liveState = computed<'pending' | FrameFreshness['state']>(() =>
+  snapshot.value === null ? 'pending' : frame.value.state,
+)
+
+const liveLabel = computed(() =>
+  liveState.value === 'pending' ? '加载中' : FRAME_TAG_TEXT[liveState.value],
+)
+
+const showFrame = computed(() => liveState.value !== 'none' && liveState.value !== 'pending')
+
+const frameCollectedText = computed(() => formatClock(frame.value.collectedAt) || '-')
+
+const frameAgeText = computed(() => formatFrameAge(frame.value.ageMs))
+
+const emptyFrameText = computed(() =>
+  liveState.value === 'none' ? '无实时帧 · 不展示示例数据' : '帧已过期 · 无有效采集时刻',
+)
+
+const tableNote = computed(() =>
+  liveState.value === 'expired'
+    ? `以下为末次帧（${frameCollectedText.value}）数值，非当前实时`
+    : emptyFrameText.value,
+)
+
+const frameNotice = computed(() => {
+  if (liveState.value === 'expired') {
+    const at = frameCollectedText.value === '-' ? '时刻未知' : `${frameCollectedText.value}（${frameAgeText.value}）`
+    return `末次帧采集于 ${at}，已超过 ${FRAME_TTL_MS / 3600000} 小时有效期。下方压力、热力图与曲线均为末次帧数据，不代表患者当前状态。`
+  }
+  if (liveState.value === 'none') {
+    return '该患者当前无实时帧（设备未上报或未绑定）。后端此时下发的热力图是 seed 示例兜底，页面不展示其数值。'
+  }
+  return ''
+})
+
+const chartNotice = computed(() => {
+  if (liveState.value === 'none') return '无实时帧，曲线不绘制示例数据'
+  if (liveState.value === 'expired') return '帧已过期，曲线不再推进（接 getPatientHistory 取历史帧为待办）'
+  if (pressureHistory.value.length < 2) return '等待新帧…'
+  return ''
+})
 
 const selectedDevice = computed(() => {
   const p = patients.value.find((x) => x.patientId === selectedPatientId.value)
@@ -277,21 +347,15 @@ function fmtN(v: number, digits = 1): string {
   return (Object.is(r, -0) ? 0 : r).toFixed(digits)
 }
 
-/** 本帧采集时刻（数据侧时间戳）+ 距今秒数：热力图与设备逐帧日志对账的唯一凭据 */
+/** 本帧采集时刻（数据侧时间戳）+ 帧龄：热力图与设备逐帧日志对账的唯一凭据（T296/T322） */
 const frameStamp = computed(() => {
-  const iso = snapshot.value?.pressureRecords?.[0]?.timestamp
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  const at = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-  const age = Math.round((Date.now() - d.getTime()) / 1000)
-  if (age < 0 || age >= 86400) return `${at} 采集` // 历史/占位数据不报「距今」
-  return `${at} 采集 · 距今 ${age}s`
+  if (frame.value.collectedAt === null || liveState.value === 'pending') return ''
+  return `${formatClock(frame.value.collectedAt)} 采集 · ${formatFrameAge(frame.value.ageMs)}`
 })
 
-/** 将 20 个 heatmap 点按 4 行分组 (每行 5 点，row 优先 P01-P20) */
+/** 将 20 个 heatmap 点按 4 行分组 (每行 5 点，row 优先 P01-P20)；无帧时不渲染任何格子 */
 const heatmapRows = computed<PressureHeatmapPoint[][]>(() => {
+  if (!showFrame.value) return []
   const pts = snapshot.value?.pressureHeatmap ?? []
   if (pts.length !== 20) {
     // 兜底空行（避免渲染错误）
@@ -309,6 +373,7 @@ const heatmapRows = computed<PressureHeatmapPoint[][]>(() => {
 })
 
 const heatmapDetail = computed(() => {
+  if (!showFrame.value) return emptyFrameText.value
   const pts = snapshot.value?.pressureHeatmap ?? []
   const maxPt = pts.find((p) => p.isMax)
   const sel = heatmapSelected.value
@@ -321,8 +386,9 @@ const heatmapDetail = computed(() => {
   return '点击热力图格子查看点位数值'
 })
 
-// 扁平化的 20 个采集点（设计稿 3.2 采集点表）
+// 扁平化的 20 个采集点（设计稿 3.2 采集点表）；无帧时交给表内空态行，不铺 20 行 0.0
 const flatHeatmap = computed<PressureHeatmapPoint[]>(() => {
+  if (!showFrame.value) return []
   const pts = snapshot.value?.pressureHeatmap ?? []
   if (pts.length === 20) return pts
   return Array.from({ length: 20 }, (_, i) => ({
@@ -448,10 +514,9 @@ function selectHeatmapPoint(pt: PressureHeatmapPoint) {
   heatmapSelected.value = pt
 }
 
-function pushHistory(val: number) {
-  const now = new Date()
-  const t = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
-  pressureHistory.value.push({ t, v: val })
+/** 曲线点只由真实帧产生：横轴用帧采集时刻（数据侧），不用拉取时刻（T322） */
+function pushHistory(val: number, atMs: number | null) {
+  pressureHistory.value.push({ t: formatClock(atMs ?? Date.now()), v: val })
   if (pressureHistory.value.length > CHART_WINDOW) {
     pressureHistory.value.shift()
   }
@@ -462,19 +527,7 @@ function resetHistory() {
   heatmapSelected.value = null
   todayPeak.value = null
   curFrameValue.value = 0
-}
-
-/** 构造 30 点初始历史：以当前值为基准，平滑正弦曲线 */
-function initHistory(base: number) {
-  const arr: HistoryPoint[] = []
-  const now = Date.now()
-  for (let i = CHART_WINDOW - 1; i >= 0; i--) {
-    const d = new Date(now - i * POLL_MS)
-    const t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
-    const v = Math.max(0, base + Math.sin(i * 0.35) * 5 + (Math.random() * 4 - 2))
-    arr.push({ t, v: Math.round(v * 10) / 10 })
-  }
-  pressureHistory.value = arr
+  lastFrameAt = undefined
 }
 
 // ====== 数据加载 ======
@@ -497,13 +550,20 @@ async function loadPatients() {
 async function refreshTick() {
   const pid = selectedPatientId.value
   if (!pid) return
+  const pullAt = Date.now()
   currentPatientId.value = pid
   heatmapSelected.value = null
   try {
     const snap = await fetchPatientRealtime(pid)
     // 竞态防护：请求返回时若患者已切换则丢弃
     if (currentPatientId.value !== pid) return
-    snapshot.value = snap
+    // 校准减基线后的负读数在这一层归零：热力图 / 采集点表 / 由它取最大值的曲线共用同一份数值
+    snapshot.value = normalizeFramePressure(snap)
+    pullTime.value = formatClock(pullAt)
+    frame.value = frameFreshness(snap.pressureRecords, pullAt)
+    // 同一帧每秒都会被重新读到：只有换了帧才允许推进曲线与峰值（T322 防「平线被轮询推活」）
+    const isNewFrame = frame.value.collectedAt !== lastFrameAt
+    lastFrameAt = frame.value.collectedAt
 
     // ===== T079 逐帧 max：一律以 heatmap 20 点最大值为基准，弃用 snap.maxPressure =====
     const hm = snap.pressureHeatmap ?? []
@@ -512,32 +572,29 @@ async function refreshTick() {
       return max
     }, null)
     const curV = curMaxPt?.pressureValue ?? 0
-    curFrameValue.value = curV
+    // 无帧时后端给的是 seed 兜底值，不参与任何显示与统计
+    curFrameValue.value = frame.value.state === 'none' ? 0 : curV
 
     // ===== 今日峰值累计（跨日自动重置、仅 curV > 0 才写入，避免 0N 占位） =====
-    const now = new Date()
-    const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+    const dateKey = `${new Date(pullAt).getFullYear()}-${String(new Date(pullAt).getMonth() + 1).padStart(2, '0')}-${String(new Date(pullAt).getDate()).padStart(2, '0')}`
     if (todayPeak.value && todayPeak.value.dateKey !== dateKey) {
       // 跨日：清零昨日峰值
       todayPeak.value = null
     }
-    if (curV > 0 && curV > (todayPeak.value?.value ?? -1) && curMaxPt) {
+    const peakTime = formatClock(frame.value.collectedAt ?? pullAt)
+    // 无帧患者的 heatmap 是 seed 兜底 ⇒ 不许进峰值，否则「最大压力采集点」会显示一个示例点位号
+    if (isNewFrame && frame.value.state !== 'none' && curV > 0 && curV > (todayPeak.value?.value ?? -1) && curMaxPt) {
       todayPeak.value = {
         value: curV,
         pointId: curMaxPt.pointId,
         label: curMaxPt.label,
-        time: timeStr,
+        time: peakTime,
         dateKey,
       }
     }
 
-    if (pressureHistory.value.length === 0) {
-      initHistory(curV)
-    } else {
-      pushHistory(curV)
-    }
-    lastUpdated.value = timeStr
+    // 曲线只收「未过期的新帧」；过期/无帧时宁可不画，也不制造在动的样子
+    if (isNewFrame && frame.value.state === 'fresh') pushHistory(curV, frame.value.collectedAt)
   } catch (e: unknown) {
     if (currentPatientId.value === pid) {
       ElMessage.error(e instanceof Error ? e.message : '实时数据刷新失败')
@@ -601,6 +658,10 @@ void h
   color: #999;
   flex: 1;
 }
+.time-split {
+  margin: 0 8px;
+  color: #d8dee9;
+}
 .realtime-tag {
   display: inline-flex;
   align-items: center;
@@ -614,6 +675,32 @@ void h
   width: 6px; height: 6px; border-radius: 50%;
   background: #10ac84;
   animation: rtPulse 1.5s infinite;
+}
+/* T322：非实时态不得继续闪绿点 —— 脉冲本身就是「数据在动」的暗示 */
+.realtime-tag.live-expired { color: #b45309; }
+.realtime-tag.live-expired .realtime-dot { background: #f59e0b; animation: none; }
+.realtime-tag.live-none { color: #64748b; }
+.realtime-tag.live-none .realtime-dot { background: #cbd5e1; animation: none; }
+.realtime-tag.live-pending { color: #94a3b8; }
+.realtime-tag.live-pending .realtime-dot { background: #e2e8f0; animation: none; }
+
+/* T322 帧新鲜度告警条 */
+.frame-notice {
+  margin: 0 20px 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.notice-expired {
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+}
+.notice-none {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
 }
 @keyframes rtPulse {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -635,6 +722,13 @@ void h
   margin-bottom: 14px;
   display: flex;
   align-items: center;
+}
+/* 采集点表在过期/无帧时给一句口径说明（列名保持设计稿四列不动） */
+.tbl-note {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: #b45309;
 }
 
 /* T296：本帧采集时刻（数据侧时间戳），供与设备逐帧日志对账 */
@@ -692,10 +786,30 @@ void h
   width: 100%;
   height: 280px;
 }
+/* 无帧/过期时盖住画布区，不给「曲线在跑」的观感 */
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  text-align: center;
+  font-size: 13px;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.9);
+}
 
 /* ===== 热力图卡片 ===== */
 .heatmap-card .heatmap-wrap {
   text-align: center;
+}
+.hm-empty {
+  padding: 48px 0;
+  border: 1px dashed #e2e8f0;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #94a3b8;
 }
 .hm-size-hint {
   font-size: 11px;

@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test'
 import { realLogin, gotoMenu, pickSelectOption, realRoutes } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 04 实时监控（真实模式）
  * 覆盖：页面默认渲染 / 热力图 20 格 / 患者切换
- * ⚠️ 注意：staging 设备模拟器可能未运行，导致状态为 offline/未佩戴，
- *        但监控页前端应对未绑定设备有兜底渲染（热力图 seed 兜底逻辑），
- *        故断言改为「结构正确」，不校验具体状态文案。
+ * ⚠️ staging 设备模拟器可能未运行 ⇒ 帧会过期甚至无帧。T322 起这类状态下页面明确显示
+ *    「数据已过期 / 无实时数据」且不再画兜底示例数据，所以下面按状态分支的用例要么用 page.route
+ *    把帧时刻钉死（4.1b / 4.1c / 4.2c / 4.2e / 4.4），要么只断「落在三态之一」（4.1）。
  */
 test.describe('04-实时监控', () => {
   test.beforeEach(async ({ page }) => {
@@ -31,12 +32,45 @@ test.describe('04-实时监控', () => {
     })
   }
 
+  /**
+   * T322 部署顺序门控 —— 口径以 T324 为准（PM 2026-09-23），故走 e2e-real/deploy-guard.ts
+   * 的共享 requireDeployedBuild，而不是本文件早期那版自己实现的 skip + 标注。
+   *
+   * 本 job 打的是【已部署的 staging 前端包】，而 4.1a / 4.1b / 4.1c / 4.2e 断的是 T322 的【新行为】
+   * （采集/拉取双时刻、live-expired、live-none、校准后负读数按 0 展示）。#175 合并 + Andy 部署之前，
+   * 旧包里没有这套 DOM，硬断言必假红（2026-09-22 实测 3 failed / 29 passed）。
+   *
+   * 两阶段行为由 deploy-guard 统一给：PR 阶段缺标记 ⇒ 显式 post-deploy 跳过（报告可反查、
+   * 并汇总进 job summary）；定时/手动阶段（E2E_POST_DEPLOY_STRICT=1）staging 本该已追平，
+   * 仍缺标记即判红 —— 不像本地 skip 那样能让新行为断言永久挂在跳过里。
+   * 判据本身一条不放宽，也没有 continue-on-error。
+   */
+  const T322_BUILD_MARKER = '数据采集：'
+  async function requireT322Build(page: import('@playwright/test').Page): Promise<void> {
+    await requireDeployedBuild(page, {
+      marker: 'T322-monitor-freshness',
+      why: '#175 的双时刻/新鲜度三态/负读数归零尚未部署到 staging，部署后本条自动转真跑',
+      // 只做存在性探测（T324 约定）：等顶栏出现后读文字里有没有新构建的「数据采集：」标记，
+      // 探不到就返回 false 交给守卫判阶段；不在旧包上 await 一个不存在的元素。
+      probe: async (p) => {
+        const bar = p.locator('.page-toolbar .update-time')
+        await bar.waitFor({ state: 'visible', timeout: 25_000 }).catch(() => {})
+        return ((await bar.textContent()) ?? '').includes(T322_BUILD_MARKER)
+      },
+    })
+  }
+
   test.describe('页面默认渲染', () => {
-    test('4.1 实时同步标签 + 默认患者 + 最近更新时间戳 + 状态指示器 + 设备提示', async ({ page }) => {
-      // 1) 实时同步中标签
-      await expect(page.locator('.page-toolbar .realtime-tag')).toContainText('实时同步中', {
-        timeout: 20_000,
-      })
+    test('4.1 新鲜度标签 + 默认患者 + 状态指示器 + 设备提示', async ({ page }) => {
+      // 1) T322 起标签随帧新鲜度变（实时同步中 / 数据已过期 / 无实时数据）。
+      //    这里不再写死「实时同步中」——staging 的种子帧早已停在上报时刻，写死它等于把
+      //    PM 报的「假实时」写进断言（2026-09-22 实测：帧冻结在 10:30，页面却秒秒跳「最近更新」）。
+      //    三态各自的表现由下方 4.1a / 4.1b / 4.1c 逐条钉死。
+      //    本条只留「新旧包都成立」的判据，双时刻那两条属新行为，挪进 4.1a（受部署门控）。
+      await expect(page.locator('.page-toolbar .realtime-tag')).toContainText(
+        /实时同步中|数据已过期|无实时数据/,
+        { timeout: 20_000 },
+      )
       // 2) 患者卡片 + 选中患者名（el-select__selected-item 或 wrapper 内有任意患者名文字）
       const card = page.locator('.patient-card')
       await expect(card).toBeVisible({ timeout: 20_000 })
@@ -62,6 +96,100 @@ test.describe('04-实时监控', () => {
         const t = await hint.textContent()
         expect(t!.trim().length).toBeGreaterThan(0)
       }
+    })
+
+    test('4.1a 顶栏分列「数据采集」与「本次拉取」两个时刻（T322 语义纠正）', async ({ page }) => {
+      await requireT322Build(page)
+      // 采集时刻与拉取时刻必须分列（不得用拉取时刻冒充数据新鲜度）
+      const bar = page.locator('.page-toolbar .update-time')
+      await expect(bar).toContainText(/数据采集：\d{2}:\d{2}:\d{2}/)
+      await expect(bar).toContainText(/本次拉取：\d{2}:\d{2}:\d{2}/)
+    })
+
+    /**
+     * T322：改写实时快照的 pressureRecords 字段制造新鲜度状态，其余响应原样透传。
+     *
+     * 为什么真实模式必须靠改写：过期态与无帧态在 staging 上是「碰运气」的当前状态
+     * （帧 TTL 2 小时、有无上报取决于模拟器是否在跑），下一轮跑可能就成了另一态。
+     * 把帧时刻钉死成 3 小时前 / 把帧清空，才能让这两态成为可复跑的断言。
+     * 4.1 只验「标签落在三态之一 + 双时刻分列」，具体某一态的表现全在这两条里。
+     */
+    async function injectFrame(
+      page: import('@playwright/test').Page,
+      mutate: (data: { pressureRecords?: unknown }) => void,
+    ): Promise<void> {
+      await page.route('**/api/v1/patients/*/realtime', async (route) => {
+        const res = await route.fetch()
+        let body: { data?: Record<string, unknown> }
+        try {
+          body = await res.json()
+        } catch {
+          await route.fulfill({ response: res })
+          return
+        }
+        if (body?.data) mutate(body.data as { pressureRecords?: unknown })
+        await route.fulfill({ response: res, body: JSON.stringify(body) })
+      })
+      await page.locator('.page-toolbar').getByRole('button', { name: '立即刷新' }).click()
+    }
+
+    test('4.1b 帧时刻超过 TTL：标签转「数据已过期」+ 告警条 + 曲线不再推进', async ({ page }) => {
+      await requireT322Build(page)
+      await waitForSnapshotLoaded(page)
+      const collected = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+      await injectFrame(page, (data) => {
+        const records = (data.pressureRecords as Array<Record<string, unknown>> | undefined) ?? []
+        data.pressureRecords = [{ ...(records[0] ?? {}), timestamp: collected }]
+      })
+
+      const tag = page.locator('.page-toolbar .realtime-tag')
+      await expect(tag).toHaveClass(/live-expired/, { timeout: 20_000 })
+      await expect(tag).toContainText('数据已过期')
+
+      // 告警条必须点名「末次帧」，不能只换个标签
+      const notice = page.locator('.frame-notice')
+      await expect(notice).toBeVisible()
+      await expect(notice).toContainText(/末次帧采集于 \d{2}:\d{2}:\d{2}（距今 \d+ 小时(?: \d+ 分)?）/)
+      await expect(notice).toContainText('不代表患者当前状态')
+
+      // 采集时刻与拉取时刻分列，且同一个过期帧内采集时刻不随轮询跳动（T322 的语义纠正本身）。
+      // 先等页面真的读到被改写的那一帧：监控页每 2s 轮询，route 只对注册之后的请求生效，
+      // 不先卡这个信号就会拿「注入前的旧帧时刻」当基准，5 秒后必然对不上（2026-09-23 实测红：
+      // 先读到 staging 种子帧 10:30:00，随后变成注入的 12:37:23）。
+      const updateTime = page.locator('.page-toolbar .update-time')
+      await expect(updateTime).toContainText(/数据采集：\d{2}:\d{2}:\d{2}（距今 3 小时/, {
+        timeout: 25_000,
+      })
+      const collectedText = (await updateTime.textContent())!.match(/数据采集：(\d{2}:\d{2}:\d{2})/)![1]
+      await page.waitForTimeout(5_000)
+      expect((await updateTime.textContent())!).toContain(`数据采集：${collectedText}`)
+
+      // 过期帧仍是帧：20 格照画，但「最大点脉冲」这种暗示实时的动画必须停
+      await expect(page.locator('.hm-cell')).toHaveCount(20)
+      await expect(page.locator('.hm-cell-pulse')).toHaveCount(0)
+      await expect(page.locator('.tbl-note')).toContainText('非当前实时')
+      await expect(page.locator('.chart-empty')).toContainText('帧已过期，曲线不再推进')
+    })
+
+    test('4.1c 快照无帧：标签转「无实时数据」且不渲染 seed 兜底热力图', async ({ page }) => {
+      await requireT322Build(page)
+      await waitForSnapshotLoaded(page)
+      await injectFrame(page, (data) => {
+        data.pressureRecords = []
+      })
+
+      const tag = page.locator('.page-toolbar .realtime-tag')
+      await expect(tag).toHaveClass(/live-none/, { timeout: 20_000 })
+      await expect(tag).toContainText('无实时数据')
+
+      // 无帧判据只能是 records 为空：T325 之前后端还会下发 seed 兜底热力图，
+      // 合并后（main 704baf5）无真实帧时 pressureHeatmap 已是空数组；但前端这道判据不许依赖
+      // 后端是否兜底 —— 兜底哪天再回来，页面一格都不许画。
+      await expect(page.locator('.hm-cell')).toHaveCount(0)
+      await expect(page.locator('.hm-empty')).toContainText('无实时帧 · 不展示示例数据')
+      await expect(page.locator('.frame-notice')).toContainText('无实时帧')
+      await expect(page.locator('.points-table .empty-cell')).toContainText('无实时帧')
+      await expect(page.locator('.chart-empty')).toContainText('曲线不绘制示例数据')
     })
   })
 
@@ -115,7 +243,10 @@ test.describe('04-实时监控', () => {
       }
     })
 
-    async function injectT296Grid(page: import('@playwright/test').Page): Promise<void> {
+    async function injectT296Grid(
+      page: import('@playwright/test').Page,
+      grid: typeof T296_GRID = T296_GRID,
+    ): Promise<void> {
       await page.route('**/api/v1/patients/*/realtime', async (route) => {
         const res = await route.fetch()
         let body: { data?: Record<string, unknown> }
@@ -132,7 +263,7 @@ test.describe('04-实时监控', () => {
             pressureHighN?: number
             pressureRecords?: Array<Record<string, unknown>>
           }
-          data.pressureHeatmap = T296_GRID
+          data.pressureHeatmap = grid
           data.heatmapMaxN = 6
           data.pressureHighN = 5
           data.pressureRecords = [{ ...(data.pressureRecords?.[0] ?? {}), timestamp: new Date().toISOString() }]
@@ -141,6 +272,29 @@ test.describe('04-实时监控', () => {
       })
       await page.locator('.page-toolbar').getByRole('button', { name: '立即刷新' }).click()
     }
+
+    // T322 问题二夹具：把 staging 末次帧实测到的那 5 个负读数原样塞进响应
+    // （P05 -0.0426 / P06 -0.0898 / P07 -0.0216 / P08 -0.1072 / P17 -0.0266，
+    //  由设备逐点减校准基线得到，后端有意保留负值）。页面必须显示 0.0。
+    const NEG_GRID = Array.from({ length: 20 }, (_, i) => {
+      const n = ((): number => {
+        if (i === 4) return -0.0426
+        if (i === 5) return -0.0898
+        if (i === 6) return -0.0216
+        if (i === 7) return -0.1072
+        if (i === 16) return -0.0266
+        if (i === 1) return 4.0
+        return 0.5
+      })()
+      return {
+        pointId: `P${String(i + 1).padStart(2, '0')}`,
+        row: Math.floor(i / 5) + 1,
+        col: (i % 5) + 1,
+        label: `R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`,
+        pressureValue: n,
+        isMax: i === 1,
+      }
+    })
 
     test('4.2c 亚牛顿值不被压成 0/-0，色阶与分级按后端下发上界渲染', async ({ page }) => {
       await waitForSnapshotLoaded(page)
@@ -173,6 +327,34 @@ test.describe('04-实时监控', () => {
       await expect(page.locator('.hm-cell-max')).toHaveCount(1)
       await expect(page.locator('.hm-cell-id').nth(1)).toHaveText('P02')
       await expect(page.locator('.heatmap-card .hm-detail')).toContainText('★ 压力最大点：P02 (R1C2)')
+    })
+
+    test('4.2e 校准后的负读数按 0 展示，热力图与采集点表不出现负号（T322 问题二）', async ({ page }) => {
+      // 受同一部署门控：负值归零是 #175 的新构建行为，旧包会把 -0.1 原样印出来
+      await requireT322Build(page)
+      await waitForSnapshotLoaded(page)
+      await injectT296Grid(page, NEG_GRID)
+      // 先确认改写后的那一帧真的落到页面上了再读：route 只对注册后的请求生效，而监控页每 2s 轮询，
+      // 不等这个信号就会读到注入前的 staging 真值（2026-09-23 实测红：读到 24.3 而非夹具的 0.5/4.0）。
+      // P02 是夹具里的正数值，不受归零影响，适合当「注入已生效」的哨兵。
+      const vals = page.locator('.hm-cell-val')
+      await expect(vals.nth(1)).toHaveText('4.0', { timeout: 25_000 })
+
+      const texts = await vals.allInnerTexts()
+      expect(texts).toHaveLength(20)
+      expect(texts.filter((t) => t.includes('-')), '热力图出现负读数').toEqual([])
+      for (const i of [4, 5, 6, 7, 16]) {
+        expect(texts[i], `第 ${i + 1} 格（staging 实测负值点位）应显示 0.0`).toBe('0.0')
+      }
+      // 正值不受影响，且最大点标记仍按接口下发的那一格，不归零不重排
+      expect(texts[1]).toBe('4.0')
+      await expect(page.locator('.hm-cell-max')).toHaveCount(1)
+      await expect(page.locator('.hm-cell-id').nth(1)).toHaveText('P02')
+
+      const tbl = await page.locator('.points-table tbody tr td:nth-child(3)').allInnerTexts()
+      expect(tbl.filter((t) => t.includes('-')), '采集点表出现负读数').toEqual([])
+      // 归零后这些点按 0 走既有分级（无信号），不是新造的第三种状态
+      await expect(page.locator('.points-table tbody tr').nth(7).locator('td').nth(3)).toContainText('无信号')
     })
 
     test('4.2d 热力图卡片显示本帧采集时刻，可与设备逐帧日志对账', async ({ page }) => {
