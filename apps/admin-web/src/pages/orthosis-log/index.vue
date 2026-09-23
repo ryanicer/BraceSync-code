@@ -78,7 +78,7 @@
             <el-select v-model="patientId" placeholder="选择患者" class="patient-select" @change="loadPatientData">
               <el-option v-for="p in patients" :key="p.patientId" :label="`${p.name}（${p.patientId}）`" :value="p.patientId" />
             </el-select>
-            <el-tag v-if="auth.role === 'doctor'" type="info" effect="plain">医生工作台：仅本团队患者（PRD §7D.11）</el-tag>
+            <el-tag v-if="auth.role === 'doctor'" type="info" effect="plain">医护工作台：仅本团队患者（PRD §7D.11）</el-tag>
             <!-- T344 第 4 块：稿面（矫形日志.html #wsSendAdvice）只定形态与位置 = 未选患者禁用 + 点击占位提示。
                  模板消息无对外端点（卡内已报 PM），故本按钮本轮不触达患者。 -->
             <el-button class="send-advice-btn" type="primary" :disabled="!patientId" @click="sendAdvice">发送建议给患者</el-button>

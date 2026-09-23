@@ -241,7 +241,7 @@ test.describe('工作台 · 未选患者与角色差异（T301 G1）', () => {
     await adminLogin(page, 'doctor')
     await page.goto(adminRoutes.orthosisLog)
     await page.getByRole('tab', { name: '患者工作台' }).click()
-    await expect(page.locator('.view-workspace .page-toolbar .el-tag')).toContainText('医生工作台：仅本团队患者')
+    await expect(page.locator('.view-workspace .page-toolbar .el-tag')).toContainText('医护工作台：仅本团队患者')
 
     await adminLogin(page, 'admin')
     await page.goto(adminRoutes.orthosisLog)

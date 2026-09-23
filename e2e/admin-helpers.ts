@@ -14,7 +14,9 @@ export type AdminRole = 'admin' | 'doctor' | 'cs'
 
 export const ROLE_ACCOUNT: Record<AdminRole, { name: string; label: string }> = {
   admin: { name: '运营管理员', label: '运营管理员' },
-  doctor: { name: '张建国医生', label: '医生' },
+  // label = 角色显示名（T343 起 doctor 为「医护」，Boss 2026-09-22 14:21 裁定）；
+  // name  = mock 登录人姓名（人名里的「医生」是人员称谓，不随角色改名）
+  doctor: { name: '张建国医生', label: '医护' },
   cs: { name: '客服小美', label: '客服' },
 }
 

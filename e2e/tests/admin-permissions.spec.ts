@@ -50,7 +50,7 @@ test.describe('doctor 受限权限', () => {
     await page.goto(adminRoutes.patients)
     await expect(page).toHaveURL(/\/403/)
     await expect(page.locator('.forbidden-card')).toContainText('403 · 无访问权限')
-    await expect(page.locator('.forbidden-card')).toContainText('医生')
+    await expect(page.locator('.forbidden-card')).toContainText('医护')
   })
 
   test('doctor 越权访问 /settings 与 /technicians 跳 403', async ({ page }) => {

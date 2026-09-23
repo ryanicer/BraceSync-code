@@ -21,7 +21,7 @@ test.describe('登录页渲染', () => {
     const options = page.locator('.el-select-dropdown:visible .el-select-dropdown__item')
     await expect(options).toHaveCount(3)
     await expect(options.nth(0)).toContainText('运营管理员')
-    await expect(options.nth(1)).toContainText('医生')
+    await expect(options.nth(1)).toContainText('医护')
     await expect(options.nth(2)).toContainText('客服')
   })
 })
@@ -39,7 +39,7 @@ test.describe('三角色登录', () => {
     await expect(page).toHaveURL(/\/dashboard/)
     await expect(adminMessage(page)).toContainText('欢迎，张建国医生')
     await expect(topBarUserName(page)).toHaveText('张建国医生')
-    await expect(page.locator('.top-nav-right .el-tag')).toContainText('医生')
+    await expect(page.locator('.top-nav-right .el-tag')).toContainText('医护')
   })
 
   test('客服登录直达患者沟通（T269 D3 订正：旧断言把「落 403」当期望，等于给缺陷盖章）', async ({ page }) => {
@@ -75,8 +75,8 @@ test.describe('三角色登录', () => {
 
   test('切换角色下拉后登录生效', async ({ page }) => {
     await page.goto(adminRoutes.login)
-    await pickSelectOption(page, page.locator('.login-form .el-select'), '医生')
-    await expect(page.locator('.login-form .el-select')).toContainText('医生')
+    await pickSelectOption(page, page.locator('.login-form .el-select'), '医护')
+    await expect(page.locator('.login-form .el-select')).toContainText('医护')
   })
 })
 
