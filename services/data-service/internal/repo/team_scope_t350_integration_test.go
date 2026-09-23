@@ -217,8 +217,8 @@ func TestT350ITTrendAndDistributionScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, alertAll, 1)
 	require.Len(t, alertB, 1)
-	assert.GreaterOrEqual(t, alertAll[0].Value, int64(2))
-	assert.Equal(t, int64(1), alertB[0].Value)
+	assert.GreaterOrEqual(t, alertAll[0].Value, 2.0)
+	assert.Equal(t, 1.0, alertB[0].Value)
 	assert.Empty(t, alertNone)
 
 	avgAll, err := r.PatientAvgWearMinutes(ctx, dateStr, model.ScopeAll())
