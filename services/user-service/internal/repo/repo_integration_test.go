@@ -237,6 +237,8 @@ func TestITTechnicianLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	require.Len(t, list, 1)
+	// T333-6：created_at 要随列表投影带出（此前 SELECT 漏列 ⇒ 技师管理页创建时间全空）
+	assert.False(t, list[0].CreatedAt.IsZero(), "ListTechnicians 必须回读 technicians.created_at")
 
 	// 团队成员查询
 	teamTechs, err := itStore.ListTechniciansByTeam(ctx, "TEAM-EMPTY")
@@ -517,6 +519,8 @@ func TestITListTeamsLeader(t *testing.T) {
 	before := findTeam(itTeam)
 	assert.Empty(t, before.Leader)
 	assert.Empty(t, before.LeaderName)
+	// T333-5：创建时间随列表带出（团队管理页该列此前全空）
+	assert.False(t, before.CreatedAt.IsZero(), "ListTeams 必须回读 teams.created_at")
 
 	_, err := itStore.pool.Exec(ctx, `UPDATE teams SET leader = $1 WHERE team_id = $2`, itDoctor, itTeam)
 	require.NoError(t, err)

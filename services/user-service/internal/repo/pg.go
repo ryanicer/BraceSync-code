@@ -387,10 +387,11 @@ func (s *PGStore) GetPatient(ctx context.Context, patientID string) (*PatientRow
 // ListTeams 团队概要（member_count/patient_count 为 teams 表维护列）
 // T333：负责人两列同 teamDetailSelect 的 LEFT JOIN doctors 口径——
 // 列表页「负责人」列与编辑弹窗回显都直接读列表行，缺这两列就是结构上带不出来。
+// T333-5：created_at 同为该页表格列（T335 探测证据 filled=0），列在库里非空，纯 SELECT 漏带。
 func (s *PGStore) ListTeams(ctx context.Context) ([]TeamRow, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT t.team_id, t.name, t.member_count, t.patient_count,
-       COALESCE(t.leader, ''), COALESCE(d.name, '')
+       COALESCE(t.leader, ''), COALESCE(d.name, ''), t.created_at
 FROM teams t
 LEFT JOIN doctors d ON d.doctor_id = t.leader
 ORDER BY t.team_id`)
@@ -402,7 +403,7 @@ ORDER BY t.team_id`)
 	for rows.Next() {
 		var t TeamRow
 		if scanErr := rows.Scan(&t.TeamID, &t.Name, &t.MemberCount, &t.PatientCount,
-			&t.Leader, &t.LeaderName); scanErr != nil {
+			&t.Leader, &t.LeaderName, &t.CreatedAt); scanErr != nil {
 			return nil, scanErr
 		}
 		list = append(list, t)
@@ -468,9 +469,10 @@ func (s *PGStore) ListDoctorsByTeam(ctx context.Context, teamID string) ([]Docto
 
 // techColumns 技师投影；末尾 team_name = T278-② LEFT JOIN teams 带出的团队名
 // （设计稿技师列表显示团队名，前端分页拿不到全量团队字典 ⇒ 与患者列表 D1 同源，后端 join）
+// created_at = T333-6：技师管理页「创建时间」列此前恒空（列在库里非空、列表也按它排序，只是没 SELECT）
 const techColumns = `technicians.tech_id, technicians.name, technicians.phone_enc, technicians.phone_hash,
 	technicians.team_id, technicians.install_count, technicians.status, technicians.auth_status,
-	teams.name AS team_name`
+	teams.name AS team_name, technicians.created_at`
 
 // techFrom 统一 FROM 子句（三处技师查询共用，别名 teams 不与 technicians 列冲突）
 const techFrom = ` FROM technicians LEFT JOIN teams ON teams.team_id = technicians.team_id`
@@ -478,7 +480,7 @@ const techFrom = ` FROM technicians LEFT JOIN teams ON teams.team_id = technicia
 func scanTech(row pgx.Row) (*TechnicianRow, error) {
 	var t TechnicianRow
 	err := row.Scan(&t.TechID, &t.Name, &t.PhoneEnc, &t.PhoneHash, &t.TeamID, &t.InstallCount,
-		&t.Status, &t.AuthStatus, &t.TeamName)
+		&t.Status, &t.AuthStatus, &t.TeamName, &t.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

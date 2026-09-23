@@ -812,6 +812,7 @@ func (h *Handler) listTeams(c *gin.Context) {
 			PatientCount: r.PatientCount,
 			Leader:       nilIfBlank(r.Leader),     // T333：负责人 doctor_id
 			LeaderName:   nilIfBlank(r.LeaderName), // T333：join doctors.name
+			CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 	ok(c, list)
@@ -862,6 +863,7 @@ func (h *Handler) toTechDTO(r repo.TechnicianRow) model.TechnicianDTO {
 		InstallCount: r.InstallCount,
 		Status:       r.Status,
 		AuthStatus:   r.AuthStatus,
+		CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
