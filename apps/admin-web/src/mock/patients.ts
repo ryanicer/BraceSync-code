@@ -117,19 +117,49 @@ export interface RealtimeSnapshot {
   pressureHighN?: number
 }
 
+// T322：mock 帧时刻改为「每次调用取当下」，并让 PT-002 固定落后 3 小时。
+// 原来写死 2026-08-11 —— 帧龄永远超过后端 2h 口径，mock 模式下的实时监控页一打开就该判过期，
+// 「设备在报」这条路（含用例）结构性不可达；改实时后，过期态由 PT-002 专门承载。
+const STALE_FRAME_PATIENT_ID = 'PT-002'
+// 末次帧是一个**固定时刻**（设备最后一次上报后就没了），不能按「当下减 3 小时」每次重算：
+// 那样每次轮询采集时刻都往前挪 2 秒，页面上「数据已过期」却带着一个在跳的采集时刻，
+// 恰好是 T322 要修的「拿拉取时刻冒充数据新鲜度」的镜像版本，用例也钉不住。
+const STALE_FRAME_AT_MS = Date.now() - 3 * 60 * 60 * 1000
+// 帧内容与时刻一并冻结：设备停报后 20 个点位不会自己每 2 秒换一版数字。
+const STALE_FRAME_POINTS = makePoints(35)
+
+// T322 问题二：把这份冻结帧的 5 个点位改成**负读数**，照抄 staging 末次帧实测的那几个值。
+// 后端按点位减校准基线后才落库（data-service calibration.Apply），基线大于读数的点就是负数，
+// 不是异常数据。前端展示层必须归零；mock 若全给正数，这条判据在 mock 模式下就永远测不到。
+const NEGATIVE_BASELINE_POINTS: Record<string, number> = {
+  P05: -0.0426,
+  P06: -0.0898,
+  P07: -0.0216,
+  P08: -0.1072,
+  P17: -0.0266,
+}
+for (const p of STALE_FRAME_POINTS) {
+  const neg = NEGATIVE_BASELINE_POINTS[p.pointId]
+  if (neg !== undefined) p.pressureValue = neg
+}
+
 export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
   const patient = mockPatientDetail(patientId)
   const offline = !patient || !patient.deviceId
   const abnormal = patientId === 'PT-004'
-  const status = offline ? 'offline' : abnormal ? 'abnormal' : 'online'
-  const sensorPts = makePoints(abnormal ? 68 : 35)
+  // 帧龄超后端 2h 口径 → status 一并给 offline（record.go:537 online 判据同为 lastseen ≤2h），
+  // 否则 mock 会出现「页面判过期、状态却写佩戴中」这种真后端不可能给出的组合。
+  const stale = patientId === STALE_FRAME_PATIENT_ID
+  const status = offline || stale ? 'offline' : abnormal ? 'abnormal' : 'online'
+  const sensorPts = stale ? STALE_FRAME_POINTS : makePoints(abnormal ? 68 : 35)
+  const frameAt = stale ? STALE_FRAME_AT_MS : Date.now()
   const record: PressureRecord = {
     recordId: `REC-${patientId}-latest`,
     deviceId: patient?.deviceId ?? '',
     patientId,
-    timestamp: '2026-08-11T14:30:00+08:00',
+    timestamp: new Date(frameAt).toISOString(),
     points: sensorPts,
-    uploadTime: '2026-08-11T14:30:01+08:00',
+    uploadTime: new Date(frameAt + 1000).toISOString(),
   }
   return {
     status,
