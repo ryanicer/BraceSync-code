@@ -32,15 +32,15 @@ test.describe('04-实时监控', () => {
   }
 
   /**
-   * T322 部署顺序门控（PM 2026-09-23 07:58 打回裁定：断言要与部署顺序对齐）。
+   * T322 部署顺序门控（PM 2026-09-23 08:07 口径重申里给的 A 方案：构建版本守卫）。
    *
    * 本 job 打的是【已部署的 staging 前端包】，而 4.1a / 4.1b / 4.1c 断的是 T322 的【新行为】
    * （采集/拉取双时刻、live-expired、live-none）。#175 合并 + Andy 部署之前，旧包里没有这套
-   * DOM，硬断言必假红（2026-09-22 实测 3 failed / 29 passed）。
+   * DOM，硬断言必假红（2026-09-22 实测 3 failed / 29 passed）。门禁根因由 T324（Andy）收口。
    *
    * 处理口径：不放宽断言、也不给 job 加 continue-on-error（那正是 e2e.yml T304 注释禁止的
    * 「CI 绿但真环境没人验」），而是探测【当前已部署包】是否已带 T322 标记（双时刻文案）：
-   * 未带 ⇒ 显式 test.skip（skip 原因进 Playwright 报告，计数可见，不是静默通过）；
+   * 未带 ⇒ 显式 test.skip + 打 post-deploy 标注（PM 08:07 要求报告里可反查这批用例）；
    * 带上 ⇒ 同一批断言自动转为真跑，此后任何回归照样判红。
    */
   let t322Deployed: boolean | undefined
@@ -50,9 +50,16 @@ test.describe('04-实时监控', () => {
       await expect(bar).toBeVisible({ timeout: 25_000 })
       t322Deployed = ((await bar.textContent()) ?? '').includes('数据采集：')
     }
+    if (!t322Deployed) {
+      // post-deploy 标注：让报告里能按这个标签把这批「部署后才生效」的用例筛出来
+      test.info().annotations.push({
+        type: 'post-deploy',
+        description: 'T322 新行为断言：staging 当前为旧构建，本条待 admin-web 新包部署后自动生效',
+      })
+    }
     test.skip(
       !t322Deployed,
-      'staging 上部署的前端包还没有 T322 的「数据采集/本次拉取」双时刻（新构建未部署）⇒ 本条对旧包无意义，显式跳过；部署后自动转真跑',
+      'post-deploy：staging 上部署的前端包还没有 T322 的「数据采集/本次拉取」双时刻（新构建未部署）⇒ 本条对旧包无意义，显式跳过；部署后自动转真跑',
     )
   }
 
