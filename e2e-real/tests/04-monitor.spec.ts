@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test'
 import { realLogin, gotoMenu, pickSelectOption, realRoutes } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 04 实时监控（真实模式）
  * 覆盖：页面默认渲染 / 热力图 20 格 / 患者切换
- * ⚠️ 注意：staging 设备模拟器可能未运行，导致状态为 offline/未佩戴，
- *        但监控页前端应对未绑定设备有兜底渲染（热力图 seed 兜底逻辑），
- *        故断言改为「结构正确」，不校验具体状态文案。
+ * ⚠️ staging 设备模拟器可能未运行 ⇒ 帧会过期甚至无帧。T322 起这类状态下页面明确显示
+ *    「数据已过期 / 无实时数据」且不再画兜底示例数据，所以下面按状态分支的用例要么用 page.route
+ *    把帧时刻钉死（4.1b / 4.1c / 4.2c / 4.2e / 4.4），要么只断「落在三态之一」（4.1）。
  */
 test.describe('04-实时监控', () => {
   test.beforeEach(async ({ page }) => {
@@ -32,35 +33,31 @@ test.describe('04-实时监控', () => {
   }
 
   /**
-   * T322 部署顺序门控（PM 2026-09-23 08:07 口径重申里给的 A 方案：构建版本守卫）。
+   * T322 部署顺序门控 —— 口径以 T324 为准（PM 2026-09-23），故走 e2e-real/deploy-guard.ts
+   * 的共享 requireDeployedBuild，而不是本文件早期那版自己实现的 skip + 标注。
    *
    * 本 job 打的是【已部署的 staging 前端包】，而 4.1a / 4.1b / 4.1c / 4.2e 断的是 T322 的【新行为】
    * （采集/拉取双时刻、live-expired、live-none、校准后负读数按 0 展示）。#175 合并 + Andy 部署之前，
-   * 旧包里没有这套 DOM，硬断言必假红（2026-09-22 实测 3 failed / 29 passed）。门禁根因由 T324（Andy）收口。
+   * 旧包里没有这套 DOM，硬断言必假红（2026-09-22 实测 3 failed / 29 passed）。
    *
-   * 处理口径：不放宽断言、也不给 job 加 continue-on-error（那正是 e2e.yml T304 注释禁止的
-   * 「CI 绿但真环境没人验」），而是探测【当前已部署包】是否已带 T322 标记（双时刻文案）：
-   * 未带 ⇒ 显式 test.skip + 打 post-deploy 标注（PM 08:07 要求报告里可反查这批用例）；
-   * 带上 ⇒ 同一批断言自动转为真跑，此后任何回归照样判红。
+   * 两阶段行为由 deploy-guard 统一给：PR 阶段缺标记 ⇒ 显式 post-deploy 跳过（报告可反查、
+   * 并汇总进 job summary）；定时/手动阶段（E2E_POST_DEPLOY_STRICT=1）staging 本该已追平，
+   * 仍缺标记即判红 —— 不像本地 skip 那样能让新行为断言永久挂在跳过里。
+   * 判据本身一条不放宽，也没有 continue-on-error。
    */
-  let t322Deployed: boolean | undefined
-  async function requireT322Deployed(page: import('@playwright/test').Page): Promise<void> {
-    if (t322Deployed === undefined) {
-      const bar = page.locator('.page-toolbar .update-time')
-      await expect(bar).toBeVisible({ timeout: 25_000 })
-      t322Deployed = ((await bar.textContent()) ?? '').includes('数据采集：')
-    }
-    if (!t322Deployed) {
-      // post-deploy 标注：让报告里能按这个标签把这批「部署后才生效」的用例筛出来
-      test.info().annotations.push({
-        type: 'post-deploy',
-        description: 'T322 新行为断言：staging 当前为旧构建，本条待 admin-web 新包部署后自动生效',
-      })
-    }
-    test.skip(
-      !t322Deployed,
-      'post-deploy：staging 上部署的前端包还没有 T322 的「数据采集/本次拉取」双时刻（新构建未部署）⇒ 本条对旧包无意义，显式跳过；部署后自动转真跑',
-    )
+  const T322_BUILD_MARKER = '数据采集：'
+  async function requireT322Build(page: import('@playwright/test').Page): Promise<void> {
+    await requireDeployedBuild(page, {
+      marker: 'T322-monitor-freshness',
+      why: '#175 的双时刻/新鲜度三态/负读数归零尚未部署到 staging，部署后本条自动转真跑',
+      // 只做存在性探测（T324 约定）：等顶栏出现后读文字里有没有新构建的「数据采集：」标记，
+      // 探不到就返回 false 交给守卫判阶段；不在旧包上 await 一个不存在的元素。
+      probe: async (p) => {
+        const bar = p.locator('.page-toolbar .update-time')
+        await bar.waitFor({ state: 'visible', timeout: 25_000 }).catch(() => {})
+        return ((await bar.textContent()) ?? '').includes(T322_BUILD_MARKER)
+      },
+    })
   }
 
   test.describe('页面默认渲染', () => {
@@ -102,7 +99,7 @@ test.describe('04-实时监控', () => {
     })
 
     test('4.1a 顶栏分列「数据采集」与「本次拉取」两个时刻（T322 语义纠正）', async ({ page }) => {
-      await requireT322Deployed(page)
+      await requireT322Build(page)
       // 采集时刻与拉取时刻必须分列（不得用拉取时刻冒充数据新鲜度）
       const bar = page.locator('.page-toolbar .update-time')
       await expect(bar).toContainText(/数据采集：\d{2}:\d{2}:\d{2}/)
@@ -137,7 +134,7 @@ test.describe('04-实时监控', () => {
     }
 
     test('4.1b 帧时刻超过 TTL：标签转「数据已过期」+ 告警条 + 曲线不再推进', async ({ page }) => {
-      await requireT322Deployed(page)
+      await requireT322Build(page)
       await waitForSnapshotLoaded(page)
       const collected = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
       await injectFrame(page, (data) => {
@@ -155,8 +152,14 @@ test.describe('04-实时监控', () => {
       await expect(notice).toContainText(/末次帧采集于 \d{2}:\d{2}:\d{2}（距今 \d+ 小时(?: \d+ 分)?）/)
       await expect(notice).toContainText('不代表患者当前状态')
 
-      // 采集时刻与拉取时刻分列，且同一个过期帧内采集时刻不随轮询跳动（T322 的语义纠正本身）
+      // 采集时刻与拉取时刻分列，且同一个过期帧内采集时刻不随轮询跳动（T322 的语义纠正本身）。
+      // 先等页面真的读到被改写的那一帧：监控页每 2s 轮询，route 只对注册之后的请求生效，
+      // 不先卡这个信号就会拿「注入前的旧帧时刻」当基准，5 秒后必然对不上（2026-09-23 实测红：
+      // 先读到 staging 种子帧 10:30:00，随后变成注入的 12:37:23）。
       const updateTime = page.locator('.page-toolbar .update-time')
+      await expect(updateTime).toContainText(/数据采集：\d{2}:\d{2}:\d{2}（距今 3 小时/, {
+        timeout: 25_000,
+      })
       const collectedText = (await updateTime.textContent())!.match(/数据采集：(\d{2}:\d{2}:\d{2})/)![1]
       await page.waitForTimeout(5_000)
       expect((await updateTime.textContent())!).toContain(`数据采集：${collectedText}`)
@@ -169,7 +172,7 @@ test.describe('04-实时监控', () => {
     })
 
     test('4.1c 快照无帧：标签转「无实时数据」且不渲染 seed 兜底热力图', async ({ page }) => {
-      await requireT322Deployed(page)
+      await requireT322Build(page)
       await waitForSnapshotLoaded(page)
       await injectFrame(page, (data) => {
         data.pressureRecords = []
@@ -179,7 +182,9 @@ test.describe('04-实时监控', () => {
       await expect(tag).toHaveClass(/live-none/, { timeout: 20_000 })
       await expect(tag).toContainText('无实时数据')
 
-      // 后端无帧时仍下发 seed 兜底热力图（model.go:454），前端唯一判据是 records 为空 ⇒ 一格都不许画
+      // 无帧判据只能是 records 为空：T325 之前后端还会下发 seed 兜底热力图，
+      // 合并后（main 704baf5）无真实帧时 pressureHeatmap 已是空数组；但前端这道判据不许依赖
+      // 后端是否兜底 —— 兜底哪天再回来，页面一格都不许画。
       await expect(page.locator('.hm-cell')).toHaveCount(0)
       await expect(page.locator('.hm-empty')).toContainText('无实时帧 · 不展示示例数据')
       await expect(page.locator('.frame-notice')).toContainText('无实时帧')
@@ -326,11 +331,16 @@ test.describe('04-实时监控', () => {
 
     test('4.2e 校准后的负读数按 0 展示，热力图与采集点表不出现负号（T322 问题二）', async ({ page }) => {
       // 受同一部署门控：负值归零是 #175 的新构建行为，旧包会把 -0.1 原样印出来
-      await requireT322Deployed(page)
+      await requireT322Build(page)
       await waitForSnapshotLoaded(page)
       await injectT296Grid(page, NEG_GRID)
+      // 先确认改写后的那一帧真的落到页面上了再读：route 只对注册后的请求生效，而监控页每 2s 轮询，
+      // 不等这个信号就会读到注入前的 staging 真值（2026-09-23 实测红：读到 24.3 而非夹具的 0.5/4.0）。
+      // P02 是夹具里的正数值，不受归零影响，适合当「注入已生效」的哨兵。
+      const vals = page.locator('.hm-cell-val')
+      await expect(vals.nth(1)).toHaveText('4.0', { timeout: 25_000 })
 
-      const texts = await page.locator('.hm-cell-val').allInnerTexts()
+      const texts = await vals.allInnerTexts()
       expect(texts).toHaveLength(20)
       expect(texts.filter((t) => t.includes('-')), '热力图出现负读数').toEqual([])
       for (const i of [4, 5, 6, 7, 16]) {
