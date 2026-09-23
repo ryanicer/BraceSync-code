@@ -195,6 +195,9 @@ type fakeStore struct {
 	lastUpdateTeamID   string
 	lastUpdateTeamIn   repo.TeamInput
 	lastDeleteTeamID   string
+	gotTeam            *repo.TeamDetailRow
+	gotTeamErr         error
+	lastGetTeamID      string
 	lastAddTeamID      string
 	lastAddMemberIn    repo.MemberInput
 	lastUpdateMTeamID  string
@@ -421,6 +424,12 @@ func (f *fakeStore) UpdateTeam(_ context.Context, teamID string, in repo.TeamInp
 func (f *fakeStore) DeleteTeam(_ context.Context, teamID string) error {
 	f.lastDeleteTeamID = teamID
 	return f.deleteTeamErr
+}
+
+// GetTeam T333：单条读团队详情
+func (f *fakeStore) GetTeam(_ context.Context, teamID string) (*repo.TeamDetailRow, error) {
+	f.lastGetTeamID = teamID
+	return f.gotTeam, f.gotTeamErr
 }
 func (f *fakeStore) AddTeamMember(_ context.Context, teamID string, in repo.MemberInput) (*repo.TeamMemberRow, error) {
 	f.lastAddTeamID = teamID
@@ -1008,6 +1017,39 @@ func TestListTeams(t *testing.T) {
 
 	e.store.teamsErr = errors.New("db")
 	w, _ = e.do(http.MethodGet, "/api/v1/teams", nil, nil)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// TestGetTeam T333：单条读路由 GET /api/v1/teams/:teamId（此前实测 404，Boss「点进去看不到负责人」即此）
+func TestGetTeam(t *testing.T) {
+	e := newEnv(t, true, true)
+	created := time.Date(2026, 9, 1, 8, 30, 0, 0, time.UTC)
+	e.store.gotTeam = &repo.TeamDetailRow{
+		TeamID: "TEAM01", Name: "一组", Leader: "D01", LeaderName: "医生甲",
+		MemberCount: 2, PatientCount: 3, Description: "脊柱侧弯矫形", Status: "active", CreatedAt: created,
+	}
+	w, resp := e.do(http.MethodGet, "/api/v1/teams/TEAM01", nil, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "TEAM01", e.store.lastGetTeamID)
+	var d model.TeamDetailDTO
+	require.NoError(t, json.Unmarshal(resp.Data, &d))
+	assert.Equal(t, "D01", d.Leader)
+	assert.Equal(t, "医生甲", d.LeaderName)
+	// 详情比列表多的三列必须一起回，否则编辑弹窗仍只能读列表行
+	assert.Equal(t, "脊柱侧弯矫形", d.Description)
+	assert.Equal(t, "active", d.Status)
+	assert.Equal(t, "2026-09-01T08:30:00Z", d.CreatedAt)
+
+	// 团队不存在 → 404
+	e.store.gotTeam = nil
+	e.store.gotTeamErr = repo.ErrTeamNotFound
+	w, resp = e.do(http.MethodGet, "/api/v1/teams/NOPE", nil, nil)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, model.CodeNotFound, resp.Code)
+
+	// 其它错误 → 500
+	e.store.gotTeamErr = errors.New("db")
+	w, _ = e.do(http.MethodGet, "/api/v1/teams/TEAM01", nil, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 

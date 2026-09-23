@@ -1082,6 +1082,12 @@ func (s *PGStore) getTeamDetail(ctx context.Context, teamID string) (*TeamDetail
 	return &t, nil
 }
 
+// GetTeam 团队单条读（T333：GET /api/v1/teams/:teamId）
+// 复用写端点回读的同一 SQL，避免详情字段两处口径漂移；不存在返回 ErrTeamNotFound。
+func (s *PGStore) GetTeam(ctx context.Context, teamID string) (*TeamDetailRow, error) {
+	return s.getTeamDetail(ctx, teamID)
+}
+
 // newTeamID 生成团队 ID：TEAM + 年份后两位 + 随机 hex（VARCHAR(32) 内，规避并发序号竞争）
 func newTeamID() (string, error) {
 	buf := make([]byte, 4)

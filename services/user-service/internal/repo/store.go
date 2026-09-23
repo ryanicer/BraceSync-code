@@ -476,6 +476,8 @@ type Store interface {
 	// sentinel：ErrTeamNotFound/ErrTeamNameExists/ErrLeaderNotFound/ErrMemberNotFound/ErrMemberInTeam/ErrTeamInUse
 	CreateTeam(ctx context.Context, in TeamInput) (*TeamDetailRow, error)
 	UpdateTeam(ctx context.Context, teamID string, in TeamInput) (*TeamDetailRow, error)
+	// GetTeam T333：团队单条读（GET /api/v1/teams/:teamId），与写端点回读同一投影；不存在返回 ErrTeamNotFound
+	GetTeam(ctx context.Context, teamID string) (*TeamDetailRow, error)
 	DeleteTeam(ctx context.Context, teamID string) error // 返回 ErrTeamNotFound / ErrTeamInUse
 	AddTeamMember(ctx context.Context, teamID string, in MemberInput) (*TeamMemberRow, error)
 	UpdateTeamMember(ctx context.Context, teamID, memberID string, in MemberInput) (*TeamMemberRow, error)

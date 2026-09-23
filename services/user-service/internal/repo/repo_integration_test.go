@@ -535,3 +535,30 @@ func TestITListTeamsLeader(t *testing.T) {
 	require.NoError(t, itStore.pool.QueryRow(ctx, `SELECT COUNT(*) FROM teams`).Scan(&total))
 	assert.Len(t, list, total)
 }
+
+// TestITGetTeam T333：单条读详情（GET /teams/:teamId 的 repo 半边）
+// 守住两件事：负责人姓名与列表同一 join 口径；详情比列表多出的 description/status/createdAt 真回得来。
+func TestITGetTeam(t *testing.T) {
+	ctx := context.Background()
+
+	row, err := itStore.GetTeam(ctx, itTeam)
+	require.NoError(t, err)
+	assert.Equal(t, itTeam, row.TeamID)
+	assert.Equal(t, "active", row.Status)
+	assert.False(t, row.CreatedAt.IsZero())
+	assert.Empty(t, row.Leader, "未设负责人时详情两列为空串（handler 转 null）")
+
+	_, err = itStore.pool.Exec(ctx, `UPDATE teams SET leader = $1 WHERE team_id = $2`, itDoctor, itTeam)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = itStore.pool.Exec(ctx, `UPDATE teams SET leader = NULL WHERE team_id = $1`, itTeam)
+	})
+
+	withLeader, err := itStore.GetTeam(ctx, itTeam)
+	require.NoError(t, err)
+	assert.Equal(t, itDoctor, withLeader.Leader)
+	assert.Equal(t, "集成医生", withLeader.LeaderName)
+
+	_, err = itStore.GetTeam(ctx, "TEAM-T333-NOT-EXIST")
+	assert.ErrorIs(t, err, ErrTeamNotFound)
+}

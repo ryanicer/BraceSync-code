@@ -121,6 +121,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPut, "/admin/patients/:patientId/team"},     // T057 分配团队
 	{http.MethodPost, "/admin/patients/batch-bind"},         // T057 批量绑定
 	{http.MethodGet, "/teams"},                              // T030 #10 概要
+	{http.MethodGet, "/teams/:teamId"},                      // T333 单条详情（补 404 缺口）
 	{http.MethodGet, "/teams/:teamId/members"},              // T030 #10 成员明细
 	{http.MethodGet, "/admin/teams/stats"},                  // T256 #1 团队管理统计卡
 	{http.MethodPost, "/teams"},                             // T059 创建团队
