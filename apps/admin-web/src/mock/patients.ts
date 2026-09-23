@@ -128,6 +128,21 @@ const STALE_FRAME_AT_MS = Date.now() - 3 * 60 * 60 * 1000
 // 帧内容与时刻一并冻结：设备停报后 20 个点位不会自己每 2 秒换一版数字。
 const STALE_FRAME_POINTS = makePoints(35)
 
+// T322 问题二：把这份冻结帧的 5 个点位改成**负读数**，照抄 staging 末次帧实测的那几个值。
+// 后端按点位减校准基线后才落库（data-service calibration.Apply），基线大于读数的点就是负数，
+// 不是异常数据。前端展示层必须归零；mock 若全给正数，这条判据在 mock 模式下就永远测不到。
+const NEGATIVE_BASELINE_POINTS: Record<string, number> = {
+  P05: -0.0426,
+  P06: -0.0898,
+  P07: -0.0216,
+  P08: -0.1072,
+  P17: -0.0266,
+}
+for (const p of STALE_FRAME_POINTS) {
+  const neg = NEGATIVE_BASELINE_POINTS[p.pointId]
+  if (neg !== undefined) p.pressureValue = neg
+}
+
 export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
   const patient = mockPatientDetail(patientId)
   const offline = !patient || !patient.deviceId

@@ -239,7 +239,7 @@ import {
   frameFreshness,
   type FrameFreshness,
 } from '../../utils/frameFreshness'
-
+import { normalizeFramePressure } from '../../utils/pressureValue'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
 
 // ====== 常量 ======
@@ -557,7 +557,8 @@ async function refreshTick() {
     const snap = await fetchPatientRealtime(pid)
     // 竞态防护：请求返回时若患者已切换则丢弃
     if (currentPatientId.value !== pid) return
-    snapshot.value = snap
+    // 校准减基线后的负读数在这一层归零：热力图 / 采集点表 / 由它取最大值的曲线共用同一份数值
+    snapshot.value = normalizeFramePressure(snap)
     pullTime.value = formatClock(pullAt)
     frame.value = frameFreshness(snap.pressureRecords, pullAt)
     // 同一帧每秒都会被重新读到：只有换了帧才允许推进曲线与峰值（T322 防「平线被轮询推活」）

@@ -34,9 +34,9 @@ test.describe('04-实时监控', () => {
   /**
    * T322 部署顺序门控（PM 2026-09-23 08:07 口径重申里给的 A 方案：构建版本守卫）。
    *
-   * 本 job 打的是【已部署的 staging 前端包】，而 4.1a / 4.1b / 4.1c 断的是 T322 的【新行为】
-   * （采集/拉取双时刻、live-expired、live-none）。#175 合并 + Andy 部署之前，旧包里没有这套
-   * DOM，硬断言必假红（2026-09-22 实测 3 failed / 29 passed）。门禁根因由 T324（Andy）收口。
+   * 本 job 打的是【已部署的 staging 前端包】，而 4.1a / 4.1b / 4.1c / 4.2e 断的是 T322 的【新行为】
+   * （采集/拉取双时刻、live-expired、live-none、校准后负读数按 0 展示）。#175 合并 + Andy 部署之前，
+   * 旧包里没有这套 DOM，硬断言必假红（2026-09-22 实测 3 failed / 29 passed）。门禁根因由 T324（Andy）收口。
    *
    * 处理口径：不放宽断言、也不给 job 加 continue-on-error（那正是 e2e.yml T304 注释禁止的
    * 「CI 绿但真环境没人验」），而是探测【当前已部署包】是否已带 T322 标记（双时刻文案）：
@@ -238,7 +238,10 @@ test.describe('04-实时监控', () => {
       }
     })
 
-    async function injectT296Grid(page: import('@playwright/test').Page): Promise<void> {
+    async function injectT296Grid(
+      page: import('@playwright/test').Page,
+      grid: typeof T296_GRID = T296_GRID,
+    ): Promise<void> {
       await page.route('**/api/v1/patients/*/realtime', async (route) => {
         const res = await route.fetch()
         let body: { data?: Record<string, unknown> }
@@ -255,7 +258,7 @@ test.describe('04-实时监控', () => {
             pressureHighN?: number
             pressureRecords?: Array<Record<string, unknown>>
           }
-          data.pressureHeatmap = T296_GRID
+          data.pressureHeatmap = grid
           data.heatmapMaxN = 6
           data.pressureHighN = 5
           data.pressureRecords = [{ ...(data.pressureRecords?.[0] ?? {}), timestamp: new Date().toISOString() }]
@@ -264,6 +267,29 @@ test.describe('04-实时监控', () => {
       })
       await page.locator('.page-toolbar').getByRole('button', { name: '立即刷新' }).click()
     }
+
+    // T322 问题二夹具：把 staging 末次帧实测到的那 5 个负读数原样塞进响应
+    // （P05 -0.0426 / P06 -0.0898 / P07 -0.0216 / P08 -0.1072 / P17 -0.0266，
+    //  由设备逐点减校准基线得到，后端有意保留负值）。页面必须显示 0.0。
+    const NEG_GRID = Array.from({ length: 20 }, (_, i) => {
+      const n = ((): number => {
+        if (i === 4) return -0.0426
+        if (i === 5) return -0.0898
+        if (i === 6) return -0.0216
+        if (i === 7) return -0.1072
+        if (i === 16) return -0.0266
+        if (i === 1) return 4.0
+        return 0.5
+      })()
+      return {
+        pointId: `P${String(i + 1).padStart(2, '0')}`,
+        row: Math.floor(i / 5) + 1,
+        col: (i % 5) + 1,
+        label: `R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`,
+        pressureValue: n,
+        isMax: i === 1,
+      }
+    })
 
     test('4.2c 亚牛顿值不被压成 0/-0，色阶与分级按后端下发上界渲染', async ({ page }) => {
       await waitForSnapshotLoaded(page)
@@ -296,6 +322,29 @@ test.describe('04-实时监控', () => {
       await expect(page.locator('.hm-cell-max')).toHaveCount(1)
       await expect(page.locator('.hm-cell-id').nth(1)).toHaveText('P02')
       await expect(page.locator('.heatmap-card .hm-detail')).toContainText('★ 压力最大点：P02 (R1C2)')
+    })
+
+    test('4.2e 校准后的负读数按 0 展示，热力图与采集点表不出现负号（T322 问题二）', async ({ page }) => {
+      // 受同一部署门控：负值归零是 #175 的新构建行为，旧包会把 -0.1 原样印出来
+      await requireT322Deployed(page)
+      await waitForSnapshotLoaded(page)
+      await injectT296Grid(page, NEG_GRID)
+
+      const texts = await page.locator('.hm-cell-val').allInnerTexts()
+      expect(texts).toHaveLength(20)
+      expect(texts.filter((t) => t.includes('-')), '热力图出现负读数').toEqual([])
+      for (const i of [4, 5, 6, 7, 16]) {
+        expect(texts[i], `第 ${i + 1} 格（staging 实测负值点位）应显示 0.0`).toBe('0.0')
+      }
+      // 正值不受影响，且最大点标记仍按接口下发的那一格，不归零不重排
+      expect(texts[1]).toBe('4.0')
+      await expect(page.locator('.hm-cell-max')).toHaveCount(1)
+      await expect(page.locator('.hm-cell-id').nth(1)).toHaveText('P02')
+
+      const tbl = await page.locator('.points-table tbody tr td:nth-child(3)').allInnerTexts()
+      expect(tbl.filter((t) => t.includes('-')), '采集点表出现负读数').toEqual([])
+      // 归零后这些点按 0 走既有分级（无信号），不是新造的第三种状态
+      await expect(page.locator('.points-table tbody tr').nth(7).locator('td').nth(3)).toContainText('无信号')
     })
 
     test('4.2d 热力图卡片显示本帧采集时刻，可与设备逐帧日志对账', async ({ page }) => {

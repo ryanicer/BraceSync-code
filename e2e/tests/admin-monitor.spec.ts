@@ -408,6 +408,36 @@ test.describe('帧新鲜度三态（T322）', () => {
     await expect(page.locator('.monitor')).not.toContainText('实时同步中')
   })
 
+  test('负读数按 0 展示：末次帧含校准后负值时，热力图与采集点表不得出现负号（T322 问题二）', async ({ page }) => {
+    await waitForSnapshotLoaded(page)
+    await pickSelectOption(page, page.locator('.patient-card .el-select'), '陈子航')
+    await expect(page.locator('.hm-cell')).toHaveCount(20)
+
+    // 夹具里 P05/P06/P07/P08/P17 的原始读数是 -0.04 ~ -0.11（照抄 staging 末次帧），
+    // 页面必须显示成 0.0；这一条在修复前必红 —— 不是「格式化掉了负号」，是数值本身归零。
+    const vals = page.locator('.hm-cell-val')
+    await expect(vals).toHaveCount(20)
+    const texts = await vals.allInnerTexts()
+    expect(texts.filter((t) => t.includes('-')), '热力图出现负读数').toEqual([])
+    for (const i of [4, 5, 6, 7, 16]) {
+      expect(texts[i], `第 ${i + 1} 格（负值夹具点）应显示 0.0`).toBe('0.0')
+    }
+
+    // 采集点表同源：数值列全为非负，且这些点按 0 走「无信号」分级
+    const tbl = page.locator('.points-table tbody tr td:nth-child(3)')
+    await expect(tbl).toHaveCount(20)
+    const tblTexts = await tbl.allInnerTexts()
+    expect(tblTexts.filter((t) => t.includes('-')), '采集点表出现负读数').toEqual([])
+    await expect(page.locator('.points-table tbody tr').nth(5).locator('td').nth(3)).toContainText('无信号')
+
+    // 点击负值格后的详情行同样按 0 显示，不得从 tooltip 漏出原始负值
+    await page.locator('.hm-cell').nth(7).click()
+    await expect(page.locator('.hm-detail')).toContainText('P08 (R2C3) · 0.00 N')
+
+    // 曲线取的是热力图最大值，页面上任何位置都不许冒出负读数
+    await expect(page.locator('.monitor')).not.toContainText(/-\d+\.\d+ ?N/)
+  })
+
   test('无帧态：未绑定设备 → 显示「无实时数据」，热力图与采集点表不得渲染 seed 兜底值', async ({ page }) => {
     await waitForSnapshotLoaded(page)
     await pickSelectOption(page, page.locator('.patient-card .el-select'), '赵欣然')
