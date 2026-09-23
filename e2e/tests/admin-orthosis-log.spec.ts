@@ -94,12 +94,107 @@ test.describe('患者工作台（PM 裁定 ⑤ 并存保留）', () => {
     await page.getByRole('tab', { name: '患者工作台' }).click()
     await expect(workspace.getByText('请选择患者开始诊断评估')).toBeVisible()
     await pickSelectOption(page, workspace.locator('.patient-select'), '林小雨')
-    await expect(workspace.locator('.page-card-title').first()).toHaveText('方案调整')
+    // T344 起工作台第一张卡是「患者基本信息」，方案调整退到内层第一个页签内
+    await expect(workspace.locator('.page-card-title').first()).toHaveText('患者基本信息')
+    await expect(workspace.locator('.el-tab-pane:visible .page-card-title').first()).toHaveText('方案调整')
 
     await workspace.getByRole('tab', { name: '佩戴感受' }).click()
     const rows = tableRows(page, workspace.locator('.workspace-feelings-card'))
     await expect(rows).toHaveCount(2)
     await expect(rows.first()).toContainText('贴合')
+  })
+})
+
+/**
+ * T344 患者工作台 4 区块（Boss 2026-09-23 裁定问题 2「本期做」）
+ * 设计稿 docs/design/admin/矫形日志.html #tabWorkspace：
+ *  - #wsProfile 8 格 = PRD §7D.8 视图② 的 7 字段 + 稿面另加「患者ID」
+ *  - #wsTabs 内层页签顺序：矫形方案 → 佩戴感受 → 健康报告 → 数据视图（新增项追加末位不重排）
+ *  - #wsData 三块：压力趋势图（7/14/30 天）、每日佩戴时长柱状图、告警记录列表 5 列
+ *  - #wsSendAdvice：未选患者禁用 + 点击给占位提示（模板消息端点待 PM 派后端卡）
+ * mock 取数：PT-001 林小雨（有设备 DEV-A3F312）、PT-005 赵欣然（deviceId 为 null）
+ */
+test.describe('工作台 · T344 患者基本信息卡', () => {
+  test('8 个字段与稿面同序，取值来自患者详情端点', async ({ page }) => {
+    const ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+    const card = ws.locator('.profile-card')
+    const labels = await card.locator('.el-descriptions__label').allTextContents()
+    expect(labels.map((t) => t.trim())).toEqual([
+      '姓名', '年龄', '性别', '诊断', 'Cobb 角度', '绑定设备', '绑定团队', '患者ID',
+    ])
+    const body = card.locator('.el-descriptions__body')
+    await expect(body).toContainText('林小雨')
+    await expect(body).toContainText('13 岁')
+    await expect(body).toContainText('女')
+    await expect(body).toContainText('青少年特发性脊柱侧弯')
+    await expect(body).toContainText('28°')
+    await expect(body).toContainText('DEV-A3F312')
+    await expect(body).toContainText('脊柱侧弯一组')
+    await expect(body).toContainText('PT-001')
+  })
+
+  test('未绑定团队/设备的患者显示占位横线，不拿 null 上屏', async ({ page }) => {
+    const ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '王小红')
+    const card = ws.locator('.profile-card')
+    await expect(card.locator('.el-descriptions__body')).toContainText('PT-007')
+    const values = await card.locator('.el-descriptions__content').allTextContents()
+    // 第 6 格绑定设备、第 7 格绑定团队在 mock 档案里就是空值 ⇒ 必须落折线而非空白/null
+    expect(values[5].trim()).toBe('—')
+    expect(values[6].trim()).toBe('—')
+  })
+})
+
+test.describe('工作台 · T344 发送建议给患者', () => {
+  test('未选患者时按钮禁用，选定后可点且只给占位提示', async ({ page }) => {
+    const ws = await openWorkspace(page)
+    const btn = ws.getByRole('button', { name: '发送建议给患者' })
+    await expect(btn).toBeDisabled()
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+    await expect(btn).toBeEnabled()
+    await btn.click()
+    await expect(adminMessage(page)).toContainText('模板消息通道待后端建端点')
+  })
+})
+
+test.describe('工作台 · T344 数据视图', () => {
+  test('内层页签顺序：三块照实现现状，数据视图追加末位', async ({ page }) => {
+    const ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+    const names = (await ws.locator('.el-tabs__item').allTextContents()).map((t) => t.trim())
+    expect(names).toEqual(['矫形方案', '佩戴感受', '健康报告', '数据视图'])
+  })
+
+  test('两张图 + 告警 5 列：区间切到 14 天后图表仍在，虚线取值来自系统配置', async ({ page }) => {
+    const ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+    await ws.getByRole('tab', { name: '数据视图' }).click()
+    const pane = ws.locator('.el-tab-pane:visible')
+    await expect(pane.locator('canvas')).toHaveCount(2)
+    // 稿面：两条虚线不写死数值 ⇒ 注记里回显的是 §7D.12 当前配置值
+    await expect(pane.locator('.axis-note').first()).toContainText('当前取系统配置')
+    // 点 label 而非 input：el-radio-button 的真 radio 被 __inner span 遮住，点 input 会被判 intercept
+    await pane.locator('label.el-radio-button').filter({ hasText: '14 天' }).click()
+    await expect(pane.getByRole('radio', { name: '14 天' })).toBeChecked()
+    await expect(pane.locator('canvas')).toHaveCount(2)
+
+    const heads = await pane.locator('.el-table__header-wrapper thead th')
+      .evaluateAll((ths) => ths.map((th) => (th.textContent ?? '').trim()).filter(Boolean))
+    expect(heads).toEqual(['时间', '告警类型', '等级', '处理状态', '说明'])
+    // 等级列：Alert 契约无该字段（卡内已报 PM）⇒ 只出占位，不用类型着色冒充
+    const firstAlert = pane.locator('.el-table__body-wrapper tbody tr').first()
+    await expect(firstAlert.locator('td').nth(2)).toHaveText('—')
+    await expect(firstAlert.locator('td').nth(1)).toContainText('压力偏高')
+  })
+
+  test('无设备患者（PT-005 赵欣然）走空态，不画一条全 0 的假曲线', async ({ page }) => {
+    const ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '赵欣然')
+    await ws.getByRole('tab', { name: '数据视图' }).click()
+    const pane = ws.locator('.el-tab-pane:visible')
+    await expect(pane.locator('.el-empty').first()).toContainText('暂无日佩戴统计')
+    await expect(pane.locator('canvas')).toHaveCount(0)
   })
 })
 

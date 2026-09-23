@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import {
   fetchDashboardKPI, fetchWearTrend, fetchAlertTrend, fetchTeamRanking, fetchDoctorRanking,
   fetchWearDistribution, fetchPatients, fetchAlerts, fetchDevices, fetchTeams,
-  fetchFeedbacks, fetchPatientRealtime, fetchNotifyRules, fetchNotificationLogs,
+  fetchFeedbacks, fetchPatientRealtime, fetchPatientDailyWear, fetchNotifyRules, fetchNotificationLogs,
   fetchAbnormalReport,
 } from '../src/api'
 import { mockAbnormalReport, mockAbnormalReportCsv } from '../src/mock/alerts'
@@ -61,6 +61,20 @@ describe('API 层（USE_MOCK 模式）', () => {
     expect(pending.list.every((a) => a.processStatus === 'pending')).toBe(true)
     const byType = await fetchAlerts({ type: 'pressure_high' })
     expect(byType.list.every((a) => a.type === 'pressure_high')).toBe(true)
+  })
+
+  // T344 工作台「数据视图」两个新取数口
+  it('日佩戴聚合按闭区间逐日返回，告警支持 patientId 过滤', async () => {
+    const rows = await fetchPatientDailyWear('PT-001', '2026-09-17', '2026-09-23')
+    expect(rows.map((r) => r.date)).toEqual([
+      '2026-09-17', '2026-09-18', '2026-09-19', '2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23',
+    ])
+    expect(rows[0]).toHaveProperty('wearMinutes')
+    expect(rows[0]).toHaveProperty('avgPressure')
+
+    const pt004 = await fetchAlerts({ patientId: 'PT-004', pageSize: 100 })
+    expect(pt004.list.length).toBeGreaterThan(0)
+    expect(pt004.list.every((a) => a.patientId === 'PT-004')).toBe(true)
   })
 
   it('设备/团队/反馈/通知规则/通知记录返回非空列表', async () => {
