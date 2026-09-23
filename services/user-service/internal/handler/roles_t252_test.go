@@ -42,12 +42,13 @@ func TestT252_ListRoleTemplates(t *testing.T) {
 
 	var list []model.RoleTemplateDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &list))
-	// T277：模板收口为 3 条 = 设计稿 权限控制.html:203 下拉的 运营管理员 / 医生 / 客服
+	// T277：模板收口为 3 条 = 设计稿 权限控制.html:203 下拉的 运营管理员 / 医护 / 客服
 	//（主任医师 / 主治医师 / 康复师 / 护士 = 职称，不是角色，不得再作为模板出现）
+	// T343：第三条显示名随 Boss 2026-09-22 14:21 裁定「医生 → 医护」，**key 仍是 doctor**
 	require.Len(t, list, 3)
 	assert.Equal(t, []string{"admin", "doctor", "cs"},
 		[]string{list[0].Key, list[1].Key, list[2].Key})
-	assert.Equal(t, []string{"运营管理员", "医生", "客服"},
+	assert.Equal(t, []string{"运营管理员", "医护", "客服"},
 		[]string{list[0].Name, list[1].Name, list[2].Name})
 	assert.Equal(t, "all", list[0].Permissions.Scope)
 	assert.Len(t, list[0].Permissions.Modules, 12, "运营管理员 12 个模块全开")

@@ -144,10 +144,12 @@ func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 	}
 
 	// ② 预置登录角色 = 3 个，name/scope 与 scripts/db/seed/seed.sql 同源
-	//    （000017 幂等补播这 3 条，故 harness 只跑 migrations、不跑 seed.sql 也成立）
+	//    （000017 幂等补播这 3 条，故 harness 只跑 migrations、不跑 seed.sql 也成立；
+	//     name 取 000025 之后的现值 —— ROLE_DOCTOR 显示名已由「医生」改「医护」，
+	//     Boss 2026-09-22 14:21 裁定只改称谓，role_id 仍是 ROLE_DOCTOR ⇒ 本条同时守住「键没被顺手改」）
 	for _, want := range []struct{ id, name, scope string }{
 		{"ROLE_ADMIN", "运营管理员", "all"},
-		{"ROLE_DOCTOR", "医生", "team"},
+		{"ROLE_DOCTOR", "医护", "team"},
 		{"ROLE_CS", "客服", "all_patients"},
 	} {
 		row, ok := byID[want.id]

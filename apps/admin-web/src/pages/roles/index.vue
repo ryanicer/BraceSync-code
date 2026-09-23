@@ -157,7 +157,7 @@ interface MatrixRow {
   scopeNote: string
 }
 
-// 医生 / 客服数据范围注记（PRD §7D.11）
+// 医护 / 客服数据范围注记（PRD §7D.11）
 const SCOPE_NOTES: Record<string, string> = {
   '/monitor': '仅本团队患者',
   '/alerts': '仅本团队患者',

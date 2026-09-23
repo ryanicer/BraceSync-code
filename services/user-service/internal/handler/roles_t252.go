@@ -31,7 +31,7 @@ const roleTargetType = "role"
 
 // roleTemplates 基础权限模板 —— **3 条**（Boss 2026-09-20 裁定，T277 收口）：
 // 与设计稿 权限控制.html:203「新增角色 → 基础权限模板」下拉、以及 000017 收敛后的
-// 3 个预置登录角色（运营管理员 / 医生 / 客服）一一对应。
+// 3 个预置登录角色（运营管理员 / 医护 / 客服）一一对应。
 // 🔴 「主任医师 / 主治医师 / 康复师 / 护士」是医护**职称**（走 doctors.title），不是角色，
 // 不得作为模板 —— T262 收口 roles 表、T263 收口设计稿、本卡收口这个下拉。
 // 键名对齐契约 RoleTemplate.key（前端 11.2 按本列表渲染，改键需同步契约）。
@@ -47,7 +47,7 @@ var roleTemplates = []model.RoleTemplateDTO{
 	//    patients、comm —— T252 沿 000016 旧种子留下的偏差，T277 只收口模板**条数与名称**，
 	//    是否连预设一起对齐已登记待 PM 裁定（改这里即改变新建角色的默认权限）。
 	{
-		Key: "doctor", Name: "医生", Description: "患者数据+告警处理+沟通",
+		Key: "doctor", Name: "医护", Description: "患者数据+告警处理+沟通",
 		Permissions: model.RolePermissionsDTO{Scope: "team", Modules: []string{
 			"dashboard", "realtime", "patients", "alerts", "comm", "orthosis",
 		}},

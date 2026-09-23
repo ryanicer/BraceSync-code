@@ -7,7 +7,7 @@
 INSERT INTO roles (role_id, name, description, permissions_json) VALUES
   ('ROLE_ADMIN', '运营管理员', '全量数据，无团队隔离',
     '{"scope":"all","modules":["dashboard","realtime","patients","teams","devices","alerts","comm","orthosis","install","tech","perm","config"]}'),
-  ('ROLE_DOCTOR', '医生', '仅本团队患者数据',
+  ('ROLE_DOCTOR', '医护', '仅本团队患者数据',
     '{"scope":"team","modules":["dashboard","realtime","alerts","orthosis"]}'),
   ('ROLE_CS', '客服', '仅患者沟通模块，全量患者',
     '{"scope":"all_patients","modules":["comm"]}')

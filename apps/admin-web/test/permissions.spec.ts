@@ -34,7 +34,7 @@ describe('ROLE_PAGE_MATRIX（PRD §7D.11）', () => {
   it('预置角色元信息完整', () => {
     expect(PRESET_ROLES.map((r) => r.key)).toEqual(['admin', 'doctor', 'cs'])
     expect(roleName('admin')).toBe('运营管理员')
-    expect(roleName('doctor')).toBe('医生')
+    expect(roleName('doctor')).toBe('医护') // T343：显示名随 Boss 2026-09-22 14:21 裁定「医生 → 医护」，key 仍是 doctor（上一行钉住）
     expect(roleName('cs')).toBe('客服')
   })
 })

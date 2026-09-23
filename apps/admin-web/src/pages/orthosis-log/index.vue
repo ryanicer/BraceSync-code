@@ -78,7 +78,7 @@
             <el-select v-model="patientId" placeholder="选择患者" class="patient-select" @change="loadPatientData">
               <el-option v-for="p in patients" :key="p.patientId" :label="`${p.name}（${p.patientId}）`" :value="p.patientId" />
             </el-select>
-            <el-tag v-if="auth.role === 'doctor'" type="info" effect="plain">医生工作台：仅本团队患者（PRD §7D.11）</el-tag>
+            <el-tag v-if="auth.role === 'doctor'" type="info" effect="plain">医护工作台：仅本团队患者（PRD §7D.11）</el-tag>
           </div>
 
           <template v-if="patientId">
