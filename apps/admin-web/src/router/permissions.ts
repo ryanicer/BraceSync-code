@@ -64,6 +64,56 @@ export function canAccess(role: RoleKey | string, path: string): boolean {
 }
 
 /**
+ * 页面模块词表（T345）：DB `roles.permissions_json.modules` 短键 与 前端路由路径 的唯一映射。
+ *
+ * 为什么要这张表：全仓原本两套词表并存且无映射 —— 库里存短键（`realtime` `comm` `perm`），
+ * 路由与权限页用路径（`/monitor` `/communication` `/roles`），于是权限页勾选的是路径、
+ * 落库要存短键，两端各说各话。
+ * key 与后端 roleTemplates（`services/user-service/internal/handler/roles_t252.go`）、
+ * 子权限目录（`permissions_t257.go` 的 Module）同一套词表；顺序与 `router/index.ts` 的
+ * pageRoutes 一致（= 设计稿侧栏顺序），页面中文标签取路由 `meta.title`，此处不重复登记。
+ *
+ * 🔴 本表 15 项而非设计稿侧栏 16 项：「异常报告」既无独立路由也无模块键，是否新建待 Boss 裁
+ * （T345 挂起项，见 docs PRD §7D 与 `docs/tasks/joe/T345-逐页对照清单-16页.md` §4）。
+ */
+export interface PageModule {
+  key: string
+  path: string
+}
+
+export const PAGE_MODULES: PageModule[] = [
+  { key: 'dashboard', path: '/dashboard' },
+  { key: 'realtime', path: '/monitor' },
+  { key: 'patients', path: '/patients' },
+  { key: 'teams', path: '/teams' },
+  { key: 'devices', path: '/devices' },
+  { key: 'alerts', path: '/alerts' },
+  { key: 'comm', path: '/communication' },
+  { key: 'orthosis', path: '/orthosis-log' },
+  { key: 'install', path: '/install-records' },
+  { key: 'review', path: '/review-records' }, // T345 补键（ROLE_PAGE_MATRIX 已放开、库里缺）
+  { key: 'review_tpl', path: '/review-templates' }, // T345 补键（同上）
+  { key: 'tech', path: '/technicians' },
+  { key: 'doctor_acct', path: '/doctor-accounts' }, // T345 补键（T315 加了页面没加模块键）
+  { key: 'perm', path: '/roles' },
+  { key: 'config', path: '/settings' },
+]
+
+export function moduleKeyOfPath(path: string): string | undefined {
+  return PAGE_MODULES.find((m) => m.path === path)?.key
+}
+
+export function pathOfModule(key: string): string | undefined {
+  return PAGE_MODULES.find((m) => m.key === key)?.path
+}
+
+/** 预置角色的模块短键（由路径矩阵换算，供 mock 与断言用；不代表库里该角色的实际值） */
+export function modulesForRole(role: RoleKey | string): string[] {
+  const pages = ROLE_PAGE_MATRIX[role as RoleKey] ?? []
+  return pages.map((p) => moduleKeyOfPath(p)).filter((k): k is string => !!k)
+}
+
+/**
  * 各角色登录 / 「返回首页」的落地页（T269 D3）。
  * 写死 /dashboard 会让无 dashboard 权限的客服落 403 后点不回有权页，形成死循环。
  * 必须落在该角色有权访问的页面内（由 permissions.spec.ts 断言防漂移）。

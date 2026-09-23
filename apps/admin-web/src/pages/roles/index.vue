@@ -60,7 +60,7 @@
                 <el-checkbox
                   :model-value="row.checked"
                   :disabled="!selectedRole || saving"
-                  @change="(val: boolean) => togglePerm(row.path, val)"
+                  @change="(val: boolean) => togglePerm(row.key, val)"
                 />
               </template>
             </el-table-column>
@@ -125,6 +125,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import type { RolePermissions } from '@bracesync/shared-types'
 import {
   fetchAdminRoles, fetchRolePermissionsApi, updateRolePermissionsApi,
   fetchRoleTemplates, createRoleApi, updateRoleApi, deleteRoleApi,
@@ -132,37 +133,31 @@ import {
 } from '../../api'
 import type { AdminRoleRow } from '../../mock/system'
 import { pageRoutes } from '../../router'
-import { ROLE_PAGE_MATRIX } from '../../router/permissions'
+import { PAGE_MODULES } from '../../router/permissions'
 
-// T253-11.2: 功能模块清单（key 对齐后端模板 modules 键，label 对齐路由标题）
-const MODULE_OPTIONS: { key: string; label: string }[] = [
-  { key: 'dashboard', label: '数据概览' },
-  { key: 'realtime', label: '实时监控' },
-  { key: 'patients', label: '患者管理' },
-  { key: 'teams', label: '团队管理' },
-  { key: 'devices', label: '设备管理' },
-  { key: 'alerts', label: '告警管理' },
-  { key: 'comm', label: '患者沟通' },
-  { key: 'orthosis', label: '矫形日志' },
-  { key: 'install', label: '安装记录' },
-  { key: 'tech', label: '技师管理' },
-  { key: 'perm', label: '权限控制' },
-  { key: 'config', label: '系统配置' },
-]
+// T253-11.2 / T345-1: 功能模块清单 —— 由 router/permissions 的 PAGE_MODULES 派生，
+// 不再自持一份硬编码副本（副本是「库里 12 键 / 页面 15 页」对不齐的成因之一）。
+// key = 落库的 modules 短键，label = 路由 meta.title。
+// 🔴 「异常报告」暂无路由与模块键，是否新建待 Boss 裁（T345 挂起项）。
+const titleByPath = new Map(pageRoutes.map((r) => [r.path, String(r.meta?.title ?? r.path)]))
+const MODULE_OPTIONS = PAGE_MODULES.map((m) => ({
+  key: m.key,
+  label: titleByPath.get(m.path) ?? m.path,
+}))
 
 interface MatrixRow {
-  path: string
+  key: string
   page: string
   checked: boolean
   scopeNote: string
 }
 
-// 医护 / 客服数据范围注记（PRD §7D.11）
+// 医护 / 客服数据范围注记（PRD §7D.11），按模块短键登记
 const SCOPE_NOTES: Record<string, string> = {
-  '/monitor': '仅本团队患者',
-  '/alerts': '仅本团队患者',
-  '/orthosis-log': '仅本团队患者',
-  '/communication': '仅查看与标记',
+  realtime: '仅本团队患者',
+  alerts: '仅本团队患者',
+  orthosis: '仅本团队患者',
+  comm: '仅查看与标记',
 }
 
 const roles = ref<AdminRoleRow[]>([])
@@ -170,22 +165,19 @@ const loading = ref(false)
 const permLoading = ref(false)
 const saving = ref(false)
 const selectedRole = ref<AdminRoleRow | null>(null)
-const currentPerms = ref<string[]>([])
+// 契约形状：GET 回来的 scope 与 items 原样保留，保存时只改 modules
+// （items 若被丢弃，后端读时会按目录物化成全勾 = 悄悄放开子权限）
+const current = ref<RolePermissions>({ scope: 'team', modules: [] })
 const dirty = ref(false)
 
 const matrixRows = computed<MatrixRow[]>(() => {
-  const perms = new Set(currentPerms.value)
-  return pageRoutes.map((r) => {
-    const path = r.path
-    // 默认值从预置矩阵取（首次加载前的兜底）
-    const fallbackAdmin = ROLE_PAGE_MATRIX.admin.includes(path)
-    return {
-      path,
-      page: String(r.meta?.title ?? path),
-      checked: perms.has(path) || (currentPerms.value.length === 0 && fallbackAdmin),
-      scopeNote: SCOPE_NOTES[path] ?? '',
-    }
-  })
+  const mods = new Set(current.value.modules)
+  return MODULE_OPTIONS.map((m) => ({
+    key: m.key,
+    page: m.label,
+    checked: mods.has(m.key),
+    scopeNote: SCOPE_NOTES[m.key] ?? '',
+  }))
 })
 
 async function selectRole(row: AdminRoleRow) {
@@ -193,28 +185,32 @@ async function selectRole(row: AdminRoleRow) {
   dirty.value = false
   permLoading.value = true
   try {
-    const res = await fetchRolePermissionsApi(row.roleId)
-    currentPerms.value = res.permissions
+    current.value = await fetchRolePermissionsApi(row.roleId)
   } catch (e: unknown) {
+    current.value = { scope: 'team', modules: [] }
     ElMessage.error(e instanceof Error ? e.message : '加载权限失败')
   } finally {
     permLoading.value = false
   }
 }
 
-function togglePerm(path: string, val: boolean) {
-  const set = new Set(currentPerms.value)
-  if (val) set.add(path)
-  else set.delete(path)
-  currentPerms.value = Array.from(set)
+function togglePerm(key: string, val: boolean) {
+  const set = new Set(current.value.modules)
+  if (val) set.add(key)
+  else set.delete(key)
+  current.value = { ...current.value, modules: Array.from(set) }
   dirty.value = true
 }
 
 async function savePermissions() {
   if (!selectedRole.value) return
+  if (current.value.modules.length === 0) {
+    ElMessage.warning('请至少勾选一个功能模块')
+    return
+  }
   saving.value = true
   try {
-    await updateRolePermissionsApi(selectedRole.value.roleId, currentPerms.value)
+    await updateRolePermissionsApi(selectedRole.value.roleId, current.value)
     dirty.value = false
     ElMessage.success('权限配置已保存')
   } catch (e: unknown) {
@@ -303,7 +299,7 @@ async function removeRole(row: AdminRoleRow) {
     ElMessage.success('角色已删除')
     if (selectedRole.value?.roleId === row.roleId) {
       selectedRole.value = null
-      currentPerms.value = []
+      current.value = { scope: 'team', modules: [] }
     }
     await loadRoles()
   } catch (e: unknown) {

@@ -51,7 +51,13 @@ func TestT252_ListRoleTemplates(t *testing.T) {
 	assert.Equal(t, []string{"运营管理员", "医护", "客服"},
 		[]string{list[0].Name, list[1].Name, list[2].Name})
 	assert.Equal(t, "all", list[0].Permissions.Scope)
-	assert.Len(t, list[0].Permissions.Modules, 12, "运营管理员 12 个模块全开")
+	// T345：admin 模板 = 15 页全集（补 review / review_tpl / doctor_acct 三键，与 seed+000026 后的
+	// ROLE_ADMIN 同集）。逐键断言而非只断条数：词表一旦被改名或漏项，这里必须变红。
+	assert.Equal(t, []string{
+		"dashboard", "realtime", "patients", "teams", "devices", "alerts",
+		"comm", "orthosis", "install", "review", "review_tpl", "tech",
+		"doctor_acct", "perm", "config",
+	}, list[0].Permissions.Modules, "运营管理员模板 = 15 个模块全开")
 	assert.Equal(t, "team", list[1].Permissions.Scope)
 	assert.Equal(t, "all_patients", list[2].Permissions.Scope, "客服：全量患者、仅沟通模块")
 	assert.Equal(t, []string{"comm"}, list[2].Permissions.Modules)

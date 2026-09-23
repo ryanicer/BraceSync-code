@@ -196,11 +196,18 @@ func TestT257_GetMyPermissions(t *testing.T) {
 }
 
 // TestT257_CatalogModulesAreGrantable 目录里的每个模块都必须在 ROLE_ADMIN 的预置 modules 里
-// （seed.sql:8-9）——否则权限页会渲染出一个连超管都没被授权的勾选项，
+// （seed.sql 预置角色块，补键后终态见迁移 000026）——否则权限页会渲染出一个连超管都没被授权的勾选项，
 // 保存时又被 validatePermissionItems 以「模块未勾」拒掉，页面自己锁死自己。
 func TestT257_CatalogModulesAreGrantable(t *testing.T) {
+	// 本列表是 seed.sql / 000026 / admin-web PAGE_MODULES 的**刻意镜像**（T345：15 页全集，
+	// 补 review / review_tpl / doctor_acct）。改词表三处都得改，漏一处这里变红；
+	// 前端侧同款门禁见 apps/admin-web/test/permissions.spec.ts「模块词表与落库/后端模板同源」。
 	seedAdminModules := []string{"dashboard", "realtime", "patients", "teams", "devices",
-		"alerts", "comm", "orthosis", "install", "tech", "perm", "config"}
+		"alerts", "comm", "orthosis", "install", "review", "review_tpl", "tech",
+		"doctor_acct", "perm", "config"}
+	// 只有页面级权限、无子权限分组的模块：设计稿 权限控制.html 未给它们画组内勾选项。
+	// T345 裁定（PM 23:02）：目录保持 9 组 23 项不扩，新补的三键同样只有页面级。
+	pageOnlyModules := []string{"orthosis", "install", "tech", "review", "review_tpl", "doctor_acct"}
 
 	items := materializeItems(seedAdminModules)
 	total := 0
@@ -209,10 +216,10 @@ func TestT257_CatalogModulesAreGrantable(t *testing.T) {
 	}
 	assert.Len(t, items, total, "超管应能勾上目录里的全部 %d 项", total)
 
-	// 反向：目录没覆盖的 seed 模块（orthosis/install/tech）不产出任何 item，保持只有页面级
+	// 反向：目录没覆盖的 seed 模块不产出任何 item，保持只有页面级
 	for _, key := range items {
 		module := permissionItemModule[key]
 		assert.Contains(t, seedAdminModules, module, "目录模块 %s 不在预置词表里", module)
-		assert.NotContains(t, []string{"orthosis", "install", "tech"}, module)
+		assert.NotContains(t, pageOnlyModules, module)
 	}
 }
