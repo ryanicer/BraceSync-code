@@ -42,6 +42,9 @@ type fakeStore struct {
 	doctorID         string
 	doctorFound      bool
 	doctorErr        error
+	doctorTeam       string // T350：DoctorTeamByAdmin 返回值
+	doctorTeamFound  bool
+	doctorTeamErr    error
 	patients         []repo.PatientRow
 	patientTotal     int64
 	patientsErr      error
@@ -243,6 +246,11 @@ func (f *fakeStore) RoleScope(_ context.Context, _ string) (string, error) {
 }
 func (f *fakeStore) DoctorIDByAdmin(_ context.Context, _ string) (string, bool, error) {
 	return f.doctorID, f.doctorFound, f.doctorErr
+}
+
+// DoctorTeamByAdmin T350：医护团队范围推导的可控替身（默认空 = 无团队归属，走 fail-closed）
+func (f *fakeStore) DoctorTeamByAdmin(_ context.Context, _ string) (string, bool, error) {
+	return f.doctorTeam, f.doctorTeamFound, f.doctorTeamErr
 }
 func (f *fakeStore) ListPatients(_ context.Context, flt repo.PatientFilter) ([]repo.PatientRow, int64, error) {
 	f.lastFilter = flt

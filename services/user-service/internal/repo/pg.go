@@ -289,6 +289,24 @@ func (s *PGStore) DoctorIDByAdmin(ctx context.Context, adminID string) (string, 
 	return doctorID, true, nil
 }
 
+// DoctorTeamByAdmin T350：admin_id → 医护所属团队 team_id。
+// 登录身份是 admins.admin_id（JWT sub），团队只挂在 doctors 行上，故必须走这一跳；
+// 无 doctor 行 / team_id 为 NULL 或空串都返回 ok=false —— 调用方据此收紧为空集，
+// 绝不退化成「不过滤」（那正是 T350 要修的口子）。
+func (s *PGStore) DoctorTeamByAdmin(ctx context.Context, adminID string) (string, bool, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(team_id, '') FROM doctors WHERE admin_id = $1`, adminID)
+	var teamID string
+	err := row.Scan(&teamID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return teamID, teamID != "", nil
+}
+
 // ─────────────────────────────────────────────────────────────
 // 患者（管理端只读，含 teams/doctors 姓名 join）
 // ─────────────────────────────────────────────────────────────
@@ -307,6 +325,9 @@ LEFT JOIN teams t ON t.team_id = p.team_id
 LEFT JOIN doctors d ON d.doctor_id = p.primary_doctor_id`
 
 // patientWhere 组装筛选 WHERE 与参数（keyword=姓名/患者ID ILIKE；teamId 精确）
+//
+// T350 数据范围：TeamScoped 为真表示「按身份必须限定团队」——此时 TeamID 为空是
+// 「无团队可看」，必须落空集，不能沿用下面「空串 = 不过滤」的运营侧语义。
 func patientWhere(f PatientFilter) (string, []any) {
 	var conds []string
 	var args []any
@@ -314,7 +335,9 @@ func patientWhere(f PatientFilter) (string, []any) {
 		args = append(args, "%"+f.Keyword+"%")
 		conds = append(conds, fmt.Sprintf(`(p.name ILIKE $%[1]d OR p.patient_id ILIKE $%[1]d)`, len(args)))
 	}
-	if f.TeamID != "" {
+	if f.TeamScoped && f.TeamID == "" {
+		conds = append(conds, "false")
+	} else if f.TeamID != "" {
 		args = append(args, f.TeamID)
 		conds = append(conds, fmt.Sprintf(`p.team_id = $%d`, len(args)))
 	}
@@ -857,6 +880,17 @@ func (s *PGStore) ListFeelingLogsAdmin(ctx context.Context, f FeelingLogAdminFil
 		where = append(where, fmt.Sprintf("fl.comfort_level = $%d", idx))
 		args = append(args, "discomfort")
 		idx++
+	}
+	// T350 数据范围：医护只能看本团队患者的感受日志（patients 已内连接，直接落 p.team_id）；
+	// TeamScoped 且无团队 → 空集。
+	if f.TeamScoped {
+		if f.TeamID == "" {
+			where = append(where, "false")
+		} else {
+			where = append(where, fmt.Sprintf("p.team_id = $%d", idx))
+			args = append(args, f.TeamID)
+			idx++
+		}
 	}
 	whereSQL := strings.Join(where, " AND ")
 

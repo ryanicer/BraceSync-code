@@ -87,8 +87,11 @@ func TestT252_Audit_TrailMiddlewareTracksConfiguredRoutesOnlyOnSuccess(t *testin
 
 func TestT252_Audit_PatientDetailReadIsTracked(t *testing.T) {
 	e := newEnv(t, true, true)
-	p := samplePatient()
+	p := samplePatient() // TeamID = TEAM01
 	e.store.patient = &p
+	// T350：医护读患者详情前先按 doctors.team_id 推数据范围，本用例守的是审计留痕，
+	// 故把该医护挂到患者同团队（无团队归属的用例见 team_scope_t350_test.go）。
+	e.store.doctorTeam = "TEAM01"
 
 	w, resp := e.do(http.MethodGet, "/api/v1/admin/patients/P20260001", nil,
 		map[string]string{"X-User-Id": "D0001", "X-Role": "ROLE_DOCTOR"})

@@ -376,6 +376,10 @@ type PatientFilter struct {
 	TeamID   string
 	Page     int
 	PageSize int
+	// TeamScoped T350：true 表示「调用者身份推导出必须限定团队」，此时 TeamID 为空是
+	// 「无团队可看」的空集语义，不能像过去那样当成「不按团队过滤」。
+	// 只应由 handler 层按 X-Role/X-User-Id 落值，绝不接受客户端自报。
+	TeamScoped bool
 }
 
 // FeelingLogSaveInput T188 患者端录入入参（字段已过 handler 层校验，长度不超列宽）。
@@ -397,6 +401,10 @@ type FeelingLogAdminFilter struct {
 	Feeling   string // fitted | discomfort（T256 #3 直接比对 comfort_level 列）
 	Page      int
 	PageSize  int
+	// TeamID/TeamScoped T350：医护按所属团队过滤（PRD §7D.11 数据范围规则）。
+	// TeamScoped 为真且 TeamID 为空 = 该医护无团队归属，返回空集而不是全量。
+	TeamID     string
+	TeamScoped bool
 }
 
 // TechInput 技师新建/编辑入参（PhoneEnc/PhoneHash 由 service/handler 层准备）
@@ -468,6 +476,9 @@ type Store interface {
 	PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error)
 	RoleScope(ctx context.Context, roleID string) (scope string, err error)
 	DoctorIDByAdmin(ctx context.Context, adminID string) (doctorID string, ok bool, err error)
+	// DoctorTeamByAdmin T350：admin_id → 所属团队 team_id（数据范围推导用）。
+	// 无 doctor 行或 team_id 为空/NULL 一律 ok=false，由 handler 层按 fail-closed 处理。
+	DoctorTeamByAdmin(ctx context.Context, adminID string) (teamID string, ok bool, err error)
 
 	// 患者（管理端只读）
 	ListPatients(ctx context.Context, f PatientFilter) ([]PatientRow, int64, error)
