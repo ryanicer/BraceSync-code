@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,8 +20,10 @@ type DailyWearStatsStore interface {
 	Upsert(ctx context.Context, stats []model.DailyWearStats) error
 	// AggregateDate 聚合指定 UTC 时间窗口内所有患者的明细 → 返回 DailyWearStats 切片。
 	// from/to 为 UTC 时间（由调用方传入 Asia/Shanghai 切日转换后的 UTC 范围），
-	// intervalMinutes 为采集间隔（佩戴分钟 = 帧数 × 间隔）。
-	AggregateDate(ctx context.Context, from, to time.Time, intervalMinutes int) ([]model.DailyWearStats, error)
+	// wearingThresholdN 为佩戴帧判定阈值（单帧 20 点峰值高于该值视为佩戴帧）。
+	// 口径（T352）：佩戴分钟 = 佩戴帧时间跨度 + 一个实测帧间隔；日均压力 = 佩戴帧 20 点全点均值；
+	// 异常数 = 同窗口 alerts 行数（与告警落库口径一致）。
+	AggregateDate(ctx context.Context, from, to time.Time, wearingThresholdN float64) ([]model.DailyWearStats, error)
 	// QueryRange 查询日期范围内的日聚合数据（报告生成用），按 stat_date ASC 排列。
 	QueryRange(ctx context.Context, patientID string, from, to time.Time) ([]model.DailyWearStats, error)
 	// ListPatientsWithStats 列出指定日期范围内有聚合数据的所有患者 ID（报告生成时批量遍历）。
@@ -88,14 +91,24 @@ func (r *RollupRepo) Upsert(ctx context.Context, stats []model.DailyWearStats) e
 }
 
 // aggregateDateSQL 按日聚合 pressure_records 明细：
-// 佩戴帧判定 max_pressure > $3（WearingThresholdN），佩戴分钟 = 佩戴帧数 × 采集间隔。
+// 佩戴帧判定 max_pressure > $3（配置 wearing_pressure_threshold，读不到回退默认）。
+// 佩戴分钟不走「帧数 × 配置采集间隔」（配置 30 分钟对实际约 31 秒上报，放大近 58 倍），
+// 改为回传佩戴帧时间跨度秒数，由 Go 侧按「跨度 + 一个实测间隔」折算（T352）。
+// 日均压力取佩戴帧 20 个采集点的全点均值（旧口径 AVG(max_pressure) 是帧峰值均值，
+// 与压力上限线不同层）。abnormal_count 取同窗口 alerts 行数 —— 与告警落库同源
+// （alert-service 评估命中才写行、命中时同步给实时 stat:today 的 abnormal_count 加一）。
 // 时间窗口：[$1, $2) UTC（由调用方传入 Asia/Shanghai 切日转换后的 UTC 范围）。
 const aggregateDateSQL = `
 SELECT patient_id,
        COUNT(*)                                          AS frame_count,
-       SUM(CASE WHEN max_pressure > $3 THEN 1 ELSE 0 END) AS wearing_frames,
-       AVG(max_pressure)                                 AS avg_pressure,
+       COUNT(*) FILTER (WHERE max_pressure > $3)         AS wearing_frames,
+       COALESCE(AVG((p01+p02+p03+p04+p05+p06+p07+p08+p09+p10+
+                     p11+p12+p13+p14+p15+p16+p17+p18+p19+p20) / 20.0)
+                FILTER (WHERE max_pressure > $3), 0)::real AS avg_pressure,
        MAX(max_pressure)                                 AS max_pressure,
+       COALESCE((EXTRACT(EPOCH FROM (
+         MAX(ts) FILTER (WHERE max_pressure > $3) - MIN(ts) FILTER (WHERE max_pressure > $3)
+       )))::float8, 0)                                   AS wear_span_seconds,
        (ARRAY_AGG(
          CASE WHEN max_pressure > 0 THEN
            'P' || LPAD((
@@ -125,14 +138,17 @@ SELECT patient_id,
            )::text, 2, '0')
          END
          ORDER BY max_pressure DESC
-       ) FILTER (WHERE max_pressure > 0))[1]              AS max_point
+       ) FILTER (WHERE max_pressure > 0))[1]              AS max_point,
+       (SELECT COUNT(*) FROM alerts a
+         WHERE a.patient_id = pressure_records.patient_id
+           AND a.ts >= $1 AND a.ts < $2)                  AS abnormal_count
 FROM pressure_records
 WHERE ts >= $1 AND ts < $2
 GROUP BY patient_id`
 
 // AggregateDate 聚合指定 UTC 时间窗口内的所有患者明细
-func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, intervalMinutes int) ([]model.DailyWearStats, error) {
-	rows, err := r.pool.Query(ctx, aggregateDateSQL, from, to, float32(model.WearingThresholdN))
+func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, wearingThresholdN float64) ([]model.DailyWearStats, error) {
+	rows, err := r.pool.Query(ctx, aggregateDateSQL, from, to, float32(wearingThresholdN))
 	if err != nil {
 		return nil, fmt.Errorf("aggregate pressure_records: %w", err)
 	}
@@ -143,11 +159,13 @@ func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, inte
 		var s model.DailyWearStats
 		var wearingFrames int
 		var avgP, maxP float32
+		var wearSpanSeconds float64
 		var maxPoint *string
-		if err := rows.Scan(&s.PatientID, &s.FrameCount, &wearingFrames, &avgP, &maxP, &maxPoint); err != nil {
+		if err := rows.Scan(&s.PatientID, &s.FrameCount, &wearingFrames, &avgP, &maxP,
+			&wearSpanSeconds, &maxPoint, &s.AbnormalCount); err != nil {
 			return nil, fmt.Errorf("scan aggregate row: %w", err)
 		}
-		s.WearMinutes = min(wearingFrames*intervalMinutes, model.MaxWearMinutesPerDay)
+		s.WearMinutes = wearMinutesFromSpan(wearingFrames, wearSpanSeconds)
 		s.AvgPressure = avgP
 		s.MaxPressure = maxP
 		if maxPoint != nil {
@@ -156,6 +174,18 @@ func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, inte
 		stats = append(stats, s)
 	}
 	return stats, rows.Err()
+}
+
+// wearMinutesFromSpan 佩戴分钟 = 佩戴帧时间跨度 + 一个实测帧间隔（跨度 /(帧数-1)），
+// 等价于「佩戴帧数 × 实测间隔」，与跨度口径在 ±1 帧内自洽（T352 验收判据）。
+// 不足两帧无法确立跨度，按 0 计（单个瞬时样本不构成时长，不用配置间隔臆造）。
+// 上限仍夹到物理日，防跨月/时区异常窗口把单日撑爆。
+func wearMinutesFromSpan(wearingFrames int, spanSeconds float64) int {
+	if wearingFrames < 2 || spanSeconds <= 0 {
+		return 0
+	}
+	minutes := int(math.Round(spanSeconds * float64(wearingFrames) / float64(wearingFrames-1) / 60))
+	return min(minutes, model.MaxWearMinutesPerDay)
 }
 
 const queryRangeSQL = `
