@@ -172,6 +172,15 @@ test.describe('工作台 · T344 数据视图', () => {
     await ws.getByRole('tab', { name: '数据视图' }).click()
     const pane = ws.locator('.el-tab-pane:visible')
     await expect(pane.locator('canvas')).toHaveCount(2)
+    // 画布的父容器必须定高：chart.js responsive 按父级内容高排版，父级若被标题/注记一起撑开就会每轮 resize 长一截
+    // （staging 实测旧写法涨到 2137px/6595px，见 T344 截图台账）
+    const parentHeights = await pane.locator('canvas').evaluateAll((els) =>
+      els.map((c) => Math.round((c.parentElement ?? c).getBoundingClientRect().height)))
+    expect(parentHeights).toHaveLength(2)
+    for (const h of parentHeights) {
+      expect(h).toBeGreaterThan(100)
+      expect(h).toBeLessThanOrEqual(260)
+    }
     // 稿面：两条虚线不写死数值 ⇒ 注记里回显的是 §7D.12 当前配置值
     await expect(pane.locator('.axis-note').first()).toContainText('当前取系统配置')
     // 点 label 而非 input：el-radio-button 的真 radio 被 __inner span 遮住，点 input 会被判 intercept

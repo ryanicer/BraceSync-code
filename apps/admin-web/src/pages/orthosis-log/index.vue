@@ -203,7 +203,9 @@
                       <el-radio-button :value="30">30 天</el-radio-button>
                     </el-radio-group>
                   </div>
-                  <Line v-if="!seriesIsEmpty(wearSeries)" class="chart" :data="pressureChartData" :options="pressureOptions" />
+                  <div v-if="!seriesIsEmpty(wearSeries)" class="chart-container">
+                    <Line :data="pressureChartData" :options="pressureOptions" />
+                  </div>
                   <el-empty v-else-if="!wearLoading" description="暂无日佩戴统计" :image-size="60" />
                   <div class="axis-note">
                     纵轴 = 日均压力（N），横轴 = 日期（后端按 Asia/Shanghai 切日）。
@@ -217,7 +219,9 @@
                     <span class="page-card-title">每日佩戴时长统计</span>
                     <span class="chart-unit">单位：小时</span>
                   </div>
-                  <Bar v-if="!seriesIsEmpty(wearSeries)" class="chart" :data="wearChartData" :options="wearOptions" />
+                  <div v-if="!seriesIsEmpty(wearSeries)" class="chart-container">
+                    <Bar :data="wearChartData" :options="wearOptions" />
+                  </div>
                   <el-empty v-else-if="!wearLoading" description="暂无日佩戴统计" :image-size="60" />
                   <div class="axis-note">
                     虚线为佩戴目标线，
@@ -775,8 +779,10 @@ onMounted(async () => {
   font-size: 12px;
   color: #999;
 }
-.chart-card .chart {
-  height: 220px;
+.chart-container {
+  position: relative;
+  width: 100%;
+  height: 240px;
 }
 .axis-note {
   margin-top: 10px;
