@@ -64,6 +64,28 @@ func TestPressureRecord_MaxPointAndDTO(t *testing.T) {
 	assert.False(t, dto.Calibrated) // T173：DTO 构造默认未校准，读取侧按校准结果回填
 }
 
+// T366：maxPressure 是库侧生成列（raw greatest(p01..p20)）的同源值，不是从校准后的 points 现算的。
+// 聚合的佩戴帧判据用的正是这一列，读接口不给它就无法独立复算。
+func TestPressureRecordDTO_CarriesRawMaxPressure(t *testing.T) {
+	rec := &PressureRecord{MaxPressure: 47.2, Ts: MinValidTime, UploadTime: MinValidTime}
+	rec.Points[2] = 30.2 // 点值刻意与生成列不同（库里点值可能是 ÷1000 后的另一层）
+
+	dto := rec.ToDTO(DefaultPressureThresholds())
+	assert.InDelta(t, 47.2, dto.MaxPressure, 1e-6, "DTO 原样透出库侧列，不用点值覆盖")
+	assert.NotEqual(t, 30.2, dto.MaxPressure, "不是 max(points)")
+}
+
+// T366：Redis 回退路径没有库侧列，按同一口径现算，保证两分支的 maxPressure 可比
+func TestMaxPointValue(t *testing.T) {
+	var p [PointCount]float32
+	p[0] = 1.5
+	p[7] = 9.9
+	assert.InDelta(t, 9.9, MaxPointValue(p), 1e-6)
+
+	var zero [PointCount]float32
+	assert.Zero(t, MaxPointValue(zero), "全 0 帧峰值就是 0，不兜底成假值")
+}
+
 func TestAppError_Constructors(t *testing.T) {
 	e := ErrInvalidParam("bad %s", "points")
 	assert.Equal(t, CodeInvalidParam, e.Code)

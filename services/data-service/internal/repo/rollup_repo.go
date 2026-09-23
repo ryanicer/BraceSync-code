@@ -52,10 +52,15 @@ type RollupRepo struct {
 // NewRollupRepo 创建 RollupRepo
 func NewRollupRepo(pool *pgxpool.Pool) *RollupRepo { return &RollupRepo{pool: pool} }
 
+// upsertDailyWearStatsSQL T366：后两列是聚合印章，只由本 UPSERT 写
+// （aggregated_at / wearing_threshold_n 由 RollupService 在调用前盖到每行上）。
+// 读侧据此把「聚合任务写的行」与「seed 示例行 / 印章上线前的历史行」分开；
+// DO UPDATE 一并覆盖，重算即重新盖章，不会留旧印章。
 const upsertDailyWearStatsSQL = `
 INSERT INTO daily_wear_stats
-  (patient_id, stat_date, wear_minutes, avg_pressure, max_pressure, max_point, frame_count, abnormal_count, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())
+  (patient_id, stat_date, wear_minutes, avg_pressure, max_pressure, max_point, frame_count, abnormal_count,
+   updated_at, aggregated_at, wearing_threshold_n)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9,$10)
 ON CONFLICT (patient_id, stat_date) DO UPDATE SET
   wear_minutes   = EXCLUDED.wear_minutes,
   avg_pressure   = EXCLUDED.avg_pressure,
@@ -63,7 +68,9 @@ ON CONFLICT (patient_id, stat_date) DO UPDATE SET
   max_point      = EXCLUDED.max_point,
   frame_count    = EXCLUDED.frame_count,
   abnormal_count = EXCLUDED.abnormal_count,
-  updated_at     = now()`
+  updated_at     = now(),
+  aggregated_at  = EXCLUDED.aggregated_at,
+  wearing_threshold_n = EXCLUDED.wearing_threshold_n`
 
 // Upsert 批量幂等 UPSERT
 func (r *RollupRepo) Upsert(ctx context.Context, stats []model.DailyWearStats) error {
@@ -75,6 +82,7 @@ func (r *RollupRepo) Upsert(ctx context.Context, stats []model.DailyWearStats) e
 		batch.Queue(upsertDailyWearStatsSQL,
 			s.PatientID, s.StatDate, s.WearMinutes, s.AvgPressure,
 			s.MaxPressure, s.MaxPoint, s.FrameCount, s.AbnormalCount,
+			s.AggregatedAt, s.WearingThresholdN,
 		)
 	}
 	br := r.pool.SendBatch(ctx, batch)
@@ -194,14 +202,15 @@ func wearMinutesFromSpan(wearingFrames int, spanSeconds float64) int {
 // 切日口径与 dashboard_repo 一致：业务时区固定 Asia/Shanghai，不依赖会话时区/参数隐式转换。
 const queryRangeSQL = `
 SELECT patient_id, stat_date, wear_minutes, avg_pressure, max_pressure,
-       COALESCE(max_point, ''), frame_count, abnormal_count, updated_at
+       COALESCE(max_point, ''), frame_count, abnormal_count, updated_at,
+       aggregated_at, wearing_threshold_n
 FROM daily_wear_stats
 WHERE patient_id = $1
   AND stat_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
   AND stat_date <  ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
 ORDER BY stat_date ASC`
 
-// QueryRange 查询日期范围内的日聚合数据
+// QueryRange 查询日期范围内的日聚合数据（含 T366 聚合印章两列，NULL = 无印章）
 func (r *RollupRepo) QueryRange(ctx context.Context, patientID string, from, to time.Time) ([]model.DailyWearStats, error) {
 	rows, err := r.pool.Query(ctx, queryRangeSQL, patientID, from, to)
 	if err != nil {
@@ -212,10 +221,15 @@ func (r *RollupRepo) QueryRange(ctx context.Context, patientID string, from, to 
 	var stats []model.DailyWearStats
 	for rows.Next() {
 		var s model.DailyWearStats
+		var aggregatedAt *time.Time
+		var thresholdN *float64
 		if err := rows.Scan(&s.PatientID, &s.StatDate, &s.WearMinutes, &s.AvgPressure,
-			&s.MaxPressure, &s.MaxPoint, &s.FrameCount, &s.AbnormalCount, &s.UpdatedAt); err != nil {
+			&s.MaxPressure, &s.MaxPoint, &s.FrameCount, &s.AbnormalCount, &s.UpdatedAt,
+			&aggregatedAt, &thresholdN); err != nil {
 			return nil, fmt.Errorf("scan daily_wear_stats: %w", err)
 		}
+		s.AggregatedAt = aggregatedAt
+		s.WearingThresholdN = thresholdN
 		stats = append(stats, s)
 	}
 	return stats, rows.Err()

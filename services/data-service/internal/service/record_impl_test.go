@@ -295,11 +295,29 @@ func newDailyWearStatsTestRow(pid, dateCST string, wearMin, frameCount, abnormal
 }
 
 // newDailyWearSvcWithNow 装配带 fake now 的 DailyWearService
+// frames 传 nil = 不注入明细佐证源：T366 之后无印章的行会判 unsupported（既有断言不碰来源档）
 func newDailyWearSvcWithNow(store repo.DailyWearStatsStore, now time.Time) *DailyWearService {
-	svc := NewDailyWearService(store)
+	svc := NewDailyWearService(store, nil)
 	svc.now = func() time.Time { return now }
 	return svc
 }
+
+// fakeDailyFrameCounter T366：DailyFrameCounter 内存实现（按 CST 日返回预置帧数）
+type fakeDailyFrameCounter struct {
+	counts map[string]int
+	err    error
+	calls  int
+}
+
+func (f *fakeDailyFrameCounter) CountFramesByCSTDay(_ context.Context, _ string, _, _ time.Time) (map[string]int, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.counts, nil
+}
+
+var _ repo.DailyFrameCounter = (*fakeDailyFrameCounter)(nil)
 
 func TestDailyWearService_HasData(t *testing.T) {
 	fakeNow := time.Date(2026, 9, 2, 10, 0, 0, 0, model.CSTZone()) // CST

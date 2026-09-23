@@ -11,7 +11,7 @@ export interface DateRange {
   end: string
 }
 
-/** 后端 DailyWearDayDTO 镜像（services/data-service/internal/model/model.go:373-381） */
+/** 后端 DailyWearDayDTO 镜像（services/data-service/internal/model/model.go:419-439） */
 export interface DailyWearDay {
   date: string
   wearMinutes: number
@@ -20,6 +20,20 @@ export interface DailyWearDay {
   maxPoint: string
   frameCount: number
   abnormalCount: number
+  /**
+   * T366 可解释性：这一行从哪来。后端恒发；此处可选是为了让 mock 行（无聚合印章的假数据）
+   * 与旧版本镜像编译得过。undefined 只可能出现在 mock，真接口不会缺。
+   * rollup = 聚合任务写的行（有印章，帧数与明细恒等）；
+   * corroborated = 无印章但声明帧数与该 CST 日实存明细帧数相等；
+   * unsupported = 其余（含明细不可查）——不可当作可复算的行。
+   */
+  provenance?: 'rollup' | 'corroborated' | 'unsupported'
+  /** T366：该患者该 CST 日 pressure_records 的实际明细帧数；null = 明细不可查，0 = 确实无帧 */
+  detailFrameCount?: number | null
+  /** T366：聚合时刻（RFC3339 UTC）；null = 无聚合印章 */
+  aggregatedAt?: string | null
+  /** T366：本行聚合实际生效的佩戴帧阈值（N），复算用同一个值；null = 无印章 */
+  wearingThresholdN?: number | null
 }
 
 const CST_DATE = new Intl.DateTimeFormat('en-CA', {

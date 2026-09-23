@@ -92,6 +92,11 @@ func TestT296_RealPayload_GridMatchesUpload_RedisPath(t *testing.T) {
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
 	require.Nil(t, appErr)
 	wantT296Grid(t, snap.PressureHeatmap)
+
+	// T366：Redis 回退分支也要给 maxPressure（无库侧生成列 ⇒ 按 greatest(p01..p20) 现算），
+	// 否则同一字段在两分支一侧有值一侧恒 0，消费方无法一视同仁。
+	require.Len(t, snap.PressureRecords, 1)
+	assert.InDelta(t, 0.599, snap.PressureRecords[0].MaxPressure, 1e-6, "raw 峰值与设备最大点同值")
 }
 
 func TestT296_BothReadPaths_AgreeOnGrid(t *testing.T) {

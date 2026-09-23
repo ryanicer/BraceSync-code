@@ -128,6 +128,12 @@ func TestCalibration_GetHistory_CalibratedDTO(t *testing.T) {
 	assert.True(t, page.List[0].Calibrated)
 	assert.InDelta(t, 11.3, page.List[0].Points[0].PressureValue, 0.001)
 	assert.InDelta(t, 0, page.List[0].Points[1].PressureValue, 0.001, "无上报点且无偏移 → 0")
+
+	// T366：同一行里 points 是校准后、maxPressure 是库侧生成列（raw），两者刻意不同层。
+	// 日聚合的佩戴帧判据判的是后者 ⇒ 只给前者就无法复算，且拿 max(points) 当代理会算错。
+	assert.InDelta(t, 12.3, page.List[0].MaxPressure, 0.001, "raw 峰值 = 上报原值，不减基线偏移")
+	assert.Greater(t, float64(page.List[0].MaxPressure), page.List[0].Points[0].PressureValue,
+		"raw 峰值必须高于校准后点值（两侧同层就说明有一侧被覆盖）")
 }
 
 func TestCalibration_BaselineLookupFail_ServesRaw(t *testing.T) {

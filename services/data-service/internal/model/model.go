@@ -228,6 +228,19 @@ func (r *PressureRecord) MaxPoint() string {
 	return PointID(idx)
 }
 
+// MaxPointValue 20 点里的最大值，与库侧生成列 max_pressure = greatest(p01..p20) 同口径。
+// T366：Redis 回退路径没有 DB 行，DTO 的 maxPressure 由本函数按同一口径现算，
+// 保证「实时帧」与「落库帧」的佩戴帧判据列可比（传 raw 点，不传校准后的点）。
+func MaxPointValue(points [PointCount]float32) float32 {
+	m := points[0]
+	for i := 1; i < PointCount; i++ {
+		if points[i] > m {
+			m = points[i]
+		}
+	}
+	return m
+}
+
 // PointID 点位下标（0 起）转点位编号（P01–P20）
 func PointID(i int) string { return fmt.Sprintf("P%02d", i+1) }
 
@@ -329,17 +342,23 @@ type PressureRecordDTO struct {
 	// Calibrated 是否已应用基线校准（T173 读侧派生：false = 缺基线，值为 ÷1000 后 raw）。
 	// 读取侧在减偏移后设置；DTO 构造默认 false，不得静默当已校准。
 	Calibrated bool `json:"calibrated"`
+	// MaxPressure 库侧生成列 max_pressure 的**原始**值（= raw p01..p20 取最大，迁移 000001:154-156）。
+	// T366：与 Points **不同层**——Points 是基线校准（减偏移）后的值，本列不做校准。
+	// 日聚合的佩戴帧判据用的正是这一列（rollup_repo.go aggregateDateSQL），
+	// 缺它则验收侧只能拿 max(points) 当代理，而代理与判据不是同一件东西（T352 交件 §三实测）。
+	MaxPressure float32 `json:"maxPressure"`
 }
 
 // ToDTO 领域实体 → 前端 DTO（阈值可配置，T173；Calibrated 由读取侧按校准结果回填）
 func (r *PressureRecord) ToDTO(th PressureThresholds) PressureRecordDTO {
 	return PressureRecordDTO{
-		RecordID:   fmt.Sprintf("%d", r.RecordID),
-		DeviceID:   r.DeviceID,
-		PatientID:  r.PatientID,
-		Timestamp:  r.Ts.UTC().Format(time.RFC3339),
-		Points:     BuildSensorPoints(r.Points, th),
-		UploadTime: r.UploadTime.UTC().Format(time.RFC3339),
+		RecordID:    fmt.Sprintf("%d", r.RecordID),
+		DeviceID:    r.DeviceID,
+		PatientID:   r.PatientID,
+		Timestamp:   r.Ts.UTC().Format(time.RFC3339),
+		Points:      BuildSensorPoints(r.Points, th),
+		UploadTime:  r.UploadTime.UTC().Format(time.RFC3339),
+		MaxPressure: r.MaxPressure,
 	}
 }
 
@@ -373,7 +392,28 @@ type DailyWearStats struct {
 	FrameCount    int
 	AbnormalCount int
 	UpdatedAt     time.Time
+	// T366 聚合印章（迁移 000027）：只由本服务聚合任务的 UPSERT 写，读侧据此判来源。
+	// 两者同生同灭；任一为 nil = 该行无印章 = 不是聚合任务写的（seed 示例行 / 印章上线前的历史行）。
+	AggregatedAt      *time.Time // 本次聚合发生的时刻（UTC）
+	WearingThresholdN *float64   // 本次聚合实际生效的佩戴帧判定阈值（N）
 }
+
+// HasRollupStamp 行上是否带聚合印章（两列都在才算；半枚按无印章处理）
+func (s *DailyWearStats) HasRollupStamp() bool {
+	return s.AggregatedAt != nil && s.WearingThresholdN != nil
+}
+
+// 日聚合行来源（T366，读侧派生，非表列）
+const (
+	// ProvenanceRollup 有聚合印章 ⇒ 本服务聚合任务写入，口径可信
+	ProvenanceRollup = "rollup"
+	// ProvenanceCorroborated 无印章，但行上声明的 frame_count 与该患者该 CST 日的
+	// pressure_records 明细帧数一致 ⇒ 数字被明细佐证，来源不明但不假
+	ProvenanceCorroborated = "corroborated"
+	// ProvenanceUnsupported 无印章且未被明细佐证（帧数不符，或明细根本不可查）
+	// ⇒ 示例行 / 手工行 / 明细已不在库，不得当作聚合口径证据
+	ProvenanceUnsupported = "unsupported"
+)
 
 // DailyWearDayDTO 患者日佩戴聚合响应（对齐 daily_wear_stats 表列 + camelCase 契约）
 type DailyWearDayDTO struct {
@@ -384,6 +424,18 @@ type DailyWearDayDTO struct {
 	MaxPoint      string  `json:"maxPoint"`      // 最大点位（P01..P20，空串兜底）
 	FrameCount    int     `json:"frameCount"`    // 日帧总数
 	AbnormalCount int     `json:"abnormalCount"` // 日异常/告警数
+	// ── T366 可解释性四字段（示例行与聚合行在读接口层可辨 + 可独立复算）──
+	Provenance string `json:"provenance"` // rollup | corroborated | unsupported
+	// DetailFrameCount 该患者该 CST 日 pressure_records 的**实际**明细帧数。
+	// 聚合行（rollup）与它恒等；不等即说明这一行不是从现存明细算出来的。
+	// nil（JSON null）= 明细不可查，区别于 0 = 查明细确实没有帧。
+	DetailFrameCount *int `json:"detailFrameCount"`
+	// AggregatedAt 聚合时刻（RFC3339 UTC）。nil（JSON null）= 无聚合印章，
+	// 不得退化成空串或零值时间（T361 同族教训：未知要用 null 表达）。
+	AggregatedAt *string `json:"aggregatedAt"`
+	// WearingThresholdN 本行聚合实际生效的佩戴帧阈值（N），复算日均/佩戴分钟用同一个值。
+	// nil（JSON null）= 无印章 ⇒ 复算者需自行取 sys_configs.wearing_pressure_threshold。
+	WearingThresholdN *float64 `json:"wearingThresholdN"`
 }
 
 // HealthReport health_reports 表行（PRD §7A.11 健康报告）
