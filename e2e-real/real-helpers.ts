@@ -175,9 +175,16 @@ export async function getAuthToken(page: Page): Promise<string | null> {
   return page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
 }
 
-/** 等待表格首行加载完成（列表通用） */
-export async function waitForTableLoaded(page: Page): Promise<void> {
-  await expect(page.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
+/**
+ * 等待表格首行加载完成（列表通用）。
+ *
+ * `scope` 必传当且仅当该页有第二张也会出数的表（T358）：不带作用域时，条件是
+ * 「页面里任意一张表的任意一行可见」，同页另一张表先返回就会误判为已就绪，
+ * 而用例读的是自己那张卡的行数 —— 于是读到 0 行判红。
+ */
+export async function waitForTableLoaded(page: Page, scope?: Locator): Promise<void> {
+  const root = scope ?? page
+  await expect(root.locator('.el-table__body-wrapper tbody tr').first()).toBeVisible({
     timeout: 20_000,
   })
 }
@@ -190,11 +197,22 @@ export async function waitForTableLoaded(page: Page): Promise<void> {
  * 旧表格的行会被当成本页「加载完成」信号，于是本页表格还没出数就开始断言
  * （T279 实跑 5.1 / 5.2 / 7.1 / 7.2 四条因此读到 0 行）。
  * 先按 URL 落位、再等行，才是本页的就绪信号。
+ *
+ * T358：URL 落位只堵住了「上一页残留」这一维，没堵住作用域那一维。
+ * T289 给患者管理页加了第二张表（批量患者-团队绑定）后，两张表各发各的请求
+ * （列表 pageSize=10 / 批量卡 pageSize=100），谁先返回谁就满足全局等待条件，
+ * 批量卡先返回时 5.1 仍读到 0 行 ⇒ 同一条竞态从作用域维度漏了回来。
+ * 故调用方一旦断言的是某张卡内的表，就把那张卡作为 `tableScope` 传进来。
  */
-export async function gotoMenuAndWaitTable(page: Page, title: string, routePath: string): Promise<void> {
+export async function gotoMenuAndWaitTable(
+  page: Page,
+  title: string,
+  routePath: string,
+  tableScope?: Locator,
+): Promise<void> {
   await gotoMenu(page, title)
   await expect(page).toHaveURL(new RegExp(`/${routePath}$`), { timeout: 15_000 })
-  await waitForTableLoaded(page)
+  await waitForTableLoaded(page, tableScope)
 }
 
 /** 取所有表格行中可见的 tag 文本（用于状态存在性验证） */
