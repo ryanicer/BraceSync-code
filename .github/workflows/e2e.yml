@@ -3,6 +3,19 @@
 # 定时/手动：真实模式（e2e-real/）打 staging 全量回归 + 契约冒烟
 # 对齐：docs/ §4 · docs/ §6.3
 #
+# ─── T324：真实模式门禁与「staging 部署顺序」解耦 ──────────────────────────────
+# e2e-real 打的是【已部署在 staging 上的包】，而 PR 门禁打的是【本分支代码】——两者天然错位：
+#   PR 里新写的行为断言，在本 PR 合并并部署之前对 staging 必假红 ⇒「要绿先部署 / 要部署先合并 /
+#   要合并先绿」的死锁（T322 实测 3 failed / 29 passed 即此）。
+# 解法不是放宽判据（禁 continue-on-error / `|| true`，那是 T304 要修的旧病），而是分两个阶段：
+#   · PR 阶段：断言照旧，只有【已部署包确实还没有该行为】的那几条按 post-deploy 显式跳过，
+#     跳过清单写进 job summary（e2e-real/report-post-deploy.mjs），reviewer 看得见「这几条没验」。
+#   · 定时 / 手动阶段（E2E_POST_DEPLOY_STRICT=1）：此时 staging 本该已追平 main，仍缺标记就是
+#     「合并了却从没在真环境验过」⇒ e2e-real/deploy-guard.ts 直接抛错判红。
+#   ⇒ 新行为断言不会永久挂在跳过里：要么部署上来验绿，要么把漏部署这件事红给所有人看。
+# 用例侧写法见 e2e-real/deploy-guard.ts 顶部注释；落位示例见 e2e-real/tests/09-doctor-accounts.spec.ts。
+# ──────────────────────────────────────────────────────────────────────────────
+#
 # ─── T304：staging 地址与变量名口径 ───────────────────────────────────────────
 # 唯一入口变量 = E2E_STAGING_URL（本文件 env 块定义，e2e-real 两个 config 只读它）。
 #   历史遗留的 STAGING_URL / BASE_URL / E2E_BASE_URL 三种写法已废除，不留别名：
@@ -229,6 +242,9 @@ jobs:
     # 预期计数：30 passed / 5 skipped / 0 failed。
     #   其中 26 条只读用例已于 2026-09-22 18:00 本地真打 staging 实测通过（26 passed / 5 skipped / 0 failed，
     #   含 1.3/1.6 两次失败登录）；另 4 条是上面列到的真写用例 6.2 / 6.3 / 6.5 / 8.2，只在 CI 里跑。
+    # T324 起再加一条：09-doctor-accounts.spec.ts 的 9.1（T315 医护账号页，main 有 / staging 未部署）。
+    #   PR 阶段它按 post-deploy 跳过（共 36 条：30 passed / 6 skipped）；staging 部署到含 T315 的构建后
+    #   自动转真跑，届时 31 passed / 5 skipped。部署后阶段若仍缺该标记 ⇒ deploy-guard 判红（见文件头）。
     # job 级并发锁：顶部 workflow 级 concurrency 按 PR 分组，多个 PR 的真跑会同时打 staging。
     # 写用例里 8.2 是「读现值 → +1 → 写回读到的值」，两条 run 交错会把 maxPatients 留在别人的
     # baseline 上（值仍合法但再也回不去 seed）。故所有 run 串行排队，不取消在跑的旧 run。
@@ -251,7 +267,15 @@ jobs:
       - name: Run e2e-real against staging
         # 用例先打一行 [e2e-real][login] GET <staging>/api/... 的请求日志，
         # 便于在 run 日志里核对「确实打了 staging」而不是打了空地址。
+        # T324：PR 阶段（本分支的构建必然还没上 staging）允许 post-deploy 显式跳过；
+        # 定时 / 手动阶段置 E2E_POST_DEPLOY_STRICT=1，那时仍缺标记即判红（e2e-real/deploy-guard.ts）。
+        env:
+          E2E_POST_DEPLOY_STRICT: ${{ github.event_name != 'pull_request' && '1' || '0' }}
         run: npx playwright test --config=./e2e-real/playwright.real.config.ts
+      - name: Summarise post-deploy skips（T324 门禁阶段结论，进 job summary）
+        # if: always() —— 判红的 run 也要能看到「红在哪几条、缺哪个构建标记」，否则又要人重跑一遍去猜
+        if: always()
+        run: node e2e-real/report-post-deploy.mjs >> "$GITHUB_STEP_SUMMARY"
       - name: Upload report
         if: failure()
         uses: actions/upload-artifact@v4
