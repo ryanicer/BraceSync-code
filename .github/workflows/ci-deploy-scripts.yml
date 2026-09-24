@@ -1,0 +1,72 @@
+# BraceSync 部署脚本静态检查（T364）
+# 背景：scripts/deploy/** 不在任何 PR workflow 的 paths 里 —— 部署脚本文法错误要等下一次
+#       现网跑批才暴露（且那时正好落在「① 步换掉正在解释的自身」这条隐患的窗口里）。
+# 定位 = 最小语法级检查，与 ci-backup-scripts.yml 同一口径：
+#   `bash -n` 失败即红；shellcheck 结论只作 PR 注释呈现，不做门禁（既有告警面广，先建可见性）。
+# 未在分支保护里设为 required check ⇒ 不阻塞合并。
+name: Deploy Scripts Static Check
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'scripts/deploy/**'
+      - '.github/workflows/ci-deploy-scripts.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-scripts-static:
+    name: bash -n + shellcheck (scripts/deploy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bash -n 语法检查（失败即红）
+        run: |
+          rc=0
+          shopt -s nullglob
+          for f in scripts/deploy/*.sh; do
+            if bash -n "$f" 2>/tmp/syn.err; then
+              echo "OK    $f"
+            else
+              echo "::error file=$f::bash -n 语法检查失败"
+              sed 's/^/        /' /tmp/syn.err
+              rc=1
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "部署脚本存在语法错误，现网跑批必失败"
+          fi
+          exit $rc
+
+      - name: shellcheck（informational，结论作 PR 注释）
+        run: |
+          shopt -s nullglob
+          files=(scripts/deploy/*.sh)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::notice::scripts/deploy 下无 .sh，跳过"
+            exit 0
+          fi
+          shellcheck --version
+          report=$(mktemp)
+          shellcheck -f gcc "${files[@]}" >"$report" 2>&1 || true
+          lines=$(mktemp)
+          grep -E '^[^:]+:[0-9]+:[0-9]+: [a-z]+: ' "$report" >"$lines" || true
+          total=$(wc -l < "$lines" | tr -d '[:space:]')
+          errors=$(grep -c ': error: ' "$lines" || true)
+          while IFS= read -r line; do
+            # shellcheck -f gcc 一行五段：file:line:col: severity: message
+            file=$(echo "$line" | cut -d: -f1)
+            ln=$(echo "$line" | cut -d: -f2)
+            sev=$(echo "$line" | cut -d: -f4 | tr -d '[:space:]')
+            msg=$(echo "$line" | cut -d: -f5-)
+            case "$sev" in
+              error) echo "::error file=$file,line=$ln::shellcheck$msg" ;;
+              warning) echo "::warning file=$file,line=$ln::shellcheck$msg" ;;
+              *) echo "::notice file=$file,line=$ln::shellcheck$msg" ;;
+            esac
+          done < "$lines"
+          echo "shellcheck 结论：共 ${total} 条（其中 error 级 ${errors}），本步骤不以其结果判定成败"

@@ -216,7 +216,7 @@ test.describe('工作台 · T344 数据视图', () => {
  *  - 感受表新增「佩戴感受」列 ⇒ 不适部位从 td[2] 变成 td[3]。
  * mock 对齐 apps/admin-web/src/mock/orthosis.ts（PT-001 林小雨）：
  *  方案 2 条（v2.1 / v1.0，保存新方案 mock 固定前插 v2.2）；
- *  感受 2 条 FL-001（胸段、未回复）/ FL-002（无不适部位、已回复）；
+ *  感受 2 条 FL-001（mock 存历史码 thoracic，T370 后显示「胸椎」、未回复）/ FL-002（无不适部位、已回复）；
  *  报告 周报 92.5% / 38.2N、月报 88.1%。
  * 写操作只改浏览器内存里的 mock，每条用例新开 context，不碰共享 seed。
  */
@@ -299,7 +299,9 @@ test.describe('工作台 · 佩戴感受 Tab（T301 G1）', () => {
     // 列序：0 日期 1 佩戴感受 2 舒适度 3 不适部位 4 患者备注 5 医生回复
     const d11 = rows.filter({ hasText: '2026-08-11' })
     await expect(d11).toContainText('贴合')
-    await expect(d11.locator('td').nth(3)).toHaveText('胸段')
+    // T370：mock FL-001 存历史英文码 thoracic，展示层向现行 8 区口径归并成「胸椎」
+    //（修前译成作废四区里的「胸段」，会与写侧新词「胸椎」在同一列并存）
+    await expect(d11.locator('td').nth(3)).toHaveText('胸椎')
     await expect(d11).toContainText('上午有点闷')
     await expect(rows.filter({ hasText: '2026-08-10' }).locator('td').nth(3)).toHaveText('-')
   })
