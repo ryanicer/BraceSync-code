@@ -9,6 +9,7 @@
 #   5. docker compose up -d 重建变更服务
 #   6. 冒烟：healthz → 登录 → 受保护端点 → 挂载前缀/深链（T336）→ 全过才输出 DEPLOY OK
 #   7. 任一环节失败即退出非零中止；幂等可重入；不碰生产 /opt/bracesync
+#   8. 自改隐患（T364）：先从只读快照副本执行，开头记基线、结尾比对工作树真本
 set -euo pipefail
 
 PROJECT_ROOT="/home/ubuntu/bracesync"
@@ -27,6 +28,38 @@ export PATH=/usr/local/go/bin:/usr/bin:/usr/sbin:$PATH
 log()  { echo "\033[1;32m[deploy]\033[0m $*"; }
 err()  { echo "\033[1;31m[ERROR]\033[0m $*" >&2; }
 fail() { err "$*"; exit 1; }
+
+# ⓪ T364 自改隐患隔离（必须在 ① 之前）
+#   本脚本就住在 ① 步会被 checkout/pull 替换的那个工作树里，而 bash 是边读边解释：
+#   文件一被换掉，解释器就按旧字节偏移续读新文件，后半段能整段跳过却照样打 DEPLOY OK
+#   （T339 18:36 轮实测漏跑挂载点守卫段）。做法：把真本装成只读快照后 exec 快照，
+#   快照不会被任何部署动作改动；同时记录工作树真本基线，交给 ⑧ 比对。
+WORKTREE_SCRIPT="$PROJECT_ROOT/scripts/deploy/deploy-staging.sh"
+SELFCHK_SRC="$PROJECT_ROOT/scripts/deploy/selfcheck-deploy-script.sh"
+STATE_FILE="${TMPDIR:-/tmp}/t364-deploy-selfcheck.$$.env"
+
+if [ -z "${T364_SNAP_ROOT:-}" ]; then
+  SNAP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/t364-deploy-snap.XXXXXX") || fail "mktemp 失败，中止（不退回原地解释）"
+  chmod 700 "$SNAP_ROOT"
+  trap 'rm -rf "${SNAP_ROOT:-}" "${STATE_FILE:-}"' EXIT
+  [ -r "$WORKTREE_SCRIPT" ] || fail "工作树内部署脚本不可读：$WORKTREE_SCRIPT"
+  [ -r "$SELFCHK_SRC" ] || fail "自检脚本缺失：$SELFCHK_SRC（本轮部署包不完整）"
+  install -m 400 "$WORKTREE_SCRIPT" "$SNAP_ROOT/deploy-staging.sh" || fail "部署脚本快照安装失败"
+  install -m 400 "$SELFCHK_SRC" "$SNAP_ROOT/selfcheck-deploy-script.sh" || fail "自检脚本快照安装失败"
+  bash "$SNAP_ROOT/selfcheck-deploy-script.sh" record "$WORKTREE_SCRIPT" "$STATE_FILE" || fail "自改基线记录失败"
+  export T364_SNAP_ROOT="$SNAP_ROOT" T364_STATE_FILE="$STATE_FILE"
+  exec bash "$SNAP_ROOT/deploy-staging.sh" "$@"
+fi
+
+if [ -z "${T364_SNAP_ROOT:-}" ] || [ ! -d "$T364_SNAP_ROOT" ] \
+   || [ -z "${T364_STATE_FILE:-}" ] || [ ! -r "$T364_STATE_FILE" ]; then
+  fail "快照环境缺失（T364_SNAP_ROOT / T364_STATE_FILE），请从 $WORKTREE_SCRIPT 正常入口调用"
+fi
+SNAP_ROOT="$T364_SNAP_ROOT"
+STATE_FILE="$T364_STATE_FILE"
+SELFCHK="$SNAP_ROOT/selfcheck-deploy-script.sh"
+trap 'rm -rf "${SNAP_ROOT:-}" "${STATE_FILE:-}"' EXIT
+log "⓪ 自改隔离：本次执行只读快照 $0"
 
 # ① git pull
 log "① 拉取最新代码 ..."
@@ -207,6 +240,22 @@ log "   ✅ 入口资源带 /admin/ 前缀 + 深链 /admin/patients → 200"
 log "⑦ 清理部署残留 ..."
 rm -f "$PROJECT_ROOT/bracesync-staging.tar.gz" "$PROJECT_ROOT/bracesync-staging.zip" 2>/dev/null || true
 log "   已清理仓库根目录部署残留"
+
+# ⑧ T364 自改隐患自检：① 步有没有换掉「正在被解释的那份脚本」
+log "⑧ 自改隐患自检（比对工作树真本 vs 开头基线）..."
+if bash "$SELFCHK" verify "$WORKTREE_SCRIPT" "$STATE_FILE"; then
+  log "   ✅ 跑批期间工作树内部署脚本字节未变，本轮无自改风险"
+else
+  SELFCHK_RC=$?
+  if [ "$SELFCHK_RC" = "2" ]; then
+    err "SELF-CHECK ALARM 本次部署区间内工作树内的 deploy-staging.sh 被 checkout 换掉了（基线 != 结束时）。"
+    err "   本次运行未受影响：执行的是 ⓪ 步装好的只读快照 $SNAP_ROOT/deploy-staging.sh"
+    err "   该行必须随部署回执原样转 PM 复核（说明这轮合并改过部署脚本本身）"
+  else
+    err "自检以 rc=$SELFCHK_RC 退出（既非未变也非「字节已变」），本次部署结论不可信，请人工核对"
+    exit 1
+  fi
+fi
 
 log ""
 log "========================================"
