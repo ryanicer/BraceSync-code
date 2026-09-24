@@ -98,7 +98,13 @@ func (h *Handler) listDevices(c *gin.Context) {
 		fail(c, appErr)
 		return
 	}
-	rows, total, err := h.list.ListDevices(c.Request.Context(), strings.TrimSpace(c.Query("keyword")), page, pageSize)
+	// T378：团队范围在查询之前推导（推导失败不得退化成「不过滤」）
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
+	rows, total, err := h.list.ListDevices(c.Request.Context(),
+		strings.TrimSpace(c.Query("keyword")), listReadScope(scope), page, pageSize)
 	if err != nil {
 		fail(c, model.ErrInternal("list devices failed"))
 		return
@@ -131,7 +137,13 @@ func (h *Handler) listInstallRecords(c *gin.Context) {
 		fail(c, appErr)
 		return
 	}
-	rows, total, err := h.list.ListInstallRecords(c.Request.Context(), strings.TrimSpace(c.Query("keyword")), page, pageSize)
+	// T378：与设备列表同一推导路径 —— 两页在医护身份下都必须按团队收窄
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
+	rows, total, err := h.list.ListInstallRecords(c.Request.Context(),
+		strings.TrimSpace(c.Query("keyword")), listReadScope(scope), page, pageSize)
 	if err != nil {
 		fail(c, model.ErrInternal("list install records failed"))
 		return

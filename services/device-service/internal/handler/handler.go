@@ -225,6 +225,10 @@ func (h *Handler) register(c *gin.Context) {
 
 // getDevice 设备详情
 func (h *Handler) getDevice(c *gin.Context) {
+	// T378：归属判定排在读之前；受限身份下跨团队与查无合一律 403
+	if !h.assertDeviceInScope(c, c.Param("deviceId")) {
+		return
+	}
 	dev, appErr := h.svc.GetDevice(c.Request.Context(), c.Param("deviceId"))
 	if appErr != nil {
 		fail(c, appErr)
@@ -235,6 +239,10 @@ func (h *Handler) getDevice(c *gin.Context) {
 
 // listBindings 绑定历史（验收：历史可追溯）
 func (h *Handler) listBindings(c *gin.Context) {
+	// T378：绑定历史泄露「该设备曾绑过哪些患者号」，同属设备详情面，门禁一致
+	if !h.assertDeviceInScope(c, c.Param("deviceId")) {
+		return
+	}
 	bindings, appErr := h.svc.ListBindings(c.Request.Context(), c.Param("deviceId"))
 	if appErr != nil {
 		fail(c, appErr)
@@ -392,6 +400,10 @@ func (h *Handler) getInstall(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		fail(c, model.ErrInvalidParam("invalid install id %q", c.Param("id")))
+		return
+	}
+	// T378：安装记录带技师备注与签名图链接，跨团队读与查无合一律 403
+	if !h.assertInstallInScope(c, id) {
 		return
 	}
 	rec, appErr := h.svc.GetInstall(c.Request.Context(), id)

@@ -29,7 +29,7 @@ func TestSQLi_IT_ListDevices_PayloadReturnsZeroRows(t *testing.T) {
 	store := NewPGStore(itPool)
 
 	for _, p := range devSQLiPayloads {
-		rows, total, err := store.ListDevices(ctx, p, 1, 20)
+		rows, total, err := store.ListDevices(ctx, p, ListScope{}, 1, 20)
 		require.NoError(t, err, "payload=%q 必须被参数化", p)
 		assert.Zero(t, total, "payload=%q 若注入成立将返回全表设备", p)
 		assert.Empty(t, rows, p)
@@ -42,7 +42,7 @@ func TestSQLi_IT_ListInstallRecords_PayloadReturnsZeroRows(t *testing.T) {
 	store := NewPGStore(itPool)
 
 	for _, p := range devSQLiPayloads {
-		rows, total, err := store.ListInstallRecords(ctx, p, 1, 20)
+		rows, total, err := store.ListInstallRecords(ctx, p, ListScope{}, 1, 20)
 		require.NoError(t, err, "payload=%q", p)
 		assert.Zero(t, total, "payload=%q", p)
 		assert.Empty(t, rows, p)
@@ -54,10 +54,10 @@ func TestSQLi_IT_StackedPayload_NoDestructiveEffect(t *testing.T) {
 	ctx := context.Background()
 	store := NewPGStore(itPool)
 
-	_, _, err := store.ListDevices(ctx, "'; DROP TABLE devices;--", 1, 20)
+	_, _, err := store.ListDevices(ctx, "'; DROP TABLE devices;--", ListScope{}, 1, 20)
 	require.NoError(t, err)
 
 	// 攻击后表结构完好：正常查询不报错
-	_, _, err = store.ListDevices(ctx, "", 1, 20)
+	_, _, err = store.ListDevices(ctx, "", ListScope{}, 1, 20)
 	require.NoError(t, err, "devices 表不得被堆叠注入破坏")
 }

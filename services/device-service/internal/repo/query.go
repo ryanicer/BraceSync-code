@@ -7,6 +7,7 @@ package repo
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -43,22 +44,56 @@ type InstallListItem struct {
 // ListStore 管理端查询契约（handler 注入点；单测 fake / 集成 PGStore）
 type ListStore interface {
 	// ListDevices 设备分页列表：keyword=设备ID/患者ID/患者姓名（ILIKE）
-	ListDevices(ctx context.Context, keyword string, page, pageSize int) ([]DeviceListItem, int64, error)
+	// scope T378：医护按所属团队收窄，不受限角色传零值
+	ListDevices(ctx context.Context, keyword string, scope ListScope, page, pageSize int) ([]DeviceListItem, int64, error)
 	// ListInstallRecords 安装记录分页列表：keyword=设备ID/患者ID/患者姓名/技师姓名（ILIKE）
-	ListInstallRecords(ctx context.Context, keyword string, page, pageSize int) ([]InstallListItem, int64, error)
+	ListInstallRecords(ctx context.Context, keyword string, scope ListScope, page, pageSize int) ([]InstallListItem, int64, error)
+	// DoctorTeamByAdmin T378：admin_id → 医护所属团队（无行 / team_id 为 NULL 时 ok=false）
+	DoctorTeamByAdmin(ctx context.Context, adminID string) (string, bool, error)
+	// DeviceInTeam T378：设备归属团队的只读探测（单资源读侧门禁用）
+	DeviceInTeam(ctx context.Context, deviceID, teamID string) (bool, error)
+	// InstallInTeam T378：安装记录归属团队的只读探测
+	InstallInTeam(ctx context.Context, installID int64, teamID string) (bool, error)
 }
 
 // likeArg keyword → ILIKE 参数（%% 转义无业务必要，keyword 走占位符不构成注入）
 func likeArg(keyword string) string { return "%" + keyword + "%" }
 
-// ListDevices 设备分页列表（patients 姓名 join；走 idx_devices_patient 反查小表可接受）
-func (r *PGStore) ListDevices(ctx context.Context, keyword string, page, pageSize int) ([]DeviceListItem, int64, error) {
-	base := `FROM devices d LEFT JOIN patients p ON p.patient_id = d.patient_id`
+// listPredicates 汇总 keyword 与团队两段谓词，产出 WHERE 片段与按序参数（T378）。
+//
+// 占位符序号一律按参数追加顺序推导 —— keyword 缺失时团队谓词占 $1，不得写死；
+// 两条列表（count 与 list）共用本函数，防止「总数一种口径、列表另一种口径」。
+//
+// TeamScoped 且 TeamID 为空（无团队归属的医护）落 `false` 恒假谓词 → 空集 + 总数 0，
+// 绝不退化成「不过滤」。
+func listPredicates(kwFormat, keyword, teamAlias string, scope ListScope) (string, []any) {
+	var conds []string
 	var args []any
 	if keyword != "" {
 		args = append(args, likeArg(keyword))
-		base += fmt.Sprintf(` WHERE (d.device_id ILIKE $%[1]d OR d.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d)`, 1)
+		conds = append(conds, fmt.Sprintf(kwFormat, 1))
 	}
+	if scope.TeamScoped {
+		if scope.TeamID == "" {
+			conds = append(conds, "false")
+		} else {
+			args = append(args, scope.TeamID)
+			conds = append(conds, fmt.Sprintf(`%s.team_id = $%d`, teamAlias, len(args)))
+		}
+	}
+	if len(conds) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// ListDevices 设备分页列表（patients 姓名 join；走 idx_devices_patient 反查小表可接受）
+func (r *PGStore) ListDevices(ctx context.Context, keyword string, scope ListScope, page, pageSize int) ([]DeviceListItem, int64, error) {
+	base := `FROM devices d LEFT JOIN patients p ON p.patient_id = d.patient_id`
+	where, args := listPredicates(
+		`(d.device_id ILIKE $%[1]d OR d.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d)`,
+		keyword, "p", scope)
+	base += where
 
 	var total int64
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) `+base, args...).Scan(&total); err != nil {
@@ -90,17 +125,16 @@ func (r *PGStore) ListDevices(ctx context.Context, keyword string, page, pageSiz
 }
 
 // ListInstallRecords 安装记录分页列表（患者/技师姓名 join，install_id 倒序）
-func (r *PGStore) ListInstallRecords(ctx context.Context, keyword string, page, pageSize int) ([]InstallListItem, int64, error) {
+func (r *PGStore) ListInstallRecords(ctx context.Context, keyword string, scope ListScope, page, pageSize int) ([]InstallListItem, int64, error) {
 	base := `FROM install_records i
 	         LEFT JOIN patients p ON p.patient_id = i.patient_id
 	         LEFT JOIN technicians t ON t.tech_id = i.tech_id
 	         LEFT JOIN baselines b ON b.baseline_id = i.baseline_id`
-	var args []any
-	if keyword != "" {
-		args = append(args, likeArg(keyword))
-		base += fmt.Sprintf(
-			` WHERE (i.device_id ILIKE $%[1]d OR i.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d OR t.name ILIKE $%[1]d)`, 1)
-	}
+	// install_records.patient_id 非空，故 p 缺失 = 患者行被删，等值不成立 → 一并排除（fail-closed）
+	where, args := listPredicates(
+		`(i.device_id ILIKE $%[1]d OR i.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d OR t.name ILIKE $%[1]d)`,
+		keyword, "p", scope)
+	base += where
 
 	var total int64
 	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) `+base, args...).Scan(&total); err != nil {
