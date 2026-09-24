@@ -31,13 +31,14 @@ export const adminPath = (routePath: string): string => `${ADMIN_MOUNT}${routePa
 /** 当前是否停在登录页（挂载前缀无关，供 waitForURL 用） */
 export const isLoginPath = (pathname: string): boolean => pathname === '/login' || pathname.endsWith('/login')
 
-/** 15 页路由（对齐 router/index.ts pageRoutes，T130 复查报告 / T135 复查模板管理 / T315 医护账号） */
+/** 16 页路由（对齐 router/index.ts pageRoutes，T130 复查报告 / T135 复查模板管理 / T315 医护账号 / T372 异常报告） */
 export const adminRoutes = {
   login: adminPath('/login'),
   forbidden: adminPath('/403'),
   dashboard: adminPath('/dashboard'),
   monitor: adminPath('/monitor'),
   patients: adminPath('/patients'),
+  abnormalReport: adminPath('/abnormal-report'), // T372 异常报告独立页（设计稿侧栏第 4 项）
   teams: adminPath('/teams'),
   devices: adminPath('/devices'),
   alerts: adminPath('/alerts'),
@@ -52,15 +53,15 @@ export const adminRoutes = {
   settings: adminPath('/settings'),
 } as const
 
-/** admin 全量 15 页路径（权限矩阵 ROLE_PAGE_MATRIX.admin，T315 新增 /doctor-accounts） */
+/** admin 全量 16 页路径（权限矩阵 ROLE_PAGE_MATRIX.admin，T315 新增 /doctor-accounts、T372 新增 /abnormal-report） */
 export const ADMIN_PAGES: string[] = [
-  '/dashboard', '/monitor', '/patients', '/teams', '/devices', '/alerts',
+  '/dashboard', '/monitor', '/patients', '/abnormal-report', '/teams', '/devices', '/alerts',
   '/communication', '/orthosis-log', '/install-records', '/review-records', '/review-templates',
   '/technicians', '/doctor-accounts', '/roles', '/settings',
 ].map(adminPath)
 
-/** doctor 可见 6 页 / cs 可见 1 页（ROLE_PAGE_MATRIX，T130 新增 /review-records，T135 新增 /review-templates） */
-export const DOCTOR_PAGES: string[] = ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records', '/review-templates'].map(adminPath)
+/** doctor 可见 7 页 / cs 可见 1 页（ROLE_PAGE_MATRIX，T130 /review-records，T135 /review-templates，T372 /abnormal-report） */
+export const DOCTOR_PAGES: string[] = ['/dashboard', '/monitor', '/abnormal-report', '/alerts', '/orthosis-log', '/review-records', '/review-templates'].map(adminPath)
 export const CS_PAGES: string[] = ['/communication'].map(adminPath)
 
 /**

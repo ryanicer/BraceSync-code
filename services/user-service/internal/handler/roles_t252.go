@@ -38,23 +38,24 @@ const roleTargetType = "role"
 var roleTemplates = []model.RoleTemplateDTO{
 	{
 		Key: "admin", Name: "运营管理员", Description: "系统全部权限",
-		// T345：与 seed/000026 后的 ROLE_ADMIN 同集 = 15 页全集。
+		// T345：与 seed/000026 后的 ROLE_ADMIN 同集 = 页全集。
 		// 词表来源 apps/admin-web/src/router/permissions.ts 的 PAGE_MODULES（模块短键 ↔ 路由路径）。
 		// 缺 review / review_tpl / doctor_acct 三键时，「系统全部权限」名不副实：
 		// 复查报告、复查模板管理（T135）、医护账号（T315）三页早已上线，模板却没登记。
+		// T372：补 abnormal_report 第 16 键（异常报告按 Boss 2026-09-24 裁定拆为独立页 /abnormal-report）。
 		Permissions: model.RolePermissionsDTO{Scope: "all", Modules: []string{
-			"dashboard", "realtime", "patients", "teams", "devices", "alerts",
+			"dashboard", "realtime", "patients", "abnormal_report", "teams", "devices", "alerts",
 			"comm", "orthosis", "install", "review", "review_tpl", "tech",
 			"doctor_acct", "perm", "config",
 		}},
 	},
 	// ⚠️ doctor 模板与 ROLE_DOCTOR 预置行**不等同**，T368 之后仍是两套值：
-	//    - 预置行：seed.sql 现 6 项 = dashboard / realtime / alerts / orthosis / review / review_tpl
-	//      （T368 按 Boss 2026-09-24 09:3x 裁定 (a)「补库」补了 review / review_tpl；只跑迁移的库
-	//      由 000017 播 4 项、再经 000028 前滚到同一终态）；
+	//    - 预置行：seed.sql 现 7 项 = dashboard / realtime / abnormal_report / alerts / orthosis /
+	//      review / review_tpl（T368 按 Boss 2026-09-24 09:3x 裁定 (a)「补库」补了 review / review_tpl，
+	//      T372 再补 abnormal_report；只跑迁移的库由 000017 播 4 项、再经 000028 → 000029 前滚到同一终态）；
 	//    - 本模板：多 patients、comm，缺 review、review_tpl —— 前两个是 T252 沿 000016 旧种子留下的
 	//      偏差，T277 只收口模板**条数与名称**，是否连预设一起对齐已登记待 PM 裁定
-	//      （改这里即改变新建角色的默认权限）⇒ T368 不动本模板，上面对预置行项数的描述才是本卡口径。
+	//      （改这里即改变新建角色的默认权限）⇒ 本模板仍不动（同 T368 口径），上面对预置行项数的描述才是本卡口径。
 	{
 		Key: "doctor", Name: "医护", Description: "患者数据+告警处理+沟通",
 		Permissions: model.RolePermissionsDTO{Scope: "team", Modules: []string{

@@ -40,6 +40,7 @@ export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
     '/dashboard',
     '/monitor',
     '/patients',
+    '/abnormal-report', // T372 异常报告独立页（设计稿侧栏第 4 项）
     '/teams',
     '/devices',
     '/alerts',
@@ -53,7 +54,7 @@ export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
     '/roles',
     '/settings',
   ],
-  doctor: ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records', '/review-templates'], // T135 医生可下载空白模板；T368 库里 ROLE_DOCTOR.modules 按 Boss 裁定 (a) 补到同 6 页（迁移 000028）
+  doctor: ['/dashboard', '/monitor', '/abnormal-report', '/alerts', '/orthosis-log', '/review-records', '/review-templates'], // T135 医生可下载空白模板；T368 库里 ROLE_DOCTOR.modules 按 Boss 裁定 (a) 补到同 6 页（迁移 000028）；T372 按 PRD §7D.11 第 4 行放开异常报告（医护 ✅ 仅本团队患者）
   cs: ['/communication'],
 }
 
@@ -73,8 +74,9 @@ export function canAccess(role: RoleKey | string, path: string): boolean {
  * 子权限目录（`permissions_t257.go` 的 Module）同一套词表；顺序与 `router/index.ts` 的
  * pageRoutes 一致（= 设计稿侧栏顺序），页面中文标签取路由 `meta.title`，此处不重复登记。
  *
- * 🔴 本表 15 项而非设计稿侧栏 16 项：「异常报告」既无独立路由也无模块键，是否新建待 Boss 裁
- * （T345 挂起项，见 docs PRD §7D 与 `docs/tasks/joe/T345-逐页对照清单-16页.md` §4）。
+ * T372 起本表 = 设计稿侧栏 16 项：Boss 2026-09-24 裁定 (a)「按设计稿拆独立页」，
+ * 「异常报告」补独立路由 /abnormal-report 与模块键 abnormal_report（原 T345 挂起项就此收口）。
+ * 库里预置角色 modules 由迁移 000029 前滚到同一集合。
  */
 export interface PageModule {
   key: string
@@ -85,6 +87,7 @@ export const PAGE_MODULES: PageModule[] = [
   { key: 'dashboard', path: '/dashboard' },
   { key: 'realtime', path: '/monitor' },
   { key: 'patients', path: '/patients' },
+  { key: 'abnormal_report', path: '/abnormal-report' }, // T372 第 16 键（子权限目录未收组，按 T368 已裁口径保持 9 组 23 项）
   { key: 'teams', path: '/teams' },
   { key: 'devices', path: '/devices' },
   { key: 'alerts', path: '/alerts' },
