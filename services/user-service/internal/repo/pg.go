@@ -403,6 +403,29 @@ func (s *PGStore) GetPatient(ctx context.Context, patientID string) (*PatientRow
 	return p, nil
 }
 
+// GetPatientInTeam T350：只按「患者 + 团队」取档案行，无命中返回 (nil, nil)。
+//
+// 与 GetPatient 的分工是给单资源读端点一条「越权与查无此人同结果」的读法：
+// 团队谓词进同一条 SQL，三种不可见（无此患者 / 患者在他团队 / 患者未分配团队）
+// 一律 (nil, nil)，handler 据此统一回 403，受限身份因此拿不到患者号存在性 oracle。
+//
+// teamID 为空串（医护无团队归属）同样恒不命中，且不下库；patients.team_id 可为 NULL，
+// 但 NULL 与空串做等值比较恒为未知，空团队这一侧靠本函数的短路保证，不依赖比较语义。
+func (s *PGStore) GetPatientInTeam(ctx context.Context, patientID, teamID string) (*PatientRow, error) {
+	if teamID == "" {
+		return nil, nil
+	}
+	row := s.pool.QueryRow(ctx, patientSelect+` WHERE p.patient_id = $1 AND p.team_id = $2`, patientID, teamID)
+	p, err := scanPatient(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 // ─────────────────────────────────────────────────────────────
 // 团队 / 医生
 // ─────────────────────────────────────────────────────────────

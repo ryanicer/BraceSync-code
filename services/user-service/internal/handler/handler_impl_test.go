@@ -272,6 +272,30 @@ func (f *fakeStore) GetPatient(_ context.Context, pid string) (*repo.PatientRow,
 	}
 	return nil, nil // 忠实模拟按 patient_id 主键查询：ID 不符即无行
 }
+
+// GetPatientInTeam T350：与 PGStore 同语义的替身 —— 空团队恒不命中（不下库），
+// 患者行不存在或所属团队不等（含 team_id 为 NULL）一律 (nil, nil)，由 handler 统一回 403。
+func (f *fakeStore) GetPatientInTeam(_ context.Context, pid, teamID string) (*repo.PatientRow, error) {
+	f.lastPatientQuery = pid
+	if f.patientErr != nil {
+		return nil, f.patientErr
+	}
+	if teamID == "" {
+		return nil, nil
+	}
+	inTeam := func(p *repo.PatientRow) bool {
+		return p != nil && p.PatientID == pid && p.TeamID != nil && *p.TeamID == teamID
+	}
+	if inTeam(f.patient) {
+		return f.patient, nil
+	}
+	for i := range f.patients {
+		if inTeam(&f.patients[i]) {
+			return &f.patients[i], nil
+		}
+	}
+	return nil, nil
+}
 func (f *fakeStore) ListTeams(_ context.Context) ([]repo.TeamRow, error) { return f.teams, f.teamsErr }
 func (f *fakeStore) TeamExists(_ context.Context, _ string) (bool, error) {
 	return f.teamExists, f.teamErr

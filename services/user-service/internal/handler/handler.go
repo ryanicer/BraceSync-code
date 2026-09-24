@@ -779,22 +779,32 @@ func (h *Handler) listPatients(c *gin.Context) {
 // getPatient GET /api/v1/admin/patients/:patientId —— 详情，不存在 404
 //
 // T350：医护访问非本团队患者 → 403（水平越权优先于 404，与 gateway proxy_services.go:64 同口径）。
+// 受限范围内「查无此人」与「跨团队」走同一次带团队谓词的读、同一个 403：否则 403 与 404 的差
+// 就是患者号存在性 oracle（本项目收未成年人病历，判据③ 点名不得泄露）。不受限角色仍是 404。
 func (h *Handler) getPatient(c *gin.Context) {
 	scope, allowed := h.resolveTeamScope(c)
 	if !allowed {
 		return
 	}
-	row, err := h.store.GetPatient(c.Request.Context(), c.Param("patientId"))
+	patientID := c.Param("patientId")
+
+	var row *repo.PatientRow
+	var err error
+	if scope.limited {
+		row, err = h.store.GetPatientInTeam(c.Request.Context(), patientID, scope.teamID)
+	} else {
+		row, err = h.store.GetPatient(c.Request.Context(), patientID)
+	}
 	if err != nil {
 		fail(c, model.ErrInternal("get patient failed"))
 		return
 	}
 	if row == nil {
-		fail(c, model.ErrNotFound("patient not found: %s", c.Param("patientId")))
-		return
-	}
-	if !scope.allowsPatient(patientTeamID(row.TeamID)) {
-		denyCrossTeam(c, c.Param("patientId"))
+		if scope.limited {
+			denyCrossTeam(c, patientID)
+			return
+		}
+		fail(c, model.ErrNotFound("patient not found: %s", patientID))
 		return
 	}
 	ok(c, toPatientDTO(*row))

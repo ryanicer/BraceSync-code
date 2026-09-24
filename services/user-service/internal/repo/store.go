@@ -482,6 +482,9 @@ type Store interface {
 	// 患者（管理端只读）
 	ListPatients(ctx context.Context, f PatientFilter) ([]PatientRow, int64, error)
 	GetPatient(ctx context.Context, patientID string) (*PatientRow, error)
+	// GetPatientInTeam T350：带团队谓词的详情读，「不存在 / 跨团队 / 未分配团队」一律 (nil, nil)，
+	// 由 handler 对受限身份统一回 403（防患者号存在性 oracle）。teamID 为空串同样恒不命中。
+	GetPatientInTeam(ctx context.Context, patientID, teamID string) (*PatientRow, error)
 
 	// 患者（管理端写，T057 写功能契约）
 	CreatePatient(ctx context.Context, in PatientInput) (*PatientRow, error)
