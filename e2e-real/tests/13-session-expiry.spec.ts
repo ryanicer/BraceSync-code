@@ -130,8 +130,10 @@ test.describe('13-令牌失效处置（T357）', () => {
     await expect(page.locator('.login-card')).toBeVisible({ timeout: 20_000 })
     await page.waitForTimeout(1500)
     await requireDeployedBuild(page, {
-      // 标记取 T384 新增的跨页提示载体键名（字面量，压缩不吞），它和导出通道的收口在同一个包里
-      marker: 'admin_auth_expired_notice',
+      // marker 只是可追溯的卡号标签（deploy-guard 强制 /^T\d{3}-/，CI 实测：不合规直接抛红）；
+      // 真正的存在性判据在 probe 里 —— 探 T384 新增的跨页提示载体键名（字符串字面量，压缩不吞），
+      // 它和导出通道的收口同属本卡构建，探到即 staging 已部署含 T384 的包。
+      marker: 'T384-export-401-unified-exit',
       why: '未部署 T384 时导出通道不走处置出口，本条判据无意义',
       probe: async (p) => markerInDeployedBundle(p, 'admin_auth_expired_notice'),
     })
