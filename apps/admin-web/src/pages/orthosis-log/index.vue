@@ -653,8 +653,11 @@ async function submitReply(row: FeelingLog) {
 
 onMounted(async () => {
   loadLogs()
-  // 真实模式的团队名靠 fetchTeams 填组织字典（api/index.ts teamNameOf），否则基本信息卡只能显示 TEAM01 编号
-  fetchTeams().catch(() => undefined)
+  // T350 第 8 轮打回项 2：GET /api/v1/teams 在网关是 admin 专属（rbac.go:97 adminOnlyPatterns），
+  // 医护 token 打过去必 403（Ella T345 观察项 R-teams）。这一枪只是填组织字典给基本信息卡兜底，
+  // 而团队名本就由 GET /admin/patients/:id 的 teamName 字段带出（user-service patientSelect LEFT JOIN teams），
+  // 故按角色发：非 admin 不发（同 T348 对 dashboard 页的处置——网关的 403 是正确行为，前端不照打）。
+  if (auth.role === 'admin') fetchTeams().catch(() => undefined)
   try {
     const res = await fetchPatients({ page: 1, pageSize: 50 })
     patients.value = res.list
