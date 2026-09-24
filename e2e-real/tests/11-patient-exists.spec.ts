@@ -273,7 +273,7 @@ test.describe('11-按 patientId 查询的存在性判定', () => {
   test('11.4 doctor_li（T350 返工 D-1/D-2/D-3）：患者号折进 403、本团队患者读得回', async ({ page }) => {
     const docToken = await realToken(page.request, DOCTOR_USERNAME)
     await requireDeployedBuild(page, {
-      marker: 'T350R-doctor-scope',
+      marker: 'T350-doctor-scope',
       why: `daily-wear 对医护仍吃 T264 self-only 403（文案不含「${SCOPE_DENY_TEXT}」）`,
       probe: () =>
         probeDenyText(page.request, docToken, `/api/v1/patients/${GONE_PID}/daily-wear?days=7`),
@@ -288,12 +288,12 @@ test.describe('11-按 patientId 查询的存在性判定', () => {
 
     if (!ownPids.length) {
       t350rGap(
-        'T350R-doctor-scope：doctor_li 所在团队在 staging 当前零患者 ⇒ 「本团队患者 200 读回」一格' +
+        'T350-doctor-scope：doctor_li 所在团队在 staging 当前零患者 ⇒ 「本团队患者 200 读回」一格' +
           '现网无样本，本 run 未跑（该格的代码侧对位判据在 handler 单测）；有人为该团队建档后此格自动转真跑',
       )
     } else if (!outPid) {
       t350rGap(
-        'T350R-doctor-scope：运营可见患者全部落在该医护团队内 ⇒ 「跨团队 403 与查无此人同形」一格无样本，本 run 未跑',
+        'T350-doctor-scope：运营可见患者全部落在该医护团队内 ⇒ 「跨团队 403 与查无此人同形」一格无样本，本 run 未跑',
       )
     }
 
