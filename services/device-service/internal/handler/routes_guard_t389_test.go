@@ -89,8 +89,6 @@ func t389DerivedWrites(t *testing.T, r *gin.Engine) []string {
 	return out
 }
 
-func t389KeyOf(g t389GatedWrite) string { return g.pattern }
-
 // ── 1. 覆盖性：每条写路由要么收口、要么带理由豁免 ────────────────────
 
 func TestT389_EveryDerivedWriteRouteIsGatedOrExempt(t *testing.T) {
