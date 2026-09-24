@@ -182,6 +182,60 @@ test.describe('03-告警管理', () => {
 })
 
 /**
+ * T369 · 医护侧「有几行」不是用例前提，是 staging 数据的函数
+ *
+ * 两条医护用例（3b.1 / 3c.2）原先硬要求 `tbody tr` 首行可见。但医护能看到几行告警，
+ * 取决于 `doctors.team_id` → T350 的按团队收窄：
+ *   2026-09-24 06:52 / 07:05 CI（run 35930312607 / 35931397177）里 D0001 挂在无患者的
+ *     「测试组1」→ 回包 total=0 → 两条判红（断言原文就是 spec.ts:225 与 spec.ts:329）；
+ *   同日 09:31 起同一构建（入口包 sha256 前缀 fd7e4a9691134c2f 未变）team 回到 seed 的
+ *     TEAM01 → total=2 → 两条自己转绿。
+ * ⇒ 红的是数据，不是产品；但门禁被这种漂移牵着走，等于所有人的 PR 随机红。
+ *
+ * 处置：把「本页自己发出的 GET /api/v1/alerts 回包」抓下来当分支依据 —— 有行走原来的
+ * 正向判据，0 行走空态判据（表格 0 行 + 「暂无数据」+ 分页「共 0 条」+ Tab3 的引导文案），
+ * 两条分支都保留 T351/T359 真正的判据（零 4xx、不发 admin 域那两枪、不发名录、无红条）。
+ * 顺带补一项字段级对账：UI 行数必须等于该次回包的 list 长度，且 list 长度 = min(total, pageSize)。
+ *
+ * 不在这里验「医护本该看到哪些行」—— 那是 T350 的收窄口径，另有卡在册。
+ */
+interface AlertsEcho {
+  status: number
+  total: number
+  listLen: number
+  pageSize: number
+}
+
+function armAlertsEcho(page: Page) {
+  const echoes: AlertsEcho[] = []
+  page.on('response', async (res) => {
+    const u = new URL(res.url())
+    if (u.pathname !== '/api/v1/alerts') return
+    const body = await res.json().catch(() => null)
+    echoes.push({
+      status: res.status(),
+      total: Number(body?.data?.total ?? Number.NaN),
+      listLen: Array.isArray(body?.data?.list) ? body.data.list.length : Number.NaN,
+      pageSize: Number(u.searchParams.get('pageSize') ?? Number.NaN),
+    })
+  })
+  return async (): Promise<AlertsEcho> => {
+    await expect
+      .poll(() => echoes.length, { timeout: 20_000, message: '本页一次都没发出 GET /api/v1/alerts' })
+      .toBeGreaterThan(0)
+    const last = echoes[echoes.length - 1]
+    expect(last.status, `告警列表接口回了 HTTP ${last.status}`).toBe(200)
+    expect(Number.isInteger(last.total) && last.total >= 0, `回包 total 不是非负整数：${JSON.stringify(last)}`).toBe(true)
+    expect(Number.isInteger(last.listLen), '回包 data.list 不是数组').toBe(true)
+    expect(
+      last.listLen,
+      `list 长度应 = min(total, pageSize)，实际 total=${last.total} pageSize=${last.pageSize} list=${last.listLen}`,
+    ).toBe(Math.min(last.total, last.pageSize))
+    return last
+  }
+}
+
+/**
  * T351 · 医护进「告警管理」不再被 admin 专属配置端点带出 403 红条
  *
  * 修前现场（staging 已部署包 + doctor_li，2026-09-24 01:4x 实测，见
@@ -209,6 +263,7 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
     page.on('request', (req) => {
       if (req.url().includes('/api/')) sentPaths.push(new URL(req.url()).pathname)
     })
+    const readEcho = armAlertsEcho(page)
 
     await realLogin(page, 'doctor_li')
     await expect(menuItems(page).first()).toBeVisible({ timeout: 20_000 })
@@ -221,9 +276,20 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
       probe: async (p) => (await p.getByRole('tab', { name: '告警规则配置' }).count()) === 0,
     })
 
-    // 页面级准入没被一起摘掉：列表照常有数据
-    await expect(tableRows(page).first()).toBeVisible({ timeout: 20_000 })
-    expect(await tableRows(page).count()).toBeGreaterThanOrEqual(1)
+    // 页面级准入没被一起摘掉：接口照常回 200，行数随该次回包对账（T369：不再把「至少 1 行」当前提）
+    const echo = await readEcho()
+    if (echo.total === 0) {
+      // 医护所在团队当前没有患者 ⇒ 0 行是 T350 收窄后的正确行为，页面应落到空态而不是白屏
+      await expect(tableRows(page)).toHaveCount(0)
+      await expect(page.locator('.el-table__empty-block')).toHaveCount(1)
+      await expect(page.locator('.el-table__empty-text')).toContainText('暂无数据')
+      await expect(page.locator('.el-pagination__total')).toContainText('共 0 条')
+      console.log('[e2e-real][t369] 3b.1 走「0 行」分支：医护团队无可见告警，判空态')
+    } else {
+      await expect(tableRows(page).first()).toBeVisible({ timeout: 20_000 })
+      expect(await tableRows(page).count(), '表格行数应等于本页回包的 list 长度').toBe(echo.listLen)
+      console.log(`[e2e-real][t369] 3b.1 走「有数据」分支：total=${echo.total} list=${echo.listLen}`)
+    }
 
     await expect(page.getByRole('tab', { name: '告警列表' })).toHaveCount(1)
     await expect(page.getByRole('tab', { name: '处理流程' })).toHaveCount(1)
@@ -278,7 +344,9 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
  *
  * 三条用例的分工：
  *   3c.1 接口层锁网关口径（含「名录仍 403」这条反向锁，防后来人顺手放开）；
- *   3c.2 UI 层锁医护点开 Tab3 全程零 4xx，并证明判据非空转：模板那一枪必须真的发出去过；
+ *   3c.2 UI 层锁医护点开 Tab3 全程零 4xx，并证明判据非空转：医护有可见告警时，模板那一枪
+ *        必须真的发出去过；0 行（T369 的数据漂移态）时改判 Tab3 引导态 + 「不该发的枪」，
+ *        点开那一腿不下线 —— 它由 3c.1 在接口层无条件覆盖。
  *   3c.3 运营侧不退化（名录照发、照 200）。
  *
  * 部署守卫：3c.1 探网关那一半（marker T359-flow-templates-staff-read），3c.2 探前端包那一半
@@ -322,11 +390,13 @@ test.describe('03c-告警处理流程 · 医护可读（T359）', () => {
   })
 
   test('3c.2 doctor_li：点开「流程」进 Tab3 全程零 4xx、无红条、不发名录枪', async ({ page }) => {
+    const readEcho = armAlertsEcho(page)
+
     await realLogin(page, 'doctor_li')
     await expect(menuItems(page).first()).toBeVisible({ timeout: 20_000 })
     await gotoMenu(page, '告警管理')
     await expect(page).toHaveURL(/\/alerts$/, { timeout: 15_000 })
-    await expect(tableRows(page).first()).toBeVisible({ timeout: 20_000 })
+    const echo = await readEcho()
 
     // 监听器必须在落到本页之后才挂：doctor 的落地页数据概览会自己打一发 403 GET /api/v1/teams
     // （T349 新发现 B 的现场，另一张卡），算进本条判据就变成拿别人的缺陷判我的红。
@@ -340,9 +410,23 @@ test.describe('03c-告警处理流程 · 医护可读（T359）', () => {
       if (r.url().includes('/api/')) sentPaths.push(new URL(r.url()).pathname)
     })
 
-    await tableRows(page).first().getByRole('button', { name: '流程' }).click()
-    await expect(page.getByRole('tab', { name: '处理流程' })).toHaveCount(1)
-    await page.waitForTimeout(2_500)
+    if (echo.total === 0) {
+      // 0 行 ⇒ 没有「流程」按钮可点（那是 T350 按团队收窄后的正常态，不是缺陷）。
+      // Tab3 只能停在引导态，就把「这一屏不该发出的枪」和空态文案验全；
+      // 「医护点开 Tab3 不 403」那一腿在 3c.1 走接口层，无条件跑，不依赖有没有行。
+      await expect(page.locator('.el-table__empty-block')).toHaveCount(1)
+      await page.getByRole('tab', { name: '处理流程' }).click()
+      await expect(page.locator('.page-card.flow-empty')).toHaveCount(1)
+      await expect(page.locator('.page-card.flow-empty')).toContainText('请先在')
+      await page.waitForTimeout(1_500)
+      expect(sentPaths.filter((p) => p.includes('/admin/flow/templates')), '未选告警时不该去拉模板列表').toEqual([])
+      console.log('[e2e-real][t369] 3c.2 走「0 行」分支：未点「流程」，模板那一腿由 3c.1 接口层无条件覆盖')
+    } else {
+      await tableRows(page).first().getByRole('button', { name: '流程' }).click()
+      await expect(page.getByRole('tab', { name: '处理流程' })).toHaveCount(1)
+      await page.waitForTimeout(2_500)
+      console.log(`[e2e-real][t369] 3c.2 走「有数据」分支：total=${echo.total} list=${echo.listLen}，已点「流程」进 Tab3`)
+    }
 
     await requireDeployedBuild(page, {
       marker: 'T359-process-tab-no-403',
@@ -351,8 +435,10 @@ test.describe('03c-告警处理流程 · 医护可读（T359）', () => {
     })
 
     expect(badRows, `医护点开处理流程后不得出现任何 4xx：${badRows.join('；')}`).toEqual([])
-    // 判据非空转：模板那一枪必须真的发出去过（否则「零 4xx」是被根本没请求骗出来的）
-    expect(sentPaths.some((p) => p.includes('/admin/flow/templates')), '应真的请求过模板端点').toBe(true)
+    if (echo.total > 0) {
+      // 判据非空转：模板那一枪必须真的发出去过（否则「零 4xx」是被根本没请求骗出来的）
+      expect(sentPaths.some((p) => p.includes('/admin/flow/templates')), '应真的请求过模板端点').toBe(true)
+    }
     // 名录那一枪按角色摘掉（前端降级），不是靠网关放行
     expect(sentPaths.filter((p) => p === '/api/v1/doctors'), '医护不应发出名录请求').toEqual([])
     await expect(page.locator('.el-message--error')).toHaveCount(0)
