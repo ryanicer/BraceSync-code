@@ -66,12 +66,23 @@ test.describe('13-令牌失效处置（T357）', () => {
     // 直接深链受保护页：守卫看 token+user 都在 ⇒ 放行 ⇒ 页面发真实请求 ⇒ 网关 401
     await page.goto(realRoutes.patients, { waitUntil: 'domcontentloaded' })
 
-    await expect.poll(() => page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY), {
-      message: '失效令牌没被清掉 = 处置分支仍未执行',
-      timeout: 20_000,
-    }).toBeNull()
+    // expect.poll 的谓词会撞上本次整页跳转：page.evaluate 在执行上下文被销毁时抛错，
+    // 而 poll 不吞错 ⇒ 同一个 run 的两次 attempt 分别红在这行（06:20）与下一行（06:11）——
+    // CI run 35926141178 实测。抛错只可能是「正在跳」，返回哨兵值继续轮询，落地后仍能读出真值。
+    const readLS = (k: string) =>
+      page.evaluate((key) => localStorage.getItem(key), k).catch(() => '__navigating__')
+
+    await expect
+      .poll(() => readLS(LS_TOKEN_KEY), {
+        message: '失效令牌没被清掉 = 处置分支仍未执行',
+        timeout: 20_000,
+      })
+      .toBeNull()
     await expect(page).toHaveURL(new RegExp(`${REAL_MOUNT}/login`), { timeout: 20_000 })
-    expect(isLoginPath(new URL(page.url()).pathname), '仍停在患者管理页 = 未跳登录页').toBe(false)
+    // 原判据写成 isLoginPath(...).toBe(false)，与上一行「URL 必须落在 login」互斥 ⇒ 处置真的发生时
+    // 必然红：staging 一部署上 T357，本条就永久红（本机 06:3x 对 staging 复现 Expected false /
+    // Received true）。改按该行消息的本意出判据：离开了患者管理页。
+    expect(new URL(page.url()).pathname, '仍停在患者管理页 = 未跳登录页').not.toBe(realRoutes.patients)
 
     // T336 深链口径：redirect 是不带挂载前缀的 router 内部路径，登录后可直接回填 push
     expect(new URL(page.url()).searchParams.get('redirect')).toBe('/patients')
