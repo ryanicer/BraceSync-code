@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   techRoutes, fillTechInput,
-  MOCK_DEVICE_ID,
+  MOCK_DEVICE_ID, SEED_PATIENT_ID,
   forceTechLoginMock, mockTechBLE,
 } from '../tech-helpers'
 
@@ -24,7 +24,7 @@ test.describe('技师端全链路', () => {
     const deviceInput = page.locator('.section').nth(1).locator('.form-input').first()
     await fillTechInput(deviceInput, MOCK_DEVICE_ID)
     const patientInput = page.locator('.section').nth(1).locator('.form-input').nth(1)
-    await fillTechInput(patientInput, 'pat-001')
+    await fillTechInput(patientInput, SEED_PATIENT_ID)
     await page.locator('.btn-primary', { hasText: '绑定设备' }).click()
     await expect(page.locator('.toast-text')).toContainText('设备绑定成功', { timeout: 3_000 })
     await page.waitForURL('**/pages/install/**', { timeout: 15_000 })

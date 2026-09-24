@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   techRoutes, fillTechInput,
-  MOCK_DEVICE_ID,
+  MOCK_DEVICE_ID, SEED_PATIENT_ID,
   forceTechLoginMock, mockTechBLE,
 } from '../tech-helpers'
 
@@ -20,7 +20,7 @@ async function goToInstallViaBind(page) {
   const deviceInput = page.locator('.section').nth(1).locator('.form-input').first()
   await fillTechInput(deviceInput, MOCK_DEVICE_ID)
   const patientInput = page.locator('.section').nth(1).locator('.form-input').nth(1)
-  await fillTechInput(patientInput, 'pat-001')
+  await fillTechInput(patientInput, SEED_PATIENT_ID)
   await page.locator('.btn-primary', { hasText: '绑定设备' }).click()
   await page.waitForURL('**/pages/install/**', { timeout: 15_000 })
 }
@@ -55,7 +55,7 @@ test.describe('安装流程 3 阶段', () => {
   test('阶段一：患者信息确认并推进', async ({ page }) => {
     await expect(page.locator('.card-title', { hasText: '患者信息确认' })).toBeVisible()
     await expect(page.getByText('张明远')).toBeVisible()
-    await expect(page.getByText('pat-001')).toBeVisible()
+    await expect(page.getByText(SEED_PATIENT_ID)).toBeVisible()
     await expect(page.getByText('14 岁')).toBeVisible()
     await expect(page.getByText('特发性脊柱侧弯')).toBeVisible()
     await page.locator('.btn-primary', { hasText: '确认，下一步' }).click()

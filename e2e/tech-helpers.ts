@@ -12,6 +12,11 @@ export const TECH_PHONE = '13900000001' // T041 播种技师账号（T037 联调
 export const MOCK_TECH_TOKEN = 'mock-tech-token-ci-001'
 export const MOCK_TECH_ID = 'TECH_CI_001'
 export const MOCK_DEVICE_ID = 'PRS-ML05-RC-001'
+/**
+ * T362：e2e 里填的患者 ID 用真实形态（后台 `newPatientID()` = P + 年份 + 12 位 hex；
+ * `P20260001` 是 seed 患者号）。旧值 `pat-001` 现网零命中，用它跑通用例等于把错口径钉死。
+ */
+export const SEED_PATIENT_ID = 'P20260001'
 
 /** uni-app H5 hash 路由直达（技师端无 tabBar） */
 export const techRoutes = {
