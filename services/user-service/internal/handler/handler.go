@@ -1340,9 +1340,15 @@ func (h *Handler) feedbackStats(c *gin.Context) {
 
 type processFeedbackRequest struct {
 	ReplyContent *string `json:"replyContent"`
+	// MarkResolved T374：仅标记已处理（落 resolved，不动已存备注）。与 replyContent 互斥。
+	MarkResolved bool `json:"markResolved"`
 }
 
-// processFeedback POST /api/v1/feedbacks/:feedbackId/process —— 回复落库 + 标记处理
+// processFeedback POST /api/v1/feedbacks/:feedbackId/process —— 处理备注落库 / 标记已处理
+//
+// T374 按 PRD V3.26 §7D.7 把本页两个写动作分流：带 replyContent 是「保存处理备注」
+// （pending → replied），带 markResolved 是「标记为已处理」（→ resolved）。
+// 旧版靠「备注有没有带上来」猜动作，既落不到 resolved，又会把已存备注洗成空值。
 func (h *Handler) processFeedback(c *gin.Context) {
 	feedbackID, err := strconv.ParseInt(c.Param("feedbackId"), 10, 64)
 	if err != nil || feedbackID < 1 {
@@ -1356,11 +1362,19 @@ func (h *Handler) processFeedback(c *gin.Context) {
 			return
 		}
 	}
+	if req.MarkResolved && req.ReplyContent != nil {
+		fail(c, model.ErrInvalidParam("markResolved and replyContent are mutually exclusive"))
+		return
+	}
+	if !req.MarkResolved && (req.ReplyContent == nil || strings.TrimSpace(*req.ReplyContent) == "") {
+		fail(c, model.ErrInvalidParam("replyContent is required unless markResolved"))
+		return
+	}
 	if req.ReplyContent != nil && len(*req.ReplyContent) > 500 {
 		fail(c, model.ErrInvalidParam("replyContent exceeds 500 chars"))
 		return
 	}
-	exists, err := h.store.ProcessFeedback(c.Request.Context(), feedbackID, operatorID(c, "ops"), req.ReplyContent)
+	exists, err := h.store.ProcessFeedback(c.Request.Context(), feedbackID, operatorID(c, "ops"), req.ReplyContent, req.MarkResolved)
 	if err != nil {
 		fail(c, model.ErrInternal("process feedback failed"))
 		return

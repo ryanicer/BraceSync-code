@@ -87,7 +87,7 @@ test('客服工作链路：登录 → 患者沟通 → 标记处理', async ({ p
   // 右侧面板点"仅标记已处理"
   const rightPane = page.locator('.right-pane')
   await rightPane.getByRole('button', { name: '仅标记已处理' }).click()
-  await expect(adminMessage(page)).toContainText('已标记处理')
+  await expect(adminMessage(page)).toContainText('已标记为已处理')
   await expect(pendingRow).toContainText('已解决')
 
   // 查看已回复反馈 FB-002（点击行，右侧面板显示回复内容）

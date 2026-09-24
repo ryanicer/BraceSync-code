@@ -376,9 +376,13 @@ export async function fetchFeedbacks(params: { keyword?: string }): Promise<Feed
   return request<Feedback[]>({ url: '/api/v1/feedbacks', data: params as Record<string, unknown> })
 }
 
-export async function processFeedbackApi(feedbackId: string, reply?: string): Promise<void> {
-  if (USE_MOCK) { await delay(); feedbackMock.mockProcessFeedback(feedbackId, reply); return }
-  await request<null>({ url: `/api/v1/feedbacks/${feedbackId}/process`, method: 'POST', data: { replyContent: reply } })
+// T374：本页两个写动作分流 —— 带 replyContent 是「保存处理备注」，带 markResolved 是「标记为已处理」
+export async function processFeedbackApi(
+  feedbackId: string,
+  payload: { replyContent?: string; markResolved?: boolean },
+): Promise<void> {
+  if (USE_MOCK) { await delay(); feedbackMock.mockProcessFeedback(feedbackId, payload); return }
+  await request<null>({ url: `/api/v1/feedbacks/${feedbackId}/process`, method: 'POST', data: payload })
 }
 
 // ========== Orthosis（矫形日志 / 医生工作台） ==========

@@ -536,7 +536,8 @@ type Store interface {
 	CreateFeedback(ctx context.Context, in FeedbackCreateInput) (int64, error)
 	// FeedbackStats 患者沟通统计栏（T248 7.1）：今日区间由调用方按 Asia/Shanghai 切日传入
 	FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time) (FeedbackStatsRow, error)
-	ProcessFeedback(ctx context.Context, feedbackID int64, handlerID string, replyContent *string) (bool, error)
+	// ProcessFeedback T374：markResolved 决定落 resolved 还是 replied；replyContent 为 nil 时不动已存备注
+	ProcessFeedback(ctx context.Context, feedbackID int64, handlerID string, replyContent *string, markResolved bool) (bool, error)
 
 	// 矫形方案
 	ListPlans(ctx context.Context, patientID string) ([]OrthosisPlanRow, error)

@@ -94,8 +94,8 @@ test.describe('07-患者沟通', () => {
     })
   })
 
-  test.describe('回复并标记处理（写）', () => {
-    test('7.3 找到 pending 反馈 → 详情 → 填回复（T053回复-xxx）→ 提交成功 + 状态变更', async ({ page }) => {
+  test.describe('处理备注与标记已处理（写）', () => {
+    test('7.3 找到 pending 反馈 → 详情 → 填处理备注（T053回复-xxx）→ 保存成功 + 状态变更', async ({ page }) => {
       // T279 复跑停跑：回复对象是 seed 反馈，POST /feedbacks/:id/process 单向、退不回待处理。
       //   ⚠️ PM 裁定（本卡 2026-09-21 13:00）把 7.3 列入「跑（自建唯一命名数据、跑完删除）」，
       //      但后台没有「新建反馈」入口/端点 —— 反馈只能由患者端提交 ⇒ 7.3 的对象必然是共享 seed 反馈，
@@ -126,21 +126,22 @@ test.describe('07-患者沟通', () => {
       await expect(replyInput).toBeVisible({ timeout: 5_000 })
       const replyText = `${uniqueName(E2E_REPLY_PREFIX)} 已安排门诊复查，跟进处理中`
       await replyInput.fill(replyText)
-      const submitBtn = pane.locator('.reply-actions').getByRole('button', { name: '回复并标记' })
+      const submitBtn = pane.locator('.reply-actions').getByRole('button', { name: '保存处理备注' })
       await expect(submitBtn).toBeVisible({ timeout: 5_000 })
       await submitBtn.click()
       // T279 收紧：旧写法「没抓到提示 = 直接过」；按准确文案轮询
-      // （communication/index.vue submitReply → ElMessage.success('回复成功')）
-      await expect(adminMessage(page)).toHaveText('回复成功', { timeout: 20_000 })
+      // （communication/index.vue saveNote → ElMessage.success('处理备注已保存')）
+      // T374 改文案：staging 需部署到带本次改动的构建后本条才成立（当前 7.3 仍被上面 skip 挡住）
+      await expect(adminMessage(page)).toHaveText('处理备注已保存', { timeout: 20_000 })
 
-      // 详情面板新增「回复」项，状态由待处理变已回复
+      // 详情面板新增「客服处理备注」项（T374 文案口径），状态由待处理变已回复
       const shown = await readDescriptions(pane)
       const byLabel = Object.fromEntries(shown.map((f) => [f.label, f.value]))
-      expect(shown.map((f) => f.label), '回复后详情字段').toEqual([
-        '患者', '类型', '内容', '提交时间', '状态', '回复',
+      expect(shown.map((f) => f.label), '保存备注后详情字段').toEqual([
+        '患者', '类型', '内容', '提交时间', '状态', '客服处理备注',
       ])
       expect(byLabel['状态']).toBe('已回复')
-      expect(byLabel['回复']).toBe(replyText)
+      expect(byLabel['客服处理备注']).toBe(replyText)
       // 列表该行 tag 同步变已回复
       await expect(targetRow.locator('.el-tag')).toHaveText('已回复', { timeout: 10_000 })
     })
