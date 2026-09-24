@@ -5,8 +5,10 @@ import { AUTH_EXPIRED_MESSAGE, handleAuthExpired, isAuthExpired } from './sessio
 /**
  * T357：会话失效处置的唯一出口——清凭据 + 整页回登录页（带 redirect 回原页），并抛中文文案，
  * 让调用方把「登录已过期」提示给用户，而不是把网关英文原样渲染（同 T326 技师端口径）。
+ * T384：导出 CSV 那类自带 Authorization 的裸 fetch 通道也必须从这里出去，
+ * 否则「唯一出口」名不副实（那条通道原先只 throw，死令牌既不清也不跳登录）。
  */
-function expiredSession(): never {
+export function expiredSession(): never {
   handleAuthExpired()
   throw new Error(AUTH_EXPIRED_MESSAGE)
 }

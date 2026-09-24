@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import {
   realRoutes, isLoginPath, submitRealLoginForm, LS_TOKEN_KEY, LS_USER_KEY, REAL_MOUNT,
+  realLogin, adminMessage,
 } from '../real-helpers'
 import { requireDeployedBuild } from '../deploy-guard'
 
@@ -110,5 +111,55 @@ test.describe('13-令牌失效处置（T357）', () => {
     await page.waitForTimeout(4000)
     expect(isLoginPath(new URL(page.url()).pathname), '正常令牌被误判失效 ⇒ 踢回了登录页').toBe(false)
     expect(await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY), '正常令牌被清掉了').toBeTruthy()
+  })
+
+  // T384：导出 CSV 是第二条自带 Authorization 的裸 fetch 通道，修前它只 throw「导出失败」——
+  // 现场是「进异常报告页会被弹回登录页（页面数据走 request()），但在页上点导出不跳」：
+  // 凭据不清、不跳登录，用户对着一个永远失败的按钮反复点（Joe 部署后复验 §六 建议 1，L1.5 接口层实证）。
+  test('13.3 死令牌点「导出 CSV」：同样清凭据 + 跳登录 + 落地补提示（T384 第二条通道）', async ({ page }) => {
+    const marks: string[] = []
+    page.on('console', (msg) => {
+      if (msg.text().includes('T357-auth-expiry')) marks.push(msg.text())
+    })
+    const exportReqs: string[] = []
+    page.on('request', (req) => {
+      if (req.url().includes('/abnormal-reports/export')) exportReqs.push(req.url())
+    })
+
+    await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('.login-card')).toBeVisible({ timeout: 20_000 })
+    await page.waitForTimeout(1500)
+    await requireDeployedBuild(page, {
+      // 标记取 T384 新增的跨页提示载体键名（字面量，压缩不吞），它和导出通道的收口在同一个包里
+      marker: 'admin_auth_expired_notice',
+      why: '未部署 T384 时导出通道不走处置出口，本条判据无意义',
+      probe: async (p) => markerInDeployedBundle(p, 'admin_auth_expired_notice'),
+    })
+
+    await realLogin(page)
+    await page.goto(realRoutes.abnormalReport, { waitUntil: 'domcontentloaded' })
+    const exportBtn = page.getByRole('button', { name: '导出 CSV' })
+    // 按钮在报告数据回来前是 disabled：能点到 = 页面数据已用活令牌加载完
+    await expect(exportBtn).toBeEnabled({ timeout: 30_000 })
+
+    // 只在点导出前一刻换死令牌：否则进页就被 request() 弹走，测不到这条通道
+    await page.evaluate((token) => localStorage.setItem('admin_token', token), DEAD_JWT)
+    await exportBtn.click()
+
+    // 判别力：证明这一枪确实是「导出」打出去的 401，而不是页上别的请求先把用户带走
+    await expect.poll(() => exportReqs.length, { timeout: 10_000 }).toBeGreaterThan(0)
+
+    await expect(page).toHaveURL(new RegExp(`${REAL_MOUNT}/login`), { timeout: 20_000 })
+    expect(new URL(page.url()).searchParams.get('redirect'), 'T336 深链口径：回原页').toBe('/abnormal-report')
+    const readLS = (k: string) => page.evaluate((key) => localStorage.getItem(key), k).catch(() => '__navigating__')
+    expect(await readLS(LS_TOKEN_KEY), '死令牌没被清掉 = 导出通道仍没进唯一出口').toBeNull()
+    expect(await readLS(LS_USER_KEY)).toBeNull()
+    // 提示载体「已被取走」= 登录页真的消费了它（没人消费则留在 sessionStorage 里）
+    expect(
+      await page.evaluate(() => sessionStorage.getItem('admin_auth_expired_notice')),
+      '登录页没消费失效提示载体 ⇒ 那条 toast 不会出现',
+    ).toBeNull()
+    await expect(adminMessage(page)).toContainText('登录已过期，请重新登录', { timeout: 10_000 })
+    expect(marks.length, `失效处置打了 ${marks.length} 次：${marks.join(' | ')}`).toBe(1)
   })
 })

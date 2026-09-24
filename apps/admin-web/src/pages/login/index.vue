@@ -60,13 +60,14 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import { PRESET_ROLES, type RoleKey } from '../../router/permissions'
 import { authLandingPath } from '../../router'
 import { USE_MOCK } from '../../utils/request'
+import { consumeAuthExpiredNotice } from '../../utils/sessionExpiry'
 
 const router = useRouter()
 const route = useRoute()
@@ -86,6 +87,13 @@ const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
+
+// T384：会话失效是整页跳进来的，当前页那一刻弹的 toast 用户看不见 ⇒ 提示由这里落地后补一次
+// （consume 即作废，刷新登录页不重复弹，主动登出或直接访问登录页也不会误弹）。
+onMounted(() => {
+  const notice = consumeAuthExpiredNotice()
+  if (notice) ElMessage.warning(notice)
+})
 
 function redirectAfterLogin() {
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''

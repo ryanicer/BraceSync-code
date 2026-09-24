@@ -11,6 +11,24 @@ import { removeToken } from './token'
 
 export const AUTH_EXPIRED_MESSAGE = '登录已过期，请重新登录'
 
+/**
+ * T384：失效提示的跨页载体。整页 assign 会立刻卸掉当前页，那一刻弹的 toast 用户看不见，
+ * 所以把这句话随跳转带走，由登录页落地后取用一次并提示 —— 与技师端 T326
+ * forceRelogin 的「同文案 + toast」口径对齐（那边 reLaunch 不重载页面，可直接弹）。
+ */
+export const AUTH_EXPIRED_NOTICE_KEY = 'admin_auth_expired_notice'
+
+export function markAuthExpiredNotice(): void {
+  sessionStorage.setItem(AUTH_EXPIRED_NOTICE_KEY, AUTH_EXPIRED_MESSAGE)
+}
+
+/** 取出即作废：只提示一次，刷新登录页不该再弹 */
+export function consumeAuthExpiredNotice(): string | null {
+  const msg = sessionStorage.getItem(AUTH_EXPIRED_NOTICE_KEY)
+  if (msg) sessionStorage.removeItem(AUTH_EXPIRED_NOTICE_KEY)
+  return msg
+}
+
 /** 会话失效判定：HTTP 401 为准，业务码 10401 / 40101 兼容保留 */
 export function isAuthExpired(status: number, code?: number): boolean {
   if (status === 401) return true
@@ -61,6 +79,7 @@ export function handleAuthExpired(deps: ExpiryEffects = windowExpiryEffects): st
   const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`
   if (innerPath(base, pathname) === '/login') return null // 已在登录页：只清凭据，不自跳
   const href = expiredLoginHref(baseUrl, pathname, search)
+  markAuthExpiredNotice()
   deps.log(href)
   deps.assign(href)
   return href

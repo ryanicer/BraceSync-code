@@ -7,7 +7,8 @@ import type {
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
   RolePermissions,
 } from '@bracesync/shared-types'
-import { USE_MOCK, request } from '../utils/request'
+import { USE_MOCK, request, expiredSession } from '../utils/request'
+import { isAuthExpired } from '../utils/sessionExpiry'
 import { getToken } from '../utils/token'
 import { reactive } from 'vue'
 import * as dashboardMock from '../mock/dashboard'
@@ -194,6 +195,8 @@ export async function fetchAbnormalReport(q: alertMock.AbnormalReportQuery): Pro
 /**
  * 导出 CSV。走带 Authorization 的 fetch 取回二进制再触发下载——
  * window.open / <a href> 不带凭据头，真实模式下会被网关 401（现有两处下载走的是预签名 URL，不适用于此）。
+ * T384：401 必须走 expiredSession() 唯一出口。此前这条通道只 throw 一句「导出失败」，
+ * 现场形态是「页面数据走 request() 会被弹回登录页，但在页上点导出不会」——凭据不清、不跳登录。
  */
 export async function exportAbnormalReportApi(q: alertMock.AbnormalReportQuery): Promise<void> {
   if (USE_MOCK) {
@@ -214,6 +217,7 @@ export async function exportAbnormalReportApi(q: alertMock.AbnormalReportQuery):
   if (!res.ok) {
     // 失败时后端回 JSON 信封而非 CSV，不能把错误体当文件存盘
     const body = (await res.json().catch(() => null)) as ApiResponse<unknown> | null
+    if (isAuthExpired(res.status, body?.code)) expiredSession()
     throw new Error(body?.message || `导出失败（HTTP ${res.status}）`)
   }
   saveCsvBlob(dispositionFilename(res.headers.get('Content-Disposition')), await res.blob())
