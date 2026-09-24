@@ -33,6 +33,13 @@ const (
 	t378ITPatient    = "P-DEV-IT-T378-OWN"
 	t378ITDeviceOwn  = "PRS-DEV-IT-T378-OWN"
 	t378ITDeviceFree = "PRS-DEV-IT-T378-FREE" // 无主设备（patient_id 为 NULL）
+
+	t378ITRole     = "ROLE-DEV-IT-T378"
+	t378ITAdmOwn   = "ADM-DEV-IT-T378"
+	t378ITAdmNone  = "ADM-DEV-IT-T378-NOT"
+	t378ITDocOwn   = "DOC-DEV-IT-T378"
+	t378ITDocNone  = "DOC-DEV-IT-T378-NOT"
+	t378ITDocGhost = "ADM-DEV-IT-T378-ABSENT" // 有身份无 doctor 行
 )
 
 // seedT378Devices 一名本团队患者 + 一名他团队患者 + 一台无主设备 + 各自一条安装记录。
@@ -44,6 +51,13 @@ func seedT378Devices(t *testing.T) {
 		sql  string
 		args []any
 	}{
+		// doctors.admin_id 有外键：DoctorTeamByAdmin 用例要先有登录身份行
+		{`INSERT INTO roles (role_id, name, permissions_json) VALUES ($1, 'T378 集成角色', '{}')
+		 ON CONFLICT (role_id) DO NOTHING`, []any{t378ITRole}},
+		{`INSERT INTO admins (admin_id, username, name, password_hash, role_id)
+		   VALUES ($1, 'dev_it_t378_own', 'T378本团队医生', 'x', $3),
+		          ($2, 'dev_it_t378_none', 'T378无团队医生', 'x', $3)
+		 ON CONFLICT (admin_id) DO NOTHING`, []any{t378ITAdmOwn, t378ITAdmNone, t378ITRole}},
 		{`INSERT INTO teams (team_id, name, member_count, patient_count) VALUES
 		   ($1, 'T378本团队', 1, 1), ($2, 'T378他团队', 1, 1)
 		 ON CONFLICT (team_id) DO NOTHING`, []any{t378ITTeamOwn, t378ITTeamOther}},
@@ -83,11 +97,15 @@ func seedT378Devices(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() {
-		_, _ = itPool.Exec(ctx, `DELETE FROM install_records WHERE device_id LIKE 'PRS-DEV-IT-T378%'`)
-		_, _ = itPool.Exec(ctx, `DELETE FROM devices WHERE device_id LIKE 'PRS-DEV-IT-T378%'`)
-		_, _ = itPool.Exec(ctx, `DELETE FROM patients WHERE patient_id LIKE 'P-DEV-IT-T378%'`)
-		_, _ = itPool.Exec(ctx, `DELETE FROM technicians WHERE tech_id = 'TECH-DEV-IT-T378'`)
-		_, _ = itPool.Exec(ctx, `DELETE FROM teams WHERE team_id IN ($1, $2)`, t378ITTeamOwn, t378ITTeamOther)
+		cctx := context.Background()
+		_, _ = itPool.Exec(cctx, `DELETE FROM install_records WHERE device_id LIKE 'PRS-DEV-IT-T378%'`)
+		_, _ = itPool.Exec(cctx, `DELETE FROM devices WHERE device_id LIKE 'PRS-DEV-IT-T378%'`)
+		_, _ = itPool.Exec(cctx, `DELETE FROM doctors WHERE doctor_id LIKE 'DOC-DEV-IT-T378%'`)
+		_, _ = itPool.Exec(cctx, `DELETE FROM admins WHERE admin_id LIKE 'ADM-DEV-IT-T378%'`)
+		_, _ = itPool.Exec(cctx, `DELETE FROM roles WHERE role_id = $1`, t378ITRole)
+		_, _ = itPool.Exec(cctx, `DELETE FROM patients WHERE patient_id LIKE 'P-DEV-IT-T378%'`)
+		_, _ = itPool.Exec(cctx, `DELETE FROM technicians WHERE tech_id = 'TECH-DEV-IT-T378'`)
+		_, _ = itPool.Exec(cctx, `DELETE FROM teams WHERE team_id IN ($1, $2)`, t378ITTeamOwn, t378ITTeamOther)
 	})
 }
 
@@ -231,36 +249,31 @@ func TestITT378DeviceAndInstallProbes(t *testing.T) {
 
 func TestITT378DoctorTeamByAdmin(t *testing.T) {
 	ctx := context.Background()
-	const adminID = "ADM-DEV-IT-T378"
-	const doctorID = "DOC-DEV-IT-T378"
-	seedT378Devices(t)
+	seedT378Devices(t) // 自带清场：doctors 先于 admins/roles/teams 删（外键序）
 	_, err := itPool.Exec(ctx, `INSERT INTO doctors (doctor_id, name, title, department, team_id, admin_id)
 		VALUES ($1, 'T378集成医生', '主治医师', '骨科', $2, $3)
-		ON CONFLICT (doctor_id) DO NOTHING`, doctorID, t378ITTeamOwn, adminID)
+		ON CONFLICT (doctor_id) DO NOTHING`, t378ITDocOwn, t378ITTeamOwn, t378ITAdmOwn)
 	require.NoError(t, err)
 	_, err = itPool.Exec(ctx, `INSERT INTO doctors (doctor_id, name, title, department, team_id, admin_id)
 		VALUES ($1, 'T378无团队医生', '主治医师', '骨科', NULL, $2)
-		ON CONFLICT (doctor_id) DO NOTHING`, "DOC-DEV-IT-T378-NOT", "ADM-DEV-IT-T378-NOT")
+		ON CONFLICT (doctor_id) DO NOTHING`, t378ITDocNone, t378ITAdmNone)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, _ = itPool.Exec(ctx, `DELETE FROM doctors WHERE doctor_id IN ($1, $2)`, doctorID, "DOC-DEV-IT-T378-NOT")
-	})
 
 	store := newITStore()
 
-	teamID, ok, err := store.DoctorTeamByAdmin(ctx, adminID)
+	teamID, ok, err := store.DoctorTeamByAdmin(ctx, t378ITAdmOwn)
 	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, t378ITTeamOwn, teamID)
 
 	// team_id 为 NULL → 空串 + ok=false（调用方据此落空集，不得当成「不过滤」）
-	empty, ok2, err := store.DoctorTeamByAdmin(ctx, "ADM-DEV-IT-T378-NOT")
+	empty, ok2, err := store.DoctorTeamByAdmin(ctx, t378ITAdmNone)
 	require.NoError(t, err)
 	assert.False(t, ok2)
 	assert.Equal(t, "", empty)
 
 	// 无 doctor 行 → 同样是「无归属」而非报错（报错会变 500，医护被踢成另一种码）
-	missing, ok3, err := store.DoctorTeamByAdmin(ctx, "ADM-DEV-IT-T378-ABSENT")
+	missing, ok3, err := store.DoctorTeamByAdmin(ctx, t378ITDocGhost)
 	require.NoError(t, err)
 	assert.False(t, ok3)
 	assert.Equal(t, "", missing)
