@@ -85,15 +85,20 @@ type fakeStore struct {
 	processErr       error
 	plans            []repo.OrthosisPlanRow
 	plansErr         error
+	planListCalls    int // T373：ListPlans 被调次数（跨团队读必须为 0）
 	latest           string
 	hasLatest        bool
 	latestErr        error
 	createdPlan      *repo.OrthosisPlanRow
 	createPlanEr     error
+	createPlanCalls  int // T373：CreatePlan 被调次数（跨团队必须为 0）
 	feelings         []repo.FeelingLogRow
 	feelingsErr      error
 	replyOK          bool
 	replyErr         error
+	replyCalls       int // T373：ReplyFeelingLog 被调次数（跨团队必须为 0）
+	feelingTeamCalls int // T373：FeelingLogInTeam 只读探测被调次数
+	feelingTeamErr   error
 	// T256 #1 团队统计卡
 	teamCount              int
 	memberCount            int
@@ -342,12 +347,14 @@ func (f *fakeStore) ProcessFeedback(_ context.Context, _ int64, _ string, reply 
 	return f.processOK, f.processErr
 }
 func (f *fakeStore) ListPlans(_ context.Context, _ string) ([]repo.OrthosisPlanRow, error) {
+	f.planListCalls++ // T373 A1：越权读必须在触库前被拦掉
 	return f.plans, f.plansErr
 }
 func (f *fakeStore) LatestPlanVersion(_ context.Context, _ string) (string, bool, error) {
 	return f.latest, f.hasLatest, f.latestErr
 }
 func (f *fakeStore) CreatePlan(_ context.Context, _, _, _, version string) (*repo.OrthosisPlanRow, error) {
+	f.createPlanCalls++ // T373：越权写必须在触库前被拦掉，此计数须保持 0
 	if f.createdPlan != nil {
 		f.createdPlan.Version = version
 	}
@@ -358,8 +365,43 @@ func (f *fakeStore) ListFeelingLogs(_ context.Context, patientID string) ([]repo
 	return f.feelings, f.feelingsErr
 }
 func (f *fakeStore) ReplyFeelingLog(_ context.Context, _ int64, reply string) (bool, error) {
+	f.replyCalls++ // T373：这条就是 D1 的「库写」，越权时须保持 0
 	f.lastReply = reply
 	return f.replyOK, f.replyErr
+}
+
+// FeelingLogInTeam T373：与 PGStore 同语义的只读替身 —— 空团队不下库恒 false；
+// 「日志不存在 / 患者在他团队 / 患者 team_id 为 NULL」一律 false，由 handler 统一回 403。
+func (f *fakeStore) FeelingLogInTeam(_ context.Context, logID int64, teamID string) (bool, error) {
+	f.feelingTeamCalls++
+	if teamID == "" {
+		return false, nil
+	}
+	if f.feelingTeamErr != nil {
+		return false, f.feelingTeamErr
+	}
+	pid, found := "", false
+	for _, l := range f.feelings {
+		if l.LogID == logID {
+			pid, found = l.PatientID, true
+			break
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	inTeam := func(p *repo.PatientRow) bool {
+		return p != nil && p.PatientID == pid && p.TeamID != nil && *p.TeamID == teamID
+	}
+	if inTeam(f.patient) {
+		return true, nil
+	}
+	for i := range f.patients {
+		if inTeam(&f.patients[i]) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // T188 患者端录入：记录入参并回读调用方预置的行（覆盖语义由 repo 集成测试守）

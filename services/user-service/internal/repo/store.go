@@ -548,6 +548,11 @@ type Store interface {
 	// SaveFeelingLog T188 患者端创建/覆盖当日感受日志（同患者同日覆盖，不清医生回复位）。
 	// patient_id 外键不命中 → ErrPatientNotFound；返回落库后的整行（含 logId / createdAt）。
 	SaveFeelingLog(ctx context.Context, in FeelingLogSaveInput) (FeelingLogRow, error)
+	// FeelingLogInTeam T373：医生回复落库前的只读归属探测（团队谓词在同一条 SQL 里）。
+	// 与 GetPatientInTeam 同语义：「日志不存在 / 患者属他团队 / 患者未分配团队」一律 false，
+	// 由 handler 对受限身份统一回 403（否则 403 与 404 的差就是 logId 存在性 oracle）；
+	// teamID 为空恒 false 且不下库。刻意无写副作用：越权要在触库之前判掉。
+	FeelingLogInTeam(ctx context.Context, logID int64, teamID string) (bool, error)
 	ReplyFeelingLog(ctx context.Context, logID int64, replyContent string) (bool, error)
 	// ListFeelingLogsAdmin T256 #2：跨患者感受日志流（搜索/日期范围/感受筛选）
 	ListFeelingLogsAdmin(ctx context.Context, f FeelingLogAdminFilter) ([]FeelingLogRow, int64, error)

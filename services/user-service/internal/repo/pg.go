@@ -844,6 +844,29 @@ func (s *PGStore) SaveFeelingLog(ctx context.Context, in FeelingLogSaveInput) (F
 	return out, nil
 }
 
+// FeelingLogInTeam T373：医生回复落库前的只读归属探测。
+// feeling_logs 本身不带团队列，归属由患者的 team_id 决定，故与 patients 内连接
+// （口径同 ListFeelingLogsAdmin 的 T350 团队过滤）。患者未分配团队时 p.team_id IS NULL，
+// 等值比较恒不命中，与「日志不存在 / 他团队」同回 false，由 handler 统一成 403。
+// teamID 为空（医护账号无团队归属）不下库直接 false，走 fail-closed。
+func (s *PGStore) FeelingLogInTeam(ctx context.Context, logID int64, teamID string) (bool, error) {
+	if teamID == "" {
+		return false, nil
+	}
+	var one int
+	err := s.pool.QueryRow(ctx,
+		`SELECT 1 FROM feeling_logs fl
+		 JOIN patients p ON p.patient_id = fl.patient_id
+		 WHERE fl.log_id = $1 AND p.team_id = $2`, logID, teamID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ReplyFeelingLog 医生回复写入（重复回复覆盖）；返回日志是否存在
 func (s *PGStore) ReplyFeelingLog(ctx context.Context, logID int64, replyContent string) (bool, error) {
 	tag, err := s.pool.Exec(ctx,
