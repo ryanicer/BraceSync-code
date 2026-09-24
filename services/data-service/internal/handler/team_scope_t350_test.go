@@ -12,6 +12,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,6 +57,8 @@ func TestT350_DoctorCrossTeam403(t *testing.T) {
 		{"realtime", "/api/v1/patients/P-OTHER/realtime"},
 		{"records", "/api/v1/patients/P-OTHER/records?date=2026-08-08"},
 		{"health-reports", "/api/v1/patients/P-OTHER/health-reports"},
+		// T350 返工 D-1：daily-wear 此前不在本表内，缺口因此三层无门禁承载
+		{"daily-wear", "/api/v1/patients/P-OTHER/daily-wear"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -303,6 +306,141 @@ func TestT350_DashboardClientCannotOverrideScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Equal(t, model.ScopeTeam(t350TeamA), q.scopes["GetKPI"], "伪造 teamId 不得改范围")
 	assert.NotEqual(t, t350TeamB, q.scopes["GetKPI"].TeamID)
+}
+
+// ─────────────────────────────────────────────────────────────
+// T350 返工 D-1：daily-wear 的医护身份腿
+//
+// 现场（Ella 09-24 工程验收 D-1）：getDailyWear 只有 T264 的 self-only 判定，
+// 医生连本团队患者也吃 403「may only query your own daily-wear stats」，
+// 而医生可进的矫形日志页在调它（orthosis-log/index.vue 的 Promise.all）。
+// 上面的 DoctorCrossTeam403 只补了「越权必拒」方向，这里补齐另三面：
+// 反证（本团队照常 200）、不放宽（CS / 技师一字不变）、不泄露（不存在与越界同码）。
+// ─────────────────────────────────────────────────────────────
+
+// t350DailyWearServer 单独装配：querier 由用例持有，用于断言「403 之前不调 querier」
+func t350DailyWearServer(lookup PatientLookup, q *fakeDailyWearQuerier) http.Handler {
+	svc := service.NewRecordService(&stubRecords{}, &stubDevices{}, stubConfigs{}, stubCache{}, stubAlerts{},
+		service.NewRateLimiter(1e9, 1e9, 1e9, 1e9))
+	h := New(svc)
+	if lookup != nil {
+		h.SetPatientLookup(lookup)
+	}
+	h.SetDailyWearQuerier(q)
+	return h.Router()
+}
+
+func t350WearData() *fakeDailyWearQuerier {
+	return &fakeDailyWearQuerier{
+		list: []*model.DailyWearDayDTO{{Date: "2026-08-08", WearMinutes: 1200, FrameCount: 40}},
+	}
+}
+
+// TestT350R_DailyWearDoctorSameTeam200 反证：本团队患者的日佩戴数据必须读得到。
+func TestT350R_DailyWearDoctorSameTeam200(t *testing.T) {
+	lookup, q := t350Lookup(), t350WearData()
+
+	w := doDataReq(t, t350DailyWearServer(lookup, q), http.MethodGet,
+		"/api/v1/patients/"+hPatient+"/daily-wear", roleDoctor, t350Admin)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"code":0`)
+	assert.Equal(t, hPatient, q.lastPID, "鉴权通过才允许查聚合")
+	assert.Contains(t, w.Body.String(), "2026-08-08", "本团队有数据不得被打成空态")
+	assert.Equal(t, []string{hPatient}, lookup.teamSeen)
+}
+
+// TestT350R_DailyWearDenyPath 越界四面：跨团队 / 患者未分配团队 / 医生无团队 / 患者不存在，
+// 全 403 且零查询；前两者的响应体除患者号外逐字相同 ⇒ 患者号存在性不作为探测面。
+func TestT350R_DailyWearDenyPath(t *testing.T) {
+	cases := []struct{ name, patientID, adminID string }{
+		{"跨团队患者", "P-OTHER", t350Admin},
+		{"患者未分配团队", "P-NOTEAM-A", t350Admin},
+		{"医生无团队归属", hPatient, t350NoTeam},
+		{"患者档案不存在", "P-NOPE", t350Admin},
+	}
+	shapes := make(map[string]string, len(cases))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lookup, q := t350Lookup(), t350WearData()
+
+			w := doDataReq(t, t350DailyWearServer(lookup, q), http.MethodGet,
+				"/api/v1/patients/"+tc.patientID+"/daily-wear", roleDoctor, tc.adminID)
+
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			code, _ := decodeBody(t, w)
+			assert.Equal(t, model.CodeForbidden, code)
+			assert.Equal(t, "", q.lastPID, "拒绝路径不得触达聚合查询")
+			assert.Equal(t, "", lookup.lastSeen, "团队判定必须先于存在性查询")
+			// 抹掉回显的患者号再比对：剩下的若不同，就是在泄露「这个号有没有档案」
+			shapes[tc.name] = strings.ReplaceAll(w.Body.String(), tc.patientID, "{pid}")
+		})
+	}
+	assert.Equal(t, shapes["患者档案不存在"], shapes["跨团队患者"], "存在性不得区别于越界")
+	assert.Equal(t, shapes["患者档案不存在"], shapes["医生无团队归属"], "存在性不得区别于本人无团队")
+}
+
+// TestT350R_DailyWearOtherRolesUnchanged 不放宽：CS / 技师 / 患者本人 / 缺身份头的响应一字不变。
+func TestT350R_DailyWearOtherRolesUnchanged(t *testing.T) {
+	t.Run("运营仍读任意患者", func(t *testing.T) {
+		lookup, q := t350Lookup(), t350WearData()
+
+		w := doDataReq(t, t350DailyWearServer(lookup, q), http.MethodGet,
+			"/api/v1/patients/P-OTHER/daily-wear", roleAdmin, t350Operator)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Empty(t, lookup.teamSeen, "非医生不触发团队推导")
+	})
+
+	// CS 与技师在 T264 口径下本就 403（不是 assertAdminOrSelf 的 staff 放行），本轮不收口也不放开
+	for _, role := range []string{"ROLE_CS", "technician"} {
+		t.Run(role+" 仍 403（旧语义不变）", func(t *testing.T) {
+			lookup, q := t350Lookup(), t350WearData()
+
+			w := doDataReq(t, t350DailyWearServer(lookup, q), http.MethodGet,
+				"/api/v1/patients/"+hPatient+"/daily-wear", role, t350Operator)
+
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), "your own daily-wear")
+			assert.Equal(t, "", q.lastPID)
+			assert.Empty(t, lookup.teamSeen)
+		})
+	}
+
+	t.Run("患者本人 200 / 他人 403", func(t *testing.T) {
+		lookup, q := t350Lookup(), t350WearData()
+		router := t350DailyWearServer(lookup, q)
+
+		w := doDataReq(t, router, http.MethodGet, "/api/v1/patients/"+hPatient+"/daily-wear", "ROLE_PATIENT", hPatient)
+		assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		w = doDataReq(t, router, http.MethodGet, "/api/v1/patients/P-OTHER/daily-wear", "ROLE_PATIENT", hPatient)
+		assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+
+		assert.Empty(t, lookup.teamSeen, "患者路径不参与团队推导")
+	})
+
+	t.Run("医生缺 X-User-Id 403 且不查库", func(t *testing.T) {
+		lookup, q := t350Lookup(), t350WearData()
+
+		w := doDataReq(t, t350DailyWearServer(lookup, q), http.MethodGet,
+			"/api/v1/patients/"+hPatient+"/daily-wear", roleDoctor, "")
+
+		require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+		assert.Empty(t, lookup.teamSeen)
+		assert.Equal(t, "", q.lastPID)
+	})
+
+	t.Run("推导报错 500 且不触达聚合", func(t *testing.T) {
+		lookup, q := t350Lookup(), t350WearData()
+		lookup.teamErr = errors.New("db down")
+
+		w := doDataReq(t, t350DailyWearServer(lookup, q), http.MethodGet,
+			"/api/v1/patients/"+hPatient+"/daily-wear", roleDoctor, t350Admin)
+
+		require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+		assert.Equal(t, "", q.lastPID)
+	})
 }
 
 // 编译期确认替身满足 handler 侧契约（生产实现分别是 repo.PatientRepo 与 service.DashboardService）
