@@ -32,11 +32,29 @@ import (
 
 type memStore struct {
 	files map[string]*model.FileMetadata
+
+	// T378 归属判定桩：表内无键 = 无团队归属（fail-closed）
+	doctorTeam  map[string]string // admin_id → team_id
+	patientTeam map[string]string // patient_id → team_id
+	alertTeam   map[string]string // alert_id → team_id
+	scopeCalls  int               // 触库判定次数（拒绝路径零写断言用）
+	writes      int               // CreateFile / MarkUploaded 落库次数（零写断言用）
+	scopeErr    error             // DoctorTeamByAdmin 故障注入
+	probeErr    error             // 归属探测（FileOwnerInTeam / OwnerInTeam）故障注入
+	teamQuery   repo.QueryFilter  // 最近一次 QueryFiles/CountFiles 收到的过滤条件
 }
 
-func newMemStore() *memStore { return &memStore{files: map[string]*model.FileMetadata{}} }
+func newMemStore() *memStore {
+	return &memStore{
+		files:       map[string]*model.FileMetadata{},
+		doctorTeam:  map[string]string{},
+		patientTeam: map[string]string{},
+		alertTeam:   map[string]string{},
+	}
+}
 
 func (m *memStore) CreateFile(_ context.Context, fm *model.FileMetadata) error {
+	m.writes++
 	if _, exists := m.files[fm.FileID]; exists {
 		return nil
 	}
@@ -46,6 +64,7 @@ func (m *memStore) CreateFile(_ context.Context, fm *model.FileMetadata) error {
 }
 
 func (m *memStore) MarkUploaded(_ context.Context, fileID, publicURL string, size int64) error {
+	m.writes++
 	fm, ok := m.files[fileID]
 	if !ok {
 		return repo.ErrNotFound
@@ -72,12 +91,10 @@ func (m *memStore) GetFileByFileID(_ context.Context, fileID string) (*model.Fil
 }
 
 func (m *memStore) QueryFiles(_ context.Context, f repo.QueryFilter) ([]model.FileMetadata, error) {
+	m.teamQuery = f
 	var out []model.FileMetadata
 	for _, fm := range m.files {
-		if f.OwnerType != "" && fm.OwnerType != f.OwnerType {
-			continue
-		}
-		if f.OwnerID != "" && fm.OwnerID != f.OwnerID {
+		if !m.matchFilter(fm, f) {
 			continue
 		}
 		out = append(out, *fm)
@@ -89,17 +106,74 @@ func (m *memStore) QueryFiles(_ context.Context, f repo.QueryFilter) ([]model.Fi
 }
 
 func (m *memStore) CountFiles(_ context.Context, f repo.QueryFilter) (int64, error) {
+	m.teamQuery = f
 	var n int64
 	for _, fm := range m.files {
-		if f.OwnerType != "" && fm.OwnerType != f.OwnerType {
-			continue
-		}
-		if f.OwnerID != "" && fm.OwnerID != f.OwnerID {
+		if !m.matchFilter(fm, f) {
 			continue
 		}
 		n++
 	}
 	return n, nil
+}
+
+func (m *memStore) matchFilter(fm *model.FileMetadata, f repo.QueryFilter) bool {
+	if f.OwnerType != "" && fm.OwnerType != f.OwnerType {
+		return false
+	}
+	if f.OwnerID != "" && fm.OwnerID != f.OwnerID {
+		return false
+	}
+	return !f.TeamScoped || m.ownerInTeam(fm.OwnerType, fm.OwnerID, f.TeamID)
+}
+
+// ─── T378 归属判定桩 ───
+
+// ownerInTeam 是 repo.teamScopedCond 的内存镜像：非患者材料（ReviewTemplate 等）恒放行，
+// 患者维度材料（patient / alert）须 owner 患者落在调用者团队内。
+func (m *memStore) ownerInTeam(ownerType, ownerID, teamID string) bool {
+	switch ownerType {
+	case "patient", "alert":
+		if teamID == "" {
+			return false
+		}
+		got := m.patientTeam[ownerID]
+		if ownerType == "alert" {
+			got = m.alertTeam[ownerID]
+		}
+		return got == teamID && got != ""
+	default:
+		return true
+	}
+}
+
+func (m *memStore) DoctorTeamByAdmin(_ context.Context, adminID string) (string, bool, error) {
+	m.scopeCalls++
+	if m.scopeErr != nil {
+		return "", false, m.scopeErr
+	}
+	teamID := m.doctorTeam[adminID]
+	return teamID, teamID != "", nil
+}
+
+func (m *memStore) FileOwnerInTeam(_ context.Context, fileID, teamID string) (bool, error) {
+	m.scopeCalls++
+	if m.probeErr != nil {
+		return false, m.probeErr
+	}
+	fm, ok := m.files[fileID]
+	if !ok {
+		return false, nil // 查无此文件与跨团队合一
+	}
+	return m.ownerInTeam(fm.OwnerType, fm.OwnerID, teamID), nil
+}
+
+func (m *memStore) OwnerInTeam(_ context.Context, ownerType, ownerID, teamID string) (bool, error) {
+	m.scopeCalls++
+	if m.probeErr != nil {
+		return false, m.probeErr
+	}
+	return m.ownerInTeam(ownerType, ownerID, teamID), nil
 }
 
 // setupTestServer 构建带身份头的 httptest 服务器（模拟 gateway 注入 X-User-Id/X-Role）
@@ -478,8 +552,14 @@ func TestT261_Presign_StaffKeepsBodyOwner(t *testing.T) {
 }
 
 // TestT261_GetFileByID_OwnershipEnforced 非 staff 仅可访问本人文件，跨 owner → 403；staff 放行。
+//
+// T378 之后 staff 放行多了一层团队前提：DOC-1 与 P-A/P-B 同团队，本用例才仍在验
+// 「角色跨 owner」这一维；跨团队那条由 TestT378_FileDetail_CrossTeamDenied 覆盖。
 func TestT261_GetFileByID_OwnershipEnforced(t *testing.T) {
 	store := newMemStore()
+	store.doctorTeam["DOC-1"] = "TEAM-T261"
+	store.patientTeam["P-A"] = "TEAM-T261"
+	store.patientTeam["P-B"] = "TEAM-T261"
 	seedFile(store, "F-OWN", "patient", "P-A", model.FileStatusUploaded)
 	srv := setupTestServer(store)
 	defer srv.Close()
@@ -499,8 +579,11 @@ func TestT261_GetFileByID_OwnershipEnforced(t *testing.T) {
 }
 
 // TestT261_Download_OwnershipEnforced 下载端点同样执行归属校验。
+// T378 后医护放行需与 owner 患者同团队（跨团队那条见 TestT378_Download_CrossTeamDenied）。
 func TestT261_Download_OwnershipEnforced(t *testing.T) {
 	store := newMemStore()
+	store.doctorTeam["DOC-1"] = "TEAM-T261"
+	store.patientTeam["P-A"] = "TEAM-T261"
 	seedFile(store, "F-DL", "patient", "P-A", model.FileStatusUploaded)
 	srv := setupTestServer(store)
 	defer srv.Close()
@@ -523,6 +606,9 @@ func TestT261_Download_OwnershipEnforced(t *testing.T) {
 // 强制过滤为本人，无法枚举他人文件。
 func TestT261_Query_PatientOwnerForced(t *testing.T) {
 	store := newMemStore()
+	store.doctorTeam["DOC-1"] = "TEAM-T261"
+	store.patientTeam["P-A"] = "TEAM-T261"
+	store.patientTeam["P-B"] = "TEAM-T261"
 	seedFile(store, "F-A1", "patient", "P-A", model.FileStatusUploaded)
 	seedFile(store, "F-A2", "patient", "P-A", model.FileStatusUploaded)
 	seedFile(store, "F-B1", "patient", "P-B", model.FileStatusUploaded)
@@ -535,7 +621,7 @@ func TestT261_Query_PatientOwnerForced(t *testing.T) {
 	data := body["data"].(map[string]interface{})
 	assert.Equal(t, float64(2), data["total"], "patient 查询应被强制限定为本人 owner")
 
-	// staff 查询 P-B 的文件 → 可见 1 条
+	// staff 查询 P-B 的文件 → 可见 1 条（同团队前提下跨 owner 仍放行）
 	code, body = doGET(t, srv.URL+"/api/v1/files/query?owner_type=patient&owner_id=P-B", "DOC-1", "ROLE_DOCTOR")
 	require.Equal(t, http.StatusOK, code)
 	data = body["data"].(map[string]interface{})
@@ -545,6 +631,8 @@ func TestT261_Query_PatientOwnerForced(t *testing.T) {
 // TestT261_UploadComplete_OwnershipEnforced 非 staff 不得为他人文件确认上传。
 func TestT261_UploadComplete_OwnershipEnforced(t *testing.T) {
 	store := newMemStore()
+	store.doctorTeam["DOC-1"] = "TEAM-T261"
+	store.patientTeam["P-A"] = "TEAM-T261"
 	seedFile(store, "F-UP", "patient", "P-A", model.FileStatusPending)
 	srv := setupTestServer(store)
 	defer srv.Close()
@@ -560,7 +648,7 @@ func TestT261_UploadComplete_OwnershipEnforced(t *testing.T) {
 		`{"file_id":"F-UP","size":1024}`)
 	assert.Equal(t, http.StatusOK, code)
 
-	// staff 为他人文件确认 → 200（放行）
+	// staff 为同团队他人文件确认 → 200（跨 owner 放行；跨团队那条见 TestT378_UploadComplete_CrossTeamDenied）
 	seedFile(store, "F-STAFF", "patient", "P-A", model.FileStatusPending)
 	code, _ = doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/upload-complete", "DOC-1", "ROLE_DOCTOR",
 		`{"file_id":"F-STAFF","size":1024}`)

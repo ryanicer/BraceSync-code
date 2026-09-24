@@ -87,7 +87,7 @@ VALUES ($1, 'question', $2, $3, $4, $5, $6, $7)`,
 	seed("T248今日已回复", todayStart.Add(2*time.Hour), todayStart.Add(2*time.Hour+10*time.Minute), "replied")
 	seed("T248昨日已回复", yesterdayStart.Add(2*time.Hour), yesterdayStart.Add(2*time.Hour+20*time.Minute), "replied")
 
-	row, err := itStore.FeedbackStats(ctx, todayStart, todayStart.AddDate(0, 0, 1))
+	row, err := itStore.FeedbackStats(ctx, todayStart, todayStart.AddDate(0, 0, 1), FeedbackScope{})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, row.TodayCount, int64(2), "今日窗口至少命中自造两条（昨日那条不计）")
 	assert.GreaterOrEqual(t, row.PendingCount, int64(1))
@@ -99,7 +99,7 @@ VALUES ($1, 'question', $2, $3, $4, $5, $6, $7)`,
 	// 「无已回复样本 ⇒ NULL」这一支由 fake 层用例覆盖；真库共享种子表恒有已回复样本，
 	// 不为此删种子（会打断 TestITFeedbackProcess 等既有用例）。
 	farStart := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	far, err := itStore.FeedbackStats(ctx, farStart, farStart.AddDate(0, 0, 1))
+	far, err := itStore.FeedbackStats(ctx, farStart, farStart.AddDate(0, 0, 1), FeedbackScope{})
 	require.NoError(t, err)
 	assert.Zero(t, far.TodayCount)
 	require.NotNil(t, far.AvgReplySec, "全量口径：不受今日窗口约束")

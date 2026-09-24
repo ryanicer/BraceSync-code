@@ -30,16 +30,56 @@ type fakeListStore struct {
 	lastKeyword  string
 	lastPage     int
 	lastPageSize int
+
+	// T378：团队范围接线可观测 —— 记录下发给 repo 的 scope，以及探测调用次数
+	lastDeviceScope   repo.ListScope
+	lastInstallScope  repo.ListScope
+	doctorTeam        string
+	doctorTeamErr     error
+	deviceTeamCalls   int
+	installTeamCalls  int
+	deviceTeamResult  map[string]bool
+	installTeamResult map[int64]bool
+	deviceTeamErr     error
+	installTeamErr    error
 }
 
-func (f *fakeListStore) ListDevices(_ context.Context, keyword string, page, pageSize int) ([]repo.DeviceListItem, int64, error) {
+func (f *fakeListStore) ListDevices(_ context.Context, keyword string, scope repo.ListScope, page, pageSize int) ([]repo.DeviceListItem, int64, error) {
 	f.lastKeyword, f.lastPage, f.lastPageSize = keyword, page, pageSize
+	f.lastDeviceScope = scope
 	return f.devices, f.deviceTotal, f.devicesErr
 }
 
-func (f *fakeListStore) ListInstallRecords(_ context.Context, keyword string, page, pageSize int) ([]repo.InstallListItem, int64, error) {
+func (f *fakeListStore) ListInstallRecords(_ context.Context, keyword string, scope repo.ListScope, page, pageSize int) ([]repo.InstallListItem, int64, error) {
 	f.lastKeyword, f.lastPage, f.lastPageSize = keyword, page, pageSize
+	f.lastInstallScope = scope
 	return f.installs, f.installTotal, f.installsErr
+}
+
+func (f *fakeListStore) DoctorTeamByAdmin(_ context.Context, _ string) (string, bool, error) {
+	return f.doctorTeam, f.doctorTeam != "", f.doctorTeamErr
+}
+
+func (f *fakeListStore) DeviceInTeam(_ context.Context, deviceID, teamID string) (bool, error) {
+	f.deviceTeamCalls++
+	if f.deviceTeamErr != nil {
+		return false, f.deviceTeamErr
+	}
+	if teamID == "" {
+		return false, nil
+	}
+	return f.deviceTeamResult[deviceID], nil
+}
+
+func (f *fakeListStore) InstallInTeam(_ context.Context, installID int64, teamID string) (bool, error) {
+	f.installTeamCalls++
+	if f.installTeamErr != nil {
+		return false, f.installTeamErr
+	}
+	if teamID == "" {
+		return false, nil
+	}
+	return f.installTeamResult[installID], nil
 }
 
 // newQueryEnv 装配带 ListStore 的路由（svc 允许 nil：列表端点不依赖 svc）

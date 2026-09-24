@@ -314,14 +314,14 @@ func TestITFeedbackProcess(t *testing.T) {
 	assert.False(t, ok)
 
 	// 列表 + keyword
-	list, err := itStore.ListFeedbacks(ctx, "集成反馈")
+	list, err := itStore.ListFeedbacks(ctx, "集成反馈", FeedbackScope{})
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.Equal(t, "P-USR-IT-1", list[0].PatientID)
-	list, err = itStore.ListFeedbacks(ctx, "不存在的关键词zz")
+	list, err = itStore.ListFeedbacks(ctx, "不存在的关键词zz", FeedbackScope{})
 	require.NoError(t, err)
 	assert.Empty(t, list)
-	list, err = itStore.ListFeedbacks(ctx, "P-USR-IT-1") // 患者ID 命中
+	list, err = itStore.ListFeedbacks(ctx, "P-USR-IT-1", FeedbackScope{}) // 患者ID 命中
 	require.NoError(t, err)
 	assert.Len(t, list, 1)
 }

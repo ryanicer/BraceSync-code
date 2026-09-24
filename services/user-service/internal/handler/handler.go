@@ -1300,8 +1300,15 @@ func (h *Handler) createFeedback(c *gin.Context) {
 }
 
 // listFeedbacks GET /api/v1/feedbacks —— keyword 过滤，提交时间倒序
+//
+// T378：医护身份只回本团队患者的反馈（#205 的三条读链路里没有这一条）。
 func (h *Handler) listFeedbacks(c *gin.Context) {
-	rows, err := h.store.ListFeedbacks(c.Request.Context(), strings.TrimSpace(c.Query("keyword")))
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
+	rows, err := h.store.ListFeedbacks(c.Request.Context(),
+		strings.TrimSpace(c.Query("keyword")), feedbackReadScope(scope))
 	if err != nil {
 		fail(c, model.ErrInternal("list feedbacks failed"))
 		return
@@ -1323,10 +1330,18 @@ var cstLoc = time.FixedZone("Asia/Shanghai", 8*3600)
 // 「平均响应」为全量已回复样本均值（设计稿标签「平均响应」无期限词，限定今日会在
 // 多数时段无样本而空栏）。🔴 设计稿第四项「满意度」无数据模型字段（feedbacks 无评分列），
 // 本端点不返回，已作为待裁项上报。
+//
+// T378：这里的「全量」一律读作「调用者可见患者集合内的全量」——医护拿到的三项
+// 与本页列表（listFeedbacks 同一条团队谓词）出自同一批行，不再出现「列表 3 条、统计条 12 条」。
 func (h *Handler) feedbackStats(c *gin.Context) {
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
 	now := time.Now().In(cstLoc)
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, cstLoc)
-	row, err := h.store.FeedbackStats(c.Request.Context(), todayStart, todayStart.AddDate(0, 0, 1))
+	row, err := h.store.FeedbackStats(c.Request.Context(), todayStart, todayStart.AddDate(0, 0, 1),
+		feedbackReadScope(scope))
 	if err != nil {
 		fail(c, model.ErrInternal("feedback stats failed"))
 		return
@@ -1349,6 +1364,11 @@ type processFeedbackRequest struct {
 // T374 按 PRD V3.26 §7D.7 把本页两个写动作分流：带 replyContent 是「保存处理备注」
 // （pending → replied），带 markResolved 是「标记为已处理」（→ resolved）。
 // 旧版靠「备注有没有带上来」猜动作，既落不到 resolved，又会把已存备注洗成空值。
+//
+// T378 在本动作前加患者域归属门（医护仅本团队患者）。为什么这道门必须存在：
+// resolved 无反向接口（T374 交底时登记过），一次跨团队误写不可回滚。
+// 医护侧的「查无此条」由归属探测统一成 403，不再暴露 feedbackId 存在性；
+// 运营 / 客服侧的「查无 → 404」逐字不变。
 func (h *Handler) processFeedback(c *gin.Context) {
 	feedbackID, err := strconv.ParseInt(c.Param("feedbackId"), 10, 64)
 	if err != nil || feedbackID < 1 {
@@ -1372,6 +1392,11 @@ func (h *Handler) processFeedback(c *gin.Context) {
 	}
 	if req.ReplyContent != nil && len(*req.ReplyContent) > 500 {
 		fail(c, model.ErrInvalidParam("replyContent exceeds 500 chars"))
+		return
+	}
+	// T378：归属判定排在写调用之前（判据「越权被拒时库内变更次数为 0」）。
+	// 状态机语义一个字不动（T374 的两动作分流在上），只在它前面加一道门。
+	if !h.assertFeedbackInScope(c, feedbackID) {
 		return
 	}
 	exists, err := h.store.ProcessFeedback(c.Request.Context(), feedbackID, operatorID(c, "ops"), req.ReplyContent, req.MarkResolved)

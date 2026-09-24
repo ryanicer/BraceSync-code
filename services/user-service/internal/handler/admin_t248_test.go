@@ -32,9 +32,10 @@ var (
 	t248StatsCallCount int
 )
 
-func (f *fakeStore) FeedbackStats(_ context.Context, todayStart, todayEnd time.Time) (repo.FeedbackStatsRow, error) {
+func (f *fakeStore) FeedbackStats(_ context.Context, todayStart, todayEnd time.Time, scope repo.FeedbackScope) (repo.FeedbackStatsRow, error) {
 	t248StatsStart, t248StatsEnd = todayStart, todayEnd
 	t248StatsCallCount++
+	f.lastFeedbackStatsScope = scope // T378：统计条三项必须与列表页同一条团队谓词
 	return t248StatsRow, nil
 }
 

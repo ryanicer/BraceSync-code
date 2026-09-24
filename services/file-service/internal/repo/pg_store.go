@@ -33,16 +33,28 @@ type Store interface {
 	QueryFiles(ctx context.Context, filters QueryFilter) ([]model.FileMetadata, error)
 	// CountFiles 过滤条件下的总行数（分页 total，不受 page/pageSize 影响）
 	CountFiles(ctx context.Context, filters QueryFilter) (int64, error)
+	// DoctorTeamByAdmin admin_id → 医护团队 team_id；无行 / 空 team_id 一律 ok=false（T378）
+	DoctorTeamByAdmin(ctx context.Context, adminID string) (string, bool, error)
+	// FileOwnerInTeam 单文件归属探测；查无此文件与跨团队合一返回 false（T378）
+	FileOwnerInTeam(ctx context.Context, fileID, teamID string) (bool, error)
+	// OwnerInTeam presign 写侧归属探测：owner 指向的患者须在团队内，非患者材料放行（T378）
+	OwnerInTeam(ctx context.Context, ownerType, ownerID, teamID string) (bool, error)
 }
 
 // QueryFilter 查询过滤条件（空值不过滤）
+//
+// TeamScoped/TeamID（T378）收窄患者维度材料：TeamScoped 为真时，owner_type 属于
+// 患者材料（patient/alert）的行只保留 owner 患者在本团队者；TeamID 为空落恒假
+// （无团队归属的医护看不到任何患者材料），绝不退化成「不过滤」。
 type QueryFilter struct {
-	OwnerType string
-	OwnerID   string
-	FileType  model.FileType
-	Status    model.FileStatus
-	Page      int
-	PageSize  int
+	OwnerType  string
+	OwnerID    string
+	FileType   model.FileType
+	Status     model.FileStatus
+	TeamScoped bool
+	TeamID     string
+	Page       int
+	PageSize   int
 }
 
 // PGStore PostgreSQL 仓储实现（pgxpool，对齐仓库其他服务）
@@ -135,6 +147,15 @@ func buildFilterSQL(filters QueryFilter) (string, []interface{}) {
 	if filters.Status != "" {
 		where += fmt.Sprintf(" AND status = $%d", len(args)+1)
 		args = append(args, string(filters.Status))
+	}
+	// T378：团队收窄与单文件探测共用 teamScopedCond，列表与详情口径不可能分叉
+	if filters.TeamScoped {
+		if filters.TeamID == "" {
+			where += " AND owner_type NOT IN (" + patientScopedTypes + ")"
+		} else {
+			args = append(args, filters.TeamID)
+			where += " AND " + teamScopedCond("owner_type", "owner_id", len(args))
+		}
 	}
 	return where, args
 }

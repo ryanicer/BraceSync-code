@@ -46,12 +46,25 @@ type fakeQueryStore struct {
 	installs []repo.InstallListItem
 }
 
-func (f *fakeQueryStore) ListDevices(_ context.Context, _ string, _, _ int) ([]repo.DeviceListItem, int64, error) {
+func (f *fakeQueryStore) ListDevices(_ context.Context, _ string, _ repo.ListScope, _, _ int) ([]repo.DeviceListItem, int64, error) {
 	return f.devices, int64(len(f.devices)), nil
 }
 
-func (f *fakeQueryStore) ListInstallRecords(_ context.Context, _ string, _, _ int) ([]repo.InstallListItem, int64, error) {
+func (f *fakeQueryStore) ListInstallRecords(_ context.Context, _ string, _ repo.ListScope, _, _ int) ([]repo.InstallListItem, int64, error) {
 	return f.installs, int64(len(f.installs)), nil
+}
+
+// T378：本用例集不发身份头（非医护），三方法仅需满足接口，恒返回「不受限 / 无归属」。
+func (f *fakeQueryStore) DoctorTeamByAdmin(_ context.Context, _ string) (string, bool, error) {
+	return "", false, nil
+}
+
+func (f *fakeQueryStore) DeviceInTeam(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeQueryStore) InstallInTeam(_ context.Context, _ int64, _ string) (bool, error) {
+	return false, nil
 }
 
 func t356Cases() []listDetailCase {

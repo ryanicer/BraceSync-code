@@ -65,7 +65,7 @@ func TestITListDevicesJoinFilterPaging(t *testing.T) {
 	ctx := context.Background()
 
 	// 全量含 join：绑定设备返回患者姓名，未绑定为 nil
-	rows, total, err := store.ListDevices(ctx, "PRS-QRY-IT", 1, 100)
+	rows, total, err := store.ListDevices(ctx, "PRS-QRY-IT", ListScope{}, 1, 100)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
 	require.Len(t, rows, 2)
@@ -86,20 +86,20 @@ func TestITListDevicesJoinFilterPaging(t *testing.T) {
 	assert.Nil(t, unbound.PatientID)
 
 	// keyword 命中患者姓名
-	rows, total, err = store.ListDevices(ctx, "查询患者甲", 1, 10)
+	rows, total, err = store.ListDevices(ctx, "查询患者甲", ListScope{}, 1, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	require.Len(t, rows, 1)
 	assert.Equal(t, qDevice, rows[0].DeviceID)
 
 	// keyword 命中患者ID
-	rows, total, err = store.ListDevices(ctx, qPatient2, 1, 10)
+	rows, total, err = store.ListDevices(ctx, qPatient2, ListScope{}, 1, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), total) // P-QRY-IT-002 无绑定设备
 	assert.Empty(t, rows)
 
 	// 分页
-	rows, total, err = store.ListDevices(ctx, "PRS-QRY-IT", 2, 1)
+	rows, total, err = store.ListDevices(ctx, "PRS-QRY-IT", ListScope{}, 2, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
 	assert.Len(t, rows, 1)
@@ -110,7 +110,7 @@ func TestITListInstallRecordsJoinFilter(t *testing.T) {
 	store := newITStore()
 	ctx := context.Background()
 
-	rows, total, err := store.ListInstallRecords(ctx, qDevice, 1, 10)
+	rows, total, err := store.ListInstallRecords(ctx, qDevice, ListScope{}, 1, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	require.Len(t, rows, 1)
@@ -121,17 +121,17 @@ func TestITListInstallRecordsJoinFilter(t *testing.T) {
 	assert.Equal(t, "unconfigured", rows[0].WifiStatus)
 
 	// keyword 命中技师姓名
-	rows, total, err = store.ListInstallRecords(ctx, "查询技师", 1, 10)
+	rows, total, err = store.ListInstallRecords(ctx, "查询技师", ListScope{}, 1, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 
 	// keyword 命中患者姓名
-	rows, _, err = store.ListInstallRecords(ctx, "查询患者甲", 1, 10)
+	rows, _, err = store.ListInstallRecords(ctx, "查询患者甲", ListScope{}, 1, 10)
 	require.NoError(t, err)
 	assert.Len(t, rows, 1)
 
 	// 无命中
-	rows, total, err = store.ListInstallRecords(ctx, "不存在关键词xyz", 1, 10)
+	rows, total, err = store.ListInstallRecords(ctx, "不存在关键词xyz", ListScope{}, 1, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), total)
 	assert.Empty(t, rows)

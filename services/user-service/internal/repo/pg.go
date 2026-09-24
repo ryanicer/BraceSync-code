@@ -649,16 +649,43 @@ func (s *PGStore) TechPhoneHashTaken(ctx context.Context, phoneHash, excludeTech
 // 反馈
 // ─────────────────────────────────────────────────────────────
 
+// feedbackTeamCond T378：反馈按所属团队过滤的谓词片段（含前导 " AND "，空串 = 不加条件）。
+//
+// 字段名与 PatientFilter.TeamScoped / FeelingLogAdminFilter 的 T350 约定一致：
+// TeamScoped 为真而 TeamID 为空 = 该医护无团队归属 ⇒ 恒假（空集），绝不退化成「不过滤」。
+// feedbacks 自身不带团队列，归属只能经 patient_id 一跳落到 patients.team_id。
+// argN 是该条件要用的占位符序号（前面已挂了几个入参），故与 keyword 的先后无关。
+func feedbackTeamCond(scope FeedbackScope, argN int) (string, []any) {
+	if !scope.TeamScoped {
+		return "", nil
+	}
+	if scope.TeamID == "" {
+		return " AND false", nil
+	}
+	return fmt.Sprintf(` AND EXISTS (SELECT 1 FROM patients pt WHERE pt.patient_id = f.patient_id AND pt.team_id = $%d)`, argN),
+		[]any{scope.TeamID}
+}
+
 // ListFeedbacks 反馈列表（keyword=内容/患者ID/患者姓名 ILIKE；按提交时间倒序，上限 200）
-func (s *PGStore) ListFeedbacks(ctx context.Context, keyword string) ([]FeedbackRow, error) {
+func (s *PGStore) ListFeedbacks(ctx context.Context, keyword string, scope FeedbackScope) ([]FeedbackRow, error) {
 	query := `SELECT f.feedback_id, f.patient_id, f.type, f.content, f.submit_time,
 	                 f.handler, f.reply_content, f.reply_time, f.status
 	          FROM feedbacks f`
 	var args []any
+	var conds []string
 	if keyword != "" {
 		query += ` LEFT JOIN patients p ON p.patient_id = f.patient_id`
 		args = append(args, "%"+keyword+"%")
-		query += fmt.Sprintf(` WHERE (f.content ILIKE $%[1]d OR f.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d)`, 1)
+		conds = append(conds, fmt.Sprintf(`(f.content ILIKE $%[1]d OR f.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d)`, 1))
+	}
+	// 团队谓词自带 EXISTS 子查询，不依赖 keyword 分支的 p join ⇒ 与是否带 keyword 无关
+	teamCond, teamArgs := feedbackTeamCond(scope, len(args)+1)
+	if teamCond != "" {
+		args = append(args, teamArgs...)
+		conds = append(conds, strings.TrimPrefix(teamCond, " AND "))
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
 	}
 	query += fmt.Sprintf(` ORDER BY f.submit_time DESC, f.feedback_id DESC LIMIT %d`, feedbackListLimit)
 
@@ -700,20 +727,50 @@ func (s *PGStore) CreateFeedback(ctx context.Context, in FeedbackCreateInput) (i
 }
 
 // FeedbackStats 患者沟通统计栏（T248 7.1）：一次聚合出今日咨询 / 待回复 / 平均响应
-func (s *PGStore) FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time) (FeedbackStatsRow, error) {
+//
+// T378：三项计数原先恒为全院口径，医护身份进来也数全院。团队谓词挂在同一条聚合的
+// WHERE 上（与 ListFeedbacks 同一个 feedbackTeamCond），让统计条与列表页落在同一个
+// 患者集合里 —— 分开减项会让两处数字对不上，正是 T371 那族「同名列不同取数」的坑。
+func (s *PGStore) FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time, scope FeedbackScope) (FeedbackStatsRow, error) {
 	var out FeedbackStatsRow
-	err := s.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FILTER (WHERE f.submit_time >= $1 AND f.submit_time < $2),
+	teamCond, teamArgs := feedbackTeamCond(scope, 3) // $1/$2 是今日区间，团队恒取 $3
+	args := append([]any{todayStart, todayEnd}, teamArgs...)
+	sql := `SELECT COUNT(*) FILTER (WHERE f.submit_time >= $1 AND f.submit_time < $2),
 		        COUNT(*) FILTER (WHERE f.status = 'pending'),
 		        AVG(EXTRACT(EPOCH FROM (f.reply_time - f.submit_time)))
 		            FILTER (WHERE f.reply_time IS NOT NULL AND f.submit_time IS NOT NULL)
-		 FROM feedbacks f`,
-		todayStart, todayEnd,
-	).Scan(&out.TodayCount, &out.PendingCount, &out.AvgReplySec)
+		 FROM feedbacks f`
+	if teamCond != "" {
+		sql += " WHERE " + strings.TrimPrefix(teamCond, " AND ")
+	}
+	err := s.pool.QueryRow(ctx, sql, args...).
+		Scan(&out.TodayCount, &out.PendingCount, &out.AvgReplySec)
 	if err != nil {
 		return FeedbackStatsRow{}, err
 	}
 	return out, nil
+}
+
+// FeedbackInTeam T378：处理反馈落库前的只读归属探测（口径同 FeelingLogInTeam）。
+// 归属经 feedbacks.patient_id → patients.team_id 一跳；「反馈不存在 / 患者属他团队 /
+// 患者未分配团队」一律 false，由 handler 对受限身份统一回 403，免得 403 与 404 之差
+// 成为 feedbackId 存在性 oracle。teamID 为空（医护无团队归属）不下库直接 false。
+func (s *PGStore) FeedbackInTeam(ctx context.Context, feedbackID int64, teamID string) (bool, error) {
+	if teamID == "" {
+		return false, nil
+	}
+	var one int
+	err := s.pool.QueryRow(ctx,
+		`SELECT 1 FROM feedbacks f
+		 JOIN patients p ON p.patient_id = f.patient_id
+		 WHERE f.feedback_id = $1 AND p.team_id = $2`, feedbackID, teamID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ProcessFeedback 客服「处理备注」与「标记已处理」两个动作（T374，PRD V3.26 §7D.7 状态映射）：

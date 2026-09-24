@@ -299,6 +299,18 @@ type FeedbackStatsRow struct {
 	AvgReplySec  *float64 // 已回复样本的 (reply_time - submit_time) 均值，单位秒；无样本为 nil
 }
 
+// FeedbackScope T378：反馈读侧（列表 + 统计条）的团队范围。
+//
+// 字段名沿用 PatientFilter / FeelingLogAdminFilter 的 T350 约定：
+//   - Scoped=false：运营 / 客服按矩阵取全量，维持改造前语义（只收紧不放宽）；
+//   - Scoped=true + TeamID 非空：只统计该团队患者的反馈；
+//   - Scoped=true + TeamID 为空：该医护无团队归属 → 恒假谓词（空集 / 全零），
+//     绝不退化成「不过滤」。
+type FeedbackScope struct {
+	TeamID     string
+	TeamScoped bool
+}
+
 // OrthosisPlanRow orthosis_plans 表投影
 type OrthosisPlanRow struct {
 	PlanID    int64
@@ -530,12 +542,19 @@ type Store interface {
 	SetDoctorAccountPassword(ctx context.Context, doctorID, passwordHash string) (*DoctorRow, error)
 
 	// 反馈
-	ListFeedbacks(ctx context.Context, keyword string) ([]FeedbackRow, error)
+	// ListFeedbacks 反馈列表。scope 见 FeedbackScope（T378：医护只见本团队患者的反馈）。
+	ListFeedbacks(ctx context.Context, keyword string, scope FeedbackScope) ([]FeedbackRow, error)
 	// CreateFeedback T311 反馈创建端点（患者端配网失败自动存档）。
 	// patient_id 外键不命中 → ErrPatientNotFound；返回自增 feedback_id。
 	CreateFeedback(ctx context.Context, in FeedbackCreateInput) (int64, error)
-	// FeedbackStats 患者沟通统计栏（T248 7.1）：今日区间由调用方按 Asia/Shanghai 切日传入
-	FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time) (FeedbackStatsRow, error)
+	// FeedbackStats 患者沟通统计栏（T248 7.1）：今日区间由调用方按 Asia/Shanghai 切日传入；
+	// 三项计数与 ListFeedbacks 同一条团队谓词（T378）
+	FeedbackStats(ctx context.Context, todayStart, todayEnd time.Time, scope FeedbackScope) (FeedbackStatsRow, error)
+	// FeedbackInTeam T378：处理反馈落库前的只读归属探测（团队谓词在同一条 SQL 里）。
+	// 与 FeelingLogInTeam 同语义：「反馈不存在 / 患者属他团队 / 患者未分配团队」一律 false，
+	// 由 handler 对受限身份统一回 403；teamID 为空恒 false 且不下库。
+	// 刻意无写副作用 —— 卡面判据要求「越权被拒时库内变更次数为 0」，判定必须先于 ProcessFeedback。
+	FeedbackInTeam(ctx context.Context, feedbackID int64, teamID string) (bool, error)
 	// ProcessFeedback T374：markResolved 决定落 resolved 还是 replied；replyContent 为 nil 时不动已存备注
 	ProcessFeedback(ctx context.Context, feedbackID int64, handlerID string, replyContent *string, markResolved bool) (bool, error)
 
