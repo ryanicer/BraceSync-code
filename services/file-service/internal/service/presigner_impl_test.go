@@ -64,6 +64,17 @@ func (m *memStore) CountFiles(_ context.Context, _ repo.QueryFilter) (int64, err
 	return int64(len(m.files)), nil
 }
 
+// T378 归属判定三方法：只在 handler 层调用，presigner 用例不触发，此处仅满足接口。
+func (m *memStore) DoctorTeamByAdmin(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+func (m *memStore) FileOwnerInTeam(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (m *memStore) OwnerInTeam(context.Context, string, string, string) (bool, error) {
+	return false, nil
+}
+
 func newTestPresigner(store repo.Store) *Presigner {
 	return NewPresigner(storage.NewMockCOSClient(), store, "test-bucket", "ap-guangzhou")
 }

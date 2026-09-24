@@ -35,6 +35,17 @@ func (failStore) CountFiles(context.Context, repo.QueryFilter) (int64, error) {
 	return 0, errDBDown
 }
 
+// T378 归属判定三方法同样落在故障分支上（判定失败 → 500，不得退化成放行）
+func (failStore) DoctorTeamByAdmin(context.Context, string) (string, bool, error) {
+	return "", false, errDBDown
+}
+func (failStore) FileOwnerInTeam(context.Context, string, string) (bool, error) {
+	return false, errDBDown
+}
+func (failStore) OwnerInTeam(context.Context, string, string, string) (bool, error) {
+	return false, errDBDown
+}
+
 // countFailStore QueryFiles 正常、CountFiles 失败（隔离 query/count 两条 500 分支）
 type countFailStore struct {
 	memStore

@@ -149,6 +149,11 @@ func (h *FileHandler) handlePresignURL(c *gin.Context) {
 		req.OwnerType = "patient"
 		req.OwnerID = userID
 	}
+	// T378 写侧归属：判定排在 GenerateUploadURL 之前——签发本身会落 files pending 行，
+	// 拒绝路径必须库内零变更。医护只能给本团队的患者/告警开上传通道。
+	if !h.assertPresignOwnerAllowed(c, req.OwnerType, req.OwnerID) {
+		return
+	}
 
 	resp, err := h.presigner.GenerateUploadURL(c.Request.Context(), service.UploadRequest{
 		FileType:    fileType,
@@ -205,6 +210,11 @@ func (h *FileHandler) handleUploadComplete(c *gin.Context) {
 		return
 	}
 
+	// T378 写侧归属：判定排在 MarkUploaded 之前，拒绝路径下库内零变更
+	if !h.assertFileInView(c, req.FileID) {
+		return
+	}
+
 	// T261 归属校验：先取文件元数据，非 staff 须本人所有方可确认上传
 	fm, err := h.store.GetFileByFileID(c.Request.Context(), req.FileID)
 	if err != nil {
@@ -253,6 +263,10 @@ func (h *FileHandler) getFileByID(c *gin.Context) {
 	}
 
 	fileID := c.Param("fileID")
+	// T378：归属判定排在读之前；医护受限身份下跨团队与查无合一律 403（存在性不可辨）
+	if !h.assertFileInView(c, fileID) {
+		return
+	}
 	fm, err := h.store.GetFileByFileID(c.Request.Context(), fileID)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
@@ -286,6 +300,10 @@ func (h *FileHandler) handleDownloadURL(c *gin.Context) {
 	}
 
 	fileID := c.Param("fileID")
+	// T378：下载 URL 泄露的是文件内容本身，与详情同一门禁、同一形态
+	if !h.assertFileInView(c, fileID) {
+		return
+	}
 	// T261 归属校验：先取文件元数据，非 staff 须本人所有方可下载
 	fm, err := h.store.GetFileByFileID(c.Request.Context(), fileID)
 	if err != nil {
@@ -353,6 +371,13 @@ func (h *FileHandler) queryFiles(c *gin.Context) {
 		filters.OwnerType = "patient"
 		filters.OwnerID = userID
 	}
+	// T378：团队范围在查询之前推导（推导失败不得退化成「不过滤」）；
+	// QueryFiles 与 CountFiles 共用同一 filters，total 与明细不可能分叉
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
+	applyFileScope(&filters, scope)
 
 	ctx := c.Request.Context()
 	files, err := h.store.QueryFiles(ctx, filters)
