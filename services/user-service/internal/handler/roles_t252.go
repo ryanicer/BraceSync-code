@@ -48,9 +48,13 @@ var roleTemplates = []model.RoleTemplateDTO{
 			"doctor_acct", "perm", "config",
 		}},
 	},
-	// ⚠️ doctor 的 modules 比 ROLE_DOCTOR 种子（seed.sql 与 000017 的 ROLE_DOCTOR 行均只 4 项）多
-	//    patients、comm —— T252 沿 000016 旧种子留下的偏差，T277 只收口模板**条数与名称**，
-	//    是否连预设一起对齐已登记待 PM 裁定（改这里即改变新建角色的默认权限）。
+	// ⚠️ doctor 模板与 ROLE_DOCTOR 预置行**不等同**，T368 之后仍是两套值：
+	//    - 预置行：seed.sql 现 6 项 = dashboard / realtime / alerts / orthosis / review / review_tpl
+	//      （T368 按 Boss 2026-09-24 09:3x 裁定 (a)「补库」补了 review / review_tpl；只跑迁移的库
+	//      由 000017 播 4 项、再经 000028 前滚到同一终态）；
+	//    - 本模板：多 patients、comm，缺 review、review_tpl —— 前两个是 T252 沿 000016 旧种子留下的
+	//      偏差，T277 只收口模板**条数与名称**，是否连预设一起对齐已登记待 PM 裁定
+	//      （改这里即改变新建角色的默认权限）⇒ T368 不动本模板，上面对预置行项数的描述才是本卡口径。
 	{
 		Key: "doctor", Name: "医护", Description: "患者数据+告警处理+沟通",
 		Permissions: model.RolePermissionsDTO{Scope: "team", Modules: []string{
