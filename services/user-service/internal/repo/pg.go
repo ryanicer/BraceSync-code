@@ -391,6 +391,8 @@ func (s *PGStore) ListPatients(ctx context.Context, f PatientFilter) ([]PatientR
 }
 
 // GetPatient 患者详情（管理端）；不存在返回 (nil, nil)
+//
+// 不带团队谓词 ⇒ 受限身份（仅本团队患者）请用 GetPatientInTeam，否则 403 与 404 的差会泄露患者号是否存在。
 func (s *PGStore) GetPatient(ctx context.Context, patientID string) (*PatientRow, error) {
 	row := s.pool.QueryRow(ctx, patientSelect+` WHERE p.patient_id = $1`, patientID)
 	p, err := scanPatient(row)
