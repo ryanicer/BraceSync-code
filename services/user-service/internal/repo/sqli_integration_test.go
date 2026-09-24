@@ -43,7 +43,7 @@ func TestSQLi_IT_ListPatients_PayloadReturnsZeroRows(t *testing.T) {
 func TestSQLi_IT_ListFeedbacks_PayloadReturnsZeroRows(t *testing.T) {
 	ctx := context.Background()
 	for _, p := range sqliPayloads {
-		list, err := itStore.ListFeedbacks(ctx, p)
+		list, err := itStore.ListFeedbacks(ctx, p, FeedbackScope{})
 		require.NoError(t, err, "payload=%q", p)
 		assert.Empty(t, list, "payload=%q 不得命中任何反馈", p)
 	}

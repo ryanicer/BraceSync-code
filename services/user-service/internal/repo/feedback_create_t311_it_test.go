@@ -48,7 +48,7 @@ func TestITCreateFeedback_T311(t *testing.T) {
 	require.NoError(t, err)
 	assert.Positive(t, id, "feedback_id 应由 IDENTITY 生成")
 
-	rows, err := itStore.ListFeedbacks(ctx, "T311配网失败存档")
+	rows, err := itStore.ListFeedbacks(ctx, "T311配网失败存档", FeedbackScope{})
 	require.NoError(t, err)
 	var got *FeedbackRow
 	for i := range rows {

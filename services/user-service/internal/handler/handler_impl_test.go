@@ -77,28 +77,34 @@ type fakeStore struct {
 	feedbackIn       repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
 	feedbackID       int64                    // T311：CreateFeedback 返回的自增 id
 	feedbackErr      error                    // T311：CreateFeedback 注入错误
-	feelingSaveIn    repo.FeelingLogSaveInput // T188：SaveFeelingLog 落库入参
-	feelingSaveCalls int                      // T188：SaveFeelingLog 被调次数（校验短路用）
-	feelingSaved     repo.FeelingLogRow       // T188：SaveFeelingLog 回读行
-	feelingSaveErr   error                    // T188：SaveFeelingLog 注入错误
-	processOK        bool
-	processErr       error
-	plans            []repo.OrthosisPlanRow
-	plansErr         error
-	planListCalls    int // T373：ListPlans 被调次数（跨团队读必须为 0）
-	latest           string
-	hasLatest        bool
-	latestErr        error
-	createdPlan      *repo.OrthosisPlanRow
-	createPlanEr     error
-	createPlanCalls  int // T373：CreatePlan 被调次数（跨团队必须为 0）
-	feelings         []repo.FeelingLogRow
-	feelingsErr      error
-	replyOK          bool
-	replyErr         error
-	replyCalls       int // T373：ReplyFeelingLog 被调次数（跨团队必须为 0）
-	feelingTeamCalls int // T373：FeelingLogInTeam 只读探测被调次数
-	feelingTeamErr   error
+	// T378 反馈域读写归属：列表/统计条收到的团队范围、写前的只读探测计数、写调用计数
+	lastFeedbackListScope  repo.FeedbackScope
+	lastFeedbackStatsScope repo.FeedbackScope
+	feedbackTeamCalls      int
+	feedbackTeamErr        error
+	processCalls           int
+	feelingSaveIn          repo.FeelingLogSaveInput // T188：SaveFeelingLog 落库入参
+	feelingSaveCalls       int                      // T188：SaveFeelingLog 被调次数（校验短路用）
+	feelingSaved           repo.FeelingLogRow       // T188：SaveFeelingLog 回读行
+	feelingSaveErr         error                    // T188：SaveFeelingLog 注入错误
+	processOK              bool
+	processErr             error
+	plans                  []repo.OrthosisPlanRow
+	plansErr               error
+	planListCalls          int // T373：ListPlans 被调次数（跨团队读必须为 0）
+	latest                 string
+	hasLatest              bool
+	latestErr              error
+	createdPlan            *repo.OrthosisPlanRow
+	createPlanEr           error
+	createPlanCalls        int // T373：CreatePlan 被调次数（跨团队必须为 0）
+	feelings               []repo.FeelingLogRow
+	feelingsErr            error
+	replyOK                bool
+	replyErr               error
+	replyCalls             int // T373：ReplyFeelingLog 被调次数（跨团队必须为 0）
+	feelingTeamCalls       int // T373：FeelingLogInTeam 只读探测被调次数
+	feelingTeamErr         error
 	// T256 #1 团队统计卡
 	teamCount              int
 	memberCount            int
@@ -336,14 +342,68 @@ func (f *fakeStore) ToggleTechnician(_ context.Context, _, status string) (bool,
 func (f *fakeStore) TechPhoneHashTaken(_ context.Context, _, _ string) (bool, error) {
 	return f.phoneTaken, f.takenErr
 }
-func (f *fakeStore) ListFeedbacks(_ context.Context, _ string) ([]repo.FeedbackRow, error) {
-	return f.feedbacks, f.feedbacksErr
+
+// ListFeedbacks T378：替身按 scope 做与 SQL 等价的内存过滤 ——
+// TeamScoped 为真且 TeamID 为空 → 空集；否则按 f.patients 上的 team_id 命中。
+func (f *fakeStore) ListFeedbacks(_ context.Context, _ string, scope repo.FeedbackScope) ([]repo.FeedbackRow, error) {
+	f.lastFeedbackListScope = scope
+	if !scope.TeamScoped {
+		return f.feedbacks, f.feedbacksErr
+	}
+	if scope.TeamID == "" {
+		return nil, f.feedbacksErr
+	}
+	list := make([]repo.FeedbackRow, 0, len(f.feedbacks))
+	for _, fb := range f.feedbacks {
+		for i := range f.patients {
+			p := &f.patients[i]
+			if p.PatientID == fb.PatientID && p.TeamID != nil && *p.TeamID == scope.TeamID {
+				list = append(list, fb)
+			}
+		}
+	}
+	return list, f.feedbacksErr
 }
 func (f *fakeStore) CreateFeedback(_ context.Context, in repo.FeedbackCreateInput) (int64, error) {
 	f.feedbackIn = in
 	return f.feedbackID, f.feedbackErr
 }
+
+// FeedbackInTeam T378：与 FeelingLogInTeam 同语义的只读替身（空团队不下库恒 false；
+// 「反馈不存在 / 患者在他团队 / 患者 team_id 为 NULL」一律 false）。
+func (f *fakeStore) FeedbackInTeam(_ context.Context, feedbackID int64, teamID string) (bool, error) {
+	f.feedbackTeamCalls++
+	if teamID == "" {
+		return false, nil
+	}
+	if f.feedbackTeamErr != nil {
+		return false, f.feedbackTeamErr
+	}
+	pid, found := "", false
+	for _, fb := range f.feedbacks {
+		if fb.FeedbackID == feedbackID {
+			pid, found = fb.PatientID, true
+			break
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	inTeam := func(p *repo.PatientRow) bool {
+		return p != nil && p.PatientID == pid && p.TeamID != nil && *p.TeamID == teamID
+	}
+	if inTeam(f.patient) {
+		return true, nil
+	}
+	for i := range f.patients {
+		if inTeam(&f.patients[i]) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 func (f *fakeStore) ProcessFeedback(_ context.Context, _ int64, _ string, reply *string, markResolved bool) (bool, error) {
+	f.processCalls++
 	f.lastProcessR = reply
 	f.lastProcessMark = markResolved
 	return f.processOK, f.processErr
