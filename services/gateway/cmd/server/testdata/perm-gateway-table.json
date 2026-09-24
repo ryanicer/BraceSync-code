@@ -1,0 +1,910 @@
+{
+  "generatedBy": "apps/admin-web/test/perm-gateway-cross-source.spec.ts (UPDATE_GATEWAY_TABLE=1)",
+  "note": "T379 三源门禁的网关判定表。path 里的参数段以 S1 为样本值，网关侧 Go 用例逐行发真实请求复核（rbac_perm_gate_t379_test.go）：deny 行须回 403，pass 行须非 403。",
+  "sample": "S1",
+  "rows": [
+    {
+      "role": "ROLE_ADMIN",
+      "method": "DELETE",
+      "path": "/api/v1/admin/flow/templates/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "DELETE",
+      "path": "/api/v1/admin/roles/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "DELETE",
+      "path": "/api/v1/teams/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "DELETE",
+      "path": "/api/v1/teams/S1/members/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/abnormal-reports",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/alert-rules",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/audit-logs",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/alert-trend",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/doctor-ranking",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/kpi",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/team-ranking",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/wear-distribution",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/wear-trend",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/feeling-logs",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/instances",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/instances/S1/actions",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/instances/S1/nodes",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/templates",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/templates/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/notification-logs",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/notify-rules",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/patients",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/patients/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/review-templates",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/role-templates",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/roles",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/roles/S1/permissions",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/settings",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/admin/teams/stats",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/alerts",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/devices",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/devices/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/devices/S1/bindings",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/doctors",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/feedbacks",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/install-records",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/install-records/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/daily-wear",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/feeling-logs",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/health-reports",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/orthosis-plans",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/realtime",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/review-records",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/teams",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/teams/S1/members",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/technicians",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/alert-rules/points/reset",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/doctors",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/doctors/S1/reset-password",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/doctors/S1/status",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/flow/instances",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/flow/instances/S1/nodes/S1/actions",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/flow/templates",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/patients",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/patients/batch-bind",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/review-records",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/review-templates",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/review-templates/S1/replace",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/roles",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/admin/technicians",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/alerts/S1/process",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/alerts/S1/processing",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/devices",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/feedbacks/S1/process",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/feeling-logs/S1/reply",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/files/presign",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/files/upload-complete",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/patients/S1/orthosis-plans",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/teams",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/teams/S1/members",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
+      "path": "/api/v1/technicians/S1/toggle",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/alert-rules/global",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/alert-rules/points",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/doctors/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/flow/templates/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/notify-rules/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/patients/S1/team",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/roles/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/roles/S1/permissions",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/settings",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/admin/technicians/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/teams/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "PUT",
+      "path": "/api/v1/teams/S1/members/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_CS",
+      "method": "GET",
+      "path": "/api/v1/feedbacks",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_CS",
+      "method": "POST",
+      "path": "/api/v1/feedbacks/S1/process",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "DELETE",
+      "path": "/api/v1/admin/flow/templates/S1",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/abnormal-reports",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/alert-rules",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/alert-trend",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/doctor-ranking",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/kpi",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/team-ranking",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/wear-distribution",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/dashboard/wear-trend",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/feeling-logs",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/instances",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/instances/S1/actions",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/instances/S1/nodes",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/templates",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/templates/S1",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/patients",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/patients/S1",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/review-templates",
+      "deny": false,
+      "why": "doctor-or-admin 专属"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/settings",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/alerts",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/doctors",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/daily-wear",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/feeling-logs",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/health-reports",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/orthosis-plans",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/realtime",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/patients/S1/review-records",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/teams",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/admin/alert-rules/points/reset",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/admin/flow/instances",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/admin/flow/instances/S1/nodes/S1/actions",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/admin/flow/templates",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/admin/review-records",
+      "deny": false,
+      "why": "doctor-or-admin 专属"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/admin/review-templates",
+      "deny": false,
+      "why": "doctor-or-admin 专属"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/admin/review-templates/S1/replace",
+      "deny": false,
+      "why": "doctor-or-admin 专属"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/alerts/S1/process",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/alerts/S1/processing",
+      "deny": false,
+      "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/feeling-logs/S1/reply",
+      "deny": false,
+      "why": "doctor-or-admin 专属"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/files/presign",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/files/upload-complete",
+      "deny": false,
+      "why": "public"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "POST",
+      "path": "/api/v1/patients/S1/orthosis-plans",
+      "deny": false,
+      "why": "doctor-or-admin 专属"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "PUT",
+      "path": "/api/v1/admin/alert-rules/global",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "PUT",
+      "path": "/api/v1/admin/alert-rules/points",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "PUT",
+      "path": "/api/v1/admin/flow/templates/S1",
+      "deny": true,
+      "why": "admin-only"
+    }
+  ]
+}
