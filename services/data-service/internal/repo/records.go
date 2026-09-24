@@ -204,6 +204,51 @@ func (r *RecordRepo) GetLatestRecord(ctx context.Context, patientID string) (mod
 	return rec, true, nil
 }
 
+// ─────────────────────────────────────────────────────────────
+// T366：按 CST 日统计明细帧数（daily-wear 行的佐证源）
+// ─────────────────────────────────────────────────────────────
+
+// DailyFrameCounter 明细帧按业务日计数契约（*RecordRepo 实现）。
+// 单独成接口、不并入 RecordStore：RecordStore 的测试替身遍布各 service 单测，
+// 加方法会牵动无关卡片；注入侧用类型断言取用（同 ThresholdStore 的先例）。
+type DailyFrameCounter interface {
+	// CountFramesByCSTDay 按 Asia/Shanghai 切日统计某患者区间内每天的压力帧数。
+	// 返回 map["YYYY-MM-DD"]count；区间内无帧的日期不出现在 map 里
+	// （调用方据此区分「0 帧」与「未统计」）。
+	CountFramesByCSTDay(ctx context.Context, patientID string, from, to time.Time) (map[string]int, error)
+}
+
+// countFramesByCSTDaySQL 与 rollup 的 aggregateDateSQL 同窗口口径：[$1,$2) UTC。
+// 切日必须显式 AT TIME ZONE 'Asia/Shanghai' 再截 date（同 queryRangeSQL 的坑：
+// 直接比较会整体早一天）。GROUP BY 用表达式别名，避免与分区键上的 ts 比较混淆。
+const countFramesByCSTDaySQL = `
+SELECT to_char((ts AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS cst_date,
+       COUNT(*)::int AS frames
+FROM pressure_records
+WHERE patient_id = $1 AND ts >= $2 AND ts < $3
+GROUP BY 1
+ORDER BY 1`
+
+// CountFramesByCSTDay 实现 DailyFrameCounter
+func (r *RecordRepo) CountFramesByCSTDay(ctx context.Context, patientID string, from, to time.Time) (map[string]int, error) {
+	rows, err := r.pool.Query(ctx, countFramesByCSTDaySQL, patientID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("count pressure_records by cst day: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var day string
+		var n int
+		if err := rows.Scan(&day, &n); err != nil {
+			return nil, err
+		}
+		out[day] = n
+	}
+	return out, rows.Err()
+}
+
 // frameArgs 组装 23 个插入参数
 func frameArgs(deviceID, patientID string, f PendingFrame) []any {
 	args := make([]any, 0, 23)

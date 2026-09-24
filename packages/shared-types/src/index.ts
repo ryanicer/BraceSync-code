@@ -151,6 +151,12 @@ export interface PressureRecord {
   uploadTime: string;
   /** T173：是否已应用基线校准（减偏移）。false = 设备无基线，读数为 raw 值 */
   calibrated?: boolean;
+  /**
+   * T366：库侧生成列 max_pressure 的**原始**值（= raw p01..p20 取最大，不做校准）。
+   * 与 points[].pressureValue 不同层：后者是校准后的值，日聚合判的是本列。
+   * 缺省 = 服务端未透出（旧版本镜像），不要当 0 用。
+   */
+  maxPressure?: number;
 }
 
 export interface Alert {

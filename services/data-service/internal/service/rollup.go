@@ -111,21 +111,32 @@ func (s *RollupService) ProcessBackfillQueue(ctx context.Context) {
 	}
 }
 
+// stampStats 给聚合行盖 T366 聚合印章：聚合发生时刻 + 本次实际生效的佩戴帧阈值，
+// 并统一回填 StatDate（CST 切日）。
+// 🔴 thresholdN 必须是传给 AggregateDate 的那一个值（同源），否则读侧「按印章复算」
+// 用的是另一个阈值，印章就成了假证据。
+// 印章只由这里写：seed 示例行、迁移前的历史行永远是无印章，读侧据此判为未佐证。
+func stampStats(stats []model.DailyWearStats, date time.Time, at time.Time, thresholdN float64) {
+	for i := range stats {
+		stats[i].StatDate = date
+		stats[i].AggregatedAt = &at
+		stats[i].WearingThresholdN = &thresholdN
+	}
+}
+
 // aggregateAndUpsert 聚合指定日期的全部患者并 UPSERT
 func (s *RollupService) aggregateAndUpsert(ctx context.Context, date time.Time, dateStr string) error {
 	// UTC 时间窗口：CST 当日 00:00 ~ 次日 00:00
 	from := date.UTC()
 	to := date.AddDate(0, 0, 1).UTC()
 
-	stats, err := s.stats.AggregateDate(ctx, from, to, s.wearingThresholdN(ctx))
+	thN := s.wearingThresholdN(ctx)
+	stats, err := s.stats.AggregateDate(ctx, from, to, thN)
 	if err != nil {
 		return err
 	}
 
-	// 设置日期（CST 切日）
-	for i := range stats {
-		stats[i].StatDate = date
-	}
+	stampStats(stats, date, s.now().UTC(), thN)
 
 	if len(stats) == 0 {
 		log.Info().Str("date", dateStr).Msg("daily rollup: no records found for date")
@@ -145,17 +156,18 @@ func (s *RollupService) aggregatePatientDate(ctx context.Context, date time.Time
 	from := date.UTC()
 	to := date.AddDate(0, 0, 1).UTC()
 
-	stats, err := s.stats.AggregateDate(ctx, from, to, s.wearingThresholdN(ctx))
+	thN := s.wearingThresholdN(ctx)
+	stats, err := s.stats.AggregateDate(ctx, from, to, thN)
 	if err != nil {
 		return err
 	}
+	stampStats(stats, date, s.now().UTC(), thN)
 
 	// 过滤出目标患者
 	var filtered []model.DailyWearStats
-	for _, s := range stats {
-		if s.PatientID == patientID {
-			s.StatDate = date
-			filtered = append(filtered, s)
+	for i := range stats {
+		if stats[i].PatientID == patientID {
+			filtered = append(filtered, stats[i])
 		}
 	}
 

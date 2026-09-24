@@ -110,7 +110,7 @@ import { useAuthStore } from '../../stores/auth'
 // 目标 18h/天：wearing.html PT-18「目标: 18小时/天」；与 T221 异常监测页的 16h 口径不同源，勿混用
 const WEAR_TARGET_H = 18
 
-// data-service DailyWearDayDTO（T076）
+// data-service DailyWearDayDTO（T076；T366 可解释性四字段为可选镜像，本页不消费）
 interface DailyWearDay {
   date: string
   wearMinutes: number
@@ -119,6 +119,10 @@ interface DailyWearDay {
   maxPoint: string
   frameCount: number
   abnormalCount: number
+  provenance?: 'rollup' | 'corroborated' | 'unsupported'
+  detailFrameCount?: number | null
+  aggregatedAt?: string | null
+  wearingThresholdN?: number | null
 }
 
 const auth = useAuthStore()

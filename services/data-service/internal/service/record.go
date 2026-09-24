@@ -592,6 +592,8 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 					Points:     model.BuildSensorPoints(res.Points, th),
 					UploadTime: rf.UploadTime.UTC().Format(time.RFC3339),
 					Calibrated: res.Applied,
+					// T366：与 DB 分支同口径的 raw 峰值（Redis 无库侧生成列，按 greatest(p01..p20) 现算）
+					MaxPressure: model.MaxPointValue(raw),
 				})
 				snapshot.Battery = rf.Battery
 			}
@@ -789,12 +791,48 @@ const maxDailyWearDays = 90
 // DailyWearService 患者视角的日佩戴聚合查询（数据源：repo.DailyWearStatsStore）
 type DailyWearService struct {
 	store repo.DailyWearStatsStore
-	now   func() time.Time
+	// frames T366 佐证源：按 CST 日统计 pressure_records 明细帧数。
+	// nil = 未注入（仅测试/降级场景）⇒ 无印章的行一律判 unsupported，
+	// 且 detailFrameCount 下发 null（「没查」不能说成「0 帧」）。
+	frames repo.DailyFrameCounter
+	now    func() time.Time
 }
 
-// NewDailyWearService 组装 DailyWearService（store 注入 RollupRepo）
-func NewDailyWearService(store repo.DailyWearStatsStore) *DailyWearService {
-	return &DailyWearService{store: store, now: time.Now}
+// NewDailyWearService 组装 DailyWearService
+// store 注入 RollupRepo；frames 注入 RecordRepo（T366 明细佐证，可为 nil）
+func NewDailyWearService(store repo.DailyWearStatsStore, frames repo.DailyFrameCounter) *DailyWearService {
+	return &DailyWearService{store: store, frames: frames, now: time.Now}
+}
+
+// deriveWearProvenance T366 三值来源判定（纯函数，单测直接打表）。
+//   - stamped：行上有聚合印章（aggregated_at + wearing_threshold_n 两列齐）⇒ rollup
+//   - detail == nil：明细帧数未取到 ⇒ 无印章的行只能判 unsupported（不得当成已佐证）
+//   - detail != nil 且与行上声明的 frame_count 相等 ⇒ corroborated（数字对得上，来源不明但不假）
+//   - 其余（含 seed 示例行：声明帧数与现存明细不符）⇒ unsupported
+//
+// 🔴 只有「有正向证据」才升档：印章或明细二者皆缺时落 unsupported，绝不因「看起来合理」放行。
+func deriveWearProvenance(stamped bool, declaredFrameCount int, detailFrameCount *int) string {
+	if stamped {
+		return model.ProvenanceRollup
+	}
+	if detailFrameCount != nil && *detailFrameCount == declaredFrameCount {
+		return model.ProvenanceCorroborated
+	}
+	return model.ProvenanceUnsupported
+}
+
+// wearDetailCounts 取区间内逐 CST 日的明细帧数；未注入或查询失败返回 nil（不分佐证档）。
+// 佐证失败只降级不报错：daily-wear 的可用性优先，判档按「未佐证」走。
+func (s *DailyWearService) wearDetailCounts(ctx context.Context, patientID string, from, to time.Time) map[string]int {
+	if s.frames == nil {
+		return nil
+	}
+	counts, err := s.frames.CountFramesByCSTDay(ctx, patientID, from, to)
+	if err != nil {
+		log.Warn().Err(err).Str("patient_id", patientID).Msg("daily-wear provenance: detail frame count failed, rows degrade to unsupported")
+		return nil
+	}
+	return counts
 }
 
 // GetDailyWear 按日期范围（闭区间，YYYY-MM-DD，Asia/Shanghai 切日）返回 daily_wear_stats。
@@ -844,17 +882,38 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 		return nil, model.ErrInternal("query daily wear stats failed")
 	}
 
+	// T366：同窗口取逐日明细帧数，用于给无印章的行找佐证
+	detailCounts := s.wearDetailCounts(ctx, patientID, fromUTC, toUTC)
+
 	out := make([]*model.DailyWearDayDTO, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, &model.DailyWearDayDTO{
-			Date:          r.StatDate.In(model.CSTZone()).Format("2006-01-02"),
-			WearMinutes:   r.WearMinutes,
-			AvgPressure:   r.AvgPressure,
-			MaxPressure:   r.MaxPressure,
-			MaxPoint:      r.MaxPoint, // QueryRange SQL COALESCE(max_point, '') 兜底空串
-			FrameCount:    r.FrameCount,
-			AbnormalCount: r.AbnormalCount,
-		})
+		date := r.StatDate.In(model.CSTZone()).Format("2006-01-02")
+		var detail *int
+		if detailCounts != nil {
+			if n, ok := detailCounts[date]; ok {
+				detail = &n
+			} else {
+				zero := 0
+				detail = &zero // 查到该区间但无该日 = 该日 0 帧（区别于「未查」）
+			}
+		}
+		dto := &model.DailyWearDayDTO{
+			Date:             date,
+			WearMinutes:      r.WearMinutes,
+			AvgPressure:      r.AvgPressure,
+			MaxPressure:      r.MaxPressure,
+			MaxPoint:         r.MaxPoint, // QueryRange SQL COALESCE(max_point, '') 兜底空串
+			FrameCount:       r.FrameCount,
+			AbnormalCount:    r.AbnormalCount,
+			Provenance:       deriveWearProvenance(r.HasRollupStamp(), r.FrameCount, detail),
+			DetailFrameCount: detail,
+		}
+		if r.HasRollupStamp() {
+			agg := r.AggregatedAt.UTC().Format(time.RFC3339)
+			dto.AggregatedAt = &agg
+			dto.WearingThresholdN = r.WearingThresholdN
+		}
+		out = append(out, dto)
 	}
 	return out, nil
 }

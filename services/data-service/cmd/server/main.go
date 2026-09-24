@@ -139,7 +139,8 @@ func main() {
 	h.SetDashboardQuerier(dashboardSvc)
 
 	// T076：患者日佩戴聚合端点（数据源 daily_wear_stats，患者自查 + admin 任意）
-	dailyWearSvc := service.NewDailyWearService(rollupRepo)
+	// T366：第二参数注入 pressure_records 明细佐证源，用于给无聚合印章的行判 corroborated / unsupported
+	dailyWearSvc := service.NewDailyWearService(rollupRepo, repo.NewRecordRepo(pool))
 	h.SetDailyWearQuerier(dailyWearSvc)
 
 	router := h.Router()

@@ -94,6 +94,7 @@ import { alertsToPressureMap, type PressureAnomalyItem } from '../../utils/anoma
 
 // 佩戴记录：后端 data-service DailyWearDayDTO（GET /patients/:patientId/daily-wear，T076）
 // 真机教训：DTO 只有 wearMinutes，hours/status 必须前端派生，不可直接消费
+// T366：可解释性四字段为可选镜像，本页不消费
 export interface DailyWearDay {
   date: string
   wearMinutes: number
@@ -102,6 +103,10 @@ export interface DailyWearDay {
   maxPoint: string
   frameCount: number
   abnormalCount: number
+  provenance?: 'rollup' | 'corroborated' | 'unsupported'
+  detailFrameCount?: number | null
+  aggregatedAt?: string | null
+  wearingThresholdN?: number | null
 }
 
 export interface WearingRecord {
