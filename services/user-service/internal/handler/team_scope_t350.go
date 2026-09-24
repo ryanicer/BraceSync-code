@@ -56,24 +56,11 @@ func (s teamScope) filterTeamID(override string) string {
 	return s.teamID // 医护：一律按自己的团队，客户端传的 teamId 被忽略
 }
 
-// patientTeamID 取患者行所属团队（patients.team_id 可空，NULL = 未分配团队）。
-func patientTeamID(teamID *string) string {
-	if teamID == nil {
-		return ""
-	}
-	return *teamID
-}
-
-// allowsPatient 单资源越权判定：患者所属团队是否落在调用者范围内
-func (s teamScope) allowsPatient(teamID string) bool {
-	if !s.limited {
-		return true
-	}
-	return s.teamID != "" && teamID == s.teamID
-}
-
-// denyCrossTeam 越界访问统一按 403（与既有契约「水平越权优先于 404，存在性不泄露」一致）。
-// 患者不存在时不在此处判定，仍由各 handler 原有的 404 分支负责。
+// denyCrossTeam 单资源越界访问统一按 403。
+//
+// T350 判据③ 的口径修正：本函数同时承接「档案不存在」——受限范围下的详情读走
+// repo.GetPatientInTeam（团队谓词在同一条 SQL 里），无行即回本函数，因此对医护这一端点
+// 永远不出 404，患者号存在性不可辨。不受限角色（运营 / 客服）不进这条路径，仍吃原 404。
 func denyCrossTeam(c *gin.Context, patientID string) {
 	fail(c, model.ErrForbidden("patient %s is out of your data scope", patientID))
 }

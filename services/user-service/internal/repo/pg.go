@@ -391,8 +391,33 @@ func (s *PGStore) ListPatients(ctx context.Context, f PatientFilter) ([]PatientR
 }
 
 // GetPatient 患者详情（管理端）；不存在返回 (nil, nil)
+//
+// 不带团队谓词 ⇒ 受限身份（仅本团队患者）请用 GetPatientInTeam，否则 403 与 404 的差会泄露患者号是否存在。
 func (s *PGStore) GetPatient(ctx context.Context, patientID string) (*PatientRow, error) {
 	row := s.pool.QueryRow(ctx, patientSelect+` WHERE p.patient_id = $1`, patientID)
+	p, err := scanPatient(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// GetPatientInTeam T350：只按「患者 + 团队」取档案行，无命中返回 (nil, nil)。
+//
+// 与 GetPatient 的分工是给单资源读端点一条「越权与查无此人同结果」的读法：
+// 团队谓词进同一条 SQL，三种不可见（无此患者 / 患者在他团队 / 患者未分配团队）
+// 一律 (nil, nil)，handler 据此统一回 403，受限身份因此拿不到患者号存在性 oracle。
+//
+// teamID 为空串（医护无团队归属）同样恒不命中，且不下库；patients.team_id 可为 NULL，
+// 但 NULL 与空串做等值比较恒为未知，空团队这一侧靠本函数的短路保证，不依赖比较语义。
+func (s *PGStore) GetPatientInTeam(ctx context.Context, patientID, teamID string) (*PatientRow, error) {
+	if teamID == "" {
+		return nil, nil
+	}
+	row := s.pool.QueryRow(ctx, patientSelect+` WHERE p.patient_id = $1 AND p.team_id = $2`, patientID, teamID)
 	p, err := scanPatient(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -817,6 +842,29 @@ func (s *PGStore) SaveFeelingLog(ctx context.Context, in FeelingLogSaveInput) (F
 		return FeelingLogRow{}, err
 	}
 	return out, nil
+}
+
+// FeelingLogInTeam T373：医生回复落库前的只读归属探测。
+// feeling_logs 本身不带团队列，归属由患者的 team_id 决定，故与 patients 内连接
+// （口径同 ListFeelingLogsAdmin 的 T350 团队过滤）。患者未分配团队时 p.team_id IS NULL，
+// 等值比较恒不命中，与「日志不存在 / 他团队」同回 false，由 handler 统一成 403。
+// teamID 为空（医护账号无团队归属）不下库直接 false，走 fail-closed。
+func (s *PGStore) FeelingLogInTeam(ctx context.Context, logID int64, teamID string) (bool, error) {
+	if teamID == "" {
+		return false, nil
+	}
+	var one int
+	err := s.pool.QueryRow(ctx,
+		`SELECT 1 FROM feeling_logs fl
+		 JOIN patients p ON p.patient_id = fl.patient_id
+		 WHERE fl.log_id = $1 AND p.team_id = $2`, logID, teamID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ReplyFeelingLog 医生回复写入（重复回复覆盖）；返回日志是否存在

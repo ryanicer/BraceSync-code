@@ -114,6 +114,47 @@ describe('模块词表与落库/后端模板同源（T345 跨端漂移门禁）'
     expect(parseArray(m![1], '000026 up')).toEqual(PAGE_MODULES.map((x) => x.key))
   })
 
+  // ↓ T368：医护侧栏/路由越权（Ella T345 验收唯一不通过项 D-A）。缺陷成因正是
+  //   「前端准入矩阵 6 页、库里 ROLE_DOCTOR.modules 只 4 项」两套来源同屏，而上面的三条用例
+  //   只镜像了 ROLE_ADMIN —— admin 恰好两边相等，所以这条分叉没有任何门禁能看见。
+  //   Boss 2026-09-24 09:3x 裁 (a)「补库」⇒ 这里把 doctor 也钉成同源。
+  it('seed.sql 的 ROLE_DOCTOR.modules = 前端 doctor 可见页换算出的模块键', () => {
+    const m = read('scripts/db/seed/seed.sql').match(
+      /'ROLE_DOCTOR',[\s\S]*?"modules":(\[[^\]]*\])/,
+    )
+    expect(m, 'seed.sql 里没定位到 ROLE_DOCTOR 的 modules').not.toBeNull()
+    expect(parseArray(m![1], 'seed.sql')).toEqual(modulesForRole('doctor'))
+    // 逐值再钉一遍基数：换算函数若哪天吞了某页，上一行会两边一起变短而看不出来
+    expect(modulesForRole('doctor'), 'T135 起医护 6 页（T368 补库后的基数）').toEqual([
+      'dashboard', 'realtime', 'alerts', 'orthosis', 'review', 'review_tpl',
+    ])
+  })
+
+  it('迁移 000028 前滚后的 ROLE_DOCTOR.modules = 前端 doctor 可见页（up 与 down 对称）', () => {
+    const parse = (file: string, where: string): string[] => {
+      const m = read(file).match(/'\{modules\}',\s*'(\[[^\]]*\])'::jsonb/)
+      expect(m, `${where} 里没定位到 jsonb_set 的 modules 数组（改格式可以，别悄悄改）`).not.toBeNull()
+      return parseArray(m![1], where)
+    }
+    expect(
+      parse('scripts/db/migrations/000028_t368_doctor_review_modules_iris.up.sql', '000028 up'),
+      '000028 前滚后的库必须与前端矩阵逐元素相等（含顺序）',
+    ).toEqual(modulesForRole('doctor'))
+    // down 回到补库前的 4 项 —— 不是「和 up 一样」就完事，回滚目标本身也要钉住
+    expect(
+      parse('scripts/db/migrations/000028_t368_doctor_review_modules_iris.down.sql', '000028 down'),
+      '000028 down 应退回 Boss 裁定前的 4 项',
+    ).toEqual(['dashboard', 'realtime', 'alerts', 'orthosis'])
+  })
+
+  it('客服模块键未被 T368 顺手改动（仍只 comm 一项）', () => {
+    const m = read('scripts/db/seed/seed.sql').match(
+      /'ROLE_CS',[\s\S]*?"modules":(\[[^\]]*\])/,
+    )
+    expect(m, 'seed.sql 里没定位到 ROLE_CS 的 modules').not.toBeNull()
+    expect(parseArray(m![1], 'seed.sql ROLE_CS')).toEqual(['comm'])
+  })
+
   it('后端 admin 角色模板 = PAGE_MODULES（前端弹窗按它预勾）', () => {
     const m = read('services/user-service/internal/handler/roles_t252.go').match(
       /Key: "admin"[\s\S]*?Modules: \[\]string\{([\s\S]*?)\}/,

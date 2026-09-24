@@ -53,7 +53,7 @@ export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
     '/roles',
     '/settings',
   ],
-  doctor: ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records', '/review-templates'], // T135 医生可下载空白模板
+  doctor: ['/dashboard', '/monitor', '/alerts', '/orthosis-log', '/review-records', '/review-templates'], // T135 医生可下载空白模板；T368 库里 ROLE_DOCTOR.modules 按 Boss 裁定 (a) 补到同 6 页（迁移 000028）
   cs: ['/communication'],
 }
 

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { realLogin, gotoMenu, pickSelectOption, realRoutes } from '../real-helpers'
+import { realLogin, gotoMenu, pickSelectOption, realRoutes, stubRealtimeSnapshot } from '../real-helpers'
 import { requireDeployedBuild } from '../deploy-guard'
 
 /**
@@ -463,17 +463,12 @@ test.describe('04-实时监控', () => {
     ]
 
     test('4.4 快照带事件时：四列表头 + 逐行时间/类型徽章/详情/采集点渲染，无 undefined/NaN', async ({ page }) => {
-      await page.route('**/api/v1/patients/*/realtime', async (route) => {
-        const res = await route.fetch()
-        let body: { data?: Record<string, unknown> }
-        try {
-          body = await res.json()
-        } catch {
-          await route.fulfill({ response: res })
-          return
-        }
-        if (body && body.data) body.data.alerts = INJECTED
-        await route.fulfill({ response: res, body: JSON.stringify(body) })
+      // T365：这里不再自己写 page.route + await route.fetch()。监控页每 2s 轮询同一端点，
+      // 旧写法在用例收尾时可能还有 handler 挂在那次 fetch 上，回来时 route 已被处置，
+      // fulfill 抛 "Route is already handled!" 并记到本条名下（CI 4 个 attempt 红 2 次）。
+      // 收口写法见 real-helpers.ts 的 stubRealtimeSnapshot。
+      const realtimeServed = await stubRealtimeSnapshot(page, (data) => {
+        data.alerts = INJECTED
       })
 
       // 触发一次带拦截的刷新（页面本身 2s 轮询，点「立即刷新」把它拉到当前）
@@ -521,6 +516,10 @@ test.describe('04-实时监控', () => {
       const t2 = (await rows.nth(1).locator('td').nth(0).textContent())!.trim()
       expect(t1).not.toBe(t2)
       await expect(card).not.toContainText(/undefined|NaN/)
+
+      // 5) 判据非空转：本条的 3 行事件只可能来自改写后的响应，故拦截必须真的命中过。
+      //    （上面任何一条断言失手都会先判红，这里是给「缓存出口一次都没服务」留的显式锁。）
+      expect(realtimeServed(), '实时快照应至少被拦截并改写一次').toBeGreaterThanOrEqual(1)
     })
   })
 })

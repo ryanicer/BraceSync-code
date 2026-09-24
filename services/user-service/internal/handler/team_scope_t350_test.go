@@ -3,15 +3,18 @@
 // 缺陷原貌：patient 列表 / 患者详情 / 跨患者感受日志三条读链路的团队维度只从 query 取，
 // 从不按调用者身份推导 ⇒ 医生令牌不传 teamId 就是全表，传别人的 teamId 就能切视图。
 //
-// 本文件守三件事：
+// 本文件守四件事：
 //  1. 推导来源是身份（X-Role + X-User-Id → doctors.team_id），客户端 teamId 对医护无效；
 //  2. fail-closed：医护无团队归属 → 空集标记（TeamScoped 且 TeamID 为空），绝不退化成不过滤；
-//  3. 只收紧不放宽：运营 / 客服路径的入参语义逐字不变。
+//  3. 只收紧不放宽：运营 / 客服路径的入参语义逐字不变；
+//  4. 存在性不泄露（判据③ 后半，第 8 轮打回项）：受限身份的详情读「跨团队」与「查无此人」
+//     同码同形，患者详情端点对医护永不出 404。
 package handler
 
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -166,13 +169,61 @@ func TestT350_GetPatient_AdminSeesAnyTeam(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, resp.Message)
 }
 
-func TestT350_GetPatient_NotFoundStill404ForDoctor(t *testing.T) {
+// 判据③ 后半（PM 第 8 轮打回项）：受限身份的患者详情不得成为「患者号存在性 oracle」。
+// 打回前的现网原文：跨团队 P20260001 回 403、不存在的 P99999999 回 404，
+// 一名已登录医护据此可枚举哪些患者号真实存在。本用例守「同码 + 同文案」。
+func TestT350_GetPatient_DoctorCannotProbeExistence(t *testing.T) {
+	p := samplePatient() // TEAM01，对 doctor_li 是跨团队
+
+	// 甲：读「存在但跨团队」
+	ea := newEnv(t, false, false)
+	existing := p
+	ea.store.patient = &existing
+	t350DoctorInTeam(ea, t350OtherTeam)
+	wa, respA := ea.do(http.MethodGet, "/api/v1/admin/patients/P20260001", nil,
+		t350Hdr(t350DoctorHDR, "ADM-D001"))
+
+	// 乙：读「根本不存在」的号
+	eb := newEnv(t, false, false)
+	t350DoctorInTeam(eb, t350OtherTeam)
+	wb, respB := eb.do(http.MethodGet, "/api/v1/admin/patients/P20269999", nil,
+		t350Hdr(t350DoctorHDR, "ADM-D001"))
+
+	require.Equal(t, http.StatusForbidden, wa.Code, respA.Message)
+	require.Equal(t, http.StatusForbidden, wb.Code, "不存在不得回 404（与跨团队同码）")
+	assert.Equal(t, model.CodeForbidden, respB.Code)
+	assert.Equal(t, respA.Code, respB.Code, "业务码必须一致，否则码值本身就是 oracle")
+	// 文案同理：抹掉调用者自己填的患者号后必须逐字相同（Alice 举证的判读面含文案差异）
+	assert.Equal(t,
+		strings.ReplaceAll(respA.Message, "P20260001", "<pid>"),
+		strings.ReplaceAll(respB.Message, "P20269999", "<pid>"),
+		"两句文案去掉患者号后必须同形")
+	assert.NotContains(t, respB.Message, "not found", "不得出现「不存在」字样")
+}
+
+// 无团队归属的医护：读不存在的号同样 403（fail-closed 与存在性闭合走同一条路径）
+func TestT350_GetPatient_DoctorWithoutTeamNotFoundForbidden(t *testing.T) {
 	e := newEnv(t, false, false)
-	t350DoctorInTeam(e, t350OwnTeam)
+	t350DoctorInTeam(e, "")
 
 	w, resp := e.do(http.MethodGet, "/api/v1/admin/patients/P20269999", nil,
-		t350Hdr(t350DoctorHDR, "ADM-D001"))
-	assert.Equal(t, http.StatusNotFound, w.Code, resp.Message)
+		t350Hdr(t350DoctorHDR, "ADM-D002"))
+	assert.Equal(t, http.StatusForbidden, w.Code, resp.Message)
+}
+
+// 只收紧不放宽：不受限角色（运营 / 客服）的 404 语义逐字不变
+func TestT350_GetPatient_NotFoundStill404ForAdmin(t *testing.T) {
+	for _, role := range []string{"ROLE_ADMIN", "ROLE_CS"} {
+		t.Run(role, func(t *testing.T) {
+			e := newEnv(t, false, false)
+			t350DoctorInTeam(e, t350OwnTeam) // 非医护身份即便能查到团队也不参与过滤
+
+			w, resp := e.do(http.MethodGet, "/api/v1/admin/patients/P20269999", nil,
+				t350Hdr(role, "ADM-001"))
+			assert.Equal(t, http.StatusNotFound, w.Code, resp.Message)
+			assert.Equal(t, model.CodeNotFound, resp.Code)
+		})
+	}
 }
 
 // ── 4. 跨患者感受日志：同一套推导 ───────────────────────────────────────
