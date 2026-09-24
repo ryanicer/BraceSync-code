@@ -49,7 +49,7 @@ export interface Doctor {
   teamId: string | null;         // DB doctors.team_id 可空
   phoneMasked: string;           // 展示脱敏（与 Technician 一致），联系走微信客服
   phoneState: PhoneState;        // T361：与 phoneMasked 配套，区分「没有」与「读不出」
-  patientCount: number;
+  patientCount: number;          // T371 口径：主诊患者数（patients.primary_doctor_id 计数，不带团队维度）
   status: 'enabled' | 'disabled';
 }
 
@@ -83,7 +83,7 @@ export interface Team {
   teamId: string;
   name: string;
   memberCount: number;
-  patientCount: number;
+  patientCount: number;          // T371 口径：本团队患者数（按 patients.team_id 实时计数，非 teams.patient_count 快照列）
   /** T059 团队管理写功能（GET /teams 扩展返回，可选字段对齐既有读路径） */
   leader?: string | null;         // 负责人 doctorId
   leaderName?: string | null;     // 负责人姓名（后端 join）
@@ -119,7 +119,7 @@ export interface TeamMember {
   title: string | null;          // 职称/科室
   phoneMasked: string;
   phoneState: PhoneState;        // T361
-  patientCount: number;
+  patientCount: number;          // T371 口径：该成员的主诊患者数（primary_doctor_id，不按团队收窄）
   joinTime: string;
   status: 'enabled' | 'disabled';
 }
@@ -428,7 +428,7 @@ export interface DashboardKPI {
 export interface TeamRanking {
   rank: number;
   teamName: string;
-  patientCount: number;
+  patientCount: number;          // T371 口径：按 patients.team_id 计数（与团队管理页同口径）
   avgDailyWear: number;
   complianceRate: number;
 }
@@ -437,7 +437,7 @@ export interface DoctorRanking {
   rank: number;
   doctorName: string;
   teamName: string;
-  patientCount: number;
+  patientCount: number;          // T371 口径：按 primary_doctor_id 计数；医护视角再与本团队患者取交集（T350）
   complianceRate: number;
 }
 

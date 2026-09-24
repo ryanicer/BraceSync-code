@@ -432,14 +432,20 @@ func (s *PGStore) GetPatientInTeam(ctx context.Context, patientID, teamID string
 // 团队 / 医生
 // ─────────────────────────────────────────────────────────────
 
-// ListTeams 团队概要（member_count/patient_count 为 teams 表维护列）
+// teamPatientCountExpr T371-B1：团队「患者数」实时按 patients.team_id 数，不再读 teams.patient_count。
+// 该列运行期无人写（全仓只有迁移/seed 写过，删除守卫按 team_id 现场数完也不写回），
+// 现网读到的是建库快照 ⇒ 列表显示 0 患者的团队点删除会得 409，两个数同名互相打脸。
+// 谓词与 data-service 团队排行（dashboard_repo.go teamRankingSQL）、本仓删除守卫同源。
+const teamPatientCountExpr = `(SELECT COUNT(*) FROM patients p WHERE p.team_id = t.team_id)`
+
+// ListTeams 团队概要（member_count 为 teams 表维护列；patient_count 见 teamPatientCountExpr）
 // T333：负责人两列同 teamDetailSelect 的 LEFT JOIN doctors 口径——
 // 列表页「负责人」列与编辑弹窗回显都直接读列表行，缺这两列就是结构上带不出来。
 // T333-5：created_at 同为该页表格列（T335 探测证据 filled=0），列在库里非空，纯 SELECT 漏带。
 // T337：description / status 契约（shared-types Team）已声明、详情接口已带出，列表仍未带 ⇒ 列同 teamDetailSelect 口径。
 func (s *PGStore) ListTeams(ctx context.Context) ([]TeamRow, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT t.team_id, t.name, t.member_count, t.patient_count,
+SELECT t.team_id, t.name, t.member_count, `+teamPatientCountExpr+` AS patient_count,
        COALESCE(t.leader, ''), COALESCE(d.name, ''), t.created_at,
        COALESCE(t.description, ''), t.status
 FROM teams t
@@ -1194,9 +1200,11 @@ func (s *PGStore) BatchBindPatients(ctx context.Context, patientIDs []string, te
 // ─────────────────────────────────────────────────────────────
 
 // teamDetailSelect teams LEFT JOIN doctors 负责人姓名投影（T059 写功能返回）
+// 患者数列 T371-B1 起走 teamPatientCountExpr 实时计数（列表与详情同一条表达式，不漂口径）
 const teamDetailSelect = `
 SELECT t.team_id, t.name, COALESCE(t.leader, ''), COALESCE(d.name, ''),
-       t.member_count, t.patient_count, COALESCE(t.description, ''), t.status, t.created_at
+       t.member_count, ` + teamPatientCountExpr + ` AS patient_count,
+       COALESCE(t.description, ''), t.status, t.created_at
 FROM teams t
 LEFT JOIN doctors d ON d.doctor_id = t.leader
 WHERE t.team_id = $1`
