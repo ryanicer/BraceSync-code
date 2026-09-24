@@ -138,7 +138,6 @@ import { PAGE_MODULES } from '../../router/permissions'
 // T253-11.2 / T345-1: 功能模块清单 —— 由 router/permissions 的 PAGE_MODULES 派生，
 // 不再自持一份硬编码副本（副本是「库里 12 键 / 页面 15 页」对不齐的成因之一）。
 // key = 落库的 modules 短键，label = 路由 meta.title。
-// 🔴 「异常报告」暂无路由与模块键，是否新建待 Boss 裁（T345 挂起项）。
 const titleByPath = new Map(pageRoutes.map((r) => [r.path, String(r.meta?.title ?? r.path)]))
 const MODULE_OPTIONS = PAGE_MODULES.map((m) => ({
   key: m.key,
@@ -165,8 +164,8 @@ const loading = ref(false)
 const permLoading = ref(false)
 const saving = ref(false)
 const selectedRole = ref<AdminRoleRow | null>(null)
-// 契约形状：GET 回来的 scope 与 items 原样保留，保存时只改 modules
-// （items 若被丢弃，后端读时会按目录物化成全勾 = 悄悄放开子权限）
+// 契约形状：GET 回来的 scope 与 items 原样保留，勾选项只改 modules
+// （items 若被整体丢弃，后端读时会按目录物化成全勾 = 悄悄放开子权限）
 const current = ref<RolePermissions>({ scope: 'team', modules: [] })
 const dirty = ref(false)
 
@@ -202,6 +201,19 @@ function togglePerm(key: string, val: boolean) {
   dirty.value = true
 }
 
+// T372 第 14 格（Alice 22:20 现网抓到）：子权限 key 形如 `alerts.process`，前缀即所属模块；
+// 后端 validatePermissionItems（permissions_t257.go）要求每个 item 的模块必须在 modules 里，
+// 所以关掉某模块后仍把它名下的 items 原样 PUT 必 400 / code 10400 —— 减权方向整体存不下去。
+// 剪枝放在保存处而非 togglePerm：current 里的 items 始终是 GET 回来的原始授权快照，
+// 「关勾再勾回」不该把它洗成空集（矩阵页无子权限勾选行，洗掉了界面上看不见）。
+// 前缀取第一段：目录 23 个 key 全是 `模块.动作` 形态（permissions_t257.go），
+// 无点号的裸 key 会整串当模块名比对 ⇒ 不在 modules 里就被剪掉，与后端拒绝同向。
+function pruneItems(modules: string[], items?: string[]): string[] | undefined {
+  if (items === undefined) return undefined
+  const mods = new Set(modules)
+  return items.filter((k) => mods.has(k.split('.')[0]))
+}
+
 async function savePermissions() {
   if (!selectedRole.value) return
   if (current.value.modules.length === 0) {
@@ -210,7 +222,8 @@ async function savePermissions() {
   }
   saving.value = true
   try {
-    await updateRolePermissionsApi(selectedRole.value.roleId, current.value)
+    const items = pruneItems(current.value.modules, current.value.items)
+    await updateRolePermissionsApi(selectedRole.value.roleId, { ...current.value, items })
     dirty.value = false
     ElMessage.success('权限配置已保存')
   } catch (e: unknown) {
