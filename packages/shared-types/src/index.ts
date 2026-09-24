@@ -227,7 +227,9 @@ export interface FeelingLog {
   logDate: string;               // 对齐 DB feeling_logs.log_date（YYYY-MM-DD）
   comfortScore: number | null;   // 0.5–5（可半星）；T256 #3 历史星级口径，写入口径以 feeling 为准
   feeling: 'fitted' | 'discomfort' | null; // T256 #3：贴合(fitted)/不适(discomfort)两档，来自 comfort_level 列
-  discomfortAreas: string[];     // neck/thoracic/lumbar/pelvis
+  discomfortAreas: string[];     // T370：现行取值 = 设计稿 feelings.html:64-72 的 8 区中文原词（写侧白名单同源）；
+                                 // 旧四区口径 neck/thoracic/lumbar/pelvis 已作废（PRD §7A.7、§8.2），
+                                 // 但历史行仍存这些英文码，展示层译名见 apps/admin-web/src/utils/feelingAreas.ts
   notes: string;
   replyContent: string | null;   // 医生回复
   replyTime: string | null;

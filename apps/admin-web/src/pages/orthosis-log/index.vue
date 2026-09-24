@@ -313,6 +313,7 @@ import {
   alignWearSeries, constantLine, rangeForDays, seriesIsEmpty,
   type DailyWearDay, type WearRangeDays, type WearSeries,
 } from '../../utils/workbenchData'
+import { areaLabel } from '../../utils/feelingAreas'
 import { useAuthStore } from '../../stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
@@ -411,11 +412,6 @@ function resetFilters() {
 function openDetail(row: FeelingLog) {
   current.value = row
   detailVisible.value = true
-}
-
-function areaLabel(area: string): string {
-  const map: Record<string, string> = { neck: '颈部', thoracic: '胸段', lumbar: '腰段', pelvis: '骨盆' }
-  return map[area] ?? area
 }
 
 function trendLabel(trend: HealthReport['trendJudgment']): string {
