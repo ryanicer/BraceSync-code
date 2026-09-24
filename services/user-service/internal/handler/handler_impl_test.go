@@ -158,6 +158,7 @@ type fakeStore struct {
 	lastUpsertBy     string
 	lastFilter       repo.PatientFilter
 	lastProcessR     *string
+	lastProcessMark  bool // T374：断言「标记已处理」与「保存备注」两动作分流
 	lastTechInput    repo.TechInput
 	lastPermJSON     string
 	lastReply        string
@@ -342,8 +343,9 @@ func (f *fakeStore) CreateFeedback(_ context.Context, in repo.FeedbackCreateInpu
 	f.feedbackIn = in
 	return f.feedbackID, f.feedbackErr
 }
-func (f *fakeStore) ProcessFeedback(_ context.Context, _ int64, _ string, reply *string) (bool, error) {
+func (f *fakeStore) ProcessFeedback(_ context.Context, _ int64, _ string, reply *string, markResolved bool) (bool, error) {
 	f.lastProcessR = reply
+	f.lastProcessMark = markResolved
 	return f.processOK, f.processErr
 }
 func (f *fakeStore) ListPlans(_ context.Context, _ string) ([]repo.OrthosisPlanRow, error) {
@@ -1457,37 +1459,57 @@ func TestProcessFeedback(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.processOK = true
 
+	// T374 动作一「保存处理备注」：带备注、不带标记
 	w, _ := e.do(http.MethodPost, "/api/v1/feedbacks/12/process",
 		map[string]string{"replyContent": "正常现象"}, map[string]string{"X-User-Id": "A0003"})
 	assert.Equal(t, http.StatusOK, w.Code)
 	require.NotNil(t, e.store.lastProcessR)
 	assert.Equal(t, "正常现象", *e.store.lastProcessR)
+	assert.False(t, e.store.lastProcessMark)
 
-	// 无 body 亦可（仅标记处理）
-	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/12/process", nil, nil)
+	// T374 动作二「标记为已处理」：带标记、不带备注（旧版靠「备注为空」推断，库里从不落 resolved）
+	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/12/process",
+		map[string]any{"markResolved": true}, nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Nil(t, e.store.lastProcessR)
+	assert.True(t, e.store.lastProcessMark)
+
+	// 反证：空 body（既无备注也无标记）不再被猜成「保存备注」，直接 400
+	w, resp := e.do(http.MethodPost, "/api/v1/feedbacks/12/process", nil, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+
+	// 反证：两动作互斥，不允许一次请求同时推进两态
+	w, resp = e.do(http.MethodPost, "/api/v1/feedbacks/12/process",
+		map[string]any{"markResolved": true, "replyContent": "串字段"}, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+
+	// 反证：空白备注走保存动作等同于没写备注 → 400（旧版会把已存备注改写成空白）
+	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/12/process",
+		map[string]string{"replyContent": "   "}, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// 超长回复 → 400
-	w, resp := e.do(http.MethodPost, "/api/v1/feedbacks/12/process",
+	w, resp = e.do(http.MethodPost, "/api/v1/feedbacks/12/process",
 		map[string]string{"replyContent": strings.Repeat("长", 501)}, nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
 
 	// 非法 ID → 400
-	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/abc/process", map[string]string{}, nil)
+	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/abc/process", map[string]any{"markResolved": true}, nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/0/process", map[string]string{}, nil)
+	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/0/process", map[string]any{"markResolved": true}, nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// 不存在 → 404
 	e.store.processOK = false
-	w, resp = e.do(http.MethodPost, "/api/v1/feedbacks/99/process", map[string]string{}, nil)
+	w, resp = e.do(http.MethodPost, "/api/v1/feedbacks/99/process", map[string]any{"markResolved": true}, nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, model.CodeNotFound, resp.Code)
 
 	e.store.processErr = errors.New("db")
-	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/12/process", map[string]string{}, nil)
+	w, _ = e.do(http.MethodPost, "/api/v1/feedbacks/12/process", map[string]any{"markResolved": true}, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 

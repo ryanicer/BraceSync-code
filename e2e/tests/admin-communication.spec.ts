@@ -10,7 +10,8 @@ import { adminRoutes, adminLogin, adminMessage, tableRows } from '../admin-helpe
  *   2. 🟢 点击按钮新窗口打开微信客服 (mpkf.weixin.qq.com)
  *   3. 🟢 列表展示已有反馈（患者/内容/状态 tag）
  *   4. 🟢 详情对话框可打开显示反馈内容
- *   5. 🟢 回复并标记已处理后状态变更 + 列表刷新
+ *   5. 🟢 保存处理备注 → 已回复，再「标记为已处理」→ 已解决 + 列表刷新
+ *        （T374 按 PRD V3.26 拆成两个写动作；备注不被标记动作洗掉）
  *        实现：mock/communication.ts 补 mockProcessFeedback 更新 FEEDBACKS 内存
  *   6. 🟢 客服角色权限提示 alert 可见
  *
@@ -134,10 +135,11 @@ test.describe('患者沟通 · admin 视角', () => {
     })
   })
 
-  // ── 回复与处理流程 ──────────────────────────────────────
-  test.describe('回复与处理流程', () => {
-    test('填写回复并提交后 ElMessage 成功 + 状态变更 + 列表刷新', async ({ page }) => {
-      // T247: 改为左右布局，回复在右侧面板内联操作
+  // ── 处理备注与两动作 ──────────────────────────────────────
+  test.describe('处理备注与反馈状态流转', () => {
+    test('填写处理备注并保存后状态转已回复 + 列表刷新', async ({ page }) => {
+      // T247: 改为左右布局，处理备注在右侧面板内联操作
+      // T374（PRD V3.26）：本框是「处理备注」而非「回复」，写动作与「标记为已处理」分开
       const rows = tableRows(page)
       await expect(rows).toHaveCount(4)
 
@@ -147,23 +149,31 @@ test.describe('患者沟通 · admin 视角', () => {
       await firstRow.click()
 
       const rightPane = page.locator('.right-pane')
-      // status=pending 时应有回复输入框 + 按钮
+      // status=pending 时应有处理备注输入框 +「保存处理备注」+「仅标记已处理」
       const replyInput = rightPane.locator('.reply-box textarea, .reply-box .el-textarea textarea')
-      const submitBtn = rightPane.getByRole('button', { name: '回复并标记' })
+      const submitBtn = rightPane.getByRole('button', { name: '保存处理备注' })
+      await expect(rightPane.getByText('处理备注', { exact: true })).toBeVisible()
       await expect(replyInput).toBeVisible()
       await expect(submitBtn).toBeVisible()
+      await expect(rightPane.getByRole('button', { name: '仅标记已处理' })).toBeVisible()
 
       await replyInput.fill('已安排调整支具，明日下午门诊复查确认')
       await submitBtn.click()
 
-      // ElMessage 成功提示
-      await expect(adminMessage(page)).toContainText('成功', { timeout: 10_000 })
+      // ElMessage 成功提示（T374 文案改口径：不再叫「回复成功」）
+      await expect(adminMessage(page)).toContainText('处理备注已保存', { timeout: 10_000 })
 
-      // 列表对应行状态变更（变为 replied=已回复 或 resolved=已解决 任一即可）
+      // 列表对应行状态变更：保存备注只到 replied，不会直达 resolved
       const rowsAfter = tableRows(page)
-      await expect(rowsAfter.nth(0).locator('.el-tag')).toContainText(/已回复|已解决/, {
+      await expect(rowsAfter.nth(0).locator('.el-tag')).toContainText('已回复', {
         timeout: 15_000,
       })
+
+      // T374：pending 直达 resolved 是「仅标记已处理」这个独立动作，且它不得洗掉已存备注
+      await rightPane.getByRole('button', { name: '标记为已处理' }).click()
+      await expect(adminMessage(page)).toContainText('已标记为已处理', { timeout: 10_000 })
+      await expect(rowsAfter.nth(0).locator('.el-tag')).toContainText('已解决', { timeout: 15_000 })
+      await expect(rightPane).toContainText('已安排调整支具，明日下午门诊复查确认')
     })
   })
 })

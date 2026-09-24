@@ -59,21 +59,26 @@
             <el-descriptions-item label="状态">
               <el-tag :type="statusTagType(current.status)" size="small">{{ statusLabel(current.status) }}</el-tag>
             </el-descriptions-item>
-            <el-descriptions-item v-if="current.replyContent" label="回复">{{ current.replyContent }}</el-descriptions-item>
+            <el-descriptions-item v-if="current.replyContent" label="客服处理备注">{{ current.replyContent }}</el-descriptions-item>
           </el-descriptions>
 
           <template v-if="current.status === 'pending'">
             <div class="reply-box">
-              <div class="reply-label">回复内容（协调微信客服后填写）</div>
-              <el-input v-model="replyText" type="textarea" :rows="4" placeholder="输入回复..." />
+              <div class="reply-label">处理备注</div>
+              <el-input
+                v-model="replyText"
+                type="textarea"
+                :rows="4"
+                placeholder="记录本次处理说明（仅内部可见，不会发送给患者）"
+              />
               <div class="reply-actions">
-                <el-button type="primary" :loading="replying" @click="submitReply">回复并标记</el-button>
+                <el-button type="primary" :loading="replying" @click="saveNote">保存处理备注</el-button>
                 <el-button @click="markResolved(current)">仅标记已处理</el-button>
               </div>
             </div>
           </template>
           <template v-else-if="current.status === 'replied'">
-            <el-button type="success" @click="markResolved(current)">标记已解决</el-button>
+            <el-button type="success" @click="markResolved(current)">标记为已处理</el-button>
           </template>
           <el-empty v-else description="该反馈已解决" :image-size="60" class="empty-desc" />
         </template>
@@ -136,18 +141,23 @@ function selectFeedback(row: Feedback) {
   replyText.value = ''
 }
 
-async function submitReply() {
+async function saveNote() {
   if (!current.value) return
+  const note = replyText.value.trim()
+  if (!note) {
+    ElMessage.warning('请先填写处理备注')
+    return
+  }
   replying.value = true
   try {
-    await processFeedbackApi(current.value.feedbackId, replyText.value)
-    current.value.replyContent = replyText.value || null
+    await processFeedbackApi(current.value.feedbackId, { replyContent: note })
+    current.value.replyContent = note
     current.value.replyTime = new Date().toISOString()
-    current.value.status = 'replied'
+    if (current.value.status !== 'resolved') current.value.status = 'replied'
     current.value.handler = auth.user?.name ?? null
-    ElMessage.success('回复成功')
+    ElMessage.success('处理备注已保存')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '回复失败')
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
     replying.value = false
   }
@@ -155,10 +165,10 @@ async function submitReply() {
 
 async function markResolved(row: Feedback) {
   try {
-    await processFeedbackApi(row.feedbackId)
+    await processFeedbackApi(row.feedbackId, { markResolved: true })
     row.status = 'resolved'
     row.handler = row.handler || auth.user?.name || null
-    ElMessage.success('已标记处理')
+    ElMessage.success('已标记为已处理')
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '操作失败')
   }

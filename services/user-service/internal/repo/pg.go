@@ -710,14 +710,21 @@ func (s *PGStore) FeedbackStats(ctx context.Context, todayStart, todayEnd time.T
 	return out, nil
 }
 
-// ProcessFeedback 回复落库 + 标记处理（resolved 不回退）；返回反馈是否存在
-func (s *PGStore) ProcessFeedback(ctx context.Context, feedbackID int64, handlerID string, replyContent *string) (bool, error) {
+// ProcessFeedback 客服「处理备注」与「标记已处理」两个动作（T374，PRD V3.26 §7D.7 状态映射）：
+// markResolved 为真落 resolved，否则 pending → replied；resolved 不回退。
+// replyContent 为 nil 时保留原备注与原 reply_time（仅标记不得洗掉已存备注）。
+// 返回反馈是否存在。
+func (s *PGStore) ProcessFeedback(
+	ctx context.Context, feedbackID int64, handlerID string, replyContent *string, markResolved bool,
+) (bool, error) {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE feedbacks
-		 SET handler = $2, reply_content = $3, reply_time = now(),
-		     status = CASE WHEN status = 'resolved' THEN 'resolved' ELSE 'replied' END
+		 SET handler = $2,
+		     reply_content = CASE WHEN $3::text IS NULL THEN reply_content ELSE $3::text END,
+		     reply_time = CASE WHEN $3::text IS NULL THEN reply_time ELSE now() END,
+		     status = CASE WHEN $4 THEN 'resolved' WHEN status = 'resolved' THEN 'resolved' ELSE 'replied' END
 		 WHERE feedback_id = $1`,
-		feedbackID, handlerID, replyContent)
+		feedbackID, handlerID, replyContent, markResolved)
 	if err != nil {
 		return false, err
 	}

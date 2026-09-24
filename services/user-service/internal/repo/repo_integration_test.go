@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -264,31 +265,51 @@ func TestITFeedbackProcess(t *testing.T) {
 		`SELECT feedback_id FROM feedbacks WHERE patient_id='P-USR-IT-1' AND content='集成反馈'`).Scan(&feedbackID))
 
 	reply := "已处理，正常现象"
-	ok, err := itStore.ProcessFeedback(ctx, feedbackID, "A-IT", &reply)
+	ok, err := itStore.ProcessFeedback(ctx, feedbackID, "A-IT", &reply, false)
 	require.NoError(t, err)
 	assert.True(t, ok)
 
 	var status, handler string
 	var replyContent *string
+	var replyTime time.Time
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT status, handler, reply_content FROM feedbacks WHERE feedback_id = $1`, feedbackID).
-		Scan(&status, &handler, &replyContent))
+		`SELECT status, handler, reply_content, reply_time FROM feedbacks WHERE feedback_id = $1`, feedbackID).
+		Scan(&status, &handler, &replyContent, &replyTime))
 	assert.Equal(t, "replied", status)
 	assert.Equal(t, "A-IT", handler)
 	require.NotNil(t, replyContent)
 	assert.Equal(t, reply, *replyContent)
+	require.False(t, replyTime.IsZero())
 
-	// resolved 不回退
-	_, err = pool.Exec(ctx, `UPDATE feedbacks SET status='resolved' WHERE feedback_id = $1`, feedbackID)
-	require.NoError(t, err)
-	ok, err = itStore.ProcessFeedback(ctx, feedbackID, "A-IT", nil)
+	// T374 判据③：仅标记已处理 ⇒ 库里真落 resolved
+	// T374 判据④反证：该动作不带备注，不得把已存处理备注洗成 NULL，也不得刷掉 reply_time
+	ok, err = itStore.ProcessFeedback(ctx, feedbackID, "A-IT-2", nil, true)
 	require.NoError(t, err)
 	assert.True(t, ok)
-	require.NoError(t, pool.QueryRow(ctx, `SELECT status FROM feedbacks WHERE feedback_id = $1`, feedbackID).Scan(&status))
+	var markedTime time.Time
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT status, handler, reply_content, reply_time FROM feedbacks WHERE feedback_id = $1`, feedbackID).
+		Scan(&status, &handler, &replyContent, &markedTime))
 	assert.Equal(t, "resolved", status)
+	assert.Equal(t, "A-IT-2", handler)
+	require.NotNil(t, replyContent)
+	assert.Equal(t, reply, *replyContent)
+	assert.True(t, markedTime.Equal(replyTime), "仅标记已处理不应刷新 reply_time")
+
+	// resolved 不回退：已 resolved 后再保存备注，状态仍是 resolved，备注照常更新
+	reply2 := "补充备注"
+	ok, err = itStore.ProcessFeedback(ctx, feedbackID, "A-IT-3", &reply2, false)
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT status, reply_content FROM feedbacks WHERE feedback_id = $1`, feedbackID).
+		Scan(&status, &replyContent))
+	assert.Equal(t, "resolved", status)
+	require.NotNil(t, replyContent)
+	assert.Equal(t, reply2, *replyContent)
 
 	// 不存在
-	ok, err = itStore.ProcessFeedback(ctx, 999999, "A", nil)
+	ok, err = itStore.ProcessFeedback(ctx, 999999, "A", nil, true)
 	require.NoError(t, err)
 	assert.False(t, ok)
 
