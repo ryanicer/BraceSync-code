@@ -4,7 +4,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import QRCode from 'qrcode'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import PatientsPage from '../src/pages/patients/index.vue'
+
+// T372 后抽屉里有「异常报告」跳转按钮 ⇒ 页面 setup 用到 useRouter()，本用例必须装一个 router
+const noop = { render: () => null }
 
 async function flushAll() {
   for (let i = 0; i < 8; i++) {
@@ -45,7 +49,15 @@ async function openRow(index: number) {
 
 beforeEach(() => {
   vi.useFakeTimers()
-  wrapper = mount(PatientsPage, { global: { plugins: [ElementPlus] } })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: noop },
+      { path: '/patients', component: noop },
+      { path: '/abnormal-report', component: noop },
+    ],
+  })
+  wrapper = mount(PatientsPage, { global: { plugins: [router, ElementPlus] } })
 })
 
 afterEach(() => {

@@ -45,14 +45,16 @@ describe('MainLayout 布局', () => {
     vi.useRealTimers()
   })
 
-  it('admin 侧边栏展示全部 15 页菜单', async () => {
+  it('admin 侧边栏展示全部 16 页菜单', async () => {
     const wrapper = await mountLayout('admin')
     const items = wrapper.findAll('.sidebar-menu li.el-menu-item')
-    expect(items.length).toBe(15) // 断言更新：14→15，依据 T315 新增医护账号页
+    expect(items.length).toBe(16) // 断言更新：14→15（T315 医护账号页）→16（T372 异常报告独立页）
     expect(wrapper.text()).toContain('数据概览')
     expect(wrapper.text()).toContain('系统配置')
     expect(wrapper.text()).toContain('复查报告')
     expect(wrapper.text()).toContain('医护账号') // T315：设计稿侧栏第 12 项，位于技师管理与权限控制之间
+    expect(wrapper.text()).toContain('异常报告') // T372：设计稿侧栏第 4 项，位于患者管理与团队管理之间
+    expect(items[3].text()).toContain('异常报告') // 位置也钉住：稿面侧栏顺序 = 数据概览/实时监控/患者管理/异常报告
     expect(wrapper.text()).toContain('运营管理员')
     wrapper.unmount()
   })

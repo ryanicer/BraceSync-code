@@ -1,5 +1,4 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
-import { readFileSync } from 'fs'
 import QRCode from 'qrcode'
 import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
 
@@ -14,35 +13,6 @@ import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } fr
 const listCard = (page: Page): Locator => page.locator('.patient-list-card')
 const listRows = (page: Page): Locator => tableRows(page, listCard(page))
 const listHeads = (page: Page): Locator => listCard(page).locator('.el-table__header-wrapper thead th')
-
-/**
- * 往抽屉里的 daterange 选择器写两端日期（T301-G10）。
- * EP 的 daterange 面板是浮层，写完必须点一处非输入区把面板收起来，
- * 否则它盖住「查询汇总」按钮，点击会落在面板上（表现为用例莫名不生效）。
- */
-async function setReportRange(page: Page, start: string, end: string) {
-  const range = page.locator('.el-drawer .report-range')
-  const from = range.locator('input').nth(0)
-  const to = range.locator('input').nth(1)
-  await from.click()
-  await from.fill(start)
-  await from.press('Enter')
-  await to.fill(end)
-  await to.press('Enter')
-  await page.locator('.el-drawer .report-title').click()
-}
-
-/** 汇总那张表最后一列（次数）求和；出现非数字说明列口径变了，直接判红而不是当 0 加进去。 */
-async function sumLastColumn(table: Locator): Promise<number> {
-  const cells = await table.locator('tbody tr').evaluateAll((rows) =>
-    rows.map((tr) => {
-      const tds = tr.querySelectorAll('td')
-      return (tds[tds.length - 1]?.textContent ?? '').trim()
-    }),
-  )
-  for (const c of cells) expect(c, `「次数」列应是纯数字，实际「${c}」`).toMatch(/^\d+$/)
-  return cells.reduce((n, c) => n + Number(c), 0)
-}
 
 test.beforeEach(async ({ page }) => {
   await adminLogin(page, 'admin')
@@ -222,7 +192,7 @@ test.describe('详情抽屉', () => {
 
     await drawer.locator('.el-drawer__close-btn').click()
     await expect(drawer).toBeHidden()
-    // 只数列表那一张表：T300 后抽屉里还有两张汇总表、4.2 后本页还有批量绑定表，
+    // 只数列表那一张表：4.2 后本页还有批量绑定表（T372 拆页后抽屉里已无汇总表），
     // 全局 .el-table 选择器会把它们算进来 ⇒ scope 到 .patient-list-card
     await expect(listRows(page)).toHaveCount(rowCount) // 关抽屉不改变列表（未触发筛选/翻页）
   })
@@ -333,132 +303,7 @@ test.describe('批量患者-团队绑定卡片（T289 4.2 / F2）', () => {
 })
 
 /**
- * T300 异常报告最小入口（合同 §二 患者管理）：抽屉内按「患者 + 日期范围」出汇总 + 导出 CSV。
- * 断言两件事：① 汇总三视图计数与总数自洽（口径没错配）；② 导出的 CSV 明细行数 == 页面显示的总数
- * （汇总与明细同源，这条正是后端「同一 WHERE」设计在前端的可见结果）。
+ * T300 异常报告入口的 e2e 判据已随 Boss 2026-09-24 裁定 (a) 迁到独立页 —— 见
+ * e2e/tests/admin-abnormal-report.spec.ts 的「导出与区间筛选（T300 判据随页迁移）」.
+ * 本文件只留患者管理自身职责；抽屉的处置由 test/abnormal-report.spec.ts 的两条负向用例守.
  */
-test.describe('T300 异常报告入口', () => {
-  test('进抽屉自动出汇总，状态计数之和等于总数', async ({ page }) => {
-    await listRows(page).filter({ hasText: '林小雨' }).click()
-    const section = page.locator('.el-drawer .abnormal-report')
-    const totalLine = section.locator('.report-total')
-    await expect(totalLine).toContainText('共 ')
-
-    const text = await totalLine.innerText()
-    const total = Number(/共 (\d+) 条/.exec(text)?.[1] ?? -1)
-    expect(total, `汇总总数应为正整数，实际文本「${text}」`).toBeGreaterThan(0)
-    const statusSum = ['待处理', '处理中', '已处理']
-      .reduce((n, label) => n + Number(new RegExp(`${label} (\\d+)`).exec(text)?.[1] ?? -1), 0)
-    expect(statusSum, '三状态计数不重不漏 = 总数').toBe(total)
-    await expect(section.getByRole('button', { name: '导出 CSV' })).toBeVisible()
-    // 两个视图各出一张表（按类型 / 按日期），且都有行
-    const tables = section.locator('.el-table')
-    await expect(tables).toHaveCount(2)
-    await expect(tables.nth(0).locator('tbody tr').first()).toBeVisible()
-    await expect(tables.nth(1).locator('tbody tr').first()).toBeVisible()
-  })
-
-  test('导出 CSV：文件名含患者与区间，明细行数等于页面总数', async ({ page }) => {
-    await listRows(page).filter({ hasText: '林小雨' }).click()
-    const section = page.locator('.el-drawer .abnormal-report')
-    const total = Number(/共 (\d+) 条/.exec(await section.locator('.report-total').innerText())?.[1] ?? -1)
-    expect(total).toBeGreaterThan(0)
-
-    const download = page.waitForEvent('download')
-    await section.getByRole('button', { name: '导出 CSV' }).click()
-    const file = await download
-    expect(file.suggestedFilename()).toMatch(/^abnormal-report-PT-001-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.csv$/)
-
-    const raw = readFileSync(await file.path())
-    expect(raw.subarray(0, 3).toString('hex'), 'Excel 打开不乱码需 UTF-8 BOM').toBe('efbbbf')
-    const lines = raw.toString('utf8').slice(1).trim().split('\r\n')
-    expect(lines[0].split(',')).toHaveLength(16)
-    expect(lines.length - 1, 'CSV 明细行数 = 汇总总数').toBe(total)
-  })
-
-  /**
-   * T301-G10 补口：#157 自带 2 条（汇总自洽 + 导出行数等于总数），这里补齐 PM 点名的另两面 ——
-   * 区间是否真的参与筛选、空区间行为。行定位一律用 listRows（T289 后本页两张表，全局选择器会串）。
-   */
-  test('区间真的参与筛选：换成 2020-03-01~03 后总数与按日分桶同步变', async ({ page }) => {
-    await listRows(page).filter({ hasText: '林小雨' }).click()
-    const section = page.locator('.el-drawer .abnormal-report')
-    const totalLine = section.locator('.report-total')
-    await expect(totalLine).toContainText('共 ')
-    const defaultTotal = Number(/共 (\d+) 条/.exec(await totalLine.innerText())?.[1] ?? -1)
-    expect(defaultTotal, '默认近 7 天窗口应非空，否则下面的「变了」没有对照').toBeGreaterThan(0)
-
-    await setReportRange(page, '2020-03-01', '2020-03-03')
-    await section.getByRole('button', { name: '查询汇总' }).click()
-    // 该窗口内 mock 按患者+日序确定性生成：03-01 当日 0 条，03-02 一条，03-03 两条
-    await expect(totalLine).toContainText('共 3 条')
-    expect(Number(/共 (\d+) 条/.exec(await totalLine.innerText())?.[1])).not.toBe(defaultTotal)
-
-    const days = section.locator('.report-days tbody tr')
-    await expect(days).toHaveCount(2)
-    await expect(days.nth(0)).toContainText('2020-03-02')
-    await expect(days.nth(1)).toContainText('2020-03-03')
-    // 导出文件名带的是**所填区间**，不是默认窗口 ⇒ 证明 start/end 一路传到下载
-    const download = page.waitForEvent('download')
-    await section.getByRole('button', { name: '导出 CSV' }).click()
-    expect((await download).suggestedFilename()).toBe('abnormal-report-PT-001-2020-03-01_2020-03-03.csv')
-  })
-
-  test('区间内无异常：总数 0、两张表出空态，导出的 CSV 只剩表头', async ({ page }) => {
-    await listRows(page).filter({ hasText: '林小雨' }).click()
-    const section = page.locator('.el-drawer .abnormal-report')
-    await expect(section.locator('.report-total')).toContainText('共 ')
-
-    // 2020-03-01 单日：mock 对该患者该日给 0 条（确定性生成，不随运行日期漂移）
-    await setReportRange(page, '2020-03-01', '2020-03-01')
-    await section.getByRole('button', { name: '查询汇总' }).click()
-    await expect(section.locator('.report-total')).toContainText('共 0 条')
-    const empties = section.locator('.el-table__empty-text')
-    await expect(empties).toHaveCount(2)
-    await expect(empties.nth(0)).toHaveText('该区间无异常')
-    await expect(empties.nth(1)).toHaveText('该区间无异常')
-
-    const download = page.waitForEvent('download')
-    await section.getByRole('button', { name: '导出 CSV' }).click()
-    const raw = readFileSync(await (await download).path())
-    const lines = raw.toString('utf8').slice(1).trim().split('\r\n')
-    expect(lines).toHaveLength(1)
-    expect(lines[0].split(',')).toHaveLength(16)
-  })
-
-  test('三视图与总数自洽：按类型、按日期两张表的次数之和都等于总数', async ({ page }) => {
-    await listRows(page).filter({ hasText: '林小雨' }).click()
-    const section = page.locator('.el-drawer .abnormal-report')
-    await expect(section.locator('.report-total')).toContainText('共 ')
-    const total = Number(/共 (\d+) 条/.exec(await section.locator('.report-total').innerText())?.[1] ?? -1)
-    expect(total).toBeGreaterThan(0)
-    // 默认窗口是「今天减 6 天」，会随运行日期变 ⇒ 只断自洽关系，不写死数字
-    expect(await sumLastColumn(section.locator('.el-table').nth(0))).toBe(total)
-    expect(await sumLastColumn(section.locator('.report-days'))).toBe(total)
-  })
-
-  /**
-   * G13（本卡在 §9.3 发现的缺陷）已由 Winner 在 code #161 修复：`patients/index.vue` 的
-   * reportQueryOrNull() 解构前补了 null 兜底 ⇒ 原先的 test.fail 标注已摘掉，本条转真绿。
-   * 保留理由：清空区间后必须出提示且不得有未捕获异常，这是「空区间不崩」验收项唯一的 E2E 判据。
-   */
-  test('清空日期区间：应提示「请选择日期范围」而不是抛异常', async ({ page }) => {
-    const errors: string[] = []
-    page.on('pageerror', (e) => errors.push(String(e)))
-    await listRows(page).filter({ hasText: '林小雨' }).click()
-    const section = page.locator('.el-drawer .abnormal-report')
-    await expect(section.locator('.report-total')).toContainText('共 ')
-
-    const range = page.locator('.el-drawer .report-range')
-    await range.hover()
-    await range.locator('.el-range__close-icon').click()
-    await expect(range.locator('input').first()).toHaveValue('')
-
-    await section.getByRole('button', { name: '查询汇总' }).click()
-    await section.getByRole('button', { name: '导出 CSV' }).click()
-    expect(errors, `清空区间后点两个按钮不应有未捕获异常，实际：${errors.join(' | ')}`).toHaveLength(0)
-    // 不崩之后还要真的拦住用户：给出口语化的提示，而不是静默沿用上一次的汇总
-    await expect(adminMessage(page)).toContainText('请选择日期范围')
-    await expect(section.locator('.report-total')).toContainText('共 ')
-  })
-})

@@ -154,16 +154,18 @@ func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 	//   裁定 (a)「补库」——原来「医护对复查两页的权限位待裁」这一条已拍板，两页正式授权给医护，
 	//   使库与前端准入矩阵 ROLE_PAGE_MATRIX.doctor（6 页）同源。逐值写死同时钉住
 	//   「补了该补的两键、没顺手改动别的角色、也没多给 patients / teams / devices 等页」。
+	// T372：两角色各再补 abnormal_report（ADMIN 15→16、DOCTOR 6→7，迁移 000029）——
+	//   Boss 2026-09-24 裁定 (a)「异常报告按设计稿拆独立页」，PRD §7D.11 第 4 行 admin ✅ / doctor ✅。
 	for _, want := range []struct {
 		id, name, scope string
 		modules         []string
 	}{
 		{"ROLE_ADMIN", "运营管理员", "all", []string{
-			"dashboard", "realtime", "patients", "teams", "devices", "alerts",
+			"dashboard", "realtime", "patients", "abnormal_report", "teams", "devices", "alerts",
 			"comm", "orthosis", "install", "review", "review_tpl", "tech",
 			"doctor_acct", "perm", "config",
 		}},
-		{"ROLE_DOCTOR", "医护", "team", []string{"dashboard", "realtime", "alerts", "orthosis", "review", "review_tpl"}},
+		{"ROLE_DOCTOR", "医护", "team", []string{"dashboard", "realtime", "abnormal_report", "alerts", "orthosis", "review", "review_tpl"}},
 		{"ROLE_CS", "客服", "all_patients", []string{"comm"}},
 	} {
 		row, ok := byID[want.id]

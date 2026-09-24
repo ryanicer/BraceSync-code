@@ -8,6 +8,7 @@ export const pageRoutes: RouteRecordRaw[] = [
   { path: '/dashboard', name: 'Dashboard', component: () => import('../pages/dashboard/index.vue'), meta: { title: '数据概览', icon: '📊' } },
   { path: '/monitor', name: 'Monitor', component: () => import('../pages/monitor/index.vue'), meta: { title: '实时监控', icon: '🔍' } },
   { path: '/patients', name: 'Patients', component: () => import('../pages/patients/index.vue'), meta: { title: '患者管理', icon: '👤' } },
+  { path: '/abnormal-report', name: 'AbnormalReport', component: () => import('../pages/abnormal-report/index.vue'), meta: { title: '异常报告', icon: '🧾' } }, // T372 独立页（设计稿 异常报告.html，侧栏第 4 项）
   { path: '/teams', name: 'Teams', component: () => import('../pages/teams/index.vue'), meta: { title: '团队管理', icon: '👥' } },
   { path: '/devices', name: 'Devices', component: () => import('../pages/devices/index.vue'), meta: { title: '设备管理', icon: '📱' } },
   { path: '/alerts', name: 'Alerts', component: () => import('../pages/alerts/index.vue'), meta: { title: '告警管理', icon: '🚨' } },
