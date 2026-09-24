@@ -164,6 +164,8 @@ type fakeStore struct {
 	lastReply        string
 	lastToggle       string
 	lastFeelingQuery string
+	// T350 返工 D-2：患者维度感受日志读替身的调用次数（跨团队读必须为 0）
+	feelingListCalls int
 
 	techLogin       *repo.TechLoginRow
 	techLoginErr    error
@@ -223,6 +225,8 @@ type fakeStore struct {
 	// T130 复查记录
 	reviewRows      []repo.ReviewRecordRow
 	reviewRowsErr   error
+	reviewListCalls int    // T350 返工 D-3：患者维度复查记录读的调用次数（跨团队读必须为 0）
+	lastReviewQuery string // 实收的 patient_id
 	createdReview   *repo.ReviewRecordRow
 	createReviewErr error
 
@@ -363,6 +367,7 @@ func (f *fakeStore) CreatePlan(_ context.Context, _, _, _, version string) (*rep
 	return f.createdPlan, f.createPlanEr
 }
 func (f *fakeStore) ListFeelingLogs(_ context.Context, patientID string) ([]repo.FeelingLogRow, error) {
+	f.feelingListCalls++ // T350 返工 D-2：越权读必须在触库前被拦掉
 	f.lastFeelingQuery = patientID
 	return f.feelings, f.feelingsErr
 }
@@ -1686,7 +1691,8 @@ func TestListFeelingLogs_HorizontalAuthz(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, model.CodeOK, resp.Code)
 
-	// 医生查他人 → 403（本卡仅 ADMIN 放行；医生团队范围读需 PM 另裁）
+	// 医生查他人 → 403（T350 返工 D-2 后走团队推导；本 env 未给 doctors.team_id ⇒ 无团队 fail-closed。
+	// 「同团队可读 / 跨团队合一 403 / 触库次数 0」的医护身份腿在 team_scope_t350_rework_test.go）
 	w, resp = e.do(http.MethodGet, "/api/v1/patients/P002/feeling-logs", nil,
 		map[string]string{"X-Role": "ROLE_DOCTOR", "X-User-Id": "DOC001"})
 	assert.Equal(t, http.StatusForbidden, w.Code)
@@ -2050,7 +2056,9 @@ func (f *fakeStore) CreateReviewRecord(_ context.Context, row repo.ReviewRecordR
 	return &row, f.createReviewErr
 }
 
-func (f *fakeStore) ListReviewRecordsByPatient(_ context.Context, _ string) ([]repo.ReviewRecordRow, error) {
+func (f *fakeStore) ListReviewRecordsByPatient(_ context.Context, patientID string) ([]repo.ReviewRecordRow, error) {
+	f.reviewListCalls++ // T350 返工 D-3：越权读必须在触库前被拦掉
+	f.lastReviewQuery = patientID
 	return f.reviewRows, f.reviewRowsErr
 }
 

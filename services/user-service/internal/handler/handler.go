@@ -1525,7 +1525,8 @@ func toFeelingDTO(r repo.FeelingLogRow) model.FeelingLogDTO {
 }
 
 // listFeelingLogs GET /api/v1/patients/:patientId/feeling-logs
-// 水平鉴权（T184）：ROLE_ADMIN 可查任意患者；其他角色仅 X-User-Id == patientId 可查。
+// 水平鉴权（T184）：ROLE_ADMIN 可查任意患者；ROLE_DOCTOR 可查本团队患者（T350 返工 D-2）；
+// 其他角色仅 X-User-Id == patientId 可查。
 func (h *Handler) listFeelingLogs(c *gin.Context) {
 	patientID := c.Param("patientId")
 	if patientID == "" {
@@ -1536,14 +1537,16 @@ func (h *Handler) listFeelingLogs(c *gin.Context) {
 	// 水平鉴权（fail-closed：缺失头视为无权限）
 	role := c.GetHeader(headerRole)
 	userID := c.GetHeader(headerUserID)
-	if role != roleAdmin {
+	if role != roleAdmin && role != roleDoctor {
 		if userID == "" || userID != patientID {
 			fail(c, model.ErrForbidden("may only query your own feeling logs"))
 			return
 		}
 	}
 
-	if !h.assertPatientExists(c, patientID) { // T353：查无此人 404
+	// 医护 → 团队谓词读，四格（不存在 / 他团队 / 患者无团队 / 本人无团队）合一 403；
+	// 运营与客服仍只判存在性，查无此人照旧 404（T353 口径，只收紧不放宽）。
+	if !h.assertPatientInScope(c, patientID) {
 		return
 	}
 	rows, err := h.store.ListFeelingLogs(c.Request.Context(), patientID)

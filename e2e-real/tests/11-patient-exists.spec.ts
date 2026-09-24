@@ -27,6 +27,19 @@ import { requireDeployedBuild } from '../deploy-guard'
  *
  * 数据纪律：全量只读 GET，不建不改不删；不存在患者用固定 P99999999（现网实测 patients 表无此 ID），
  * 现存患者从 GET /api/v1/admin/patients 取当次首行，不硬编码 seed 患者 ID。
+ *
+ * ── T350 返工追加的 11.4（派发单 c 项：本文件原来只登运营账号，医护身份一层从不覆盖）──────
+ * 三条被返工的端点（daily-wear / feeling-logs / review-records）在返工前后都回 403，
+ * 状态码差探不出部署与否 —— 返工前是 T264 的 self-only 403，返工后是团队范围 403。
+ * 故 probe 按【文案】探（新文案含 "out of your data scope"，旧文案是 "your own ..."），
+ * 它仍只做存在性探测、不含业务判据，符合本文件顶部对 probe 的边界。
+ *
+ * 覆盖缺口要说清（现网数据决定的，不是用例写松）：staging 的 doctor_li 所在团队当前零患者，
+ * 所以「本团队患者 200 读回」这条在现网拿不到样本 ⇒ 该腿按数据可得性条件执行，
+ * 拿不到时在报告 annotations 与 run 日志里显式登记「未跑」。一旦有人给该团队建档，自动转真跑。
+ * 该缺口的代码侧对位判据（同团队可读、跨团队零触库）在单测层：
+ *   services/user-service/internal/handler/team_scope_t350_rework_test.go
+ *   services/data-service/internal/handler/team_scope_t350_test.go
  */
 
 const GONE_PID = 'P99999999'
@@ -53,12 +66,28 @@ const MSG_ENDPOINTS: Array<[string, (pid: string) => string]> = [
   ['notifications', (p) => `/api/v1/patients/${p}/notifications?pageSize=5`],
 ]
 
-async function realToken(req: APIRequestContext): Promise<string> {
+/** T350 返工（D-1/D-2/D-3）纳入团队推导的三条：医护身份腿只跑这三条 */
+const REWORK_ENDPOINTS: Array<[string, (pid: string) => string]> = [
+  ['daily-wear', (p) => `/api/v1/patients/${p}/daily-wear?days=7`],
+  ['feeling-logs', (p) => `/api/v1/patients/${p}/feeling-logs`],
+  ['review-records', (p) => `/api/v1/patients/${p}/review-records`],
+]
+
+/** staging 预置医护账号（无团队归属 ⇒ 全部患者对其越界，见 11.4 的覆盖缺口说明） */
+const DOCTOR_USERNAME = 'doctor_li'
+
+/** 团队范围 403 的新文案（denyCrossTeam），旧文案是 T264 self-only 的 "your own ..." */
+const SCOPE_DENY_TEXT = 'out of your data scope'
+
+async function realToken(
+  req: APIRequestContext,
+  username: string = 'ops_admin',
+): Promise<string> {
   const res = await req.post('/api/v1/auth/login', {
-    data: { username: 'ops_admin', password: 'admin123' },
+    data: { username, password: 'admin123' },
     headers: { 'Content-Type': 'application/json' },
   })
-  expect(res.status(), '登录应 200').toBe(200)
+  expect(res.status(), `${username} 登录应 200`).toBe(200)
   const body = await res.json()
   expect(body.code, '登录 code 应为 0').toBe(0)
   const token = body?.data?.token
@@ -68,15 +97,22 @@ async function realToken(req: APIRequestContext): Promise<string> {
 
 /** 取当次库里真实存在的一名患者（只读，不硬编码 seed ID） */
 async function existingPatient(req: APIRequestContext, token: string): Promise<string> {
-  const res = await req.get('/api/v1/admin/patients?page=1&pageSize=1', {
+  const list = await patientIds(req, token, 1)
+  expect(list.length, 'staging 应至少有一名患者可作「存在但无数据」对照').toBeGreaterThan(0)
+  return list[0]
+}
+
+/** 某令牌可见的患者 ID 列表（医护令牌由服务端按 doctors.team_id 过滤，不接受入参） */
+async function patientIds(req: APIRequestContext, token: string, pageSize: number): Promise<string[]> {
+  const res = await req.get(`/api/v1/admin/patients?page=1&pageSize=${pageSize}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   expect(res.status(), 'GET /api/v1/admin/patients 应 200').toBe(200)
   const json = await res.json()
-  const pid = String(json?.data?.list?.[0]?.patientId ?? '')
-  expect(pid.length, 'staging 应至少有一名患者可作「存在但无数据」对照').toBeGreaterThan(0)
-  return pid
+  const list: Array<{ patientId?: unknown }> = Array.isArray(json?.data?.list) ? json.data.list : []
+  return list.map((p) => String(p?.patientId ?? '')).filter((s) => s !== '')
 }
+
 
 /**
  * 「查无此人 → 404 + 10404 + data:null」与「现存患者 → 仍 200」两条判据逐端点跑。
@@ -120,6 +156,88 @@ async function probe404(req: APIRequestContext, token: string, path: string): Pr
   return res.status() === 404
 }
 
+/**
+ * 存在性探测（文案版，T350 返工用）：返工前后对医护都是 403，状态码探不出部署与否
+ * （旧的是 T264 self-only，新的是团队范围），故这里探「拒绝文案是不是团队范围口径」。
+ * 同样只做存在性探测，不含业务判据。
+ */
+async function probeDenyText(req: APIRequestContext, token: string, path: string): Promise<boolean> {
+  const res = await req.get(path, { headers: { Authorization: `Bearer ${token}` } })
+  const body = await res.json().catch(() => null)
+  return String(body?.message ?? '').includes(SCOPE_DENY_TEXT)
+}
+
+/** 把调用者自己填的患者号折成占位符，用于比对两种拒绝是否「同形」 */
+function foldPid(message: string, pid: string): string {
+  return message.split(pid).join('<pid>')
+}
+
+/**
+ * 医护身份腿（T350 返工派发单 c 项）：三条端点在患者号维度对 ROLE_DOCTOR 一律 403 且同形，
+ * 本团队患者必须读得回 200 —— 后面两格按现网数据可得性执行，拿不到样本由调用方登记缺口。
+ * 偏差同样累计成清单，一条端点红掉不挡其余端点的现状。
+ */
+async function assertDoctorScope(
+  req: APIRequestContext,
+  docToken: string,
+  ownPids: string[],
+  outPid: string,
+  group: Array<[string, (pid: string) => string]>,
+): Promise<void> {
+  const headers = { Authorization: `Bearer ${docToken}` }
+  const ownPid = ownPids[0] ?? ''
+  const badGone: string[] = []
+  const badOut: string[] = []
+  const badShape: string[] = []
+  const badLive: string[] = []
+
+  for (const [name, build] of group) {
+    const gone = await req.get(build(GONE_PID), { headers })
+    const goneBody = await gone.json().catch(() => null)
+    console.log(`[e2e-real][t350r] GET ${gone.url()} -> HTTP ${gone.status()} code=${goneBody?.code}`)
+    if (gone.status() !== 403) badGone.push(`${name} HTTP=${gone.status()}`)
+    if (goneBody?.data !== null) badGone.push(`${name} data 非 null`)
+    if (!String(goneBody?.message ?? '').includes(SCOPE_DENY_TEXT)) {
+      badGone.push(`${name} 拒绝文案不是团队范围口径：${goneBody?.message}`)
+    }
+
+    if (outPid) {
+      const out = await req.get(build(outPid), { headers })
+      const outBody = await out.json().catch(() => null)
+      console.log(`[e2e-real][t350r] GET ${out.url()} -> HTTP ${out.status()} code=${outBody?.code}`)
+      if (out.status() !== 403) badOut.push(`${name} HTTP=${out.status()}`)
+      if (
+        foldPid(String(outBody?.message ?? ''), outPid) !==
+        foldPid(String(goneBody?.message ?? ''), GONE_PID)
+      ) {
+        badShape.push(`${name} 跨团队「${outBody?.message}」与查无此人「${goneBody?.message}」不同形`)
+      }
+    }
+
+    if (ownPid) {
+      const live = await req.get(build(ownPid), { headers })
+      const liveBody = await live.json().catch(() => null)
+      console.log(`[e2e-real][t350r] GET ${live.url()} -> HTTP ${live.status()} code=${liveBody?.code}`)
+      if (live.status() !== 200 || liveBody?.code !== 0) {
+        badLive.push(`${name} HTTP=${live.status()} code=${liveBody?.code}`)
+      }
+    }
+  }
+
+  expect(badGone, `医护读不存在患者应折进 403（永不出 404），实际偏差：${badGone.join('；')}`).toEqual([])
+  expect(badOut, `医护读越界患者应 403，实际偏差：${badOut.join('；')}`).toEqual([])
+  expect(badShape, `跨团队与查无此人必须同形，否则患者号存在性可枚举：${badShape.join('；')}`).toEqual([])
+  expect(
+    badLive,
+    `医护读本团队患者应 200 + code 0（D-1/D-2/D-3 要修的就是这一格），实际偏差：${badLive.join('；')}`,
+  ).toEqual([])
+}
+
+function t350rGap(desc: string): void {
+  console.log(`[e2e-real][t350r] 覆盖缺口 —— ${desc}`)
+  test.info().annotations.push({ type: 'coverage-gap', description: desc })
+}
+
 test.describe('11-按 patientId 查询的存在性判定', () => {
   let token = ''
   let livePid = ''
@@ -150,5 +268,35 @@ test.describe('11-按 patientId 查询的存在性判定', () => {
       probe: () => probe404(page.request, token, `/api/v1/patients/${GONE_PID}/subscription-quota`),
     })
     await assertNotFoundIs404(page.request, token, livePid, MSG_ENDPOINTS)
+  })
+
+  test('11.4 doctor_li（T350 返工 D-1/D-2/D-3）：患者号折进 403、本团队患者读得回', async ({ page }) => {
+    const docToken = await realToken(page.request, DOCTOR_USERNAME)
+    await requireDeployedBuild(page, {
+      marker: 'T350R-doctor-scope',
+      why: `daily-wear 对医护仍吃 T264 self-only 403（文案不含「${SCOPE_DENY_TEXT}」）`,
+      probe: () =>
+        probeDenyText(page.request, docToken, `/api/v1/patients/${GONE_PID}/daily-wear?days=7`),
+    })
+
+    // 「本团队患者」不硬编码：由服务端按 doctors.team_id 过滤后的患者列表给出
+    const ownPids = await patientIds(page.request, docToken, 100)
+    const opsPids = await patientIds(page.request, token, 100)
+    const outPid = ownPids.length
+      ? opsPids.find((p) => !ownPids.includes(p)) ?? ''
+      : livePid // 医护团队零患者 ⇒ 运营取到的任一名患者都是越界样本
+
+    if (!ownPids.length) {
+      t350rGap(
+        'T350R-doctor-scope：doctor_li 所在团队在 staging 当前零患者 ⇒ 「本团队患者 200 读回」一格' +
+          '现网无样本，本 run 未跑（该格的代码侧对位判据在 handler 单测）；有人为该团队建档后此格自动转真跑',
+      )
+    } else if (!outPid) {
+      t350rGap(
+        'T350R-doctor-scope：运营可见患者全部落在该医护团队内 ⇒ 「跨团队 403 与查无此人同形」一格无样本，本 run 未跑',
+      )
+    }
+
+    await assertDoctorScope(page.request, docToken, ownPids, outPid, REWORK_ENDPOINTS)
   })
 })

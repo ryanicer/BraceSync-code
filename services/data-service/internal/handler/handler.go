@@ -265,7 +265,8 @@ func (h *Handler) SetDailyWearQuerier(q DailyWearQuerier) { h.dailyWear = q }
 // getDailyWear GET /api/v1/patients/:patientId/daily-wear
 //
 //	?start=YYYY-MM-DD&end=YYYY-MM-DD（闭区间，Asia/Shanghai 切日；缺省 end=今日 start=end-6d）
-//	水平鉴权：ROLE_ADMIN 允许任意；其余角色仅当 X-User-Id == patientId 允许（否则 403）
+//	水平鉴权：ROLE_ADMIN 允许任意；ROLE_DOCTOR 允许本团队患者（T350 返工 D-1）；
+//	其余角色仅当 X-User-Id == patientId 允许（否则 403）
 func (h *Handler) getDailyWear(c *gin.Context) {
 	if h.dailyWear == nil {
 		fail(c, model.ErrInternal("daily-wear querier not configured"))
@@ -280,11 +281,16 @@ func (h *Handler) getDailyWear(c *gin.Context) {
 	// 水平越权校验（fail-closed：缺失头视为无权限）
 	role := c.GetHeader(headerRole)
 	userID := c.GetHeader(headerUserID)
-	if role != roleAdmin {
+	if role != roleAdmin && role != roleDoctor {
 		if userID == "" || userID != patientID {
 			fail(c, model.ErrForbidden("may only query your own daily-wear stats"))
 			return
 		}
+	}
+	// T350 返工 D-1：医护走团队推导（realtime / records / health-reports 同一条闸门）。
+	// 排在存在性探测之前 ⇒ 跨团队与「查无此人」合一 403，患者号存在性不作为探测面。
+	if !h.assertTeamScope(c, patientID) {
+		return
 	}
 	if !h.assertPatientExists(c, patientID) { // T340
 		return

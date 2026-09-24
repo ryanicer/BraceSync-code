@@ -85,7 +85,8 @@ func (h *Handler) createReviewRecord(c *gin.Context) {
 }
 
 // listReviewRecords GET /api/v1/patients/:patientId/review-records —— 复查记录列表
-// 水平鉴权：ROLE_ADMIN 可查任意患者；其他角色仅 X-User-Id == patientId 可查。
+// 水平鉴权：ROLE_ADMIN 可查任意患者；ROLE_DOCTOR 可查本团队患者（T350 返工 D-3）；
+// 其他角色仅 X-User-Id == patientId 可查。
 func (h *Handler) listReviewRecords(c *gin.Context) {
 	patientID := c.Param("patientId")
 	if patientID == "" {
@@ -96,14 +97,15 @@ func (h *Handler) listReviewRecords(c *gin.Context) {
 	// 水平鉴权（fail-closed：缺失头视为无权限）
 	role := c.GetHeader(headerRole)
 	userID := c.GetHeader(headerUserID)
-	if role != roleAdmin {
+	if role != roleAdmin && role != roleDoctor {
 		if userID == "" || userID != patientID {
 			fail(c, model.ErrForbidden("may only query your own review records"))
 			return
 		}
 	}
 
-	if !h.assertPatientExists(c, patientID) { // T353：查无此人 404
+	// 同 listFeelingLogs：医护走团队谓词（四格合一 403），运营/客服仍只判存在性 404。
+	if !h.assertPatientInScope(c, patientID) {
 		return
 	}
 	rows, err := h.store.ListReviewRecordsByPatient(c.Request.Context(), patientID)
