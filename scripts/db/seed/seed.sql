@@ -7,16 +7,23 @@
 -- T345：ROLE_ADMIN 的 modules 由 12 项补到 15 项（补 review / review_tpl / doctor_acct），
 --   与 apps/admin-web/src/router/permissions.ts 的 PAGE_MODULES（15 页 = 路由全集）对齐。
 --   原缺三键是「页面已上线、库里没登记」：复查报告/复查模板管理（T135）、医护账号（T315）。
---   ROLE_DOCTOR / ROLE_CS 一字未动 —— 医护对复查两页的权限位待 Boss 裁（T345 挂起项）。
+--   ROLE_CS 一字未动（客服仍只 comm 一项）。
+-- T368：ROLE_DOCTOR 的 modules 由 4 项补到 6 项（补 review / review_tpl），按 Boss 2026-09-24 09:3x
+--   裁定 (a)「补库」——医护本职含复查报告，两页正式授权给医护，使库与前端准入矩阵
+--   （apps/admin-web/src/router/permissions.ts 的 ROLE_PAGE_MATRIX.doctor，6 页）同源。
+--   新建库由下面的 6 项直接命中；已建库（dev / staging / prod）由迁移 000028 前滚到同一终态。
 -- 🔴 本文件是「冲突即跳过」的插入，对已建库（dev / staging / prod）的既有行不生效，
---   线上补键走迁移 000026（先例：000025 纠正角色名、000021/000022 纠正量纲）。
--- ⚠ 本块上方加了 6 行说明，旧文本里的 seed.sql:NN 行号引用整体后移；
+--   线上补键走迁移 000026（ROLE_ADMIN）与 000028（ROLE_DOCTOR）
+--   （先例：000025 纠正角色名、000021/000022 纠正量纲）。
+-- ⚠ 本块上方累计 11 行说明注释（T345 加 6 行 + T368 加 5 行），旧文本里的 seed.sql:NN 行号引用整体后移；
 --   roles_t252.go 与 permissions_t257_test.go 的引用已改为「按块名定位」，不再写行号。
+--   ⚠ 文档侧仍有按行号引本页的（PRD §7D.11 与设计稿 权限控制.html 引 seed.sql:8-13 / :10），
+--     归口 PM 派文档刷新，本卡不代改文档。
 INSERT INTO roles (role_id, name, description, permissions_json) VALUES
   ('ROLE_ADMIN', '运营管理员', '全量数据，无团队隔离',
     '{"scope":"all","modules":["dashboard","realtime","patients","teams","devices","alerts","comm","orthosis","install","review","review_tpl","tech","doctor_acct","perm","config"]}'),
   ('ROLE_DOCTOR', '医护', '仅本团队患者数据',
-    '{"scope":"team","modules":["dashboard","realtime","alerts","orthosis"]}'),
+    '{"scope":"team","modules":["dashboard","realtime","alerts","orthosis","review","review_tpl"]}'),
   ('ROLE_CS', '客服', '仅患者沟通模块，全量患者',
     '{"scope":"all_patients","modules":["comm"]}')
 ON CONFLICT (role_id) DO 
