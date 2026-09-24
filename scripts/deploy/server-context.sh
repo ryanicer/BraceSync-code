@@ -40,6 +40,7 @@ echo ""
 
 echo "[2/5] 服务器目录地图"
 echo "  $PROJECT_ROOT  权威仓库(最新代码+任务文档+scripts/deploy 部署资产)"
+echo "  /home/ubuntu/bracesync-ops  被部署工作树之外的运行副本区(T383): bin/=cron 实际引用的备份脚本, deploy-selfcheck/=中止轮自比对凭据, cron-scripts.published.log=签发台账"
 echo "  $STAGING_DIR   staging 部署目录(docker-compose.yml/.env/nginx.conf)"
 echo "  $PROD_DIR      生产部署目录(红线:仅部署流程触碰,日常禁止)"
 echo "  /tmp/bracesync-worktree-residual  旧分支残留备份(可清理)"

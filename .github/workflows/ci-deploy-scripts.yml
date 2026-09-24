@@ -1,8 +1,11 @@
 # BraceSync 部署脚本静态检查（T364）
 # 背景：scripts/deploy/** 不在任何 PR workflow 的 paths 里 —— 部署脚本文法错误要等下一次
 #       现网跑批才暴露（且那时正好落在「① 步换掉正在解释的自身」这条隐患的窗口里）。
-# 定位 = 最小语法级检查，与 ci-backup-scripts.yml 同一口径：
+# 定位 = 最小语法级检查 + 自检脚本行为测试，与 ci-backup-scripts.yml 同一口径：
 #   `bash -n` 失败即红；shellcheck 结论只作 PR 注释呈现，不做门禁（既有告警面广，先建可见性）。
+#   T383 起追加 selfcheck-behavior-test.sh：record / verify / receipt 三条路径的退出码
+#   （0 / 2 / 3 各自要对）与落盘内容都进门禁 —— 中止轮凭据这种「只在出事时才用到的东西」，
+#   没有真跑一遍就等于没写（T364 那格假绿：守卫的放行分支从没被执行过）。
 # 未在分支保护里设为 required check ⇒ 不阻塞合并。
 name: Deploy Scripts Static Check
 
@@ -41,6 +44,12 @@ jobs:
             echo "部署脚本存在语法错误，现网跑批必失败"
           fi
           exit $rc
+
+      - name: 自检行为测试（T383 中止轮凭据 / record-verify-receipt 三向 rc）
+        run: |
+          # 检测类改动必须双向取证：既验「该放行」的放行，也验「该判红」的判红，
+          # 还验 rc 既非 0 也非预期码那一条 —— 见 scripts/deploy/selfcheck-behavior-test.sh。
+          bash scripts/deploy/selfcheck-behavior-test.sh
 
       - name: shellcheck（informational，结论作 PR 注释）
         run: |

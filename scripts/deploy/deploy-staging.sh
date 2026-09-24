@@ -10,6 +10,10 @@
 #   6. 冒烟：healthz → 登录 → 受保护端点 → 挂载前缀/深链（T336）→ 全过才输出 DEPLOY OK
 #   7. 任一环节失败即退出非零中止；幂等可重入；不碰生产 /opt/bracesync
 #   8. 自改隐患（T364）：先从只读快照副本执行，开头记基线、结尾比对工作树真本
+#   9. cron 入口外置（T383 第一处）：每轮把 cron 用的备份脚本原子签发到工作树之外的 CRON_PUBLISH_DIR，
+#      crontab 只引用外置副本 —— 被调度脚本的字节不再随 ① 步 checkout/pull 变动
+#  10. 中止轮留凭据（T383 第二处）：① 至 ⑦ 任一步非零退出时，先落一份「开头基线 vs 中止时」
+#      自比对凭据到 SELFCHK_RECEIPT_DIR 再清理（⑧ 段只在成功路径跑，中止轮原先什么都不留）
 set -euo pipefail
 
 PROJECT_ROOT="/home/ubuntu/bracesync"
@@ -19,6 +23,16 @@ SEED_SQL="$PROJECT_ROOT/scripts/db/seed/seed.sql"
 SMOKE_USER="ops_admin"
 SMOKE_PASS="admin123"
 HEALTH_URL="http://localhost:81/healthz"
+
+# T383：被部署工作树【之外】的运行副本区。
+#   判据「凡正在被调度 / 正在被解释的字节，都不许住在 ① 步会被 checkout、pull 换掉的树里」，
+#   所以 cron 实际引用的备份脚本副本、以及中止轮的自比对凭据，都落在这里（树内只留源文件）。
+#   四个变量与 publish-cron-scripts.sh / selfcheck receipt 的同名入参一一对应，覆盖它们只为测试。
+OPS_ROOT="${BRACESYNC_OPS_ROOT:-/home/ubuntu/bracesync-ops}"
+CRON_SOURCE_DIR="${CRON_SOURCE_DIR:-$PROJECT_ROOT/scripts/backup}"
+CRON_PUBLISH_DIR="${CRON_PUBLISH_DIR:-$OPS_ROOT/bin}"
+CRON_PUBLISH_LOG="${CRON_PUBLISH_LOG:-$OPS_ROOT/cron-scripts.published.log}"
+SELFCHK_RECEIPT_DIR="${SELFCHK_RECEIPT_DIR:-$OPS_ROOT/deploy-selfcheck}"
 
 LOGIN_URL="http://localhost:81/api/v1/auth/login"
 PATIENTS_URL="http://localhost:81/api/v1/admin/patients"
@@ -36,6 +50,7 @@ fail() { err "$*"; exit 1; }
 #   快照不会被任何部署动作改动；同时记录工作树真本基线，交给 ⑧ 比对。
 WORKTREE_SCRIPT="$PROJECT_ROOT/scripts/deploy/deploy-staging.sh"
 SELFCHK_SRC="$PROJECT_ROOT/scripts/deploy/selfcheck-deploy-script.sh"
+PUBLISH_SRC="$PROJECT_ROOT/scripts/deploy/publish-cron-scripts.sh"
 STATE_FILE="${TMPDIR:-/tmp}/t364-deploy-selfcheck.$$.env"
 
 if [ -z "${T364_SNAP_ROOT:-}" ]; then
@@ -44,8 +59,10 @@ if [ -z "${T364_SNAP_ROOT:-}" ]; then
   trap 'rm -rf "${SNAP_ROOT:-}" "${STATE_FILE:-}"' EXIT
   [ -r "$WORKTREE_SCRIPT" ] || fail "工作树内部署脚本不可读：$WORKTREE_SCRIPT"
   [ -r "$SELFCHK_SRC" ] || fail "自检脚本缺失：$SELFCHK_SRC（本轮部署包不完整）"
+  [ -r "$PUBLISH_SRC" ] || fail "外置签发脚本缺失：$PUBLISH_SRC（T383 后 ⑦-b 段必需，本轮部署包不完整）"
   install -m 400 "$WORKTREE_SCRIPT" "$SNAP_ROOT/deploy-staging.sh" || fail "部署脚本快照安装失败"
   install -m 400 "$SELFCHK_SRC" "$SNAP_ROOT/selfcheck-deploy-script.sh" || fail "自检脚本快照安装失败"
+  install -m 400 "$PUBLISH_SRC" "$SNAP_ROOT/publish-cron-scripts.sh" || fail "外置签发脚本快照安装失败"
   bash "$SNAP_ROOT/selfcheck-deploy-script.sh" record "$WORKTREE_SCRIPT" "$STATE_FILE" || fail "自改基线记录失败"
   export T364_SNAP_ROOT="$SNAP_ROOT" T364_STATE_FILE="$STATE_FILE"
   exec bash "$SNAP_ROOT/deploy-staging.sh" "$@"
@@ -58,7 +75,18 @@ fi
 SNAP_ROOT="$T364_SNAP_ROOT"
 STATE_FILE="$T364_STATE_FILE"
 SELFCHK="$SNAP_ROOT/selfcheck-deploy-script.sh"
-trap 'rm -rf "${SNAP_ROOT:-}" "${STATE_FILE:-}"' EXIT
+# T383 第二处：⑧ 段（自比对）只在成功路径上跑，① 至 ⑦ 任一步 fail 时 trap 会把基线连快照
+#   一起删掉 ⇒ 中止轮拿不出「开头 vs 中止时」的自比对凭据。改为：非零退出先落一份只读凭据，
+#   再清理 —— 每轮无论成败都可对账，成功轮行为一字不动。
+t383_finish() {
+  rc_at_exit="$1"
+  if [ "$rc_at_exit" != "0" ]; then
+    bash "$SELFCHK" receipt "$WORKTREE_SCRIPT" "$STATE_FILE" "$SELFCHK_RECEIPT_DIR" "$rc_at_exit" \
+      || err "中止轮自比对凭据落盘失败（不改变本轮中止原因本身）"
+  fi
+  rm -rf "${SNAP_ROOT:-}" "${STATE_FILE:-}"
+}
+trap 't383_finish "$?"' EXIT
 log "⓪ 自改隔离：本次执行只读快照 $0"
 
 # ① git pull
@@ -240,6 +268,18 @@ log "   ✅ 入口资源带 /admin/ 前缀 + 深链 /admin/patients → 200"
 log "⑦ 清理部署残留 ..."
 rm -f "$PROJECT_ROOT/bracesync-staging.tar.gz" "$PROJECT_ROOT/bracesync-staging.zip" 2>/dev/null || true
 log "   已清理仓库根目录部署残留"
+
+# ⑦-b T383 第一处：把 cron 引用的备份脚本外置签发到被部署工作树之外
+#   现状（改前）：ubuntu crontab 两条定时任务直接 /bin/bash $PROJECT_ROOT/scripts/backup/*.sh，
+#   而 $PROJECT_ROOT 正是 ① 步 `git checkout -- .` + `git pull` 要换掉的那棵树 —— 与被部署脚本同域，
+#   「跑批中途被覆盖」与「随回滚漂移」两条隐患和 T364 同源。
+#   签发逻辑抽到 publish-cron-scripts.sh（可在 CI 里单独测），这里跑的是 ⓪ 步的快照副本。
+#   备份脚本内部全是绝对路径、与自身位置无关（实测），换目录不改行为。
+log "⑦-b cron 备份脚本外置签发（$CRON_SOURCE_DIR → $CRON_PUBLISH_DIR）..."
+mkdir -p "$OPS_ROOT" "$CRON_PUBLISH_DIR" || fail "外置区建不出来：$OPS_ROOT"
+chmod 700 "$OPS_ROOT" 2>/dev/null || true
+CRON_SOURCE_DIR="$CRON_SOURCE_DIR" CRON_PUBLISH_DIR="$CRON_PUBLISH_DIR" CRON_PUBLISH_LOG="$CRON_PUBLISH_LOG" \
+  bash "$SNAP_ROOT/publish-cron-scripts.sh" "$SHA" || fail "cron 备份脚本外置签发失败（详见上方 [publish-cron] 行）"
 
 # ⑧ T364 自改隐患自检：① 步有没有换掉「正在被解释的那份脚本」
 log "⑧ 自改隐患自检（比对工作树真本 vs 开头基线）..."
