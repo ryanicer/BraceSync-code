@@ -1,5 +1,6 @@
 /**
  * T362 — 技师端绑定页：患者ID 示例口径 + 扫码去 mock 硬编码
+ * T380 — 同页设备ID 示例口径（假串 PRS-ML05-RC-001 现网精确命中 0）
  *
  * 覆盖两件事：
  *  1. `readQrCode` 四条链路（成功 / 取消 / 无内容 / 失败）的判定，含"失败绝不产出可写入值"；
@@ -10,7 +11,10 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { readQrCode, type ScanImpl } from '../src/utils/scan'
-import { PATIENT_ID_EXAMPLE, PATIENT_ID_PLACEHOLDER, PATIENT_ID_SHAPE, SCAN_TOAST } from '../src/utils/bind-copy'
+import {
+  DEVICE_ID_EXAMPLE, DEVICE_ID_PLACEHOLDER, DEVICE_ID_SHAPE,
+  PATIENT_ID_EXAMPLE, PATIENT_ID_PLACEHOLDER, PATIENT_ID_SHAPE, SCAN_TOAST,
+} from '../src/utils/bind-copy'
 
 const PAGE = fileURLToPath(new URL('../src/pages/bind/index.vue', import.meta.url))
 const pageSrc = fs.readFileSync(PAGE, 'utf8')
@@ -77,10 +81,31 @@ describe('患者ID 示例口径（T362 现网实测）', () => {
   })
 })
 
+describe('设备ID 示例口径（T380 现网实测）', () => {
+  it('示例串符合现网真实形态 PRS-ML05-RC- 加 11 位数字', () => {
+    expect(DEVICE_ID_EXAMPLE).toMatch(DEVICE_ID_SHAPE)
+    expect(DEVICE_ID_EXAMPLE).toHaveLength(23)
+  })
+
+  it('占位文案为「例: + 示例串」，且不是旧假串那一族', () => {
+    expect(DEVICE_ID_PLACEHOLDER).toBe(`例: ${DEVICE_ID_EXAMPLE}`)
+    // 假串是「短序号后缀」形态：现网 5 台设备里精确命中 0，照它手输必然绑不到设备
+    expect(DEVICE_ID_EXAMPLE).not.toBe('PRS-ML05-RC-001')
+    expect(DEVICE_ID_PLACEHOLDER.includes('PRS-ML05-RC-001')).toBe(false)
+  })
+})
+
 describe('bind 页落点接线（源码契约，防回潮）', () => {
   it('患者ID 输入框用集中文案常量做占位，页内无 pat-001 残留', () => {
     expect(pageSrc).toMatch(/:placeholder="PATIENT_ID_PLACEHOLDER"/)
     expect(pageSrc).not.toMatch(/pat-001/)
+  })
+
+  it('设备ID 输入框用集中文案常量做占位，模板里无假串字面量', () => {
+    expect(pageSrc).toMatch(/:placeholder="DEVICE_ID_PLACEHOLDER"/)
+    // 只查模板段：script 段第 106 行那句注释是 T362 留的历史说明，明写被删掉的假串原值，属正当引用
+    const template = pageSrc.slice(0, pageSrc.indexOf('</template>'))
+    expect(template).not.toMatch(/PRS-ML05-RC-00\d/)
   })
 
   it('扫码走 readQrCode + uni.scanCode，不再直接给输入框赋字面量', () => {
