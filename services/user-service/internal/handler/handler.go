@@ -779,22 +779,32 @@ func (h *Handler) listPatients(c *gin.Context) {
 // getPatient GET /api/v1/admin/patients/:patientId —— 详情，不存在 404
 //
 // T350：医护访问非本团队患者 → 403（水平越权优先于 404，与 gateway proxy_services.go:64 同口径）。
+// 受限范围内「查无此人」与「跨团队」走同一次带团队谓词的读、同一个 403：否则 403 与 404 的差
+// 就是患者号存在性 oracle（本项目收未成年人病历，判据③ 点名不得泄露）。不受限角色仍是 404。
 func (h *Handler) getPatient(c *gin.Context) {
 	scope, allowed := h.resolveTeamScope(c)
 	if !allowed {
 		return
 	}
-	row, err := h.store.GetPatient(c.Request.Context(), c.Param("patientId"))
+	patientID := c.Param("patientId")
+
+	var row *repo.PatientRow
+	var err error
+	if scope.limited {
+		row, err = h.store.GetPatientInTeam(c.Request.Context(), patientID, scope.teamID)
+	} else {
+		row, err = h.store.GetPatient(c.Request.Context(), patientID)
+	}
 	if err != nil {
 		fail(c, model.ErrInternal("get patient failed"))
 		return
 	}
 	if row == nil {
-		fail(c, model.ErrNotFound("patient not found: %s", c.Param("patientId")))
-		return
-	}
-	if !scope.allowsPatient(patientTeamID(row.TeamID)) {
-		denyCrossTeam(c, c.Param("patientId"))
+		if scope.limited {
+			denyCrossTeam(c, patientID)
+			return
+		}
+		fail(c, model.ErrNotFound("patient not found: %s", patientID))
 		return
 	}
 	ok(c, toPatientDTO(*row))
@@ -1383,7 +1393,9 @@ func (h *Handler) listPlans(c *gin.Context) {
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
 		return
 	}
-	if !h.assertPatientExists(c, patientID) { // T353：查无此人 404
+	// A1：assertAdminOrSelf 对 staff 一律放行 ⇒ 医护可读任意患者的方案历史。
+	// T353 的「查无此人 404」只对不受限角色保留。
+	if !h.assertPatientInScope(c, patientID) {
 		return
 	}
 	rows, err := h.store.ListPlans(c.Request.Context(), patientID)
@@ -1438,13 +1450,9 @@ func (h *Handler) savePlan(c *gin.Context) {
 		return
 	}
 
-	patient, err := h.store.GetPatient(c.Request.Context(), patientID)
-	if err != nil {
-		fail(c, model.ErrInternal("get patient failed"))
-		return
-	}
-	if patient == nil {
-		fail(c, model.ErrNotFound("patient not found: %s", patientID))
+	// D2：保存方案原本只按 patientId 无条件写，医护可给任意患者建方案。
+	// 归属判定必须排在 CreatePlan 之前，跨团队时一次库写都不许发生。
+	if !h.assertPatientInScope(c, patientID) {
 		return
 	}
 
@@ -1640,6 +1648,25 @@ func (h *Handler) replyFeelingLog(c *gin.Context) {
 	if len(reply) > 200 {
 		fail(c, model.ErrInvalidParam("replyContent exceeds 200 chars"))
 		return
+	}
+	// D1：回复原本是一条按 log_id 的无条件 UPDATE，任意医护令牌可覆盖任意患者的医生回复
+	//（且 reply_time 一并被改写，原文不可恢复）。归属判定必须在写之前，跨团队时零次库写。
+	scope, allowed := h.resolveTeamScope(c)
+	if !allowed {
+		return
+	}
+	if scope.limited {
+		inTeam, err := h.store.FeelingLogInTeam(c.Request.Context(), logID, scope.teamID)
+		if err != nil {
+			fail(c, model.ErrInternal("check feeling log scope failed"))
+			return
+		}
+		if !inTeam {
+			// 「日志不存在」「在他团队患者名下」「患者未分配团队」「本人无团队」四格同码，
+			// 受限身份在这一端点永不出 404 ⇒ logId 存在性不可辨（口径同 denyCrossTeam）。
+			fail(c, model.ErrForbidden("feeling log %d is out of your data scope", logID))
+			return
+		}
 	}
 	exists, err := h.store.ReplyFeelingLog(c.Request.Context(), logID, reply)
 	if err != nil {
