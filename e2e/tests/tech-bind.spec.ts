@@ -40,6 +40,12 @@ test.describe('设备绑定', () => {
     await page.goto(techRoutes.bind)
   })
 
+  test('设备ID 输入框示例为真实形态（T380：不再是假串 PRS-ML05-RC-001）', async ({ page }) => {
+    // uni-app H5 把 placeholder 渲染成 div.uni-input-placeholder，原生 input 上没有该属性
+    const ph = page.locator('.section').nth(1).locator('.form-input').first().locator('.uni-input-placeholder')
+    await expect(ph).toHaveText(/^例: PRS-ML05-RC-\d{11}$/)
+  })
+
   test('患者ID 输入框示例为真实形态（T362：不再是 pat-001）', async ({ page }) => {
     // uni-app H5 把 placeholder 渲染成 div.uni-input-placeholder，原生 input 上没有该属性
     const ph = page.locator('.section').nth(1).locator('.form-input').nth(1).locator('.uni-input-placeholder')
@@ -72,7 +78,7 @@ test.describe('设备绑定', () => {
     await page.locator('.refresh-btn').click()
     await expect(page.locator('.refresh-btn')).toContainText('扫描中...')
     await expect(page.locator('.device-item')).toHaveCount(1, { timeout: 15_000 })
-    await expect(page.locator('.device-name').first()).toHaveText('PRS-ML05-RC-001')
+    await expect(page.locator('.device-name').first()).toHaveText(MOCK_DEVICE_ID)
     await expect(page.locator('.device-rssi').first()).toContainText('dBm')
   })
 })

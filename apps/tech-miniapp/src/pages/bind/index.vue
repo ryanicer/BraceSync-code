@@ -21,7 +21,7 @@
         <text class="section-title">手动输入设备 ID</text>
         <view class="card">
           <view class="form-group">
-            <input class="form-input" type="text" placeholder="例: PRS-ML05-RC-001" v-model="manualDeviceId" />
+            <input class="form-input" type="text" :placeholder="DEVICE_ID_PLACEHOLDER" v-model="manualDeviceId" />
           </view>
           <view class="form-group">
             <text class="form-label">患者 ID<span class="required">*</span></text>
@@ -74,7 +74,7 @@ import { useInstallStore } from '../../stores/install'
 import { discoverDevices, initBluetooth, connectDevice, readDeviceInfo, registerBleStateListener, closeBLEConnection } from '../../utils/ble'
 import { bleLog } from '../../utils/ble-log'
 import { readQrCode } from '../../utils/scan'
-import { PATIENT_ID_PLACEHOLDER, SCAN_TOAST } from '../../utils/bind-copy'
+import { DEVICE_ID_PLACEHOLDER, PATIENT_ID_PLACEHOLDER, SCAN_TOAST } from '../../utils/bind-copy'
 import { logger } from '../../utils/logger'
 import { bindDevice, type BindResult } from '../../api/device'
 import { createInstall } from '../../api/install'

@@ -11,7 +11,13 @@ import { expect, type Page, type Locator } from '@playwright/test'
 export const TECH_PHONE = '13900000001' // T041 播种技师账号（T037 联调验证通过）
 export const MOCK_TECH_TOKEN = 'mock-tech-token-ci-001'
 export const MOCK_TECH_ID = 'TECH_CI_001'
-export const MOCK_DEVICE_ID = 'PRS-ML05-RC-001'
+/**
+ * T380：设备 ID 用现网真实形态（`PRS-ML05-RC-` + 11 位数字；staging 5 台是 20260701001 到 005）。
+ * 旧值 `PRS-ML05-RC-001` 现网精确命中 0，且正是 T362 删掉的那段 mock 硬编码的原值 ——
+ * 拿它当夹具等于让「技师照示例手输必然绑不到设备」这条路径一直跑绿。
+ * 与实现侧 apps/tech-miniapp/src/utils/bind-copy.ts 的 DEVICE_ID_EXAMPLE 同源。
+ */
+export const MOCK_DEVICE_ID = 'PRS-ML05-RC-20260701001'
 /**
  * T362：e2e 里填的患者 ID 用真实形态（后台 `newPatientID()` = P + 年份 + 12 位 hex；
  * `P20260001` 是 seed 患者号）。旧值 `pat-001` 现网零命中，用它跑通用例等于把错口径钉死。
@@ -133,7 +139,7 @@ export async function initBluetooth() { return true }
 export async function discoverDevices() {
   await new Promise(r => setTimeout(r, 800))
   return [
-    { deviceId: 'PRS-ML05-RC-001', name: 'PRS-ML05-RC-001', RSSI: -45 },
+    { deviceId: '${MOCK_DEVICE_ID}', name: '${MOCK_DEVICE_ID}', RSSI: -45 },
   ]
 }
 
