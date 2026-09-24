@@ -1,0 +1,45 @@
+# BraceSync CI-Contract — 后端 json tag 与 shared-types 契约对拍（T356 交付①）
+#
+# 沿用 Contract Drift Gate（ci-fe.yml）的作业方式：PR 门禁 + 可本地单跑
+# （`node scripts/contract/go-json-tag-audit.mjs`，只读文件、不起服务、无第三方依赖）。
+#
+# 为什么不塞进 ci-fe / ci-go：两份 workflow 的 paths 互斥（ci-fe 不含 services/**，
+# ci-go 不含 packages/**），而本门禁的判定对象正好横跨两者 —— 后端 DTO 的 json tag 与
+# packages/shared-types 的契约声明。放任一现有 workflow 都会有一半改动触发不到。
+#
+# 判据（不一致即判红，退出码非 0）：
+#   C1 登记面：DTO 是否登记进 scripts/contract/dto-contract-map.mjs；登记为「不对拍」必须写理由；
+#              逐键 ignore 豁免必须写理由；同名结构体字段集不同（歧义）显式失败
+#   C2 键名面：契约声明的键与 Go json tag 双向对拍（漏字段 / 多字段 / 改名）
+#   C3 可选性：契约必填却带 omitempty（零值时前端拿不到键）
+#
+# 反向自证见交付评论：E1（改契约键名）/E2（加 omitempty）/E3（新增未登记 DTO）三组注入均判红。
+name: CI-Contract
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'services/**'
+      - 'packages/shared-types/**'
+      - 'scripts/contract/**'
+      - '.github/workflows/ci-contract.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  go-json-tag-audit:
+    name: Go json tag 契约对拍（后端 DTO ↔ shared-types）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: 对拍（无第三方依赖，不装 node_modules）
+        run: node scripts/contract/go-json-tag-audit.mjs

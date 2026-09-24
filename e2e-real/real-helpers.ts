@@ -220,3 +220,48 @@ export async function getAllTagTexts(scope: Locator | Page): Promise<string[]> {
   // Page 与 Locator 都有 .locator()，无需再分支到 body（分支写法会被 TS 收窄成 never）
   return scope.locator('.el-tag').allTextContents()
 }
+
+/**
+ * T365 · 改写「实时快照」响应的 route handler 收口：只第一条请求走异步取包，
+ * 之后的轮询一律拿缓存包同步出口。
+ *
+ * 换掉的是旧写法「每次拦截都 await route.fetch() 再 fulfill」。监控页每 2s 轮询同一端点，
+ * 于是用例收尾时可能仍有 handler 挂在那次 fetch 上；等 fetch 回来时该 route 已被 Playwright
+ * 处置掉，fulfill 就抛 "route.fulfill: Route is already handled!"，并被记到本条用例名下
+ * （CI 实测 4 个 attempt 红 2 次；本地探针「点完刷新不等断言就收尾」100% 复现同一句）。
+ * 收尾那发 page.unrouteAll({ behavior: 'wait' }) 拦不住它 —— 它等的是 handler 返回，
+ * 而 route 被处置恰好发生在 handler 还悬着的那段时间里。
+ *
+ * 第一条请求为什么可以留 await：它必然被用例的可见断言等到（断言读的就是它的产物），
+ * 不会跨到收尾；handler 里此后不再有 await 网络，窗口从「一次公网往返」缩到「同一次调用内」。
+ *
+ * 边界（探针实测，写给后来人）：缓存还冷时那条 handler 仍跨一次 await —— 一条「连自己的首包
+ * 都不等就收尾」的用例照样会撞上同一句报错。所以接了这个守卫的用例必须保留「等可见数据到位」
+ * 的断言，别把它换成裸等时长。
+ *
+ * mutate 只在填缓存那一次执行 —— 帧时刻因此被钉死，与本文件顶部对拦截的口径一致。
+ */
+export async function stubRealtimeSnapshot(
+  page: Page,
+  mutate: (data: Record<string, unknown>) => void,
+): Promise<() => number> {
+  let cached: { status: number; body: string } | null = null
+  let served = 0
+  await page.route('**/api/v1/patients/*/realtime', async (route) => {
+    if (cached === null) {
+      const res = await route.fetch()
+      let body: { data?: Record<string, unknown> }
+      try {
+        body = await res.json()
+      } catch {
+        await route.fulfill({ response: res })
+        return
+      }
+      if (body?.data) mutate(body.data)
+      cached = { status: res.status(), body: JSON.stringify(body) }
+    }
+    served++
+    await route.fulfill({ status: cached.status, contentType: 'application/json', body: cached.body })
+  })
+  return () => served
+}

@@ -149,8 +149,11 @@ func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 	//     Boss 2026-09-22 14:21 裁定只改称谓，role_id 仍是 ROLE_DOCTOR ⇒ 本条同时守住「键没被顺手改」）
 	// T345：modules 取 000026 之后的现值 —— ROLE_ADMIN 补齐为 15 页全集（新增
 	//   review / review_tpl / doctor_acct 三键，词表同 admin-web router/permissions.ts 的
-	//   PAGE_MODULES）；ROLE_DOCTOR 4 项、ROLE_CS 1 项是本轮红线未动项（医护对复查两页的
-	//   权限位待 Boss 裁），逐值写死即同时钉住「补了该补的、没顺手改动别的角色」。
+	//   PAGE_MODULES）；ROLE_CS 1 项仍是本轮红线未动项。
+	// T368：ROLE_DOCTOR 由 4 项补到 6 项（补 review / review_tpl），按 Boss 2026-09-24 09:3x
+	//   裁定 (a)「补库」——原来「医护对复查两页的权限位待裁」这一条已拍板，两页正式授权给医护，
+	//   使库与前端准入矩阵 ROLE_PAGE_MATRIX.doctor（6 页）同源。逐值写死同时钉住
+	//   「补了该补的两键、没顺手改动别的角色、也没多给 patients / teams / devices 等页」。
 	for _, want := range []struct {
 		id, name, scope string
 		modules         []string
@@ -160,7 +163,7 @@ func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 			"comm", "orthosis", "install", "review", "review_tpl", "tech",
 			"doctor_acct", "perm", "config",
 		}},
-		{"ROLE_DOCTOR", "医护", "team", []string{"dashboard", "realtime", "alerts", "orthosis"}},
+		{"ROLE_DOCTOR", "医护", "team", []string{"dashboard", "realtime", "alerts", "orthosis", "review", "review_tpl"}},
 		{"ROLE_CS", "客服", "all_patients", []string{"comm"}},
 	} {
 		row, ok := byID[want.id]
