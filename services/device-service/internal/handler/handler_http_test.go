@@ -36,6 +36,11 @@ func newTestEnv(t *testing.T) *testEnv {
 }
 
 // do 发起请求并解析统一响应体
+//
+// T387：写端点在服务层加了身份 allow-list（技师 + 运营管理员）。本文件的既有用例测的都是
+// 技师安装流程（操作人一律 TECH-*），故命中那七条写路由且调用方不给 X-Role 时按技师代发，
+// 期望值逐条不变；未命中的路由（含 provision-key 的「缺身份必须 403」那格）一律不代发。
+// 判据见 write_scope_t387_test.go 的 t387DefaultRole；门禁本身由该文件用显式头直接构造请求验证。
 func (e *testEnv) do(t *testing.T, method, path string, body any, headers map[string]string) (int, struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
@@ -52,7 +57,7 @@ func (e *testEnv) do(t *testing.T, method, path string, body any, headers map[st
 	}
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
+	for k, v := range t387DefaultRole(method, path, headers) {
 		req.Header.Set(k, v)
 	}
 	w := httptest.NewRecorder()
@@ -255,6 +260,7 @@ func (e *testEnv) doRaw(t *testing.T, method, path, body string) (int, int) {
 	t.Helper()
 	req := httptest.NewRequest(method, path, bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Role", roleTech) // T387：非法 body 用例测的是 20400，先过身份这一关
 	w := httptest.NewRecorder()
 	e.router.ServeHTTP(w, req)
 	var resp struct {
