@@ -7,6 +7,9 @@ import {
   expiredLoginHref,
   handleAuthExpired,
   resetAuthExpiryLatch,
+  consumeAuthExpiredNotice,
+  AUTH_EXPIRED_MESSAGE,
+  AUTH_EXPIRED_NOTICE_KEY,
   type ExpiryEffects,
 } from '../src/utils/sessionExpiry'
 import { getToken, removeToken } from '../src/utils/token'
@@ -105,5 +108,36 @@ describe('T357 handleAuthExpired（清凭据 + 只跳一次）', () => {
     expect(handleAuthExpired(fx)).toBeNull()
     expect(calls).toEqual([])
     expect(getToken()).toBe('')
+  })
+})
+
+// T384：整页 assign 会立刻卸掉当前页，那一刻弹 toast 用户看不见 ⇒ 文案随跳转带走，
+// 由登录页落地后取用一次。这是 admin-web 与技师端 T326「同文案 + toast」口径对齐的载体。
+describe('T384 失效提示的跨页载体', () => {
+  beforeEach(() => {
+    resetAuthExpiryLatch()
+    sessionStorage.clear()
+  })
+
+  it('要跳转的那条分支：先把文案留给登录页，取用即作废', () => {
+    const { fx } = fakeEffects({ token: 'dead-token' })
+    expect(handleAuthExpired(fx)).not.toBeNull()
+    expect(sessionStorage.getItem(AUTH_EXPIRED_NOTICE_KEY)).toBe(AUTH_EXPIRED_MESSAGE)
+    expect(consumeAuthExpiredNotice()).toBe(AUTH_EXPIRED_MESSAGE)
+    expect(consumeAuthExpiredNotice()).toBeNull()
+  })
+
+  it('反证：已在登录页（不跳转、页面还在）时不留载体，免得下次进登录页误弹', () => {
+    const { fx } = fakeEffects({ token: 'dead-token', at: { pathname: '/admin/login', search: '' } })
+    expect(handleAuthExpired(fx)).toBeNull()
+    expect(consumeAuthExpiredNotice()).toBeNull()
+  })
+
+  it('同一轮第二个 401 不重复处置，也不覆盖已留下的文案', () => {
+    const { fx } = fakeEffects({ token: 'dead-token' })
+    expect(handleAuthExpired(fx)).not.toBeNull()
+    const { fx: fx2 } = fakeEffects({ token: 'dead-token-2', at: { pathname: '/admin/teams', search: '' } })
+    expect(handleAuthExpired(fx2)).toBeNull()
+    expect(consumeAuthExpiredNotice()).toBe(AUTH_EXPIRED_MESSAGE)
   })
 })

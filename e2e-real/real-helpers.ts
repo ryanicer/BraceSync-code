@@ -56,6 +56,7 @@ export const realRoutes = {
   communication: '/admin/communication',
   orthosisLog: '/admin/orthosis-log',
   installRecords: '/admin/install-records',
+  abnormalReport: '/admin/abnormal-report',
   technicians: '/admin/technicians',
   roles: '/admin/roles',
   settings: '/admin/settings',
