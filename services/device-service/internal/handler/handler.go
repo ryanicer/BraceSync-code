@@ -22,6 +22,10 @@
 //
 // 统一响应体（架构 §3.5）：{ "code": 0, "message": "success", "data": {...} }
 // 鉴权归 gateway（JWT / 设备验签）；操作人取网关注入的 X-User-Id（§5.2 内部信任链）。
+//
+// T387：设备域写端点（bind/rebind/unbind/wifi、安装记录创建与回填、基线保存）在服务层
+// 按身份收口为技师 + 运营管理员 —— 网关 staffOnlyPatterns 对医护/客服放行，服务层不再跟随。
+// 判定见 write_scope_t387.go。
 package handler
 
 import (
@@ -259,6 +263,10 @@ func (h *Handler) listBindings(c *gin.Context) {
 // 目标患者已持有其它生效设备：未带 confirmSwap → 409/20409 且 data 带占用设备号；
 // 带 confirmSwap=true → 同事务先解旧设备再绑本机，T299 一患者一设备）
 func (h *Handler) bind(c *gin.Context) {
+	// T387：绑定属技师/管理员动作，医护一律 403（判定先于解析与仓储访问 ⇒ 零写）
+	if !h.assertDeviceWriteRole(c, "bind a device") {
+		return
+	}
 	var req bindRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
@@ -274,6 +282,9 @@ func (h *Handler) bind(c *gin.Context) {
 
 // rebind 换绑（旧绑定写 unbind_at+reason=rebind+operator，历史可追溯）
 func (h *Handler) rebind(c *gin.Context) {
+	if !h.assertDeviceWriteRole(c, "rebind a device") { // T387
+		return
+	}
 	var req bindRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
@@ -289,6 +300,9 @@ func (h *Handler) rebind(c *gin.Context) {
 
 // unbind 解绑（幂等）
 func (h *Handler) unbind(c *gin.Context) {
+	if !h.assertDeviceWriteRole(c, "unbind a device") { // T387
+		return
+	}
 	var req unbindRequest
 	// body 可空（幂等解绑可无 body）
 	if c.Request.ContentLength > 0 {
@@ -307,6 +321,11 @@ func (h *Handler) unbind(c *gin.Context) {
 
 // setWifi 配网状态：devices.wifi_ssid 维护（架构 §2.3）
 func (h *Handler) setWifi(c *gin.Context) {
+	// T387：配网回写与绑定同类（技师安装流程内动作），患者端调用方见卡内登记 ——
+	// 该路由自 T260 起就在 staffOnlyPatterns 里，患者令牌在网关已 403，服务层口径与之相符。
+	if !h.assertDeviceWriteRole(c, "configure device wifi") {
+		return
+	}
 	var req wifiRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
@@ -371,6 +390,9 @@ func (h *Handler) requireDeviceBoundToCaller(c *gin.Context) *model.AppError {
 
 // createInstall 新建安装记录（技师安装流程 bind → matrix → save-baseline → complete）
 func (h *Handler) createInstall(c *gin.Context) {
+	if !h.assertDeviceWriteRole(c, "create an install record") { // T387
+		return
+	}
 	var req installRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
@@ -417,6 +439,11 @@ func (h *Handler) getInstall(c *gin.Context) {
 // updateInstallMeta PUT /api/v1/install-records/:id —— 回填 notes / signatureUrl（T122）。
 // 空字符串字段不覆盖（repo COALESCE 语义），与 saveBaseline 回填行为一致。
 func (h *Handler) updateInstallMeta(c *gin.Context) {
+	// T387：网关在 T190 已把本路由收口为技师+管理员，服务层此前零判定（直连即绕过网关），
+	// 这里补的是同一口径的缺口，不是二次收紧。
+	if !h.assertDeviceWriteRole(c, "update an install record") {
+		return
+	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		fail(c, model.ErrInvalidParam("invalid install id %q", c.Param("id")))
@@ -486,6 +513,9 @@ func toInstallDetailDTO(r *model.InstallRecord) installDetailDTO {
 
 // saveBaseline 校准基线落库（契约 saveBaseline → ApiResponse<null>）
 func (h *Handler) saveBaseline(c *gin.Context) {
+	if !h.assertDeviceWriteRole(c, "save a calibration baseline") { // T387
+		return
+	}
 	var req baselineRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))

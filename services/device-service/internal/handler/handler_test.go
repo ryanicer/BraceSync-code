@@ -139,8 +139,15 @@ func (h *DeviceHandler) dispatch(w http.ResponseWriter, method, path string, ori
 	}
 	req := httptest.NewRequest(method, path, body)
 	req.Header.Set("Content-Type", "application/json")
-	if uid := orig.Header.Get("X-User-Id"); uid != "" {
-		req.Header.Set("X-User-Id", uid)
+	// T387：本脚手架模拟技师端安装流程。身份头原样透传，调用方没给且打在被门禁的写端点上时
+	// 按技师代发（判据见 t387DefaultRole）；空值不代发，保住「身份缺失」那一格。
+	for k, v := range t387DefaultRole(method, path, map[string]string{
+		"X-User-Id": orig.Header.Get("X-User-Id"),
+		"X-Role":    orig.Header.Get("X-Role"),
+	}) {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
 	}
 	rec := httptest.NewRecorder()
 	h.impl.Router().ServeHTTP(rec, req)
