@@ -206,6 +206,15 @@ interface AlertsEcho {
   pageSize: number
 }
 
+/**
+ * T381 并入项 S3（PM 2026-09-25 03:29）：readEcho 取的是**最后一次**回包，
+ * 所以一条用例里若发出第二次 GET /api/v1/alerts（例如筛选、翻页、重挂组件），
+ * 下面所有分支判据读到的就是第二次那个包，而 UI 断言读的是页面当下状态 —— 两者会错位。
+ * 因此本函数额外暴露 calls()，用例内必须断言列表请求只发过 1 次。
+ * 现网实测（run 36084324558 / job 107912721490）：3b.1 与 3c.2 各自恰好 1 发。
+ */
+type AlertsEchoReader = (() => Promise<AlertsEcho>) & { calls: () => number }
+
 function armAlertsEcho(page: Page) {
   const echoes: AlertsEcho[] = []
   page.on('response', async (res) => {
@@ -219,7 +228,7 @@ function armAlertsEcho(page: Page) {
       pageSize: Number(u.searchParams.get('pageSize') ?? Number.NaN),
     })
   })
-  return async (): Promise<AlertsEcho> => {
+  const read = async (): Promise<AlertsEcho> => {
     await expect
       .poll(() => echoes.length, { timeout: 20_000, message: '本页一次都没发出 GET /api/v1/alerts' })
       .toBeGreaterThan(0)
@@ -233,6 +242,9 @@ function armAlertsEcho(page: Page) {
     ).toBe(Math.min(last.total, last.pageSize))
     return last
   }
+  const reader = read as AlertsEchoReader
+  reader.calls = () => echoes.length
+  return reader
 }
 
 /**
@@ -278,8 +290,11 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
 
     // 页面级准入没被一起摘掉：接口照常回 200，行数随该次回包对账（T369：不再把「至少 1 行」当前提）
     const echo = await readEcho()
+    // S3（T381 并入项）：readEcho 读的是最后一次回包 ⇒ 本用例内列表请求必须只有一发
+    expect(readEcho.calls(), '本用例内 GET /api/v1/alerts 只能发 1 次，否则分支判据读到的是第二次的包').toBe(1)
     if (echo.total === 0) {
       // 医护所在团队当前没有患者 ⇒ 0 行是 T350 收窄后的正确行为，页面应落到空态而不是白屏
+      // 注意：现网 staging 上 doctor_li 恒有 2 行 ⇒ 这一腿在 CI 里走不到，它的正证在 3b.3（S1）
       await expect(tableRows(page)).toHaveCount(0)
       await expect(page.locator('.el-table__empty-block')).toHaveCount(1)
       await expect(page.locator('.el-table__empty-text')).toContainText('暂无数据')
@@ -326,6 +341,67 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
     await expect(page.locator('.alert-grid .grid-cell')).toHaveCount(20)
     await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
+
+  /**
+   * T381 并入项 S1（PM 2026-09-25 03:29，来源 Joe T369 工程验收建议 S1）
+   *
+   * 现场：3b.1 与 3c.2 的「0 行」空态分支在 CI 里执行次数为 0 —— main 与本卡 PR 的 job 原文
+   * （run 36084324558 / job 107912721490）两处都是 `total=2 list=2` ⇒ 恒走「有数据」分支。
+   * 「代码里有这段断言」和「这段断言被跑过」是两件事，前者蒙得住后者，属本卡同根因的假绿面。
+   *
+   * 本条用**只读**方式把那一腿真跑一遍：只拦本页那一条 GET /api/v1/alerts 的回包喂 total=0，
+   * 不写 staging、不动 seed、不动数据（无 POST/PUT/DELETE，page.route 只 fulfill 不 passthrough）。
+   * 断言文本与 3b.1 的 0 行分支逐字同源，另加两条防自欺：route 必须命中过、列表请求只能有一发。
+   */
+  test('3b.3 doctor_li 空态分支只读正证（T381 S1）：喂 total=0，0 行那一腿在 CI 里真跑', async ({ page }) => {
+    let fed = 0
+    await page.route('**/api/v1/alerts*', (route) => {
+      if (route.request().method() !== 'GET') return route.fallback()
+      fed++
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 0, message: 'ok', data: { list: [], total: 0, page: 1, pageSize: 10 } }),
+      })
+    })
+
+    const apiRows: string[] = []
+    const sentPaths: string[] = []
+    page.on('response', (res) => {
+      if (!res.url().includes('/api/')) return
+      const u = new URL(res.url())
+      if (res.status() >= 400) apiRows.push(`${res.status()} ${res.request().method()} ${u.pathname}`)
+    })
+    page.on('request', (r) => {
+      if (r.url().includes('/api/')) sentPaths.push(new URL(r.url()).pathname)
+    })
+    const readEcho = armAlertsEcho(page)
+
+    await realLogin(page, 'doctor_li')
+    await expect(menuItems(page).first()).toBeVisible({ timeout: 20_000 })
+    await gotoMenu(page, '告警管理')
+    await expect(page).toHaveURL(/\/alerts$/, { timeout: 15_000 })
+
+    const echo = await readEcho()
+    expect(fed, 'page.route 一发都没命中 ⇒ 本条没在验空态，只是在验现网数据').toBeGreaterThan(0)
+    expect(readEcho.calls(), '本用例内 GET /api/v1/alerts 只能发 1 次（S3）').toBe(1)
+    expect(echo.total, '喂给本页的回包 total 应为 0').toBe(0)
+
+    // ↓↓↓ 与 3b.1 的 0 行分支逐字同源（那四行断言首次被执行）
+    await expect(tableRows(page)).toHaveCount(0)
+    await expect(page.locator('.el-table__empty-block')).toHaveCount(1)
+    await expect(page.locator('.el-table__empty-text')).toContainText('暂无数据')
+    await expect(page.locator('.el-pagination__total')).toContainText('共 0 条')
+    // ↑↑↑
+
+    // 空态不该把角色分叉的两条真判据一起抹掉
+    await expect(page.getByRole('tab', { name: '告警规则配置' })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: '流程配置' })).toHaveCount(0)
+    expect(apiRows).toEqual([])
+    expect(sentPaths.filter((p) => p.includes('/admin/alert-rules'))).toEqual([])
+    await expect(page.locator('.el-message--error')).toHaveCount(0)
+    console.log(`[e2e-real][t381] 3b.3 空态分支已被执行：route 命中 ${fed} 次，total=${echo.total}`)
+  })
 })
 
 /**
@@ -346,7 +422,8 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
  *   3c.1 接口层锁网关口径（含「名录仍 403」这条反向锁，防后来人顺手放开）；
  *   3c.2 UI 层锁医护点开 Tab3 全程零 4xx，并证明判据非空转：医护有可见告警时，模板那一枪
  *        必须真的发出去过；0 行（T369 的数据漂移态）时改判 Tab3 引导态 + 「不该发的枪」，
- *        点开那一腿不下线 —— 它由 3c.1 在接口层无条件覆盖。
+ *        点开那一腿不下线 —— 它由 3c.1 在接口层无条件覆盖，并由本条末尾的 S4 反向锁自己再验一次
+ *        （T381 并入项 S4：3c.1 失效时 3c.2 不得假绿）。
  *   3c.3 运营侧不退化（名录照发、照 200）。
  *
  * 部署守卫：3c.1 探网关那一半（marker T359-flow-templates-staff-read），3c.2 探前端包那一半
@@ -397,6 +474,9 @@ test.describe('03c-告警处理流程 · 医护可读（T359）', () => {
     await gotoMenu(page, '告警管理')
     await expect(page).toHaveURL(/\/alerts$/, { timeout: 15_000 })
     const echo = await readEcho()
+    // S3（T381 并入项）：本条的分支选择与「判据非空转」都读 readEcho 的返回值，而它取的是最后一次回包
+    // ⇒ 用例内不得有第二次列表请求，否则判据读到第二次的包、UI 断言看的是当下状态，两者错位。
+    expect(readEcho.calls(), '本用例内 GET /api/v1/alerts 只能发 1 次').toBe(1)
 
     // 监听器必须在落到本页之后才挂：doctor 的落地页数据概览会自己打一发 403 GET /api/v1/teams
     // （T349 新发现 B 的现场，另一张卡），算进本条判据就变成拿别人的缺陷判我的红。
@@ -413,7 +493,7 @@ test.describe('03c-告警处理流程 · 医护可读（T359）', () => {
     if (echo.total === 0) {
       // 0 行 ⇒ 没有「流程」按钮可点（那是 T350 按团队收窄后的正常态，不是缺陷）。
       // Tab3 只能停在引导态，就把「这一屏不该发出的枪」和空态文案验全；
-      // 「医护点开 Tab3 不 403」那一腿在 3c.1 走接口层，无条件跑，不依赖有没有行。
+      // 「医护点开 Tab3 不 403」那一腿在 3c.1 走接口层无条件跑，且本条末尾有 S4 反向锁自己再打一发。
       await expect(page.locator('.el-table__empty-block')).toHaveCount(1)
       await page.getByRole('tab', { name: '处理流程' }).click()
       await expect(page.locator('.page-card.flow-empty')).toHaveCount(1)
@@ -442,6 +522,19 @@ test.describe('03c-告警处理流程 · 医护可读（T359）', () => {
     // 名录那一枪按角色摘掉（前端降级），不是靠网关放行
     expect(sentPaths.filter((p) => p === '/api/v1/doctors'), '医护不应发出名录请求').toEqual([])
     await expect(page.locator('.el-message--error')).toHaveCount(0)
+
+    // S4（T381 并入项）反向锁：0 行分支把「医护读模板放行」这一腿口头让给了 3c.1，
+    // 那么 3c.1 一旦被摘掉、改坏或换角色，本条不得只靠 UI 判据报绿。这里自己用 API 腿再打一发，
+    // 走 page.request（非页面帧请求，不计入上面的「不该发的枪」）。
+    const token = await getAuthToken(page)
+    const tpl = await page.request.get('/api/v1/admin/flow/templates?pageSize=1', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    expect(
+      tpl.status(),
+      '3c.1 赖以兜底的「模板读放行」在本条里也必须成立（反向锁；若这里 403 而 3c.1 仍绿，说明 3c.1 已失效）',
+    ).toBe(200)
+    console.log(`[e2e-real][t381] 3c.2 反向锁：模板读 API 腿 HTTP ${tpl.status()}`)
   })
 
   test('3c.3 ops_admin：Tab3 照常可用，名录照发（运营不退化）', async ({ page }) => {
