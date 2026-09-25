@@ -168,12 +168,12 @@ type PatientProfileUpdate struct {
 	CobbAngle *float64
 }
 
-// TeamRow teams 表投影
+// TeamRow teams 表投影（member_count / patient_count 两列不取自 teams 表，见 pg.go 的两条实时表达式）
 type TeamRow struct {
 	TeamID       string
 	Name         string
-	MemberCount  int
-	PatientCount int
+	MemberCount  int    // T385：teamMemberCountExpr 实时数（医生+技师挂本团队），非 teams.member_count 维护列
+	PatientCount int    // T371-B1：teamPatientCountExpr 实时数，非 teams.patient_count 快照列
 	Leader       string // 负责人 doctor_id，无负责人为空串（T333）
 	LeaderName   string // 负责人姓名（join doctors.name），无负责人为空串（T333）
 	Description  string // T337：与 TeamDetailRow 同列，列表此前漏带
@@ -181,15 +181,11 @@ type TeamRow struct {
 	CreatedAt    time.Time
 }
 
-// TeamStatsRow 团队维度聚合投影（T256 5.1，设计稿 团队管理.html:87-90 四张统计卡）。
-// 成员口径 = doctors/technicians 中 team_id 非空者，与 DeleteTeam 的引用计数、
-// GET /teams/:teamId/members 成员列表三者同源，不用 teams.member_count 维护列（防漂移）。
-type TeamStatsRow struct {
-	TotalTeams         int // 团队总数（status='active'）
-	TotalMembers       int // 成员总数（医生 + 技师，已挂团队）
-	ManagedPatients    int // 管理患者（patients.team_id 非空）
-	UnassignedPatients int // 待分配患者（patients.team_id 为空）
-}
+// T385 删除 TeamStatsRow：T256 声明的团队统计聚合投影，全仓零使用点 ——
+// 统计卡实际走 GetTeamStats 的五个裸返回值。它身上那段「成员口径 = team_id 实时、
+// 不用 teams.member_count 维护列（防漂移）」的说明正是本卡的裁定口径，
+// 但该类型从未接线，注释与实现各说一套。取舍：删死类型，把口径搬到 GetTeamStats
+// 与 teamMemberCountExpr 两条真正承载它的注释上（见 pg.go）。
 
 // TeamDetailRow teams 详情投影（T059 写功能返回；扩展 leader/description/status/createdAt）
 type TeamDetailRow struct {
@@ -197,8 +193,8 @@ type TeamDetailRow struct {
 	Name         string
 	Leader       string // 负责人 doctor_id
 	LeaderName   string // 负责人姓名（join doctors.name）
-	MemberCount  int
-	PatientCount int
+	MemberCount  int    // T385：与 TeamRow 同表达式，列表与详情不漂口径
+	PatientCount int    // T371-B1：与 TeamRow 同表达式
 	Description  string
 	Status       string // "active"（一期固定；预留软删除字段）
 	CreatedAt    time.Time

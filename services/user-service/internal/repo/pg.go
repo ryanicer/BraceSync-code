@@ -438,19 +438,45 @@ func (s *PGStore) GetPatientInTeam(ctx context.Context, patientID, teamID string
 // 谓词与 data-service 团队排行（dashboard_repo.go teamRankingSQL）、本仓删除守卫同源。
 const teamPatientCountExpr = `(SELECT COUNT(*) FROM patients p WHERE p.team_id = t.team_id)`
 
-// ListTeams 团队概要（member_count 为 teams 表维护列；patient_count 见 teamPatientCountExpr）
+// teamMemberCountExpr T385：团队「成员数」实时按 doctors.team_id / technicians.team_id 数，不再读 teams.member_count。
+// 该列与 patient_count 同族：全仓无应用写路径（CreateTeam 的 INSERT 不带它，UpdateTeam 只改 name/leader/description），
+// 现网读到的是建库初值 —— seed 自身即不自洽（三行写 3/2/2，同份 seed 挂团队的医生+技师只有 6 人）。
+// 谓词与本仓 DeleteTeam 的引用计数（医生数加技师数）、GET /teams/:teamId/members 的两条腿同源，
+// 使同一页面的「列表成员数 / 成员明细条数 / 删除守卫计数」三处不可能再互相打脸。
+const teamMemberCountExpr = `(SELECT COUNT(*) FROM doctors dm WHERE dm.team_id = t.team_id)` +
+	` + (SELECT COUNT(*) FROM technicians tc WHERE tc.team_id = t.team_id)`
+
+// listTeamsSelect 团队列表查询。抽出成常量是为了让单测能直接盯住「成员数一列不许读维护列」
+// （同 teamDetailSelect）—— 集成层要 Docker，回归时未必跑得到。
+const listTeamsSelect = `
+SELECT t.team_id, t.name, ` + teamMemberCountExpr + ` AS member_count, ` + teamPatientCountExpr + ` AS patient_count,
+       COALESCE(t.leader, ''), COALESCE(d.name, ''), t.created_at,
+       COALESCE(t.description, ''), t.status
+FROM teams t
+LEFT JOIN doctors d ON d.doctor_id = t.leader
+ORDER BY t.team_id`
+
+// teamStatsSelect 团队管理页四张统计卡。成员一项 T385 起实时，且直接对 teamMemberCountExpr 按团队求和：
+// 修前这里是 SUM(teams.member_count) —— 一条没人维护的列的汇总，于是同页四张卡与列表/明细/删除守卫四处互相打脸
+// （Joe 现网：卡 6 对真实 7）。复用列表那一条表达式后「卡数等于各行之和」由构造保证，不靠两条 SQL 碰巧一致。
+// 另：doctors.team_id / technicians.team_id 都带 REFERENCES teams(team_id) 外键
+// （000001_init_schema.up.sql:44、:58），人挂不上不存在的团队，故求和与「全库已挂团队的人数」等价；
+// 卡面第四节子口径 2 原设想的「直连 SQL 造孤儿」因此不成立，集成用例改钉这条恒等式。
+const teamStatsSelect = `
+		SELECT
+			(SELECT COUNT(*) FROM teams) AS team_count,
+			COALESCE((SELECT SUM(` + teamMemberCountExpr + `) FROM teams t), 0) AS member_count,
+			(SELECT COUNT(*) FROM patients WHERE team_id IS NOT NULL) AS managed_count,
+			(SELECT COUNT(*) FROM patients WHERE team_id IS NULL) AS unassigned_count
+	`
+
+// ListTeams 团队概要（member_count 见 teamMemberCountExpr，patient_count 见 teamPatientCountExpr；两列均实时）
 // T333：负责人两列同 teamDetailSelect 的 LEFT JOIN doctors 口径——
 // 列表页「负责人」列与编辑弹窗回显都直接读列表行，缺这两列就是结构上带不出来。
 // T333-5：created_at 同为该页表格列（T335 探测证据 filled=0），列在库里非空，纯 SELECT 漏带。
 // T337：description / status 契约（shared-types Team）已声明、详情接口已带出，列表仍未带 ⇒ 列同 teamDetailSelect 口径。
 func (s *PGStore) ListTeams(ctx context.Context) ([]TeamRow, error) {
-	rows, err := s.pool.Query(ctx, `
-SELECT t.team_id, t.name, t.member_count, `+teamPatientCountExpr+` AS patient_count,
-       COALESCE(t.leader, ''), COALESCE(d.name, ''), t.created_at,
-       COALESCE(t.description, ''), t.status
-FROM teams t
-LEFT JOIN doctors d ON d.doctor_id = t.leader
-ORDER BY t.team_id`)
+	rows, err := s.pool.Query(ctx, listTeamsSelect)
 	if err != nil {
 		return nil, err
 	}
@@ -948,18 +974,11 @@ func (s *PGStore) ReplyFeelingLog(ctx context.Context, logID int64, replyContent
 	return tag.RowsAffected() > 0, nil
 }
 
-// GetTeamStats T256 #1：团队管理 4 张统计卡。
-// 团队总数=COUNT(teams)；成员总数=SUM(teams.member_count)；
-// 管理患者=COUNT(patients WHERE team_id IS NOT NULL)；待分配=COUNT(patients WHERE team_id IS NULL)。
+// GetTeamStats T256 #1：团队管理 4 张统计卡（团队/成员/管理患者/待分配患者四项计数）。
+// 成员一项的口径见 teamStatsSelect —— T385 起实时，不读 teams.member_count。
 func (s *PGStore) GetTeamStats(ctx context.Context) (int, int, int, int, error) {
 	var teamCount, memberCount, managedCount, unassignedCount int
-	err := s.pool.QueryRow(ctx, `
-		SELECT
-			(SELECT COUNT(*) FROM teams) AS team_count,
-			COALESCE((SELECT SUM(member_count) FROM teams), 0) AS member_count,
-			(SELECT COUNT(*) FROM patients WHERE team_id IS NOT NULL) AS managed_count,
-			(SELECT COUNT(*) FROM patients WHERE team_id IS NULL) AS unassigned_count
-	`).Scan(&teamCount, &memberCount, &managedCount, &unassignedCount)
+	err := s.pool.QueryRow(ctx, teamStatsSelect).Scan(&teamCount, &memberCount, &managedCount, &unassignedCount)
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
@@ -1257,10 +1276,11 @@ func (s *PGStore) BatchBindPatients(ctx context.Context, patientIDs []string, te
 // ─────────────────────────────────────────────────────────────
 
 // teamDetailSelect teams LEFT JOIN doctors 负责人姓名投影（T059 写功能返回）
-// 患者数列 T371-B1 起走 teamPatientCountExpr 实时计数（列表与详情同一条表达式，不漂口径）
+// 患者数列 T371-B1 起走 teamPatientCountExpr 实时计数，成员数列 T385 起走 teamMemberCountExpr 实时计数
+// （列表与详情共用同两条表达式，不漂口径）
 const teamDetailSelect = `
 SELECT t.team_id, t.name, COALESCE(t.leader, ''), COALESCE(d.name, ''),
-       t.member_count, ` + teamPatientCountExpr + ` AS patient_count,
+       ` + teamMemberCountExpr + ` AS member_count, ` + teamPatientCountExpr + ` AS patient_count,
        COALESCE(t.description, ''), t.status, t.created_at
 FROM teams t
 LEFT JOIN doctors d ON d.doctor_id = t.leader
