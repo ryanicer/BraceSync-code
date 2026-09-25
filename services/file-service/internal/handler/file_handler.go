@@ -146,8 +146,16 @@ func (h *FileHandler) handlePresignURL(c *gin.Context) {
 	//   非 staff（patient）强制 owner_type=patient / owner_id=本人，忽略请求体 owner 字段；
 	//   staff 保留请求体 owner（医生上传患者复查报告指定 owner_id=患者ID 等跨 owner 场景）。
 	if !isStaffRole(role) {
-		req.OwnerType = "patient"
+		req.OwnerType = model.OwnerTypePatient
 		req.OwnerID = userID
+	}
+	// T396：owner_type 枚举校验（与 model.ValidOwnerType / 迁移 000030 的 CHECK 同一集合）。
+	// 位置在「非 staff 强制覆盖」之后：患者端请求体的 owner 本就按 T261 被忽略，
+	// 这一条只约束 staff 自报的 owner，不给非 staff 新增 400 面。
+	// 缺它时未知取值会一路穿到 INSERT，被库约束拒成 23514 后兜成 500 —— 那是参数错误冒充服务不可用。
+	if !model.ValidOwnerType(req.OwnerType) {
+		errorJSON(c, http.StatusBadRequest, ErrorCodeInvalidRequest, "unsupported owner_type")
+		return
 	}
 	// T378 写侧归属：判定排在 GenerateUploadURL 之前——签发本身会落 files pending 行，
 	// 拒绝路径必须库内零变更。医护只能给本团队的患者/告警开上传通道。
