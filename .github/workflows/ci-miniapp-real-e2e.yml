@@ -20,6 +20,13 @@ on:
     paths:
       - 'e2e-miniapp/**'
       - '.github/workflows/ci-miniapp-real-e2e.yml'
+  # T381 要求②：小程序这条线在 main 上原本零触发（e2e.yml 的 miniapp-smoke 是占位，
+  #   本文件的语法门禁只配 pull_request）⇒ 合并后的 main 从没跑过 node --check。
+  push:
+    branches: [main]
+    paths:
+      - 'e2e-miniapp/**'
+      - '.github/workflows/ci-miniapp-real-e2e.yml'
 
 # 成本优化（对齐 T045）：同一 PR/分支并发 push 只保留最新一次，取消旧 run
 concurrency:
