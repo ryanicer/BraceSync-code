@@ -109,6 +109,22 @@ function toastText(): string {
   return document.body.textContent ?? ''
 }
 
+/**
+ * 按表头文案取列下标，再取该行那一格的文本。
+ * 🔴 不许图省事断整行 text()：同一行里「所属团队」「登录账号」等列也会落横杠，
+ * 整行断言会把手机列的回归掩掉（T377 变异实测：删掉手机列的横杠回退，整行仍含横杠）。
+ */
+function cellText(wrapper: VueWrapper, header: string, rowName: string): string {
+  const ths = wrapper.findAll('th')
+  const col = ths.findIndex((th) => th.text().trim() === header)
+  if (col < 0) throw new Error(`表头里没有「${header}」列，实有=${JSON.stringify(ths.map((t) => t.text().trim()))}`)
+  const row = wrapper.findAll('tbody tr').find((r) => r.text().includes(rowName))
+  if (!row) throw new Error(`列表里没有「${rowName}」那一行`)
+  const tds = row.findAll('td')
+  if (tds.length <= col) throw new Error(`第 ${col} 列在该行没有对应单元格，该行实有 ${tds.length} 格`)
+  return tds[col].text().trim()
+}
+
 describe('医护账号页 列表（设计稿 :141 十列 + :135 计数）', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -141,9 +157,22 @@ describe('医护账号页 列表（设计稿 :141 十列 + :135 计数）', () =
   it('手机号空值显示横杠（§9.2 / 设计稿 :299），不留空白格', async () => {
     const wrapper = mountPage()
     await flushAll()
-    const row = wrapper.findAll('tbody tr').find((r) => r.text().includes('刘医生'))
-    expect(row).toBeTruthy()
-    expect(row!.text()).toContain('—')
+    // 断到「手机号」那一格，不断整行文本：同一行的「所属团队」在 teamId 为空时也落横杠，
+    // 整行断言会掩掉手机列的回退回归（T377 变异实测出的门禁缺口 N1）
+    expect(cellText(wrapper, '手机号', '刘医生')).toBe('—')
+    wrapper.unmount()
+  })
+
+  it('三态在手机列各呈一形且两两不同（T361 判据 1：有号 / 解不开 / 没号）', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    const masked = cellText(wrapper, '手机号', '张建国') // DOC-001 有真号
+    const unreadable = cellText(wrapper, '手机号', '王护士') // DOC-102 密文解不开
+    const absent = cellText(wrapper, '手机号', '刘医生') // DOC-104 库里没号
+    expect(masked).toBe('138****2201')
+    expect(unreadable).toBe('***')
+    expect(absent).toBe('—')
+    expect(new Set([masked, unreadable, absent]).size).toBe(3)
     wrapper.unmount()
   })
 
