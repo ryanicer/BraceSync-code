@@ -14,6 +14,8 @@
 #      crontab 只引用外置副本 —— 被调度脚本的字节不再随 ① 步 checkout/pull 变动
 #  10. 中止轮留凭据（T383 第二处）：① 至 ⑦ 任一步非零退出时，先落一份「开头基线 vs 中止时」
 #      自比对凭据到 SELFCHK_RECEIPT_DIR 再清理（⑧ 段只在成功路径跑，中止轮原先什么都不留）
+#  11. cron 引用零漂移核对（T393 N6）：⓪-b 段用仓内期望清单只读比对实际 crontab，
+#      发现「引用指回工作树 / 期望副本没被引用 / 落点副本不见」即在任何变更前中止本轮
 set -euo pipefail
 
 PROJECT_ROOT="/home/ubuntu/bracesync"
@@ -51,6 +53,7 @@ fail() { err "$*"; exit 1; }
 WORKTREE_SCRIPT="$PROJECT_ROOT/scripts/deploy/deploy-staging.sh"
 SELFCHK_SRC="$PROJECT_ROOT/scripts/deploy/selfcheck-deploy-script.sh"
 PUBLISH_SRC="$PROJECT_ROOT/scripts/deploy/publish-cron-scripts.sh"
+CRON_GUARD_SRC="$PROJECT_ROOT/scripts/deploy/cron-reference-guard.sh"
 STATE_FILE="${TMPDIR:-/tmp}/t364-deploy-selfcheck.$$.env"
 
 if [ -z "${T364_SNAP_ROOT:-}" ]; then
@@ -60,9 +63,11 @@ if [ -z "${T364_SNAP_ROOT:-}" ]; then
   [ -r "$WORKTREE_SCRIPT" ] || fail "工作树内部署脚本不可读：$WORKTREE_SCRIPT"
   [ -r "$SELFCHK_SRC" ] || fail "自检脚本缺失：$SELFCHK_SRC（本轮部署包不完整）"
   [ -r "$PUBLISH_SRC" ] || fail "外置签发脚本缺失：$PUBLISH_SRC（T383 后 ⑦-b 段必需，本轮部署包不完整）"
+  [ -r "$CRON_GUARD_SRC" ] || fail "cron 引用守卫脚本缺失：$CRON_GUARD_SRC（T393 后 ⓪-b 段必需，本轮部署包不完整）"
   install -m 400 "$WORKTREE_SCRIPT" "$SNAP_ROOT/deploy-staging.sh" || fail "部署脚本快照安装失败"
   install -m 400 "$SELFCHK_SRC" "$SNAP_ROOT/selfcheck-deploy-script.sh" || fail "自检脚本快照安装失败"
   install -m 400 "$PUBLISH_SRC" "$SNAP_ROOT/publish-cron-scripts.sh" || fail "外置签发脚本快照安装失败"
+  install -m 400 "$CRON_GUARD_SRC" "$SNAP_ROOT/cron-reference-guard.sh" || fail "cron 引用守卫脚本快照安装失败"
   bash "$SNAP_ROOT/selfcheck-deploy-script.sh" record "$WORKTREE_SCRIPT" "$STATE_FILE" || fail "自改基线记录失败"
   export T364_SNAP_ROOT="$SNAP_ROOT" T364_STATE_FILE="$STATE_FILE"
   exec bash "$SNAP_ROOT/deploy-staging.sh" "$@"
@@ -88,6 +93,13 @@ t383_finish() {
 }
 trap 't383_finish "$?"' EXIT
 log "⓪ 自改隔离：本次执行只读快照 $0"
+
+# ⓪-b T393 N6：cron 引用零漂移核对（只读，排在 ① 之前 ⇒ 判红时本轮对现网与工作树零变更）
+#   仓里第一次写明「两条 cron 应当指向外置副本」的期望，并由 cron-reference-guard.sh 拿它
+#   与实际 crontab 做只读比对。放在 git pull 之前是有意的：① 步含 git checkout -- . ，
+#   正是可能把被引用文件换掉的那个动作本身，排在它后面就已经丢了零变更这条底线。
+log "⓪-b cron 引用零漂移核对（期望落点 $CRON_PUBLISH_DIR，只读）..."
+bash "$SNAP_ROOT/cron-reference-guard.sh" || fail "cron 引用与期望外置落点不一致（详见上方 [cron-ref] 行）；本轮未做任何变更即中止"
 
 # ① git pull
 log "① 拉取最新代码 ..."
