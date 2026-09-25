@@ -110,8 +110,9 @@ test.describe('07-患者沟通', () => {
       // 替代覆盖（T381 登记的已知例外，三层各有真跑，缺的是「真环境 + 页面」这一格）：
       //   · 页面写路径 + 状态流转：e2e/tests/admin-communication.spec.ts「填写处理备注并保存后
       //     状态转已回复 + 列表刷新」—— mock 本地 webServer，PR 与 push main 都跑（T381 要求②）
-      //   · 接口层：user-service feedback_create_t311_test.go（创建）+ handler_impl_test.go（写入
-      //     replied/备注）+ gateway rbac/feedback_create_t311_test.go（角色矩阵）
+      //   · 接口层：handler_impl_test.go:1523 TestProcessFeedback（保存备注 / 标记已处理 /
+      //     空 body、两动作互斥、空白备注、超长均 400）+ feedback_create_t311_test.go（创建）
+      //     + gateway rbac / feedback_create_t311_test.go（角色矩阵）
       //   · 真环境读侧：本文件 7.1/7.2（列表渲染 + 详情字段级对照）每次 nightly 真跑
       test.skip(true, 'process 端点单向且无 DELETE（T311 后自建反馈已可行，但跑一次永久留一条已回复行、无还原通道）⇒ 按「不可回滚不做」停跑；替代覆盖见上注（mock 页面 + Go 接口层），放开需 PM/Boss 裁定（T381 已知例外）')
       // 第一步：先找第一行 pending 反馈（tag 含「待处理」）
