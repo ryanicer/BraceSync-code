@@ -221,7 +221,7 @@ type TeamMembersDTO struct {
 // TeamStatsDTO 团队管理页 4 张统计卡（T256 #1，设计稿 团队管理.html:87-90）
 type TeamStatsDTO struct {
 	TeamCount              int `json:"teamCount"`              // 团队总数
-	MemberCount            int `json:"memberCount"`            // 成员总数（医生+技师，teams.member_count 汇总）
+	MemberCount            int `json:"memberCount"`            // 成员总数（医生+技师，T385 起实时按 team_id 计数，非 teams.member_count 汇总）
 	ManagedPatientCount    int `json:"managedPatientCount"`    // 管理患者（已分配团队的患者数）
 	UnassignedPatientCount int `json:"unassignedPatientCount"` // 待分配患者（team_id IS NULL）
 }

@@ -11,7 +11,10 @@
 //  1. 反证：teams.patient_count 里故意留着与真值不同的旧值，列表/详情都不许读到它；
 //  2. 实时：患者换团队后，列表与详情的患者数当场跟随，且与删除守卫报的数同源；
 //  3. 归零：患者全部移走后列表读 0，删除随即放行（快照列还留着假数，证明没人读它）；
-//  4. 不换源：member_count 仍走 teams 维护列（只换患者一列，别把整行读空当成修好了）。
+//  4. 成员一列同样不许读维护列（T385 反向订正本用例的原判据 —— 修前这里断言的是
+//     「member_count 仍走 teams 维护列」，即「只换患者一列」是刻意留的护栏；Boss 2026-09-25
+//     裁甲案后成员列也换实时，那条断言从护栏变成本卡的反证样本，按新口径重写、不删）。
+//     「别把整行读空当成修好了」这条护栏本身保留，迁到同用例的 Name/Status 两列上。
 //
 // 运行：make test-integration（需 Docker；本机无 Docker 时由 CI 跑，按用例名核日志）
 package repo
@@ -26,12 +29,13 @@ import (
 )
 
 const (
-	t371TeamA     = "TEAM-USR-T371-A"
-	t371TeamB     = "TEAM-USR-T371-B"
-	t371Patient1  = "P-USR-T371-1"
-	t371Patient2  = "P-USR-T371-2"
-	t371Patient3  = "P-USR-T371-3"
-	t371StaleColA = 9 // teams.patient_count 里写死的假快照；A 真名下 2 名患者
+	t371TeamA      = "TEAM-USR-T371-A"
+	t371TeamB      = "TEAM-USR-T371-B"
+	t371Patient1   = "P-USR-T371-1"
+	t371Patient2   = "P-USR-T371-2"
+	t371Patient3   = "P-USR-T371-3"
+	t371StaleColA  = 9 // teams.patient_count 里写死的假快照；A 真名下 2 名患者
+	t371StaleMembA = 5 // teams.member_count 里写死的假值；A 真名下 0 名成员（T385 反证用）
 )
 
 // t371Hash 64 字符且各行互不相同（patients.phone_hash 是 CHAR(64) + 唯一索引）
@@ -64,7 +68,7 @@ func TestITT371TeamPatientCountIsRealtime(t *testing.T) {
 			teamID, name, staleMembers, stalePatients)
 		require.NoError(t, err)
 	}
-	seedTeam(t371TeamA, "T371甲团队", t371StaleColA, 5)
+	seedTeam(t371TeamA, "T371甲团队", t371StaleColA, t371StaleMembA)
 	seedTeam(t371TeamB, "T371乙团队", 0, 0)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM patients WHERE patient_id IN ($1, $2, $3)`,
@@ -85,23 +89,31 @@ func TestITT371TeamPatientCountIsRealtime(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// 1. 反证「快照列不读」：库里确实还是 9，接口读出来必须是真名下的 2
-	var staleCol int
+	// 1. 反证「快照列不读」：库里确实还是 9/5，接口读出来必须是真名下的 2/0
+	var staleCol, staleMemberCol int
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT patient_count FROM teams WHERE team_id = $1`, t371TeamA).Scan(&staleCol))
+		`SELECT patient_count, member_count FROM teams WHERE team_id = $1`, t371TeamA).
+		Scan(&staleCol, &staleMemberCol))
 	require.Equal(t, t371StaleColA, staleCol, "前置：快照列得留着与真值不同的假数，否则反证不成立")
+	require.Equal(t, t371StaleMembA, staleMemberCol, "前置：成员维护列同样得留着假值（T385 反证腿）")
 
 	rowA := t371TeamRow(t, t371TeamA)
 	assert.Equal(t, 2, rowA.PatientCount, "列表患者数须为 patients.team_id 实时计数，读到 9 就是还在用快照列")
 	assert.NotEqual(t, staleCol, rowA.PatientCount)
-	assert.Equal(t, 5, rowA.MemberCount, "member_count 仍走 teams 维护列：只换患者一列，整行没被打空")
+	// T385：成员一列不许读 teams.member_count。本夹具名下没挂医生/技师，真值是 0，读到 5 即还在用维护列。
+	assert.Equal(t, 0, rowA.MemberCount, "列表成员数须为 doctors/technicians 的 team_id 实时计数，读到 5 就是还在用维护列")
+	assert.NotEqual(t, staleMemberCol, rowA.MemberCount)
+	// 「整行没被打空」护栏（从原 member_count 那条断言迁来）：换源后同一行的其余列仍要有值
 	assert.Equal(t, "T371甲团队", rowA.Name)
+	assert.NotEmpty(t, rowA.Status, "换源不许把整行读空")
+	assert.False(t, rowA.CreatedAt.IsZero(), "换源不许把整行读空")
 
 	detailA, err := itStore.GetTeam(ctx, t371TeamA)
 	require.NoError(t, err)
 	assert.Equal(t, rowA.PatientCount, detailA.PatientCount, "详情与列表同一条表达式，不留两处口径")
+	assert.Equal(t, rowA.MemberCount, detailA.MemberCount, "成员一列详情与列表同源（T385）")
 
-	// 2. 全表通用不变式：每一行的患者数都等于按 team_id 现场数出来的数
+	// 2. 全表通用不变式：每一行的患者数/成员数都等于按 team_id 现场数出来的数
 	list, err := itStore.ListTeams(ctx)
 	require.NoError(t, err)
 	for _, r := range list {
@@ -109,6 +121,13 @@ func TestITT371TeamPatientCountIsRealtime(t *testing.T) {
 		require.NoError(t, pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM patients WHERE team_id = $1`, r.TeamID).Scan(&real))
 		assert.Equal(t, real, r.PatientCount, "团队 %s 列表患者数与实时计数不等", r.TeamID)
+
+		var realMembers int
+		require.NoError(t, pool.QueryRow(ctx,
+			`SELECT (SELECT COUNT(*) FROM doctors WHERE team_id = $1)
+			          + (SELECT COUNT(*) FROM technicians WHERE team_id = $1)`, r.TeamID).
+			Scan(&realMembers))
+		assert.Equal(t, realMembers, r.MemberCount, "团队 %s 列表成员数与实时计数不等（T385）", r.TeamID)
 	}
 
 	// 3. 实时跟随：一名患者从甲团队改到乙团队，两个数当场互换
