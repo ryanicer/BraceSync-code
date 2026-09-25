@@ -1,0 +1,54 @@
+# BraceSync CI 卫生门禁（T381 交付①④）
+#
+# 判什么：本仓 .github/workflows 里的每个「验证类」job 必须要么真跑断言，要么把「我没验」写进
+#   自己的名字和输出里。两类历史病：
+#     A1/A2 恒绿占位 —— 「小程序冒烟 (miniprogram-automator)」全文只有两句 echo，
+#        每晚巡检都绿，谁也没法从看板上看出它一条断言都没跑（T381 要求①）。
+#     A3 触发器死条件 —— job 的 if 只允许某事件，而本 workflow 根本没注册该事件，
+#        于是它在 main 上永远是「跳过」，等于一处没人认领的零覆盖（T381 现象①③）。
+#   本门禁把这两条钉成机器判据，是「同一根因第 4 次出现（T358/T364/T374）」的防复发口径（要求④）：
+#   以后新增 job 若为占位或跳过，必须在 job 名或输出里自曝，否则 PR 直接判红。
+#
+# 两个方向都自证（scripts/ci/workflow-placeholder-audit.mjs --selftest）：
+#   注入恒绿占位 ⇒ 判红；四件齐自曝 ⇒ 判绿；只 playwright --list ⇒ 判红；if 死条件 ⇒ 判红；
+#   普通有断言 job ⇒ 判绿。
+#
+# 为什么不塞进现有 workflow：本门禁的判定对象就是 workflow 文件本身，
+#   而 ci-fe / ci-go / ci-contract 的 paths 互斥且都不含 .github/workflows/** 全集
+#   （同 T356 给契约对拍单开一条的理由）。
+name: CI Workflow Audit
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/ci/**'
+  # T381 要求②：main 上也得有一条真会跑的检查，别全靠 PR 阶段
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/ci/**'
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  workflow-placeholder-audit:
+    name: 占位 job 与死条件门禁（workflow-placeholder-audit）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: 自证门禁本身两个方向都对（无第三方依赖，不装 node_modules）
+        run: node scripts/ci/workflow-placeholder-audit.mjs --selftest
+      - name: 扫全仓 workflow（判绿/判红见退出码）
+        run: node scripts/ci/workflow-placeholder-audit.mjs

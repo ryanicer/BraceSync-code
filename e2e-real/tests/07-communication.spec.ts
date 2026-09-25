@@ -97,11 +97,23 @@ test.describe('07-患者沟通', () => {
   test.describe('处理备注与标记已处理（写）', () => {
     test('7.3 找到 pending 反馈 → 详情 → 填处理备注（T053回复-xxx）→ 保存成功 + 状态变更', async ({ page }) => {
       // T279 复跑停跑：回复对象是 seed 反馈，POST /feedbacks/:id/process 单向、退不回待处理。
-      //   ⚠️ PM 裁定（本卡 2026-09-21 13:00）把 7.3 列入「跑（自建唯一命名数据、跑完删除）」，
-      //      但后台没有「新建反馈」入口/端点 —— 反馈只能由患者端提交 ⇒ 7.3 的对象必然是共享 seed 反馈，
-      //      与同一条裁定的判定「共享 seed 数据默认只读，要动必须先报 PM」直接冲突，已回报待重裁。
-      //      （与 3.4 同类：单向、无 un-process 端点、不可回滚 —— 正是 PM 否决 3.4 的那条硬理由。）
-      test.skip(true, '反馈只能由患者端产生，后台无新建端点 ⇒ 7.3 只能改共享 seed 反馈且无回退端点，与「seed 默认只读」判定冲突；已报 PM 待重裁')
+      // T381 订正（本条停跑理由的第二句已腐烂，留原文以免后人再猜）：
+      //   原注释写「反馈只能由患者端产生，后台无新建端点」—— T311 之后这句不完整：
+      //   POST /api/v1/feedbacks 已登记进网关 publicPatterns（患者 + staff 均可达，服务层
+      //   assertAdminOrSelf），取证见 services/gateway/cmd/server/feedback_create_t311_test.go。
+      //   ⇒ 「拿不到自建反馈对象」不再成立：e2e-real 完全可以用 ops_admin 先自建一条再处理。
+      // 但 7.3 仍停跑，durable 的理由换成第一条（与 3.4 同类）：
+      //   process 端点单向、无 un-process 也无 DELETE /feedbacks 端点 ⇒ 放开后每次巡检
+      //   往 staging 永久留一条「已回复」自建反馈，无还原通道，撞「不可回滚的操作一律不做」。
+      //   放开前置条件（PM/Boss 裁定后删掉下面这行 skip 即可）：
+      //   ① 认可 staging 自建反馈行只增不删；或 ② 先给 user-service 补 DELETE /admin/feedbacks。
+      // 替代覆盖（T381 登记的已知例外，三层各有真跑，缺的是「真环境 + 页面」这一格）：
+      //   · 页面写路径 + 状态流转：e2e/tests/admin-communication.spec.ts「填写处理备注并保存后
+      //     状态转已回复 + 列表刷新」—— mock 本地 webServer，PR 与 push main 都跑（T381 要求②）
+      //   · 接口层：user-service feedback_create_t311_test.go（创建）+ handler_impl_test.go（写入
+      //     replied/备注）+ gateway rbac/feedback_create_t311_test.go（角色矩阵）
+      //   · 真环境读侧：本文件 7.1/7.2（列表渲染 + 详情字段级对照）每次 nightly 真跑
+      test.skip(true, 'process 端点单向且无 DELETE（T311 后自建反馈已可行，但跑一次永久留一条已回复行、无还原通道）⇒ 按「不可回滚不做」停跑；替代覆盖见上注（mock 页面 + Go 接口层），放开需 PM/Boss 裁定（T381 已知例外）')
       // 第一步：先找第一行 pending 反馈（tag 含「待处理」）
       const rows = tableRows(page)
       let pendingIdx = -1

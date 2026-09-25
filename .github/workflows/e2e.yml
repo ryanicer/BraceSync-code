@@ -1,5 +1,7 @@
 # BraceSync E2E
 # PR 门禁（informational，不阻塞合并）：患者端/技师端/后台 H5 Playwright e2e（e2e/ 基座，本地 webServer + mock）
+# push main：同上三端 mock 用例再跑一次（T381 要求②：合并后的 main 必须有最小回归，
+#   不能只信「各 PR 各自绿」）；打 staging 的 e2e-real-staging 不在 push 上跑
 # 定时/手动：真实模式（e2e-real/）打 staging 全量回归 + 契约冒烟
 # 对齐：docs/ §4 · docs/ §6.3
 #
@@ -45,14 +47,30 @@ on:
       - 'package-lock.json'
       - 'playwright.config.ts'
       - '.github/workflows/e2e.yml'
+  # T381 要求②：main 分支补最小回归触发。合并前 PR 跑过的三端 mock 用例，合并后要在 main 上
+  #   再跑一次 —— 否则多个 PR 各自绿、合起来的 main 从没被这套用例跑过（同族假绿：T358/T364/T374）。
+  #   只放开【本地 webServer + mock】的三个 job；打 staging 的 e2e-real-staging 显式排除 push，
+  #   它在 main push 上会对着「尚未追平 main 的 staging 包」判红，还会往 staging 写造数行。
+  push:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'e2e/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'playwright.config.ts'
+      - '.github/workflows/e2e.yml'
   schedule:
     - cron: "0 2 * * *"  # 每日 02:00 UTC（mock 巡检，不受 paths 限制）
     - cron: "0 12 * * *" # 每日 20:00 北京时间：真实模式打 staging（会写 T053 前缀造数行，避开白天人工测试窗口）
   workflow_dispatch: {}   # 手动触发（发版前）
 
 # 成本优化（T045）：同一 PR/分支并发 push 只保留最新一次，取消旧 run（巡检/手动不受限）
+# T381：group 里加 event_name —— schedule 的 github.ref 也是 refs/heads/main，
+#   不加的话 push main 触发的 run 会把同时段在跑的每日巡检取消掉（T373 实踩过同类挤占）。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -63,7 +81,8 @@ jobs:
   patient-miniapp-e2e:
     name: Patient MiniApp E2E (Playwright, H5)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # T381：PR + push main 都跑（mock 本地 webServer，不打 staging、零外部写）
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
       - name: Check apps/patient-miniapp exists
@@ -108,7 +127,8 @@ jobs:
   tech-miniapp-e2e:
     name: Tech MiniApp E2E (Playwright, H5)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # T381：PR + push main 都跑（mock 本地 webServer，不打 staging、零外部写）
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
       - name: Check apps/tech-miniapp exists
@@ -153,7 +173,8 @@ jobs:
   admin-web-e2e:
     name: Admin Web E2E (Playwright, Vue3+ElementPlus)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    # T381：PR + push main 都跑（mock 本地 webServer，不打 staging、零外部写）
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
       - name: Check apps/admin-web exists
@@ -224,6 +245,12 @@ jobs:
   e2e-real-staging:
     name: E2E Real（真实模式全量回归，打 staging）
     runs-on: ubuntu-latest
+    # T381：本 job 过去没有 if（= 任何触发器都跑）。加了 push main 触发后必须显式排除 push：
+    #   1) 它打的是【已部署的 staging 包】，push main 时包多半还没追平 main ⇒ post-deploy 判红是噪音；
+    #   2) 它每 run 往 staging 写造数行（见下方清单），push 触发等于把写频次绑到合并次数；
+    #   3) STRICT 口径（第 325 行 env）只认「非 pull_request」，push 会被误当成定时轮判红。
+    # 真实模式回归的触发面保持：PR（改动命中 paths）+ 每日 12:00 UTC + 手动。
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     # T304：真实模式过去在 CI 里只有 tsc + --list，从未真跑过一条用例。
     # 现在 PR（改动命中 paths）+ 每日 20:00 北京时间 + 手动都真跑；失败即判红，
     # 不加 continue-on-error / `|| true`，以免又变成「CI 绿但真环境没人验」。
@@ -237,7 +264,9 @@ jobs:
     #     T281（threshold_pressure_low 10→1）合并后 staging 现值 high=5 / low=1 已满足不变量，
     #     本条不再走「PUT 被拒即跳过」分支 ⇒ 每次 run 都会真写一次并还原
     # 不可逆的用例在代码里就 test.skip 掉了，CI 放开不了（要放开须 PM 裁定后删那行 skip）：
-    #   3.4 处理真实告警、7.3 回复 seed 反馈（均单向无撤回端点）、6.4 删 seed 团队；
+    #   3.4 处理真实告警、7.3 处理反馈（process 端点单向，且 feedbacks 无 DELETE 端点 ⇒ 自建也清不掉；
+    #     T311 之后「后台无新建反馈端点」那句旧理由已不完整，口径订正见 07-communication.spec.ts 注释）、
+    #     6.4 删 seed 团队；
     #   5.4/5.5 患者写用例（无 DELETE /admin/patients 端点，跑一次永久留一条脏数据）。
     # 预期计数：admin-web 新包（含 #175）部署到 staging 前 32 passed / 9 skipped / 0 failed；
     #   部署后自动变 36 passed / 5 skipped / 0 failed。
@@ -338,22 +367,29 @@ jobs:
             e2e-real/test-results/
           retention-days: 14
 
+  # T381：本 job 长期是「两句 echo 的恒绿占位」。CI runner 上没有微信开发者工具
+  #   （miniprogram-automator 必须连运行中的 devtools 自动化端口），补不成真断言，
+  #   按卡片口径改走「改名 + 显式自曝」，四件齐由 scripts/ci/workflow-placeholder-audit.mjs 守着：
+  #   placeholder-ok 注释 + job 名含「占位」+ ::warning:: + 写 job summary。
+  #   真实小程序冒烟的验收权在 Boss 侧 devtools 实跑（e2e-miniapp/run-real-e2e.ps1）。
+  # placeholder-ok: CI 无 devtools 环境，实跑需 Boss 侧 Windows + 微信开发者工具自动化端口
   miniapp-smoke:
-    name: 小程序冒烟 (miniprogram-automator)
+    name: 小程序冒烟（占位，未实跑；miniprogram-automator 需 devtools）
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Run miniapp smoke tests
+      - name: 自曝：本 job 未执行任何断言
         run: |
-          echo "TODO: miniprogram-automator 冒烟测试（登录/monitor/绑定流程）"
-          echo "需配置微信开发者工具 CI 环境，Phase 3 启用"
+          echo "::warning::「小程序冒烟」是占位 job，零断言零用例，绿色不代表小程序冒烟通过。真实执行在 Boss 侧 devtools（e2e-miniapp/run-real-e2e.ps1）。"
+          {
+            echo "## 小程序冒烟：占位未实跑"
+            echo ""
+            echo "- 本 job 执行的断言数：0（miniprogram-automator 需运行中的微信开发者工具自动化端口，ubuntu runner 上没有）"
+            echo "- 真实冒烟验收通道：Boss 侧 Windows 实跑 e2e-miniapp/run-real-e2e.ps1"
+            echo "- 本仓 e2e-miniapp/ 用例的语法门禁在 ci-miniapp-real-e2e.yml（PR 触发）"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # 不再 npm ci / 装 playwright —— 占位 job 不占用 runner 分钟
 
   # T144 P1：真实后端冒烟（登录→列表接口非空→页面渲染≥1条）。
   # 不进 PR 门禁（独立 job）；nightly / 手动触发。凭证由 ADMIN_USERNAME/ADMIN_PASSWORD 注入，缺失则用例自动 skip。
