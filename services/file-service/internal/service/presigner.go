@@ -39,7 +39,7 @@ const ReviewReportMaxBytes int64 = 20 << 20 // 20MB
 // OwnerTypeReviewTemplate 复查报告模板文件的 owner_type 标识（T135）。
 // 模板文件本体复用 review_report 预签名通道（不扩展 files.file_type 枚举），
 // 以 owner_type 区分运营后台空白模板。
-const OwnerTypeReviewTemplate = "ReviewTemplate"
+const OwnerTypeReviewTemplate = model.OwnerTypeReviewTemplate
 
 // Presigner 预签名签发 + 元数据登记服务
 type Presigner struct {
@@ -250,7 +250,7 @@ func (p *Presigner) GenerateUploadURL(ctx context.Context, req UploadRequest) (*
 	if !validFileType(req.FileType) {
 		return nil, ErrInvalidRequest
 	}
-	if req.OwnerType == "" || req.OwnerID == "" {
+	if req.OwnerID == "" || !model.ValidOwnerType(req.OwnerType) {
 		return nil, ErrInvalidRequest
 	}
 	// T130 增补单：复查报告三道校验（扩展名白名单 + MIME + 魔数指纹）

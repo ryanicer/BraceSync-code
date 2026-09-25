@@ -22,7 +22,27 @@ const (
 	FileStatusFailed   FileStatus = "failed"   // 上传失败/过期（预留态）
 )
 
-// ValidFileType 文件类型合法性校验（handler 参数校验与 service 签发共用同一口径）
+// Owner type（T396）：files.owner_type 的全量取值。
+// 与迁移 scripts/db/migrations/000030_t396_files_owner_type_check_winner.up.sql 的 CHECK 是同一集合，
+// 两侧由 owner_type_t396_test.go 比对字面值钉住（改一侧不改另一侧 = 用例判红）。
+const (
+	OwnerTypePatient        = "patient"        // 患者材料（复查报告）；非 staff 调用者由 handler 强制成该值
+	OwnerTypeAlert          = "alert"          // 告警附件；归属经 alerts → patients 二级反查
+	OwnerTypeReviewTemplate = "ReviewTemplate" // 复查模板（配置类材料，不是患者数据）
+	OwnerTypeInstallRecord  = "install_record" // 安装记录材料；今日无前端写入方，取值沿革见迁移 000030 注释
+)
+
+// ValidOwnerType owner_type 合法性校验（T396，handler 参数校验与签发共用同一口径）。
+// 大小写敏感：历史脏值 Patient / review 不在集合内（staging 那 3 行已清洗）。
+func ValidOwnerType(ot string) bool {
+	switch ot {
+	case OwnerTypePatient, OwnerTypeAlert, OwnerTypeReviewTemplate, OwnerTypeInstallRecord:
+		return true
+	}
+	return false
+}
+
+// ValidFileType 文件类型合法性校验（handler 参数校验与签发共用同一口径）
 func ValidFileType(ft FileType) bool {
 	switch ft {
 	case FileTypeSignature, FileTypeInstallPhoto, FileTypeCommPhoto, FileTypeLogPhoto, FileTypeReviewReport:
@@ -38,7 +58,7 @@ type FileMetadata struct {
 	ObjectKey   string     `db:"object_key" json:"object_key"`     // COS object path
 	URL         string     `db:"url" json:"url"`                   // Public/CDN URL after upload
 	FileType    FileType   `db:"file_type" json:"file_type"`       // signature/install_photo/comm_photo/log_photo
-	OwnerType   string     `db:"owner_type" json:"owner_type"`     // Entity type: InstallRecord, Patient, etc.
+	OwnerType   string     `db:"owner_type" json:"owner_type"`     // 取值见上方 OwnerType* 常量（T396 收口为枚举）
 	OwnerID     string     `db:"owner_id" json:"owner_id"`         // Parent entity ID
 	Size        int64      `db:"size" json:"size"`                 // File size in bytes
 	ContentType string     `db:"content_type" json:"content_type"` // MIME type
