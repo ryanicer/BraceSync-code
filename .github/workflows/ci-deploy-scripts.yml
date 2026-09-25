@@ -7,6 +7,10 @@
 #   receipt 三条路径的退出码（0 / 2 / 3 各自要对）与落盘内容；publish-cron-scripts-test.sh
 #   验原子签发与「签不全就一份都不签」的两条红 —— 中止轮凭据这种「只在出事时才用到的东西」，
 #   没有真跑一遍就等于没写（T364 那格假绿：守卫的放行分支从没被执行过）。
+#   T393 再加两个测试步骤：部署链接线守卫（N1，把 deploy-staging.sh 的接线拆掉必判红）与
+#   cron 引用零漂移守卫（N6，实际 crontab 与仓内期望落点做只读比对）。两类步骤各管一面：
+#   前两个管「被签出去 / 被落盘的脚本自己行为对不对」，后两个管「收口还接不接在部署链上、
+#   cron 有没有指回被部署工作树」。
 # 未在分支保护里设为 required check ⇒ 不阻塞合并。
 name: Deploy Scripts Static Check
 
@@ -58,6 +62,21 @@ jobs:
           # 而「宁可少签也不签一半」这条只有真跑一遍缺源的两条红才看得见 —— 见
           # scripts/deploy/publish-cron-scripts-test.sh（权限位 500 在 ubuntu 上是实测值，非跳过）。
           bash scripts/deploy/publish-cron-scripts-test.sh
+
+      - name: 部署链接线守卫（T393 N1 deploy-staging.sh 的接线拆掉必判红）
+        run: |
+          # Joe T383 工程验收 N1：把 ⑦-b 调用删掉、把 EXIT trap 退回旧纯清理、把 ⓪ 段必需项检查删掉，
+          # 上面两个行为测试与 bash -n 全都照样绿 —— 即「收口真的接在部署链上」这件事无人守。
+          # 本步正向逐格要求在位 + 反证逐格拆一遍要求对应那格必判红（红格编号要对得上，
+          # 顺带格也红就说明判读不纯），见 scripts/deploy/deploy-chain-wiring-test.sh。
+          bash scripts/deploy/deploy-chain-wiring-test.sh
+
+      - name: cron 引用零漂移守卫行为测试（T393 N6 期望外置落点 / 三条红 + 第三态）
+        run: |
+          # 仓里第一次有「两条 cron 应当指向哪里」的期望件，实际 crontab 由 ⓪-b 段只读比对。
+          # 这里喂夹具表跑三向：现网真实形态判绿、指回工作树/少引用/副本不见各判一红、
+          # 读不到与空表走 rc=3（「读不到」绝不许当「一致」），见 scripts/deploy/cron-reference-guard-test.sh。
+          bash scripts/deploy/cron-reference-guard-test.sh
 
       - name: shellcheck（informational，结论作 PR 注释）
         run: |
