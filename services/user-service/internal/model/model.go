@@ -324,6 +324,10 @@ type AdminRoleDTO struct {
 //   - []          ⇒ 显式全不勾（模块保留但组内无任何动作）；
 //   - ["a.b",…]   ⇒ 显式清单，写入前校验 ⊆ 目录 且 前缀模块 ∈ modules。
 //
+// PUT 的 items 不是整体替换（T413）：本次新勾上的模块按目录并入其全部子权限（加权方向），
+// 库里原本未细化且并完正好是全集时写回 null（不被洗成显式清单），
+// 其余一律尊重客户端清单——算法与理由见 handler.reconcileItems。
+//
 // 🔴 仅作呈现口径（PM 裁定 Q2=(c)）：后端鉴权仍到角色级，不消费 Items。
 type RolePermissionsDTO struct {
 	Scope   string   `json:"scope"`

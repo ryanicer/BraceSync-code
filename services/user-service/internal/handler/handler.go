@@ -1824,29 +1824,24 @@ var validScopes = map[string]struct{}{
 
 // getPermissions GET /api/v1/admin/roles/:roleId/permissions
 func (h *Handler) getPermissions(c *gin.Context) {
-	row, err := h.store.GetRole(c.Request.Context(), c.Param("roleId"))
+	roleID := c.Param("roleId")
+	perms, err := h.getStoredPermissions(c, roleID)
 	if err != nil {
-		fail(c, model.ErrInternal("get role failed"))
 		return
 	}
-	if row == nil {
-		fail(c, model.ErrNotFound("role not found: %s", c.Param("roleId")))
-		return
-	}
-	var perms model.RolePermissionsDTO
-	if err := json.Unmarshal([]byte(row.PermissionsJSON), &perms); err != nil {
-		fail(c, model.ErrInternal("invalid permissions_json for role %s", row.RoleID))
+	if perms == nil {
+		fail(c, model.ErrNotFound("role not found: %s", roleID))
 		return
 	}
 	// T257 11.5：items 缺省（老角色 / seed 预置三个）⇒ 按目录物化为「modules 下全部子权限」，
 	// 前端只有一条规则：照 items 渲染勾选，不用自己判 null
-	if perms.Items == nil {
-		perms.Items = materializeItems(perms.Modules)
-	}
-	ok(c, perms)
+	ok(c, renderPermissions(*perms))
 }
 
-// updatePermissions PUT /api/v1/admin/roles/:roleId/permissions —— 校验 scope/modules 后整体替换
+// updatePermissions PUT /api/v1/admin/roles/:roleId/permissions
+//
+// scope/modules 为整体替换；items 不是（T413）：加权方向按库里现状补齐新模块的子权限，
+// 且库里原本未细化时保持未细化，详见 reconcileItems。
 func (h *Handler) updatePermissions(c *gin.Context) {
 	roleID := c.Param("roleId")
 	var req model.RolePermissionsDTO
@@ -1869,6 +1864,13 @@ func (h *Handler) updatePermissions(c *gin.Context) {
 			return
 		}
 	}
+	// T413：合并要对着库里的现状算（哪些模块是本次新勾的、原本是否未细化），
+	// 读失败/脏 JSON 一律不写——猜一个现状出来就是把授权算错。
+	stored, err := h.getStoredPermissions(c, roleID)
+	if err != nil {
+		return
+	}
+	req.Items = reconcileItems(stored, req.Items, req.Modules)
 	payload, err := json.Marshal(req)
 	if err != nil {
 		fail(c, model.ErrInternal("marshal permissions failed"))
@@ -1883,7 +1885,27 @@ func (h *Handler) updatePermissions(c *gin.Context) {
 		fail(c, model.ErrNotFound("role not found: %s", roleID))
 		return
 	}
-	ok(c, req)
+	ok(c, renderPermissions(req))
+}
+
+// getStoredPermissions 读 roles.permissions_json 的存储原值（不做物化，未细化就是 Items == nil）。
+// row 不存在返回 (nil, nil)：交给写通道的 exists=false 出 404，口径与改动前一致；
+// 读失败或 JSON 脏 ⇒ 已 fail(c, …) 并返回 err，调用方直接 return。
+func (h *Handler) getStoredPermissions(c *gin.Context, roleID string) (*model.RolePermissionsDTO, error) {
+	row, err := h.store.GetRole(c.Request.Context(), roleID)
+	if err != nil {
+		fail(c, model.ErrInternal("get role failed"))
+		return nil, err
+	}
+	if row == nil {
+		return nil, nil
+	}
+	var perms model.RolePermissionsDTO
+	if err := json.Unmarshal([]byte(row.PermissionsJSON), &perms); err != nil {
+		fail(c, model.ErrInternal("invalid permissions_json for role %s", roleID))
+		return nil, err
+	}
+	return &perms, nil
 }
 
 // ─────────────────────────────────────────────────────────────
