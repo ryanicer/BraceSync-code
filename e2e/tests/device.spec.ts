@@ -4,7 +4,7 @@ import { routes, modal, toast, HOTSPOT_NAME, setupPatientE2E } from '../helpers'
 /**
  * device 页：T223 后仅保留「添加新设备」卡片 + 「已添加设备」区
  * （配网交互统一走 wifi-setup 页，原 4 步引导 / WiFi 输入 / 独立按钮均已注释下线）
- * mock 设备：PRS-ML05-RC-001（online）
+ * mock 设备：HOTSPOT_NAME（= 夹具 E2E_DEVICE_ID = 页面 mock 的 MOCK_DEVICE_ID，online）
  */
 
 test.beforeEach(async ({ page }) => {

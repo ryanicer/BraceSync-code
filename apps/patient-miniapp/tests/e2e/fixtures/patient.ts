@@ -10,13 +10,15 @@
  *                 请求响应体 = { code, message, data }（见 utils/request.ts）
  */
 import type { Alert, PressureRecord, SensorPoint } from '@bracesync/shared-types'
+import { MOCK_DEVICE_ID } from '../../../src/mock/device'
 
 // ---------- 登录态约定（与 utils/token.ts 的 key 对齐） ----------
 export const E2E_TOKEN_KEY = 'bracesync_token'
 export const E2E_PATIENT_ID_KEY = 'bracesync_patient_id'
 export const E2E_PATIENT_ID = 'pat-e2e-001'
 export const E2E_TOKEN = 'e2e-patient-token-001'
-export const E2E_DEVICE_ID = 'PRS-ML05-RC-001'
+// T406（U4）：夹具与页面 mock（src/mock/device.ts）同读一个常量，避免「本地 mock 一套串、e2e 另一套串」
+export const E2E_DEVICE_ID = MOCK_DEVICE_ID
 
 // 包装网关统一响应体（T067 网关中间件约定）
 export function ok<T>(data: T) {

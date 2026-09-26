@@ -25,8 +25,14 @@ export const PATIENT_ID_PLACEHOLDER = `例: ${PATIENT_ID_EXAMPLE}`
  * 到 `...005`（`scripts/db/seed/seed.sql` 同一族，后台 Go 用例亦取此形态）。
  * 旧示例 `PRS-ML05-RC-001` 现网精确命中 0 —— 它正是 T362 删掉的那段 mock 硬编码的原值，
  * 技师照它手输必然绑不到设备。本串是现网真实形态，仍只是占位示例。
+ *
+ * T406（F-1）：示例串从 `...001` 换成 `...005`。`...001` 现网是「已绑定 + abnormal」那台
+ * （T380 工程复验 F-1 登记、T406 按 GET /devices 只读复核），照示例手输会走进换绑确认分支；
+ * 尾号 `...002` 虽同样未绑定，但设计稿 tech/bind.html 把它定成「目标患者已占用另一台设备」的
+ * 异常演示串（mockOccupiedDevice 按尾号 002 命中），拿它当示例会和稿面语义撞车。
+ * `...005` 两条都避开：现网未绑定，且不出现在任何稿面的异常演示规则里。
  */
-export const DEVICE_ID_EXAMPLE = 'PRS-ML05-RC-20260701001'
+export const DEVICE_ID_EXAMPLE = 'PRS-ML05-RC-20260701005'
 
 /** 设备ID 形态判据：与 DEVICE_ID_EXAMPLE 的一致性由 test/bind-scan.spec.ts 钉住 */
 export const DEVICE_ID_SHAPE = /^PRS-ML05-RC-\d{11}$/

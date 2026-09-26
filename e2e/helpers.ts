@@ -2,7 +2,7 @@ import { expect, test, type Page, type Locator } from '@playwright/test'
 import {
   ok, wxLoginResp, realtimeSnapshot, pressureRecords, wearing15,
   pressureAlerts7groups, alertsPage, unbindOk,
-  E2E_TOKEN_KEY, E2E_PATIENT_ID_KEY, E2E_TOKEN, E2E_PATIENT_ID,
+  E2E_TOKEN_KEY, E2E_PATIENT_ID_KEY, E2E_TOKEN, E2E_PATIENT_ID, E2E_DEVICE_ID,
 } from '../apps/patient-miniapp/tests/e2e/fixtures/patient'
 import { URL } from 'node:url'
 
@@ -20,7 +20,8 @@ import { URL } from 'node:url'
 
 export const TEST_PHONE = '13800138000'
 export const TEST_SMS_CODE = '1234'
-export const HOTSPOT_NAME = 'PRS-ML05-RC-001'
+// T406（U4）：设备管理页 .device-name 渲染的是接口返回的 deviceId，夹具与断言同读一个源
+export const HOTSPOT_NAME = E2E_DEVICE_ID
 
 /** uni-app H5 hash 路由直达（tab 页用 switchTab 语义，普通页 navigateTo） */
 export const routes = {
