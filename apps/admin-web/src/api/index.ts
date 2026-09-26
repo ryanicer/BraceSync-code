@@ -224,8 +224,11 @@ export async function exportAbnormalReportApi(q: alertMock.AbnormalReportQuery):
 }
 
 /** 从 Content-Disposition 取后端给的文件名（含患者编号与日期范围） */
-function dispositionFilename(header: string | null): string {
-  const m = /filename="?([^";]+?)"?/.exec(header ?? '')
+export function dispositionFilename(header: string | null): string {
+  // 只认带引号形态：alert-service 的 reportFilename 恒发 filename="..."，
+  // 且把 patientId 收敛到 [A-Za-z0-9_-]（services/alert-service/internal/handler/t300_report_test.go 逐字钉住）。
+  // T401：上一版 `filename="?([^";]+?)"?` 的惰性量词配可选引号会最短匹配到首字符，落地文件名被截成 a.csv。
+  const m = /filename="([^"]+)"/.exec(header ?? '')
   return m ? m[1].trim() : 'abnormal-report.csv'
 }
 
