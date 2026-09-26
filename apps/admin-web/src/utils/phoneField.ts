@@ -14,6 +14,19 @@ export const PHONE_PLACEHOLDER = '***'
 /** 11 位大陆手机号，与后端 validPhone 同口径 */
 export const PHONE_RE = /^1\d{10}$/
 
+/** §9.2 / PRD_V3 :1391：空值展示为占位破折号，不得渲染成残串、不留空白格 */
+export const PHONE_DASH = '—'
+
+/**
+ * 列表「手机号」列的展示真源（医护账号 / 技师管理 / 团队成员三页共用）。
+ *
+ * 三态在展示层各呈一形：absent 的 phoneMasked 是空串 → 横杠；masked → 脱敏号；
+ * unreadable → 后端占位符 '***'，它不是空值，必须原样展示、不能被回退洗成横杠。
+ */
+export function phoneDisplay(phoneMasked: string | null | undefined): string {
+  return phoneMasked || PHONE_DASH
+}
+
 /**
  * 编辑弹窗手机号输入框的占位文案 —— 占位符只是提示、不是值，用户不填就不会改动库内号码。
  * 当前号码本身在列表行里展示，弹窗不再把它塞进可编辑框。

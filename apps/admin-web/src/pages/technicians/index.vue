@@ -14,7 +14,9 @@
       </div>
       <el-table :data="list" size="small" v-loading="loading">
         <el-table-column prop="name" label="姓名" width="100" />
-        <el-table-column prop="phoneMasked" label="手机号" width="130" />
+        <el-table-column label="手机号" width="130">
+          <template #default="{ row }">{{ phoneDisplay(row.phoneMasked) }}</template>
+        </el-table-column>
         <el-table-column label="所属团队" width="140">
           <template #default="{ row }">{{ teamNameOf(row.teamId) }}</template>
         </el-table-column>
@@ -101,7 +103,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { PhoneState, Technician, Team } from '@bracesync/shared-types'
-import { PHONE_PLACEHOLDER, PHONE_RE } from '../../utils/phoneField'
+import { PHONE_PLACEHOLDER, PHONE_RE, phoneDisplay } from '../../utils/phoneField'
 import {
   fetchTechnicians, toggleTechnicianApi, teamNameOf,
   createTechnicianApi, updateTechnicianApi, fetchTeams,
