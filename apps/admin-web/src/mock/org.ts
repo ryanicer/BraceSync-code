@@ -63,6 +63,26 @@ const INSTALL_OFFSETS: Record<string, number[]> = {
   'INS-005': [],
 }
 
+/**
+ * T410 测试夹具：四张表是模块级可变状态，写端点会就地改字段 ⇒ 播种-断言-回滚的用例
+ * 需要按初始行集整体还原（深拷贝，与 mock/medicalAccounts.ts 的 __resetMedicalAccountsForTest 同形）。
+ * 生产代码不调用。
+ */
+const ORG_SEED = JSON.stringify({ TEAMS, DOCTORS, TECHNICIANS, INSTALL_RECORDS })
+
+export function __resetOrgForTest(): void {
+  const seed = JSON.parse(ORG_SEED) as {
+    TEAMS: Team[]
+    DOCTORS: Doctor[]
+    TECHNICIANS: Technician[]
+    INSTALL_RECORDS: InstallRecordRow[]
+  }
+  TEAMS.splice(0, TEAMS.length, ...seed.TEAMS)
+  DOCTORS.splice(0, DOCTORS.length, ...seed.DOCTORS)
+  TECHNICIANS.splice(0, TECHNICIANS.length, ...seed.TECHNICIANS)
+  INSTALL_RECORDS.splice(0, INSTALL_RECORDS.length, ...seed.INSTALL_RECORDS)
+}
+
 export function mockTeams(): Team[] {
   return TEAMS.map((t) => ({ ...t }))
 }

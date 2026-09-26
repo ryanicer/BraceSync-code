@@ -86,7 +86,9 @@
           <el-table-column label="职称" width="110">
             <template #default="{ row }">{{ row.title ?? '-' }}</template>
           </el-table-column>
-          <el-table-column prop="phoneMasked" label="手机号" width="130" />
+          <el-table-column label="手机号" width="130">
+            <template #default="{ row }">{{ phoneDisplay(row.phoneMasked) }}</template>
+          </el-table-column>
           <el-table-column prop="patientCount" label="负责患者数" width="110" />
           <el-table-column label="加入时间" width="120">
             <template #default="{ row }">{{ formatDate(row.joinTime) }}</template>
@@ -179,6 +181,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import type { Team, TeamMember, TeamStats, Doctor } from '@bracesync/shared-types'
+import { phoneDisplay } from '../../utils/phoneField'
 import {
   fetchTeams, fetchDoctors, fetchTeamStats,
   createTeamApi, updateTeamApi, deleteTeamApi,

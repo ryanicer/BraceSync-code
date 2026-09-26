@@ -41,7 +41,7 @@
           <template #default="{ row }">{{ row.username || DASH }}</template>
         </el-table-column>
         <el-table-column label="手机号" width="100">
-          <template #default="{ row }">{{ row.phoneMasked || DASH }}</template>
+          <template #default="{ row }">{{ phoneDisplay(row.phoneMasked) }}</template>
         </el-table-column>
         <el-table-column prop="department" label="科室" min-width="80" />
         <el-table-column label="所属团队" min-width="100">
@@ -142,7 +142,7 @@ import { computed, h, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PhoneState, Team } from '@bracesync/shared-types'
 import { fetchTeams, teamNameOf } from '../../api'
-import { PHONE_RE, phonePatch, phonePlaceholder } from '../../utils/phoneField'
+import { PHONE_DASH, PHONE_RE, phoneDisplay, phonePatch, phonePlaceholder } from '../../utils/phoneField'
 import {
   createMedicalAccountApi,
   fetchMedicalAccounts,
@@ -154,8 +154,8 @@ import {
 } from '../../api/medicalAccount'
 import { titleOptions } from '../../utils/medicalTitles'
 
-/** §9.2 / 设计稿 :299：空值一律显示横杠，不留空白格 */
-const DASH = '—'
+/** §9.2 / 设计稿 :299：空值一律显示横杠，不留空白格（手机号那列走 phoneDisplay，同字形） */
+const DASH = PHONE_DASH
 
 const rows = ref<MedicalAccount[]>([])
 const teams = ref<Team[]>([])
