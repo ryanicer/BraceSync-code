@@ -2,8 +2,14 @@
 //
 // 缺陷原貌（卡面 N1）：全仓越权断言一律写成 assert.Equal(t, model.CodeForbidden, code)，
 // 比较两侧都是符号 ⇒ 把常量 20403 改成别的值，用例跟着常量一起走，逐格仍绿。
-// 而网关与前端是按 20403 这个数字分流错误提示的，于是码值漂移没有任何测试能拦住。
-// 本文件把这条码钉成字面量：改常量必红。
+//
+// 锁的依据是契约，不是「现网按这个数字分流」（PM 09-26 口径订正，原注释那句是虚构的）：
+//   - 网关不按业务码分支 —— ReverseProxy 透传上游响应体（proxy.go:33、proxy_admin.go:53），
+//     它自产的 403 用 403/40301，从不产出 20403；
+//   - 三端（apps/*、packages/shared-types）搜 20403 零命中，前端按 HTTP 状态码分流
+//     （admin-web/src/utils/sessionExpiry.ts:34-35 只认 401 与业务码 10401/40101）；
+//   - 真正会被码值漂移改掉的是书面契约：docs/api/api-contracts.ts 已把「403 + code 20403」
+//     写成设备域写端点的响应契约，故这里把码钉成字面量 —— 改常量必红。
 //
 // 只钉设备域这一条（PM 09-25 口径）：
 //   - user-service 的越权码是 10403、file-service 是 60003，本卡不动它们；
@@ -39,7 +45,7 @@ const (
 
 func TestT389_ForbiddenCodeIsLockedToNumericLiteral(t *testing.T) {
 	assert.Equal(t, t389CodeForbidden, model.CodeForbidden,
-		"设备域越权业务码契约值（改这一格前先看卡内 N1 说明：网关与前端按此数字分流）")
+		"设备域越权业务码契约值（锁的依据是本文件头写的响应契约，不是现网按此数字分流）")
 
 	appErr := model.ErrForbidden("probe")
 	require.NotNil(t, appErr)
