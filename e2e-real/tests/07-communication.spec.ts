@@ -7,6 +7,7 @@ import {
   E2E_REPLY_PREFIX,
   uniqueName,
   getAllTagTexts,
+  getAuthToken,
 } from '../real-helpers'
 
 /**
@@ -80,10 +81,32 @@ test.describe('07-患者沟通', () => {
       // 详情是行内面板，不是弹层
       await expect(page.locator('.el-dialog')).toHaveCount(0)
 
+      // T405：「客服处理备注」是 index.vue:62 的 v-if="current.replyContent" 条件渲染格（T374 引入），
+      //   本页种子行有 / 无备注会随现网数据变化，旧的无条件 5 项 toEqual 因此对所有 PR 恒红。
+      //   不收窄判据：改以同一条读路径的接口记录（GET /api/v1/feedbacks，model.go FeedbackDTO.ReplyContent
+      //   *string、无 omitempty）为基准派生期望字段集合 —— 无备注时第 6 格「不该出现」同样是判红条件。
+      const token = await getAuthToken(page)
+      expect(token, 'beforeEach 已 realLogin，应拿到 JWT').toBeTruthy()
+      const res = await page.request.get('/api/v1/feedbacks', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(res.ok(), 'GET /api/v1/feedbacks 应 2xx').toBe(true)
+      const body = await res.json()
+      expect(body.code, 'GET /api/v1/feedbacks 信封 code 应为 0').toBe(0)
+      const list: Record<string, unknown>[] = Array.isArray(body.data)
+        ? body.data
+        : ((body.data?.list ?? []) as Record<string, unknown>[])
+      const fb = list.find((f) => String(f.feedbackId) === id)
+      expect(fb, `接口应返回所点行的反馈 ${id}`).toBeTruthy()
+      // v-if 走 JS 真值：接口回空串 / null 则不渲染该格（空白备注在写侧就被 400 拒了，落不进库）
+      const replyRaw = fb?.replyContent == null ? '' : String(fb.replyContent)
+
       const shown = await readDescriptions(pane)
-      expect(shown.map((f) => f.label), '详情字段名与顺序').toEqual([
-        '患者', '类型', '内容', '提交时间', '状态',
-      ])
+      const expectedLabels = ['患者', '类型', '内容', '提交时间', '状态']
+      if (replyRaw !== '') expectedLabels.push('客服处理备注')
+      expect(shown.map((f) => f.label), '详情字段名与顺序（第 6 格按接口 replyContent 派生）').toEqual(
+        expectedLabels,
+      )
       const byLabel = Object.fromEntries(shown.map((f) => [f.label, f.value]))
       expect(byLabel['患者'], '详情的患者 = 所点行的患者列').toBe(patient)
       expect(byLabel['类型'], '详情的类型 = 所点行的类型列').toBe(type)
@@ -91,6 +114,10 @@ test.describe('07-患者沟通', () => {
       // formatTime() 口径：MM-DD HH:mm（不是完整 ISO）
       expect(byLabel['提交时间']).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}$/)
       expect(byLabel['状态'], '详情的状态 = 所点行的状态列').toBe(status)
+      // readDescriptions 对单元格文本做了 trim，这里按同一口径比对
+      if (replyRaw !== '') {
+        expect(byLabel['客服处理备注'], '客服处理备注 = 接口 replyContent').toBe(replyRaw.trim())
+      }
     })
   })
 
