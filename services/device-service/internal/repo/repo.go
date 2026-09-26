@@ -107,6 +107,9 @@ type Store interface {
 	// SaveBaseline 基线落库事务：插 baselines + 回填 install_records.baseline_id/notes/signature_url；
 	// install 已有基线返回 ErrConflict
 	SaveBaseline(ctx context.Context, installID int64, offsets []float32, calibratorID string) (int64, error)
+	// GetLatestBaselineByDevice 设备当前生效基线（规矩 A：baseline_id 最新一条，与 data-service
+	// calibration.Store 同源）；该设备从未存过基线返回 ErrNotFound
+	GetLatestBaselineByDevice(ctx context.Context, deviceID string) (*model.Baseline, error)
 	// UpdateInstallMeta 更新安装记录备注与签名（基线之外的一次性回填）
 	UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string) error
 	// SetWifiSSID 维护 devices.wifi_ssid（架构 §2.3 配网状态）
@@ -542,6 +545,25 @@ func (r *PGStore) SaveBaseline(ctx context.Context, installID int64, offsets []f
 		return 0, fmt.Errorf("save baseline: commit: %w", err)
 	}
 	return newID, nil
+}
+
+// GetLatestBaselineByDevice 设备当前生效基线：一机多装按安装时序推进，baseline_id 最大即当前
+// （规矩 A，与 data-service repo.BaselineRepo.GetLatestBaseline 同一条 ORDER BY 口径）。
+// 偏移值写侧由 baselines.offset_values CHECK(=20) 兜底，读侧不再二次校验。
+func (r *PGStore) GetLatestBaselineByDevice(ctx context.Context, deviceID string) (*model.Baseline, error) {
+	bl := &model.Baseline{}
+	err := r.pool.QueryRow(ctx,
+		`SELECT baseline_id, install_id, device_id, offset_values, calibrator_id, created_at
+		 FROM baselines WHERE device_id = $1 ORDER BY baseline_id DESC LIMIT 1`, deviceID,
+	).Scan(&bl.BaselineID, &bl.InstallID, &bl.DeviceID, &bl.OffsetValues,
+		&bl.CalibratorID, &bl.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest baseline by device: %w", err)
+	}
+	return bl, nil
 }
 
 // UpdateInstallMeta 回填 notes / signature_url
