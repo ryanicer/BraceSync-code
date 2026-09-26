@@ -791,17 +791,22 @@ const maxDailyWearDays = 90
 // DailyWearService 患者视角的日佩戴聚合查询（数据源：repo.DailyWearStatsStore）
 type DailyWearService struct {
 	store repo.DailyWearStatsStore
-	// frames T366 佐证源：按 CST 日统计 pressure_records 明细帧数。
+	// detail T366 佐证源 + T411 复算源：按 CST 日回取 pressure_records 明细的复算输入。
 	// nil = 未注入（仅测试/降级场景）⇒ 无印章的行一律判 unsupported，
-	// 且 detailFrameCount 下发 null（「没查」不能说成「0 帧」）。
-	frames repo.DailyFrameCounter
-	now    func() time.Time
+	// 且 detailFrameCount 下发 null（「没查」不能说成「0 帧」）、代次判 unknown 且不带复算现场。
+	detail repo.DailyWearDetailSource
+	// configs T411 复算假设来源（sys_configs 的佩戴阈值 + 采集间隔）。
+	// nil = 未注入 ⇒ 回退 model.WearingThresholdN / repo.DefaultIntervalMinutes，并把回退值随行下发。
+	configs repo.WearRecomputeConfig
+	now     func() time.Time
 }
 
 // NewDailyWearService 组装 DailyWearService
-// store 注入 RollupRepo；frames 注入 RecordRepo（T366 明细佐证，可为 nil）
-func NewDailyWearService(store repo.DailyWearStatsStore, frames repo.DailyFrameCounter) *DailyWearService {
-	return &DailyWearService{store: store, frames: frames, now: time.Now}
+// store 注入 RollupRepo；detail 注入 RecordRepo（明细佐证 + 复算输入，可为 nil）；
+// configs 注入 ConfigRepo（T411 复算假设，可为 nil）
+func NewDailyWearService(store repo.DailyWearStatsStore, detail repo.DailyWearDetailSource,
+	configs repo.WearRecomputeConfig) *DailyWearService {
+	return &DailyWearService{store: store, detail: detail, configs: configs, now: time.Now}
 }
 
 // deriveWearProvenance T366 三值来源判定（纯函数，单测直接打表）。
@@ -811,6 +816,8 @@ func NewDailyWearService(store repo.DailyWearStatsStore, frames repo.DailyFrameC
 //   - 其余（含 seed 示例行：声明帧数与现存明细不符）⇒ unsupported
 //
 // 🔴 只有「有正向证据」才升档：印章或明细二者皆缺时落 unsupported，绝不因「看起来合理」放行。
+// 🔴 T411：本判据只回答「帧数对不对得上」，不回答「数值是哪一代算的」——
+// 后者由 deriveWearGeneration 单独派生，两问不得互相顶替。
 func deriveWearProvenance(stamped bool, declaredFrameCount int, detailFrameCount *int) string {
 	if stamped {
 		return model.ProvenanceRollup
@@ -821,18 +828,92 @@ func deriveWearProvenance(stamped bool, declaredFrameCount int, detailFrameCount
 	return model.ProvenanceUnsupported
 }
 
-// wearDetailCounts 取区间内逐 CST 日的明细帧数；未注入或查询失败返回 nil（不分佐证档）。
-// 佐证失败只降级不报错：daily-wear 的可用性优先，判档按「未佐证」走。
-func (s *DailyWearService) wearDetailCounts(ctx context.Context, patientID string, from, to time.Time) map[string]int {
-	if s.frames == nil {
+// deriveWearGeneration T411 口径代次判定（纯函数，单测打表）。
+// 输入是「行上的值」与「按现存明细 + 显式假设复算出的两代候选值」：
+//   - stamped 带印章 ⇒ current_by_seal（靠印章推定，不看复算结果）
+//   - detail == nil 未查 ⇒ unknown（无复算现场，不得冒充任一档）
+//   - detail.Frames == 0 查了但无帧 ⇒ no_detail（没有复算输入，与「算不符」分开）
+//   - 只对上现口径 ⇒ current_recomputed；只对上老口径 ⇒ legacy_recomputed
+//   - 两代都对上 ⇒ ambiguous；都对不上 ⇒ unmatched
+//
+// 🔴 分钟与均值必须**同时**对上才算命中该代：只对上其一可能是巧合
+// （老口径日均 = 全帧峰值均值、现口径日均 = 佩戴帧点均值，两式的巧合面远大于两式同时成立）。
+func deriveWearGeneration(stamped bool, row model.DailyWearStats,
+	detail *repo.WearDayDetail, assumedN float64, assumedInterval int) (string, *model.WearGenerationCheck) {
+	if detail == nil {
+		if stamped {
+			return model.GenSealed, nil
+		}
+		return model.GenUnknown, nil
+	}
+
+	expCurrent := repo.WearMinutesFromSpan(detail.WearingFrames, detail.WearSpanSeconds)
+	expLegacy := model.WearMinutesLegacy(detail.WearingFrames, assumedInterval)
+	ck := &model.WearGenerationCheck{
+		AssumedWearingThresholdN:   assumedN,
+		AssumedIntervalMinutes:     assumedInterval,
+		DetailFrames:               detail.Frames,
+		FrameCountMatchesDetail:    detail.Frames == row.FrameCount,
+		WearingFramesAtAssumedN:    detail.WearingFrames,
+		ExpectedWearMinutesCurrent: expCurrent,
+		ExpectedWearMinutesLegacy:  expLegacy,
+		ExpectedAvgPressureCurrent: float32(detail.AvgPointWearing),
+		ExpectedAvgPressureLegacy:  float32(detail.AvgMaxAll),
+	}
+	ck.MatchCurrent = row.WearMinutes == expCurrent && model.AvgPressureMatches(row.AvgPressure, ck.ExpectedAvgPressureCurrent)
+	ck.MatchLegacy = row.WearMinutes == expLegacy && model.AvgPressureMatches(row.AvgPressure, ck.ExpectedAvgPressureLegacy)
+
+	if stamped {
+		return model.GenSealed, ck
+	}
+	switch {
+	case detail.Frames == 0:
+		return model.GenNoDetail, ck
+	case ck.MatchCurrent && ck.MatchLegacy:
+		return model.GenAmbiguous, ck
+	case ck.MatchCurrent:
+		return model.GenRecomputedCurrent, ck
+	case ck.MatchLegacy:
+		return model.GenRecomputedLegacy, ck
+	default:
+		return model.GenUnmatched, ck
+	}
+}
+
+// recomputeAssumptions T411：复算用的两个假设值（佩戴阈值 / 采集间隔）。
+// 读不到配置不报错——回退默认值并原样随行下发，让复核者看得见用的是哪个值。
+func (s *DailyWearService) recomputeAssumptions(ctx context.Context) (float64, int) {
+	n, interval := model.WearingThresholdN, repo.DefaultIntervalMinutes
+	if s.configs == nil {
+		return n, interval
+	}
+	if th, err := s.configs.GetPressureThresholds(ctx); err == nil {
+		n = th.WearingN
+	} else {
+		log.Warn().Err(err).Msg("daily-wear recompute: wearing threshold unreadable, falls back to model default")
+	}
+	if iv, _, err := s.configs.GetDeviceConfig(ctx); err == nil {
+		interval = iv
+	} else {
+		log.Warn().Err(err).Msg("daily-wear recompute: collect interval unreadable, falls back to PRD default")
+	}
+	return n, interval
+}
+
+// wearDetailByDay 取区间内逐 CST 日的明细复算输入；未注入或查询失败返回 nil（不分档）。
+// 复算失败只降级不报错：daily-wear 的可用性优先，判档按「未复算」走。
+func (s *DailyWearService) wearDetailByDay(ctx context.Context, patientID string, from, to time.Time,
+	assumedN float64) map[string]repo.WearDayDetail {
+	if s.detail == nil {
 		return nil
 	}
-	counts, err := s.frames.CountFramesByCSTDay(ctx, patientID, from, to)
+	details, err := s.detail.WearDetailByCSTDay(ctx, patientID, from, to, assumedN)
 	if err != nil {
-		log.Warn().Err(err).Str("patient_id", patientID).Msg("daily-wear provenance: detail frame count failed, rows degrade to unsupported")
+		log.Warn().Err(err).Str("patient_id", patientID).
+			Msg("daily-wear provenance: detail read failed, rows degrade to unsupported")
 		return nil
 	}
-	return counts
+	return details
 }
 
 // GetDailyWear 按日期范围（闭区间，YYYY-MM-DD，Asia/Shanghai 切日）返回 daily_wear_stats。
@@ -882,21 +963,26 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 		return nil, model.ErrInternal("query daily wear stats failed")
 	}
 
-	// T366：同窗口取逐日明细帧数，用于给无印章的行找佐证
-	detailCounts := s.wearDetailCounts(ctx, patientID, fromUTC, toUTC)
+	// T366/T411：同窗口取逐日明细复算输入，用于给无印章的行找佐证并判定口径代次
+	assumedN, assumedInterval := s.recomputeAssumptions(ctx)
+	dayDetails := s.wearDetailByDay(ctx, patientID, fromUTC, toUTC, assumedN)
 
 	out := make([]*model.DailyWearDayDTO, 0, len(rows))
 	for _, r := range rows {
 		date := r.StatDate.In(model.CSTZone()).Format("2006-01-02")
 		var detail *int
-		if detailCounts != nil {
-			if n, ok := detailCounts[date]; ok {
-				detail = &n
+		var dayDetail *repo.WearDayDetail
+		if dayDetails != nil {
+			if d, ok := dayDetails[date]; ok {
+				detail, dayDetail = &d.Frames, &d
 			} else {
 				zero := 0
 				detail = &zero // 查到该区间但无该日 = 该日 0 帧（区别于「未查」）
+				empty := repo.WearDayDetail{}
+				dayDetail = &empty
 			}
 		}
+		generation, genCheck := deriveWearGeneration(r.HasRollupStamp(), r, dayDetail, assumedN, assumedInterval)
 		dto := &model.DailyWearDayDTO{
 			Date:             date,
 			WearMinutes:      r.WearMinutes,
@@ -907,6 +993,8 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 			AbnormalCount:    r.AbnormalCount,
 			Provenance:       deriveWearProvenance(r.HasRollupStamp(), r.FrameCount, detail),
 			DetailFrameCount: detail,
+			WearGeneration:   generation,
+			WearRecompute:    genCheck,
 		}
 		if r.HasRollupStamp() {
 			agg := r.AggregatedAt.UTC().Format(time.RFC3339)

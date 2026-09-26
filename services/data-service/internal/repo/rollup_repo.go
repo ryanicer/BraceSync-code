@@ -173,7 +173,7 @@ func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, wear
 			&wearSpanSeconds, &maxPoint, &s.AbnormalCount); err != nil {
 			return nil, fmt.Errorf("scan aggregate row: %w", err)
 		}
-		s.WearMinutes = wearMinutesFromSpan(wearingFrames, wearSpanSeconds)
+		s.WearMinutes = WearMinutesFromSpan(wearingFrames, wearSpanSeconds)
 		s.AvgPressure = avgP
 		s.MaxPressure = maxP
 		if maxPoint != nil {
@@ -184,11 +184,13 @@ func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, wear
 	return stats, rows.Err()
 }
 
-// wearMinutesFromSpan 佩戴分钟 = 佩戴帧时间跨度 + 一个实测帧间隔（跨度 /(帧数-1)），
+// WearMinutesFromSpan 佩戴分钟 = 佩戴帧时间跨度 + 一个实测帧间隔（跨度 /(帧数-1)），
 // 等价于「佩戴帧数 × 实测间隔」，与跨度口径在 ±1 帧内自洽（T352 验收判据）。
 // 不足两帧无法确立跨度，按 0 计（单个瞬时样本不构成时长，不用配置间隔臆造）。
 // 上限仍夹到物理日，防跨月/时区异常窗口把单日撑爆。
-func wearMinutesFromSpan(wearingFrames int, spanSeconds float64) int {
+// 🔴 T411：读侧「现口径候选」复算用的就是这一函数（导出即为了让写读两侧共用一个口径实现，
+// 禁止在 service 里另抄一份折算式）。
+func WearMinutesFromSpan(wearingFrames int, spanSeconds float64) int {
 	if wearingFrames < 2 || spanSeconds <= 0 {
 		return 0
 	}

@@ -30,7 +30,7 @@ func TestWearMinutesFromSpan(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := wearMinutesFromSpan(c.wearingFrames, c.spanSeconds)
+			got := WearMinutesFromSpan(c.wearingFrames, c.spanSeconds)
 			assert.Equal(t, c.want, got)
 			assert.LessOrEqual(t, got, model.MaxWearMinutesPerDay)
 		})
@@ -42,7 +42,7 @@ func TestWearMinutesConsistentWithFrameCountTimesMeasuredInterval(t *testing.T) 
 	const intervalSeconds = 31 // staging 实测上报节奏
 	for _, frames := range []int{2, 10, 248, 556, 1456} {
 		span := float64((frames - 1) * intervalSeconds)
-		got := wearMinutesFromSpan(frames, span)
+		got := WearMinutesFromSpan(frames, span)
 		want := frames * intervalSeconds / 60
 		assert.LessOrEqual(t, absInt(got-want), 1,
 			fmt.Sprintf("frames=%d span=%.0fs", frames, span))

@@ -5,7 +5,7 @@
 //
 // 单测能证明判档逻辑，证不了两件事，必须真库跑：
 //  1. 可空列的读写闭环（NULL 读回来必须是 nil，不能是零值时间/0 阈值）；
-//  2. CountFramesByCSTDay 的切日口径 —— 帧的 UTC 日与业务日差 8 小时，
+//  2. WearDetailByCSTDay 的切日口径 —— 帧的 UTC 日与业务日差 8 小时，
 //     按 UTC 分组会把 23:30 和次日 00:30 算成同一天的 3 帧（真库里实测过的那种错）。
 package repo
 
@@ -78,6 +78,7 @@ func TestITT366StampRoundTripAndDemoRow(t *testing.T) {
 }
 
 // TestITT366CountFramesByCSTDay 明细帧按业务日计数：切日必须按 Asia/Shanghai，不按 UTC
+// （T411 起该取数由 CountFramesByCSTDay 扩为 WearDetailByCSTDay，本用例只回归它的帧数与切日两格）
 func TestITT366CountFramesByCSTDay(t *testing.T) {
 	ctx := context.Background()
 	pool := dashPool
@@ -90,16 +91,16 @@ func TestITT366CountFramesByCSTDay(t *testing.T) {
 		{"2026-08-17 09:00:00+08", 1.0, 1.0}, // 区间外
 	})
 
-	counts, err := NewRecordRepo(pool).CountFramesByCSTDay(ctx, t366Patient, t352From, t352To.AddDate(0, 0, 1))
+	counts, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, t366Patient, t352From, t352To.AddDate(0, 0, 1), 0.05)
 	require.NoError(t, err)
 
-	assert.Equal(t, 2, counts["2026-08-15"], "CST 08-15 两帧")
-	assert.Equal(t, 1, counts["2026-08-16"], "跨零点那帧归 CST 08-16（按 UTC 分组会得到 3/0）")
+	assert.Equal(t, 2, counts["2026-08-15"].Frames, "CST 08-15 两帧")
+	assert.Equal(t, 1, counts["2026-08-16"].Frames, "跨零点那帧归 CST 08-16（按 UTC 分组会得到 3/0）")
 	assert.NotContains(t, counts, "2026-08-17", "区间外的日期不得出现")
 	assert.Len(t, counts, 2, "区间内只应有这两天有帧")
 
 	// 无帧的患者/日期不返回条目（读侧据「缺键」判 0 帧，与「未查」区分开）
-	empty, err := NewRecordRepo(pool).CountFramesByCSTDay(ctx, "P-T366-NONE", t352From, t352To)
+	empty, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, "P-T366-NONE", t352From, t352To, 0.05)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }

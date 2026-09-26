@@ -8,6 +8,7 @@ package model
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -415,6 +416,71 @@ const (
 	ProvenanceUnsupported = "unsupported"
 )
 
+// 日聚合行的口径代次（T411，读侧派生，非表列）——回答「这一行的 wearMinutes/avgPressure
+// 是哪一代算法算出来的、能不能由现存明细独立复算」。
+//
+// 🔴 与 provenance 是两个问题：provenance 问「这行是谁写的、帧数对不对得上」，
+// 代次问「这行的数值口径属于哪一代」。corroborated 不等于代次已知，
+// 七值语义见下，消费方不得把 ambiguous / unmatched / no_detail / unknown 当成「已归属现口径」。
+const (
+	// GenSealed 带聚合印章 ⇒ 由 T366 之后的聚合任务写入，而那时代码已是现口径（T352 早于 T366）。
+	// 这一档靠印章推定，不依赖复算结果。
+	GenSealed = "current_by_seal"
+	// GenRecomputedCurrent 无印章，复算只对上现口径（跨度分钟 + 佩戴帧 20 点全点均值）
+	GenRecomputedCurrent = "current_recomputed"
+	// GenRecomputedLegacy 无印章，复算只对上老口径（佩戴帧数 × 采集间隔 + AVG(max_pressure) 全帧）
+	GenRecomputedLegacy = "legacy_recomputed"
+	// GenAmbiguous 无印章，两代算出的分钟与均值都相同 ⇒ 单凭这两个字段不可区分
+	// （例：佩戴帧的跨度折算恰等于「帧数 × 采集间隔」）
+	GenAmbiguous = "ambiguous"
+	// GenUnmatched 无印章且**有明细**，但两代都对不上 ⇒ 代次不可归属，
+	// 这是复算判出的红：行数值并非由现存明细按这两代任一口径算出
+	// （也可能该日实际阈值/间隔不是本次假设值，假设值随行下发供复核）
+	GenUnmatched = "unmatched"
+	// GenNoDetail 无印章，查明细确实 0 帧（明细已不在库 / 该日无上报）⇒ 复算没有输入，不可归属。
+	// 与 GenUnmatched 分开：后者是「有输入且算不符」，这一档是「无输入」，不得混判成数据缺陷。
+	GenNoDetail = "no_detail"
+	// GenUnknown 明细不可查（佐证源未注入 / 查询失败）⇒ 复算根本没做，不得当成以上任何一种
+	GenUnknown = "unknown"
+)
+
+// AvgPressureToleranceRel 复算日均的相对容差：表列是 real（float32，约 7 位有效数字），
+// SQL 的 AVG 以 float8 算完再窄化，逐位相等做不到，故按相对量级判定；
+// 两代日均的实测差在 1% 量级以上（老口径取帧峰值均值，系统性偏高），容差不会把两代并成一档。
+const AvgPressureToleranceRel = 1e-4
+
+// AvgPressureToleranceAbs 零值附近的绝对兜底（避免 0 与 1e-9 被判不等）
+const AvgPressureToleranceAbs = 1e-6
+
+// WearGenerationCheck T411：一行的复算现场（代次判定用到的全部输入与两代候选值）。
+// 消费方据此可自行核对判定过程，而不是只接受一个结论字符串。
+// 整块为 nil = 未做复算（GenUnknown），与「做了但两代都不符」（GenUnmatched）是两回事。
+type WearGenerationCheck struct {
+	// AssumedWearingThresholdN 本次复算用的佩戴阈值（N）：有印章时取行上印章值，
+	// 无印章时取当前 sys_configs 值（历史行真实阈值不可知，故这只是假设，不是事实）。
+	AssumedWearingThresholdN float64 `json:"assumedWearingThresholdN"`
+	// AssumedIntervalMinutes 老口径候选用的采集间隔（分钟，sys_configs collect_interval_minutes）。
+	AssumedIntervalMinutes int `json:"assumedIntervalMinutes"`
+	// DetailFrames 现存明细帧数（该患者该 CST 日）
+	DetailFrames int `json:"detailFrames"`
+	// FrameCountMatchesDetail 行上声明的 frameCount 与明细帧数是否相等（T366 判据，原样复述）
+	FrameCountMatchesDetail bool `json:"frameCountMatchesDetail"`
+	// WearingFramesAtAssumedN 按假设阈值判出的佩戴帧数（两代分钟候选共同依赖它）
+	WearingFramesAtAssumedN int `json:"wearingFramesAtAssumedN"`
+	// ExpectedWearMinutesCurrent 现口径候选：跨度 + 一个实测间隔，封顶 1440
+	ExpectedWearMinutesCurrent int `json:"expectedWearMinutesCurrent"`
+	// ExpectedWearMinutesLegacy 老口径候选：佩戴帧数 × 采集间隔，封顶 1440
+	ExpectedWearMinutesLegacy int `json:"expectedWearMinutesLegacy"`
+	// ExpectedAvgPressureCurrent 现口径候选：佩戴帧 20 点全点均值
+	ExpectedAvgPressureCurrent float32 `json:"expectedAvgPressureCurrent"`
+	// ExpectedAvgPressureLegacy 老口径候选：全部帧的 max_pressure 均值（无佩戴过滤）
+	ExpectedAvgPressureLegacy float32 `json:"expectedAvgPressureLegacy"`
+	// MatchCurrent 行的 wearMinutes 与 avgPressure 同时对上现口径候选
+	MatchCurrent bool `json:"matchCurrent"`
+	// MatchLegacy 行的 wearMinutes 与 avgPressure 同时对上老口径候选
+	MatchLegacy bool `json:"matchLegacy"`
+}
+
 // DailyWearDayDTO 患者日佩戴聚合响应（对齐 daily_wear_stats 表列 + camelCase 契约）
 type DailyWearDayDTO struct {
 	Date          string  `json:"date"`          // YYYY-MM-DD（Asia/Shanghai 切日）
@@ -436,6 +502,27 @@ type DailyWearDayDTO struct {
 	// WearingThresholdN 本行聚合实际生效的佩戴帧阈值（N），复算日均/佩戴分钟用同一个值。
 	// nil（JSON null）= 无印章 ⇒ 复算者需自行取 sys_configs.wearing_pressure_threshold。
 	WearingThresholdN *float64 `json:"wearingThresholdN"`
+	// ── T411 口径代次（回答 T366 三值答不了的那一半：这一行的数值是哪一代算的）──
+	// WearGeneration 七值枚举，见 Gen* 常量组。corroborated 行的代次可以仍是 unknown/no_detail/unmatched，
+	// 这不是矛盾：帧数对得上不代表数值口径可归属。
+	WearGeneration string `json:"wearGeneration"`
+	// WearRecompute 复算现场（假设值 + 两代候选值 + 命中情况）；nil（JSON null）= 未做复算。
+	WearRecompute *WearGenerationCheck `json:"wearRecompute"`
+}
+
+// WearMinutesLegacy 老口径（T352 之前）佩戴分钟 = 佩戴帧数 × 采集间隔，封顶物理日。
+// 只用于读侧「这一行是不是老口径算出来的」反证，写侧已不再使用该折算。
+func WearMinutesLegacy(wearingFrames, intervalMinutes int) int {
+	return min(wearingFrames*intervalMinutes, MaxWearMinutesPerDay)
+}
+
+// AvgPressureMatches 日均压力复算是否对上（real 列窄化带来的位差按相对容差吸收）
+func AvgPressureMatches(stored, expected float32) bool {
+	diff := float64(stored) - float64(expected)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= math.Max(float64(expected)*AvgPressureToleranceRel, AvgPressureToleranceAbs)
 }
 
 // HealthReport health_reports 表行（PRD §7A.11 健康报告）
