@@ -19,7 +19,7 @@ test('页面标题与记录总数', async ({ page }) => {
 
 test('默认显示全部记录', async ({ page }) => {
   await expect(page.locator('.record-card')).toHaveCount(6)
-  await expect(page.locator('.record-device').first()).toHaveText('PRS-ML05-RC-001')
+  await expect(page.locator('.record-device').first()).toHaveText('PRS-ML05-RC-19700101001')
   await expect(page.locator('.wifi-badge').first()).toContainText('已联网')
 })
 

@@ -123,6 +123,7 @@ func TestSecretProvider_BackendDown(t *testing.T) {
 
 func TestSecretProvider_URLEscapedDeviceID(t *testing.T) {
 	// device_id 含特殊字符时 PathEscape 不破坏路径语义
+	// 这里的 ID 只是被透传的路径键，用现网真实形态（与同包其它用例一致），不用短尾号假串
 	var gotPath atomic.Value
 	srv, _ := startSecretBackend(t, func(deviceID string) (int, string) {
 		gotPath.Store(deviceID)
@@ -130,7 +131,7 @@ func TestSecretProvider_URLEscapedDeviceID(t *testing.T) {
 	})
 	p := newDeviceServiceSecretProvider(srv.URL)
 
-	_, err := p.GetDeviceSecret(context.Background(), "PRS-ML05-RC-001")
+	_, err := p.GetDeviceSecret(context.Background(), "PRS-ML05-RC-20260701001")
 	require.NoError(t, err)
-	assert.Equal(t, "PRS-ML05-RC-001", gotPath.Load())
+	assert.Equal(t, "PRS-ML05-RC-20260701001", gotPath.Load())
 }

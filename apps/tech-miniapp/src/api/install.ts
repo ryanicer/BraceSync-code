@@ -81,7 +81,12 @@ export async function listInstallRecords(
     await new Promise((r) => setTimeout(r, 200))
     const seed: InstallRecord[] = Array.from({ length: 6 }).map((_, i) => ({
       installId: `INS-2026090${i + 1}-00${i + 1}`,
-      deviceId: `PRS-ML05-RC-00${i + 1}`,
+      // T406（U4）：旧值 `PRS-ML05-RC-00${i + 1}` 是 3 位尾号假串（现网精确命中 0）。
+      // 这里不改成现网串——现网 5 台是 20260701001–005 批次（T406 只读 GET /devices 实测），
+      // mock 冒充现网设备会让「本地绿、联调对不上号」更难查；故用形态合法
+      // （日期 8 + 序号 3）但属保留合成批次的 19700101 日期段，epoch 日期永不可能是真实装机日。
+      // 首条被 e2e/tests/tech-records.spec.ts 断言，改这里要同步改那条用例。
+      deviceId: `PRS-ML05-RC-19700101${String(i + 1).padStart(3, '0')}`,
       patientId: `pat-00${i + 1}`,
       patientName: ['张明远', '李欣怡', '王子轩', '刘思雨', '陈俊豪', '杨梓涵'][i],
       techId: 'T-001',

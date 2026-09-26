@@ -1,4 +1,5 @@
 import { expect, type Page, type Locator } from '@playwright/test'
+import { DEVICE_ID_EXAMPLE } from '../apps/tech-miniapp/src/utils/bind-copy'
 
 /**
  * 技师端 e2e 公共工具（T027 tech-miniapp mock 数据基线）
@@ -15,9 +16,12 @@ export const MOCK_TECH_ID = 'TECH_CI_001'
  * T380：设备 ID 用现网真实形态（`PRS-ML05-RC-` + 11 位数字；staging 5 台是 20260701001 到 005）。
  * 旧值 `PRS-ML05-RC-001` 现网精确命中 0，且正是 T362 删掉的那段 mock 硬编码的原值 ——
  * 拿它当夹具等于让「技师照示例手输必然绑不到设备」这条路径一直跑绿。
- * 与实现侧 apps/tech-miniapp/src/utils/bind-copy.ts 的 DEVICE_ID_EXAMPLE 同源。
+ * T406（F-1）：改为直接读实现侧的 DEVICE_ID_EXAMPLE，不再各留一份字面量。
+ * 绑定页示例串换了号（001 → 005，见 bind-copy.ts 的选型理由），夹具若不同步就会
+ * 与它自己那句「与 DEVICE_ID_EXAMPLE 同源」的注释矛盾，且 e2e 跑的不再是技师实际照抄的那串。
+ * 同源性由 apps/tech-miniapp/test/device-id-family.spec.ts 钉住。
  */
-export const MOCK_DEVICE_ID = 'PRS-ML05-RC-20260701001'
+export const MOCK_DEVICE_ID = DEVICE_ID_EXAMPLE
 /**
  * T362：e2e 里填的患者 ID 用真实形态（后台 `newPatientID()` = P + 年份 + 12 位 hex；
  * `P20260001` 是 seed 患者号）。旧值 `pat-001` 现网零命中，用它跑通用例等于把错口径钉死。

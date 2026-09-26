@@ -1,4 +1,5 @@
 import type { SensorPoint, PressureRecord } from '@bracesync/shared-types'
+import { MOCK_DEVICE_ID } from './device'
 
 // 生成 20 个传感器点（4 行 5 列，P01-P20），P12 固定 42.18N（e2e 基线）
 export function mockSensorPoints(): SensorPoint[] {
@@ -46,7 +47,7 @@ export function mockRealtime() {
     pressureRecords: [
       {
         recordId: 'rec-001',
-        deviceId: 'PRS-ML05-RC-001',
+        deviceId: MOCK_DEVICE_ID,
         patientId: 'pat-001',
         timestamp: new Date().toISOString(),
         points,
