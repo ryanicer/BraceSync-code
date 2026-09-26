@@ -16,6 +16,7 @@
 //	PUT  /api/v1/install-records/:id              回填安装元数据 notes/signatureUrl（T122）
 //	GET  /api/v1/install-records                  安装记录分页列表（T030：姓名 join）
 //	POST /api/v1/baselines                        校准基线落库（契约 saveBaseline）
+//	GET  /api/v1/devices/:deviceId/baseline       设备当前生效基线只读（T407：avg_pressure 复算入参）
 //	POST /internal/devices/:deviceId/report       上报/补传状态校正（服务间，不经网关）
 //	GET  /internal/devices/:deviceId/secret       验签密钥查询（T032，仅 gateway 验签用，不经网关）
 //	GET  /healthz                                 存活探针
@@ -88,7 +89,8 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/install-records/:id", h.getInstall)        // T122 单条详情
 		v1.PUT("/install-records/:id", h.updateInstallMeta) // T122 回填元数据
 		v1.POST("/baselines", h.saveBaseline)
-		h.registerListRoutes(v1) // T030：GET /devices 列表 + GET /install-records 列表
+		v1.GET("/devices/:deviceId/baseline", h.getDeviceBaseline) // T407 读侧（契约 getDeviceBaseline）
+		h.registerListRoutes(v1)                                   // T030：GET /devices 列表 + GET /install-records 列表
 	}
 
 	internal := r.Group("/internal")
@@ -257,6 +259,44 @@ func (h *Handler) listBindings(c *gin.Context) {
 		list = append(list, bindings[i].ToDTO())
 	}
 	ok(c, gin.H{"list": list})
+}
+
+// getDeviceBaseline 设备当前生效基线只读（T407）。
+//
+// 存在的理由：daily_wear_stats.avg_pressure 取的是**校准前**的 20 点原值，而 /records、
+// /realtime 每帧回的都是 calibration.Apply **减过偏移后**的值 —— 调用方拿不到那 20 个偏移
+// 就无法把读接口回的值还原回聚合式吃的值（Ella T366 验收附带发现 1）。本端点回的就是
+// calibration 实际减的那一条（规矩 A：该设备 baseline_id 最新），两侧同源，可直接相加反推。
+//
+// 设备存在却从未校准：200 + calibrated=false + offsetValues 空数组（与 install 详情
+// 「未校准为 []」同形），不是 404 —— 404 留给设备不存在。
+func (h *Handler) getDeviceBaseline(c *gin.Context) {
+	deviceID := c.Param("deviceId")
+	// T378 读侧口径：基线偏移属于设备详情面，医护仅本团队可读
+	if !h.assertDeviceInScope(c, deviceID) {
+		return
+	}
+	bl, appErr := h.svc.DeviceBaseline(c.Request.Context(), deviceID)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	offsets := []float32{}
+	if bl != nil {
+		offsets = bl.OffsetValues
+	}
+	data := gin.H{
+		"deviceId":     deviceID,
+		"calibrated":   bl != nil,
+		"offsetValues": offsets,
+	}
+	if bl != nil {
+		data["baselineId"] = strconv.FormatInt(bl.BaselineID, 10)
+		data["installId"] = strconv.FormatInt(bl.InstallID, 10)
+		data["calibratorId"] = bl.CalibratorID
+		data["createdAt"] = bl.CreatedAt
+	}
+	ok(c, data)
 }
 
 // bind 绑定（契约 bindDevice → ApiResponse<BindResponseDTO>；同设备已被他患者绑定 → 自动换绑；

@@ -244,6 +244,8 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/unbind"),
 	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/wifi"),
 	rbacOf(http.MethodPost, "/api/v1/baselines"),
+	// T407：基线只读（与 POST /baselines 同域；给内部复算 avg_pressure 用，患者无此需求）
+	rbacOf(http.MethodGet, "/api/v1/devices/:deviceId/baseline"),
 	rbacOf(http.MethodPost, "/api/v1/install-records"),
 	rbacOf(http.MethodGet, "/api/v1/install-records"),
 	rbacOf(http.MethodGet, "/api/v1/install-records/:id"),

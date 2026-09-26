@@ -367,6 +367,23 @@ func (s *DeviceService) SaveBaseline(ctx context.Context, installID int64, offse
 	return id, nil
 }
 
+// DeviceBaseline 设备当前生效基线（T407：avg_pressure 独立复算的入参来源）。
+// 设备不存在 → 20404；设备存在但从未存基线 → bl=nil（读侧不减偏移，与 calibration 的
+// Result.Applied=false 同一语义），不是错误。
+func (s *DeviceService) DeviceBaseline(ctx context.Context, deviceID string) (*model.Baseline, *model.AppError) {
+	if _, appErr := s.GetDevice(ctx, deviceID); appErr != nil {
+		return nil, appErr
+	}
+	bl, err := s.store.GetLatestBaselineByDevice(ctx, deviceID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, model.ErrInternal("query baseline of device %q failed", deviceID)
+	}
+	return bl, nil
+}
+
 // UpdateInstallMeta 回填安装记录的 notes / signature_url（saveBaseline 携带元数据时使用）
 func (s *DeviceService) UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string) *model.AppError {
 	if err := s.store.UpdateInstallMeta(ctx, installID, notes, signatureURL); err != nil {

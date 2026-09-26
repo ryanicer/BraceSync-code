@@ -335,6 +335,26 @@ func (f *FakeStore) SaveBaseline(_ context.Context, installID int64, offsets []f
 	return id, nil
 }
 
+// GetLatestBaselineByDevice 复刻「规矩 A」：同设备多条基线取 baseline_id 最大的一条（T407）
+func (f *FakeStore) GetLatestBaselineByDevice(_ context.Context, deviceID string) (*model.Baseline, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var latest *model.Baseline
+	for _, b := range f.baselines {
+		if b.DeviceID != deviceID {
+			continue
+		}
+		if latest == nil || b.BaselineID > latest.BaselineID {
+			cp := *b
+			latest = &cp
+		}
+	}
+	if latest == nil {
+		return nil, repo.ErrNotFound
+	}
+	return latest, nil
+}
+
 func (f *FakeStore) UpdateInstallMeta(_ context.Context, installID int64, notes, signatureURL *string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

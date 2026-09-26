@@ -36,6 +36,7 @@ var deviceManageRoutes = []proxyRoute{
 	{http.MethodPost, "/install-records"},           // 新建安装记录
 	{http.MethodPut, "/install-records/:id"},        // T122 回填安装元数据
 	{http.MethodPost, "/baselines"},                 // 校准基线落库
+	{http.MethodGet, "/devices/:deviceId/baseline"}, // T407 设备当前生效基线只读
 }
 
 // deviceReportRoutes 设备域上报路由（data-service；走设备验签组，非 JWT）
