@@ -205,46 +205,72 @@ func (r *RecordRepo) GetLatestRecord(ctx context.Context, patientID string) (mod
 }
 
 // ─────────────────────────────────────────────────────────────
-// T366：按 CST 日统计明细帧数（daily-wear 行的佐证源）
+// T366/T411：按 CST 日回取明细复算输入（daily-wear 行的佐证源 + 口径代次判据）
 // ─────────────────────────────────────────────────────────────
 
-// DailyFrameCounter 明细帧按业务日计数契约（*RecordRepo 实现）。
-// 单独成接口、不并入 RecordStore：RecordStore 的测试替身遍布各 service 单测，
-// 加方法会牵动无关卡片；注入侧用类型断言取用（同 ThresholdStore 的先例）。
-type DailyFrameCounter interface {
-	// CountFramesByCSTDay 按 Asia/Shanghai 切日统计某患者区间内每天的压力帧数。
-	// 返回 map["YYYY-MM-DD"]count；区间内无帧的日期不出现在 map 里
-	// （调用方据此区分「0 帧」与「未统计」）。
-	CountFramesByCSTDay(ctx context.Context, patientID string, from, to time.Time) (map[string]int, error)
+// WearDayDetail 某患者某 CST 日从**现存明细**算出的复算输入（T411）。
+// 字段与 rollup 的 aggregateDateSQL 逐条同式，故现口径候选可直接对平。
+type WearDayDetail struct {
+	Frames          int     // 该日帧总数（T366 的佐证项）
+	WearingFrames   int     // 佩戴帧数（按传入阈值判定）
+	WearSpanSeconds float64 // 佩戴帧时间跨度（秒）
+	AvgPointWearing float64 // 现口径日均：佩戴帧的 20 点全点均值
+	AvgMaxAll       float64 // 老口径日均：全部帧 max_pressure 均值（无佩戴过滤）
+	MaxPressure     float64 // 该日单点峰值
 }
 
-// countFramesByCSTDaySQL 与 rollup 的 aggregateDateSQL 同窗口口径：[$1,$2) UTC。
+// DailyWearDetailSource 明细复算输入按业务日取数契约（*RecordRepo 实现）。
+// 单独成接口、不并入 RecordStore：RecordStore 的测试替身遍布各 service 单测，
+// 加方法会牵动无关卡片；注入侧用类型断言取用（同 ThresholdStore 的先例）。
+type DailyWearDetailSource interface {
+	// WearDetailByCSTDay 按 Asia/Shanghai 切日统计某患者区间内每天的帧数与复算输入。
+	// wearingThresholdN 决定 WearingFrames / WearSpanSeconds / AvgPointWearing 的判据。
+	// 返回 map["YYYY-MM-DD"]WearDayDetail；区间内无帧的日期不出现在 map 里
+	// （调用方据此区分「0 帧」与「未统计」）。
+	WearDetailByCSTDay(ctx context.Context, patientID string, from, to time.Time,
+		wearingThresholdN float64) (map[string]WearDayDetail, error)
+}
+
+// wearDetailByCSTDaySQL 与 rollup 的 aggregateDateSQL 同窗口口径：[$1,$2) UTC，
+// 各聚合表达式与 rollup 逐条同式（佩戴判据、跨度、20 点全点均值、封顶前的原值）。
+// 老口径日均 AVG(max_pressure) 无 FILTER —— 对齐 T352 之前的 aggregateDateSQL（f8ac362 前一版）。
 // 切日必须显式 AT TIME ZONE 'Asia/Shanghai' 再截 date（同 queryRangeSQL 的坑：
 // 直接比较会整体早一天）。GROUP BY 用表达式别名，避免与分区键上的 ts 比较混淆。
-const countFramesByCSTDaySQL = `
+const wearDetailByCSTDaySQL = `
 SELECT to_char((ts AT TIME ZONE 'Asia/Shanghai')::date, 'YYYY-MM-DD') AS cst_date,
-       COUNT(*)::int AS frames
+       COUNT(*)::int                                                  AS frames,
+       COUNT(*) FILTER (WHERE max_pressure > $4)::int                 AS wearing_frames,
+       COALESCE((EXTRACT(EPOCH FROM (
+         MAX(ts) FILTER (WHERE max_pressure > $4) - MIN(ts) FILTER (WHERE max_pressure > $4)
+       )))::float8, 0)                                                AS wear_span_seconds,
+       COALESCE(AVG((p01+p02+p03+p04+p05+p06+p07+p08+p09+p10+
+                     p11+p12+p13+p14+p15+p16+p17+p18+p19+p20) / 20.0)
+                FILTER (WHERE max_pressure > $4), 0)::float8          AS avg_point_wearing,
+       COALESCE(AVG(max_pressure), 0)::float8                         AS avg_max_all,
+       COALESCE(MAX(max_pressure), 0)::float8                         AS max_pressure
 FROM pressure_records
 WHERE patient_id = $1 AND ts >= $2 AND ts < $3
 GROUP BY 1
 ORDER BY 1`
 
-// CountFramesByCSTDay 实现 DailyFrameCounter
-func (r *RecordRepo) CountFramesByCSTDay(ctx context.Context, patientID string, from, to time.Time) (map[string]int, error) {
-	rows, err := r.pool.Query(ctx, countFramesByCSTDaySQL, patientID, from, to)
+// WearDetailByCSTDay 实现 DailyWearDetailSource
+func (r *RecordRepo) WearDetailByCSTDay(ctx context.Context, patientID string, from, to time.Time,
+	wearingThresholdN float64) (map[string]WearDayDetail, error) {
+	rows, err := r.pool.Query(ctx, wearDetailByCSTDaySQL, patientID, from, to, float32(wearingThresholdN))
 	if err != nil {
-		return nil, fmt.Errorf("count pressure_records by cst day: %w", err)
+		return nil, fmt.Errorf("read pressure_records detail by cst day: %w", err)
 	}
 	defer rows.Close()
 
-	out := make(map[string]int)
+	out := make(map[string]WearDayDetail)
 	for rows.Next() {
 		var day string
-		var n int
-		if err := rows.Scan(&day, &n); err != nil {
+		var d WearDayDetail
+		if err := rows.Scan(&day, &d.Frames, &d.WearingFrames, &d.WearSpanSeconds,
+			&d.AvgPointWearing, &d.AvgMaxAll, &d.MaxPressure); err != nil {
 			return nil, err
 		}
-		out[day] = n
+		out[day] = d
 	}
 	return out, rows.Err()
 }

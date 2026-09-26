@@ -24,8 +24,18 @@ type ThresholdStore interface {
 	GetPressureThresholds(ctx context.Context) (model.PressureThresholds, error)
 }
 
+// WearRecomputeConfig T411 复算假设来源：无聚合印章的历史行要靠明细复算口径代次，
+// 而「该日实际用的阈值 / 采集间隔」行上没记 ⇒ 只能取当前 sys_configs 值作为**显式假设**随行下发。
+// *ConfigRepo 同时实现两个 getter；未注入时 service 回退 model 默认值（单测/降级路径）。
+type WearRecomputeConfig interface {
+	GetPressureThresholds(ctx context.Context) (model.PressureThresholds, error)
+	GetDeviceConfig(ctx context.Context) (intervalMinutes, configVersion int, err error)
+}
+
 const (
-	defaultIntervalMinutes = 30 // PRD 默认采集间隔
+	// DefaultIntervalMinutes PRD 默认采集间隔（分钟）。T411 读侧老口径候选在 sys_configs
+	// 读不到时回退它，与写侧历史回退同源，不许在别处再写一份 30。
+	DefaultIntervalMinutes = 30
 	defaultConfigVersion   = 1
 	configCacheTTL         = 60 * time.Second // 配置读缓存，避免逐帧查库
 )
@@ -71,7 +81,7 @@ func (r *ConfigRepo) load(ctx context.Context) (configSnapshot, error) {
 	r.mu.Unlock()
 
 	snap := configSnapshot{
-		interval: defaultIntervalMinutes,
+		interval: DefaultIntervalMinutes,
 		version:  defaultConfigVersion,
 		th:       model.DefaultPressureThresholds(),
 	}
@@ -105,7 +115,7 @@ func (r *ConfigRepo) load(ctx context.Context) (configSnapshot, error) {
 func (r *ConfigRepo) GetDeviceConfig(ctx context.Context) (int, int, error) {
 	snap, err := r.load(ctx)
 	if err != nil {
-		return defaultIntervalMinutes, defaultConfigVersion, err
+		return DefaultIntervalMinutes, defaultConfigVersion, err
 	}
 	return snap.interval, snap.version, nil
 }

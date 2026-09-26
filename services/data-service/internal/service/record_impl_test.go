@@ -295,29 +295,41 @@ func newDailyWearStatsTestRow(pid, dateCST string, wearMin, frameCount, abnormal
 }
 
 // newDailyWearSvcWithNow 装配带 fake now 的 DailyWearService
-// frames 传 nil = 不注入明细佐证源：T366 之后无印章的行会判 unsupported（既有断言不碰来源档）
+// detail 传 nil = 不注入明细佐证源：T366 之后无印章的行会判 unsupported（既有断言不碰来源档）
 func newDailyWearSvcWithNow(store repo.DailyWearStatsStore, now time.Time) *DailyWearService {
-	svc := NewDailyWearService(store, nil)
+	svc := NewDailyWearService(store, nil, nil)
 	svc.now = func() time.Time { return now }
 	return svc
 }
 
-// fakeDailyFrameCounter T366：DailyFrameCounter 内存实现（按 CST 日返回预置帧数）
-type fakeDailyFrameCounter struct {
-	counts map[string]int
-	err    error
-	calls  int
+// fakeDailyWearSource T366/T411：DailyWearDetailSource 内存实现（按 CST 日返回预置复算输入）
+type fakeDailyWearSource struct {
+	details map[string]repo.WearDayDetail
+	err     error
+	calls   int
+	gotN    float64 // 记录服务透传给取数层的佩戴阈值，供 T411 断言「假设值确实来自配置」
 }
 
-func (f *fakeDailyFrameCounter) CountFramesByCSTDay(_ context.Context, _ string, _, _ time.Time) (map[string]int, error) {
+func (f *fakeDailyWearSource) WearDetailByCSTDay(_ context.Context, _ string, _, _ time.Time,
+	wearingThresholdN float64) (map[string]repo.WearDayDetail, error) {
 	f.calls++
+	f.gotN = wearingThresholdN
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.counts, nil
+	return f.details, nil
 }
 
-var _ repo.DailyFrameCounter = (*fakeDailyFrameCounter)(nil)
+var _ repo.DailyWearDetailSource = (*fakeDailyWearSource)(nil)
+
+// fakeFramesByDay T366 既有断言只关心帧数：把 map[day]count 折算成零值复算输入
+func fakeFramesByDay(counts map[string]int) map[string]repo.WearDayDetail {
+	out := make(map[string]repo.WearDayDetail, len(counts))
+	for day, n := range counts {
+		out[day] = repo.WearDayDetail{Frames: n}
+	}
+	return out
+}
 
 func TestDailyWearService_HasData(t *testing.T) {
 	fakeNow := time.Date(2026, 9, 2, 10, 0, 0, 0, model.CSTZone()) // CST

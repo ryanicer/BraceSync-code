@@ -80,7 +80,7 @@ func TestT366HasRollupStampRequiresBothColumns(t *testing.T) {
 func ptrTime(v time.Time) *time.Time { return &v }
 func ptrFloat(v float64) *float64    { return &v }
 
-var _ repo.DailyFrameCounter = (*fakeDailyFrameCounter)(nil)
+var _ repo.DailyWearDetailSource = (*fakeDailyWearSource)(nil)
 
 // TestT366NilCounterKeepsStampedRowsTrustworthy 佐证源未注入只影响「无印章行」的升档，不影响印章行
 func TestT366NilCounterKeepsStampedRowsTrustworthy(t *testing.T) {
@@ -132,12 +132,12 @@ func TestT366GetDailyWearDerivesThreeTierProvenance(t *testing.T) {
 	}
 
 	store := &fakeDailyWearStore{rows: []model.DailyWearStats{stamped, corroborated, seedStyle}}
-	counter := &fakeDailyFrameCounter{counts: map[string]int{
+	counter := &fakeDailyWearSource{details: fakeFramesByDay(map[string]int{
 		"2026-09-21": 588,
 		"2026-09-22": 6,
 		"2026-09-23": 3,
-	}}
-	svc := NewDailyWearService(store, counter)
+	})}
+	svc := NewDailyWearService(store, counter, nil)
 	svc.now = func() time.Time { return fakeNow }
 
 	list, appErr := svc.GetDailyWear(ctx, "P1", "2026-09-21", "2026-09-23")
@@ -183,7 +183,8 @@ func TestT366UnknownSerializesAsJSONNull(t *testing.T) {
 			PatientID: "P1", StatDate: t366Day(t, "2026-09-23"),
 			WearMinutes: 1200, FrameCount: 40,
 		}}},
-		&fakeDailyFrameCounter{counts: map[string]int{}}, // 该日 0 帧
+		&fakeDailyWearSource{details: fakeFramesByDay(map[string]int{})}, // 该日 0 帧
+		nil,
 	)
 	svc.now = func() time.Time { return time.Date(2026, 9, 24, 10, 0, 0, 0, model.CSTZone()) }
 
@@ -207,7 +208,8 @@ func TestT366DetailCountFailureDegradesNotErrors(t *testing.T) {
 		&fakeDailyWearStore{rows: []model.DailyWearStats{{
 			PatientID: "P1", StatDate: t366Day(t, "2026-09-23"), FrameCount: 6,
 		}}},
-		&fakeDailyFrameCounter{err: errors.New("detail db down")},
+		&fakeDailyWearSource{err: errors.New("detail db down")},
+		nil,
 	)
 	svc.now = func() time.Time { return time.Date(2026, 9, 24, 10, 0, 0, 0, model.CSTZone()) }
 
