@@ -8,7 +8,7 @@
   "app-plus": {},
   "h5": {
     "title": "矫治通 · 技师端",
-    "router": { "mode": "hash" }
+    "router": { "mode": "hash", "base": "/tech-h5/" }
   },
   "mp-weixin": {
     "appid": "wxe8b673205a3dff3e",

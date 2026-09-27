@@ -16,6 +16,9 @@
 #      自比对凭据到 SELFCHK_RECEIPT_DIR 再清理（⑧ 段只在成功路径跑，中止轮原先什么都不留）
 #  11. cron 引用零漂移核对（T393 N6）：⓪-b 段用仓内期望清单只读比对实际 crontab，
 #      发现「引用指回工作树 / 期望副本没被引用 / 落点副本不见」即在任何变更前中止本轮
+#  12. 小程序 H5 走查站（T427）：③-b 构建 patient/tech 两包的 h5 产物并 rsync 到
+#      $STAGING_DIR/apps/{patient,tech}-h5/dist（只上 staging，不进生产镜像），⑥ 段实测两处入口
+#      带各自挂载前缀；「manifest 的 h5.router.base == nginx location」由 apps/*/…h5-mount-contract.spec.ts 守
 set -euo pipefail
 
 PROJECT_ROOT="/home/ubuntu/bracesync"
@@ -39,6 +42,10 @@ SELFCHK_RECEIPT_DIR="${SELFCHK_RECEIPT_DIR:-$OPS_ROOT/deploy-selfcheck}"
 LOGIN_URL="http://localhost:81/api/v1/auth/login"
 PATIENTS_URL="http://localhost:81/api/v1/admin/patients"
 ADMIN_URL="http://localhost:81/admin/"
+# T427：两小程序 H5 走查站入口（挂载点须与 apps/*-miniapp/src/manifest.json 的 h5.router.base 同值，
+#        静态契约见 apps/*/tests/unit/h5-mount-contract.spec.ts，本次构建是否真带上前缀由 ⑥ 段实测）
+PATIENT_H5_URL="http://localhost:81/patient-h5/"
+TECH_H5_URL="http://localhost:81/tech-h5/"
 export PATH=/usr/local/go/bin:/usr/bin:/usr/sbin:$PATH
 
 log()  { echo "\033[1;32m[deploy]\033[0m $*"; }
@@ -134,6 +141,25 @@ log "   admin-web 产物: $PROJECT_ROOT/apps/admin-web/dist/"
 log "   rsync admin-web 产物到 $STAGING_DIR/apps/admin-web/dist/ ..."
 sudo mkdir -p "$STAGING_DIR/apps/admin-web/dist"
 sudo rsync -a --delete "$PROJECT_ROOT/apps/admin-web/dist/" "$STAGING_DIR/apps/admin-web/dist/"
+
+# ③-b T427：构建两小程序 H5 走查包（硬件未到位期给外部用户做功能自测的入口，只上 staging）
+#   产物落 apps/<app>/dist/build/h5，按各自挂载点 rsync 到 $STAGING_DIR/apps/<site>/dist；
+#   「manifest 的 h5.router.base == nginx location」由两侧 h5-mount-contract 用例守静态契约，
+#   这里再验一次「本次产物真的带上了前缀」（同 admin-web ③ 段与 ⑥ 段的分工）。
+log "③-b 构建 miniapp H5 走查站 (patient-h5 / tech-h5) ..."
+build_h5_site() {
+  local app="$1" site="$2"
+  npm run build:h5 -w "apps/$app" || fail "H5 构建失败: $app"
+  local dist="$PROJECT_ROOT/apps/$app/dist/build/h5"
+  [ -d "$dist" ] || fail "H5 产物目录不存在: $dist"
+  grep -q "src=\"/$site/assets/" "$dist/index.html" \
+    || fail "H5 入口 HTML 未引用 /$site/assets/ 资源（$app 的 manifest h5.router.base 与挂载点不一致 ⇒ 白屏）"
+  sudo mkdir -p "$STAGING_DIR/apps/$site/dist"
+  sudo rsync -a --delete "$dist/" "$STAGING_DIR/apps/$site/dist/"
+  log "   $app 产物: $dist → $STAGING_DIR/apps/$site/dist"
+}
+build_h5_site patient-miniapp patient-h5
+build_h5_site tech-miniapp tech-h5
 
 # ④ 增量数据库迁移
 log "④ 增量数据库迁移 ..."
@@ -275,6 +301,23 @@ if [ "$DEEP_CODE" != "200" ]; then
   fail "admin-web 深链 /admin/patients 检查失败 (HTTP $DEEP_CODE)"
 fi
 log "   ✅ 入口资源带 /admin/ 前缀 + 深链 /admin/patients → 200"
+
+# T427：H5 走查站入口实检 —— 站点存在 且 入口 HTML 带各自挂载前缀（缺产物时 nginx 会给 403/404，
+#        当场判红比让走查的人打开白屏页面好）。两处站点逐条独立检查，一处坏不掩盖另一处坏。
+check_h5_site() {
+  local label="$1" url="$2" mount="$3"
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || echo "000")
+  if [ "$code" != "200" ]; then
+    fail "H5 走查站 $label 检查失败 $url (HTTP $code)"
+  fi
+  if ! curl -sS "$url" 2>/dev/null | grep -q "src=\"/$mount/assets/"; then
+    fail "H5 走查站 $label 入口 HTML 未引用 /$mount/assets/ 资源（manifest base 与挂载点不一致 ⇒ 白屏）"
+  fi
+  log "   ✅ H5 走查站 $label → 200 且入口资源带 /$mount/ 前缀"
+}
+check_h5_site patient-h5 "$PATIENT_H5_URL" patient-h5
+check_h5_site tech-h5 "$TECH_H5_URL" tech-h5
 
 # ⑦ 清理 + 完成
 log "⑦ 清理部署残留 ..."
