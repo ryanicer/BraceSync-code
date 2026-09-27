@@ -4,7 +4,7 @@
 // 且**网关那一套从来没有机器对拍**：
 //   A 前端 ROLE_PAGE_MATRIX（apps/admin-web/src/router/permissions.ts）—— UX 层守卫，路由拦页；
 //   B 库 roles.permissions_json.modules（scripts/db/seed/seed.sql + 迁移前滚）—— 侧栏渲染源；
-//   C 网关 rbac.go 的六张端点矩阵（services/gateway/cmd/server/rbac.go）—— 真正的服务端强制面，
+//   C 网关 rbac.go 的七张端点矩阵（services/gateway/cmd/server/rbac.go）—— 真正的服务端强制面，
 //     T260 起「未登记即默认拒绝」，改一处就能让某个可见页整页吃 403。
 // permissions.spec.ts（T345/T368/T372）已把 A↔B 钉住，C 只靠注释与 A 互指（rbac.go 头注释
 // 「两者须同步变更」），没有任何用例读过它 —— T348（医护概览打 GET /teams 403）与 T351
@@ -90,7 +90,7 @@ function parseSeedModules(): Record<RoleKey, string[]> {
   return out
 }
 
-// ===== 源 C：网关 rbac.go 六堆端点矩阵 =====
+// ===== 源 C：网关 rbac.go 七堆端点矩阵 =====
 interface Pattern { method: string; path: string; segs: string[] }
 interface Gateway {
   matrices: Record<string, Pattern[]>
@@ -99,7 +99,7 @@ interface Gateway {
 /** 网关矩阵名（少一个就说明 rbac.go 改了堆名或加了新堆，门禁必须知道） */
 const GW_MATRICES = [
   'adminOnlyPatterns', 'staffOnlyPatterns', 'doctorAdminOnlyPatterns',
-  'techAdminOnlyPatterns', 'provisionKeyPatterns', 'publicPatterns',
+  'techAdminOnlyPatterns', 'provisionKeyPatterns', 'abnormalReportPatterns', 'publicPatterns',
 ] as const
 
 function stripGoComments(src: string): string {
@@ -141,6 +141,9 @@ function gatewayVerdict(gw: Gateway, roleId: string, method: string, path: strin
     return { deny: roleId !== 'technician', why: 'tech-or-admin 专属' }
   if (hits(gw, 'doctorAdminOnlyPatterns', method, path))
     return { deny: roleId !== ROLE_ID.doctor, why: 'doctor-or-admin 专属' }
+  // T425：异常报告两端点单立白名单（rbac.go abnormalReportRoles = admin/doctor/technician，客服已摘）
+  if (hits(gw, 'abnormalReportPatterns', method, path))
+    return { deny: !['ROLE_ADMIN', 'ROLE_DOCTOR', 'technician'].includes(roleId), why: 'abnormal-report 角色白名单' }
   if (hits(gw, 'staffOnlyPatterns', method, path))
     return { deny: !gw.staffRoles.has(roleId), why: 'staff-only' }
   if (hits(gw, 'adminOnlyPatterns', method, path)) return { deny: true, why: 'admin-only' }

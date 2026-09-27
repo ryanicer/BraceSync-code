@@ -196,10 +196,6 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/admin/patients"),
 	rbacOf(http.MethodGet, "/api/v1/admin/patients/:patientId"),
 	rbacOf(http.MethodGet, "/api/v1/admin/feeling-logs"), // T256 #2 跨患者感受日志流
-	// T300 患者异常报告汇总/CSV 导出（合同 §二 患者管理）：按患者 + 日期范围聚合，
-	// 且导出直出全字段明细（含处理备注），只允许后台 staff；患者走自己的 /alerts 列表。
-	rbacOf(http.MethodGet, "/api/v1/admin/abnormal-reports"),
-	rbacOf(http.MethodGet, "/api/v1/admin/abnormal-reports/export"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/kpi"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/wear-trend"),
 	rbacOf(http.MethodGet, "/api/v1/admin/dashboard/wear-distribution"),
@@ -249,6 +245,31 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/install-records"),
 	rbacOf(http.MethodGet, "/api/v1/install-records"),
 	rbacOf(http.MethodGet, "/api/v1/install-records/:id"),
+}
+
+// abnormalReportPatterns T300 患者异常报告汇总/CSV 导出（合同 §二 患者管理）+ T425 收口。
+//
+// 为什么单立一张矩阵而不留在 staffOnlyPatterns：Boss 09-27 拍 A（PRD §7D.11 权限矩阵第 4 行
+// 「异常报告」客服列为 —）——这两条是跨患者聚合 + 全字段明细（含处理备注），而客服域只有患者沟通。
+// 收口不落在 staffRoles 集合本身：那张集合还被 feedbacks / alerts / devices / dashboard 等
+// staffOnlyPatterns 里的端点共用，摘掉 roleCS 会连坐客服的正常业务（T421 工程线实测 13 条用例判红）。
+//
+// 患者走自己的 GET /api/v1/alerts 列表（publicPatterns，服务层强制 patientId=X-User-Id）。
+var abnormalReportPatterns = []rbacPattern{
+	rbacOf(http.MethodGet, "/api/v1/admin/abnormal-reports"),
+	rbacOf(http.MethodGet, "/api/v1/admin/abnormal-reports/export"),
+}
+
+// abnormalReportRoles 可读异常报告的角色白名单（T425 = staff 减客服）。
+//
+// 用 allow-list 而非「仅拒 ROLE_CS」：X-Role 缺失或将来新增角色默认 403，口径同 provisionKeyRoles。
+// technician 保留不在收口之列：卡面只点名客服，PRD 权限矩阵按三类登录角色列（技师无后台页），
+// 顺带收紧技师面属另评。
+var abnormalReportRoles = map[string]bool{roleAdmin: true, roleDoctor: true, roleTech: true}
+
+// matchAbnormalReportPattern 判断 method+path 是否命中异常报告两端点
+func matchAbnormalReportPattern(method, path string) bool {
+	return matchPatterns(method, path, abnormalReportPatterns)
 }
 
 // staffRoles 内部 staff 角色集合（患者端 patient-miniapp 全仓零 /admin/* 调用，故不含 rolePatient）
@@ -399,6 +420,15 @@ func roleAuthz() gin.HandlerFunc {
 				"forbidden: role not allowed for this endpoint")
 			return
 		}
+		// T425：异常报告汇总/导出——客服不得读（PRD 权限矩阵第 4 行列为 —），患者与未知角色同拒。
+		// 两条路径已从 staffOnlyPatterns 移出，与本分支不再重叠；放行见文件末尾「已登记」分支。
+		if matchAbnormalReportPattern(c.Request.Method, c.Request.URL.Path) && !abnormalReportRoles[role] {
+			log.Warn().Str("role", role).Str("method", c.Request.Method).
+				Str("path", c.Request.URL.Path).Msg("rbac denied: abnormal-report role not in allow-list")
+			abortJSON(c, http.StatusForbidden, http.StatusForbidden,
+				"forbidden: role not allowed for this endpoint")
+			return
+		}
 		// T190：后台管理域读端点（患者档案/全院聚合）——患者及未知角色 403，staff 放行
 		if matchStaffOnlyPattern(c.Request.Method, c.Request.URL.Path) && !isStaffRole(role) {
 			log.Warn().Str("role", role).Str("method", c.Request.Method).
@@ -423,6 +453,7 @@ func roleAuthz() gin.HandlerFunc {
 		if matchProvisionKeyPattern(c.Request.Method, c.Request.URL.Path) ||
 			matchTechAdminPattern(c.Request.Method, c.Request.URL.Path) ||
 			matchDoctorAdminPattern(c.Request.Method, c.Request.URL.Path) ||
+			matchAbnormalReportPattern(c.Request.Method, c.Request.URL.Path) ||
 			matchStaffOnlyPattern(c.Request.Method, c.Request.URL.Path) ||
 			matchRBACPattern(c.Request.Method, c.Request.URL.Path) {
 			c.Next()

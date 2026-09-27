@@ -41,17 +41,24 @@ func doReport(h *Handler, target string, role string) *httptest.ResponseRecorder
 
 // ── 鉴权与参数 ─────────────────────────────────────────────────
 
-// 跨患者聚合端点：患者 token 与匿名（X-Role 缺失）一律 403，且不触达存储
+// 跨患者聚合端点：患者 / 匿名（X-Role 缺失）/ 客服（T425）一律 403，且不触达存储；
+// admin / 医护 / 技师放行。
+//
+// T425（Boss 09-27 拍 A，PRD §7D.11 第 4 行「异常报告」客服列为 —）：放行循环里原本有 ROLE_CS，
+// 那条正是本卡要收的格；客服的其余端点（GET /alerts 等）不受影响，见 gateway 侧 T425 用例。
 func TestT300_SummaryStaffOnly(t *testing.T) {
 	for _, tc := range []struct{ name, role string }{
-		{"患者", "ROLE_PATIENT"}, {"匿名", ""},
+		{"患者", "ROLE_PATIENT"}, {"匿名", ""}, {"客服", "ROLE_CS"},
 	} {
-		store := &fakePublicStore{}
-		rec := doReport(newPublicHandler(store), t300SummaryPath+t300Query, tc.role)
-		assert.Equal(t, http.StatusForbidden, rec.Code, "%s 应 403", tc.name)
-		assert.Zero(t, store.sumHits, "%s 不得触达存储", tc.name)
+		for _, path := range []string{t300SummaryPath, t300ExportPath} {
+			store := &fakePublicStore{}
+			rec := doReport(newPublicHandler(store), path+t300Query, tc.role)
+			assert.Equal(t, http.StatusForbidden, rec.Code, "%s 打 %s 应 403", tc.name, path)
+			assert.Zero(t, store.sumHits, "%s 不得触达汇总存储", tc.name)
+			assert.Zero(t, store.exportHits, "%s 不得触达导出存储", tc.name)
+		}
 	}
-	for _, role := range []string{roleAdmin, "ROLE_DOCTOR", "ROLE_CS", "technician"} {
+	for _, role := range []string{roleAdmin, "ROLE_DOCTOR", "technician"} {
 		store := &fakePublicStore{}
 		rec := doReport(newPublicHandler(store), t300SummaryPath+t300Query, role)
 		assert.Equal(t, http.StatusOK, rec.Code, "role=%s 应放行", role)

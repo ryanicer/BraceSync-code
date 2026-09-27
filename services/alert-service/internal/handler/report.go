@@ -8,7 +8,8 @@
 // 口径（最小可用，卡内边界）：
 //   - 参数只有 patientId / start / end（北京日历日 YYYY-MM-DD，含端点），不做多维度筛选、不出图表；
 //   - 汇总与导出走同一 WHERE（repo.buildAlertWhere），两者数字必然同源；
-//   - staff 专属：跨患者聚合端点，患者 token 一律 403（网关 RBAC + 本层双闸，与 T264 同型）。
+//   - staff 专属：跨患者聚合端点，患者 token 一律 403（网关 RBAC + 本层双闸，与 T264 同型）；
+//     T425 起本层白名单再收一格——客服（ROLE_CS）也 403，与网关 abnormalReportRoles 同口径；
 package handler
 
 import (
@@ -75,6 +76,19 @@ type reportQuery struct {
 	end       string
 }
 
+// abnormalReportRoles 异常报告两端点的角色白名单（T425 = staff 减客服）。
+//
+// 为什么不改公用的 staffRoles 集合：public.go:180 的 GET /api/v1/alerts 也在用它，
+// 从集合里摘掉 ROLE_CS 会连坐客服的告警列表（卡面「按端点收口」正是为此）。
+// key 形状与 staffRoles 一致（含历史别名 "admin"），保证同一令牌在网关放行后不会在本层被漏拒。
+// allow-list 而非「仅拒 ROLE_CS」：X-Role 缺失或将来新增角色默认 403。
+var abnormalReportRoles = map[string]bool{
+	"admin":       true,
+	"ROLE_ADMIN":  true,
+	"ROLE_DOCTOR": true,
+	"technician":  true,
+}
+
 // parseReportQuery 解析并校验 T300 两个端点的公共查询参数。
 // 失败时已写好响应并返回 ok=false（不再触达存储）。
 //
@@ -86,7 +100,8 @@ func (h *Handler) parseReportQuery(w http.ResponseWriter, r *http.Request) (repo
 		return reportQuery{}, false
 	}
 	// T300 水平鉴权：跨患者聚合，患者 token 不得读（X-Role 缺失同样拒，fail-closed）
-	if !isStaffRole(r.Header.Get(headerRole)) {
+	// T425：客服同样不得读（PRD §7D.11 权限矩阵第 4 行「异常报告」客服列为 —，Boss 09-27 拍 A）
+	if !abnormalReportRoles[r.Header.Get(headerRole)] {
 		h.reject(w, codeForbidden, "abnormal report is staff-only")
 		return reportQuery{}, false
 	}
