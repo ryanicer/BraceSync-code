@@ -64,9 +64,14 @@ func likeArg(keyword string) string { return "%" + keyword + "%" }
 // 占位符序号一律按参数追加顺序推导 —— keyword 缺失时团队谓词占 $1，不得写死；
 // 两条列表（count 与 list）共用本函数，防止「总数一种口径、列表另一种口径」。
 //
+// teamCondFmt 由调用方按族传入（T403 乙案起两族形状不同，见 team_scope_t378.go 的常量对）：
+// 设备族传 deviceTeamCondFmt（与 DeviceInTeam 同一段文本），安装记录族传 installTeamCondFmt
+// （与 InstallInTeam 同一条 join 链）。列表与单资源探测共文，是「列表可见 ⇒ 详情可读」
+// 的构造性保证，不再靠两条 SQL 恰好同形。
+//
 // TeamScoped 且 TeamID 为空（无团队归属的医护）落 `false` 恒假谓词 → 空集 + 总数 0，
 // 绝不退化成「不过滤」。
-func listPredicates(kwFormat, keyword, teamAlias string, scope ListScope) (string, []any) {
+func listPredicates(kwFormat, keyword, teamCondFmt string, scope ListScope) (string, []any) {
 	var conds []string
 	var args []any
 	if keyword != "" {
@@ -78,7 +83,7 @@ func listPredicates(kwFormat, keyword, teamAlias string, scope ListScope) (strin
 			conds = append(conds, "false")
 		} else {
 			args = append(args, scope.TeamID)
-			conds = append(conds, fmt.Sprintf(`%s.team_id = $%d`, teamAlias, len(args)))
+			conds = append(conds, fmt.Sprintf(teamCondFmt, len(args)))
 		}
 	}
 	if len(conds) == 0 {
@@ -92,7 +97,7 @@ func (r *PGStore) ListDevices(ctx context.Context, keyword string, scope ListSco
 	base := `FROM devices d LEFT JOIN patients p ON p.patient_id = d.patient_id`
 	where, args := listPredicates(
 		`(d.device_id ILIKE $%[1]d OR d.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d)`,
-		keyword, "p", scope)
+		keyword, deviceTeamCondFmt, scope)
 	base += where
 
 	var total int64
@@ -133,7 +138,7 @@ func (r *PGStore) ListInstallRecords(ctx context.Context, keyword string, scope 
 	// install_records.patient_id 非空，故 p 缺失 = 患者行被删，等值不成立 → 一并排除（fail-closed）
 	where, args := listPredicates(
 		`(i.device_id ILIKE $%[1]d OR i.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d OR t.name ILIKE $%[1]d)`,
-		keyword, "p", scope)
+		keyword, installTeamCondFmt, scope)
 	base += where
 
 	var total int64
