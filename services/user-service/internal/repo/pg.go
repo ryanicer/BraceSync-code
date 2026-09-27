@@ -441,10 +441,24 @@ const teamPatientCountExpr = `(SELECT COUNT(*) FROM patients p WHERE p.team_id =
 // teamMemberCountExpr T385：团队「成员数」实时按 doctors.team_id / technicians.team_id 数，不再读 teams.member_count。
 // 该列与 patient_count 同族：全仓无应用写路径（CreateTeam 的 INSERT 不带它，UpdateTeam 只改 name/leader/description），
 // 现网读到的是建库初值 —— seed 自身即不自洽（三行写 3/2/2，同份 seed 挂团队的医生+技师只有 6 人）。
-// 谓词与本仓 DeleteTeam 的引用计数（医生数加技师数）、GET /teams/:teamId/members 的两条腿同源，
-// 使同一页面的「列表成员数 / 成员明细条数 / 删除守卫计数」三处不可能再互相打脸。
-const teamMemberCountExpr = `(SELECT COUNT(*) FROM doctors dm WHERE dm.team_id = t.team_id)` +
-	` + (SELECT COUNT(*) FROM technicians tc WHERE tc.team_id = t.team_id)`
+// 列表 / 详情 / 统计卡三处读点复用同一条表达式（T385 立的就是这条复用，见下面两个 select 常量）。
+// 当时连带写下「与成员明细两条腿、DeleteTeam 引用计数同源」—— 那句话到 T429 已不成立，
+// 收口后这三者数的是两个量，理由见下方 T429 段（不是把复用取消，而是把同源范围收窄到三处读点）。
+//
+// T429（Boss 09-27 17:3x 拍「禁用的不算总数」）：两条腿各加 status='enabled'，本表达式承载的是
+// 「在职成员数」这一个维度，列表 / 详情 / 统计卡三处读点因复用而同时改口，不存在半张页改半张页不改。
+// 同源关系按新口径重述（不是取消）：
+//   - 成员明细两条腿（ListDoctorsByTeam / ListTechniciansByTeam）**不看** status ⇒ 面板仍列禁用者，
+//     因为「编辑 / 移除」要能落到禁用行上；页面 teams/index.vue:96-102 本就有一列「状态」标签输出
+//     启用/禁用，所以「成员数 3 / 面板 4 行」在同一页是可解释的，不是 T385 修的那种两数打脸。
+//     新恒等式：成员数 == 明细里 status=enabled 的行数（集成用例钉住）。
+//   - DeleteTeam 的引用计数**不看** status ⇒ 禁用者仍占着 team_id 外键，若守卫跟着收口，
+//     一个只剩禁用成员的团队会被判「无引用」删掉，把人挂进悬空状态。守卫数的是「引用数」，
+//     与本表达式的「在职人数」是两个量，故意不同源。
+//
+// 患者数一列（teamPatientCountExpr）不在本次裁定范围内，一字未动。
+const teamMemberCountExpr = `(SELECT COUNT(*) FROM doctors dm WHERE dm.team_id = t.team_id AND dm.status = 'enabled')` +
+	` + (SELECT COUNT(*) FROM technicians tc WHERE tc.team_id = t.team_id AND tc.status = 'enabled')`
 
 // listTeamsSelect 团队列表查询。抽出成常量是为了让单测能直接盯住「成员数一列不许读维护列」
 // （同 teamDetailSelect）—— 集成层要 Docker，回归时未必跑得到。
@@ -460,8 +474,9 @@ ORDER BY t.team_id`
 // 修前这里是 SUM(teams.member_count) —— 一条没人维护的列的汇总，于是同页四张卡与列表/明细/删除守卫四处互相打脸
 // （Joe 现网：卡 6 对真实 7）。复用列表那一条表达式后「卡数等于各行之和」由构造保证，不靠两条 SQL 碰巧一致。
 // 另：doctors.team_id / technicians.team_id 都带 REFERENCES teams(team_id) 外键
-// （000001_init_schema.up.sql:44、:58），人挂不上不存在的团队，故求和与「全库已挂团队的人数」等价；
+// （000001_init_schema.up.sql:44、:58），人挂不上不存在的团队，故求和与「全库已挂团队的在职人数」等价；
 // 卡面第四节子口径 2 原设想的「直连 SQL 造孤儿」因此不成立，集成用例改钉这条恒等式。
+// T429 起「在职」二字是真的：被求和的那条表达式已排除禁用账号，所以这张卡与实际可登录人数同口径。
 const teamStatsSelect = `
 		SELECT
 			(SELECT COUNT(*) FROM teams) AS team_count,
@@ -1395,7 +1410,8 @@ func (s *PGStore) DeleteTeam(ctx context.Context, teamID string) error {
 	if !exists {
 		return ErrTeamNotFound
 	}
-	// 2. 统计引用计数（patients + doctors + technicians）
+	// 2. 统计引用计数（patients + doctors + technicians）。T429 裁定只收口「在职成员数」这一个展示维度，
+	//    这里刻意继续看全量：禁用医护的 team_id 外键照样存在，跟着收口会把「名下只剩禁用者」的团队判成可删。
 	var patientCount, doctorCount, techCount int
 	if err := s.pool.QueryRow(ctx,
 		`SELECT (SELECT COUNT(*) FROM patients WHERE team_id = $1),

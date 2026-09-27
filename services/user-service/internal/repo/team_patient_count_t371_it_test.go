@@ -122,12 +122,10 @@ func TestITT371TeamPatientCountIsRealtime(t *testing.T) {
 			`SELECT COUNT(*) FROM patients WHERE team_id = $1`, r.TeamID).Scan(&real))
 		assert.Equal(t, real, r.PatientCount, "团队 %s 列表患者数与实时计数不等", r.TeamID)
 
-		var realMembers int
-		require.NoError(t, pool.QueryRow(ctx,
-			`SELECT (SELECT COUNT(*) FROM doctors WHERE team_id = $1)
-			          + (SELECT COUNT(*) FROM technicians WHERE team_id = $1)`, r.TeamID).
-			Scan(&realMembers))
-		assert.Equal(t, realMembers, r.MemberCount, "团队 %s 列表成员数与实时计数不等（T385）", r.TeamID)
+		// 成员一列的事实源不在此重写：T429 起它是「在职」口径，直接复用 T385 那个 helper，
+		// 免得两处各自维护一份谓词（这里此前抄的是收口前的 status-blind 版本）。
+		assert.Equal(t, t385RealMembers(t, r.TeamID), r.MemberCount,
+			"团队 %s 列表成员数与实时在职计数不等（T385/T429）", r.TeamID)
 	}
 
 	// 3. 实时跟随：一名患者从甲团队改到乙团队，两个数当场互换

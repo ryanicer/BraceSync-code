@@ -30,9 +30,19 @@ func TestT385_MemberCountExprCountsBothStaffTablesByTeam(t *testing.T) {
 	assert.Contains(t, teamMemberCountExpr, "FROM technicians")
 	assert.Contains(t, teamMemberCountExpr, "team_id = t.team_id")
 	assert.NotContains(t, teamMemberCountExpr, "member_count", "表达式自身不许回读那张维护列")
-	// 卡面第四节子口径 1：禁用医护仍算成员（成员明细与删除守卫都不看状态）。
-	// 若将来改判「不算」，那是新增语义、要连带改明细与守卫，本断言会先把这一处拦下来。
-	assert.NotContains(t, teamMemberCountExpr, "status", "现状不看 status；改判属新增语义，须另立卡")
+	// T429（Boss 09-27 拍「禁用的不算总数」）：这条断言原来钉的是反方向
+	// （assert.NotContains "status"，注释写着「改判属新增语义，须另立卡」），卡就是那张卡，按裁决翻转。
+	// 两条腿**分开**钉：只给医生腿加过滤、技师腿漏掉，是这张页最容易重演的半改（半改=同一页两个数）。
+	assert.Contains(t, teamMemberCountExpr, "dm.status = 'enabled'",
+		"医生腿未排除禁用账号 ⇒ 列表/详情/统计卡三处仍会把禁用者算进成员数")
+	assert.Contains(t, teamMemberCountExpr, "tc.status = 'enabled'",
+		"技师腿未排除禁用账号 ⇒ 同上，且技师腿单独漏掉时统计卡与各团队行之和照样自洽，只有这条拦得住")
+	// 反向锁：禁用态收口只落在「在职成员数」这一个维度上。成员明细两条腿（pg.go:553 ListDoctorsByTeam
+	// 与 :613 ListTechniciansByTeam 复用的 doctorSelect / techFrom）与 DeleteTeam 引用计数
+	// 必须继续看全量（禁用者仍要能在面板里被编辑/移除，且仍占着 team_id 外键），谁顺手给它们也加
+	// status 过滤，就会把禁用成员变成删不掉的管理死角 —— 集成层用例 5/6 钉着这条。
+	assert.NotContains(t, doctorSelect, "status = 'enabled'", "成员明细（医生腿）不得跟着收口")
+	assert.NotContains(t, techFrom, "status = 'enabled'", "成员明细（技师腿）不得跟着收口")
 }
 
 func TestT385_StatsCardSumsThePerTeamExpr(t *testing.T) {
