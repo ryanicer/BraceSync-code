@@ -473,3 +473,122 @@ describe('医护账号 mock 写通道（设计稿 :294-297 系统生成口径）
     expect(rows.find((r) => r.doctorId === 'DOC-001')?.status).toBe('disabled')
   })
 })
+
+/**
+ * T388：职称词表的「输入面」行为门禁（来源 = Joe T360 工程验收新发现 N1）。
+ * 页面是 titleChoices = titleOptions(rows.value)（取未过滤的行，index.vue:200，注释在 :197）。
+ * 谁把它换成 titleOptions(list.value)，越界职称「副主任医师」就会在筛选后从下拉里消失：
+ * 运营选过一次它、再输一个不含该行的关键字，这个职称就把自己筛掉了，而库里那行还在。
+ * T360 当时 28 条 vitest + 2 条 mock Playwright 对这一改动全部判绿（意图只写在注释里、无断言），
+ * 上面那条「职称下拉含库内既有值」只在未筛选状态下比集合，抓不到 —— 本块补的就是这一格。
+ * 夹具前提：副主任医师行 = DOC-002 陈小芳（TEAM-002）/ DOC-005 赵敏（TEAM-005），
+ * 关键字「张建国」只命中 DOC-001，团队「脊柱侧弯一组」= TEAM-001，两者都能把越界行筛空。
+ */
+describe('医护账号页 职称词表不随筛选自删（T360 N1 / T388）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    __resetMedicalAccountsForTest()
+    document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    document.body.innerHTML = ''
+  })
+
+  function titleSelect(wrapper: VueWrapper) {
+    return wrapper.findAll('.filter-select')[1]
+  }
+
+  /**
+   * 读筛选下拉当前的职称集合（剥掉「全部职称」哨兵项），读完收起面板。
+   * 不按 dropdownItems() 那样要求「展开中的面板恰 1 个」：选完团队之后团队那只面板仍留在
+   * aria-hidden="false"（实测 2 个），所以按「含职称哨兵项的那一个」定位，
+   * 并显式判它只有一个 —— 全局查 .el-select-dropdown__item 会把团队下拉的选项混进词表。
+   */
+  async function titleSet(wrapper: VueWrapper): Promise<string[]> {
+    openDropdown(titleSelect(wrapper).element)
+    await flushAll()
+    const pops = openedPoppers().filter((p) =>
+      [...p.querySelectorAll<HTMLElement>('.el-select-dropdown__item')].some((li) => (li.textContent ?? '').trim() === '全部职称'))
+    if (pops.length !== 1) throw new Error(`含「全部职称」哨兵项的展开面板应恰 1 个，实到 ${pops.length} 个`)
+    const items = [...pops[0].querySelectorAll<HTMLElement>('.el-select-dropdown__item')]
+      .map((li) => (li.textContent ?? '').trim())
+      .filter((t) => t !== '全部职称')
+    openDropdown(titleSelect(wrapper).element)
+    await flushAll()
+    return items
+  }
+
+  it('关键字筛掉越界行后，职称下拉仍含「副主任医师」且与未筛选时逐字相等', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    expect(await titleSet(wrapper)).toEqual(TITLE_UNION)
+    await wrapper.find('.search-input input').setValue('张建国')
+    await flushAll()
+    // 前提自证：列表确实被筛成 1 行（否则「词表没变」可能只是筛选没生效的假绿）
+    expect(wrapper.find('.count-hint').text()).toBe('共 1 个账号（启用 1 / 禁用 0）')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    const after = await titleSet(wrapper)
+    expect(after).toContain('副主任医师')
+    expect(after).toEqual(TITLE_UNION)
+    wrapper.unmount()
+  })
+
+  it('先选「副主任医师」再输关键字把结果筛成 0 行时，词表不能把自己筛掉', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    openDropdown(titleSelect(wrapper).element)
+    await flushAll()
+    pickDropdownItem('副主任医师')
+    await flushAll()
+    expect(wrapper.findAll('tbody tr')).toHaveLength(2)
+    await wrapper.find('.search-input input').setValue('张建国')
+    await flushAll()
+    expect(wrapper.findAll('tbody tr')).toHaveLength(0)
+    expect(wrapper.find('.el-table__empty-text').text()).toBe('无匹配的医护账号')
+    expect(await titleSet(wrapper)).toContain('副主任医师')
+    wrapper.unmount()
+  })
+
+  it('团队维度筛掉越界行同样不自删（换源到 list 时此条必红）', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    openDropdown(wrapper.findAll('.filter-select')[0].element)
+    await flushAll()
+    pickDropdownItem('脊柱侧弯一组')
+    await flushAll()
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows.every((r) => !r.text().includes('副主任医师'))).toBe(true)
+    expect(rows.length).toBeGreaterThan(0)
+    expect(await titleSet(wrapper)).toEqual(TITLE_UNION)
+    wrapper.unmount()
+  })
+
+  it('清空关键字后职称下拉回到初始集合（可逆，不残留筛选态）', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    const base = await titleSet(wrapper)
+    await wrapper.find('.search-input input').setValue('赵敏')
+    await flushAll()
+    await titleSet(wrapper)
+    await wrapper.find('.search-input input').setValue('')
+    await flushAll()
+    expect(await titleSet(wrapper)).toEqual(base)
+    wrapper.unmount()
+  })
+
+  it('列表已被筛掉越界行时，编辑弹窗内的职称下拉仍与筛选侧同源', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    await wrapper.find('.search-input input').setValue('张建国')
+    await flushAll()
+    clickByText(wrapper.findAll('tbody tr')[0].element, '编辑')
+    await flushAll()
+    const dlg = dialogIn(wrapper.element)
+    openDropdown(formItem(dlg, '职称'))
+    await flushAll()
+    expect(dropdownItems()).toEqual(TITLE_UNION)
+    wrapper.unmount()
+  })
+})
