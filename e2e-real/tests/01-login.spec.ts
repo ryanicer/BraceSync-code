@@ -20,13 +20,16 @@ import { requireDeployedBuild } from '../deploy-guard'
  * T279 补：1.5 = 验收卡 A-FLOW-03 步骤 4「空用户名前端拦截」（docs/tests/acceptance/admin/核心流程.md:68）。
  *          mock 侧结构上验不了（登录页只有角色下拉，没有用户名框），故只能在真实模式补。
  * T336 补：1.7 / 1.8 = 挂载点深链与刷新（前端 base 改 /admin/ 后的行为，带部署守卫）。
+ * T419 补：1.9 = 登录页品牌名收口为「矫治通」（1.1 只验标题非空，新旧包都成立，
+ *          品牌字符串本身交给带守卫的 1.9，免得换包前把整条 1.1 的结构检查一起跳掉）。
  */
 test.describe('01-登录模块', () => {
 
   test.describe('登录页渲染', () => {
     test('1.1 显示标题 / 用户名框 / 密码框 / 登录按钮', async ({ page }) => {
       await page.goto(realRoutes.login)
-      await expect(page.locator('.login-title')).toContainText('矫智通运营平台')
+      // 标题只验「有字」——品牌字符串的正误判据在 1.9（带部署守卫），旧包不该被这条卡住
+      await expect(page.locator('.login-title')).not.toBeEmpty()
       // 用户名（非 password input）
       await expect(page.locator('.login-form input:not([type="password"])').first()).toBeVisible()
       // 密码
@@ -35,6 +38,19 @@ test.describe('01-登录模块', () => {
       await expect(
         page.locator('.login-form').getByRole('button', { name: '登 录' }),
       ).toBeVisible()
+    })
+
+    test('1.9 登录页品牌名 = 「矫治通运营平台」（T419 L-1，带部署守卫）', async ({ page }) => {
+      await page.goto(realRoutes.login)
+      await requireDeployedBuild(page, {
+        marker: 'T419-brand-name',
+        why: '改名只动前端可见字符串，staging 换包前页面必然还是旧品牌',
+        probe: async (p) =>
+          (await p.locator('.login-title').filter({ hasText: '矫治通运营平台' }).count()) > 0,
+      })
+      await expect(page.locator('.login-title')).toContainText('矫治通运营平台')
+      await expect(page.locator('.login-title')).not.toContainText('矫智通')
+      await expect(page).toHaveTitle(/矫治通/)
     })
   })
 

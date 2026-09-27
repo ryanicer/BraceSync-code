@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { realLogin, gotoMenu, adminMessage, getAuthToken } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /*
  * T279 - 08 系统配置（真实模式）
@@ -20,6 +21,10 @@ import { realLogin, gotoMenu, adminMessage, getAuthToken } from '../real-helpers
  *   PM 裁定（T279 卡内 2026-09-21 13:00）：采纳「条件跳过 + 登记缺陷」，确认是真缺陷，
  *   已另立 **T281 [Winner]** 用新迁移把 threshold_pressure_low 10 改为 1。
  *   ⇒ 本用例 **阻塞于 T281**：T281 合并并部署到 staging 后即自动恢复真跑。
+ *
+ * T419 补：字段 label 随可见层术语收口而改（佩戴中断→设备离线、传感器漂移→传感器标定异常），
+ *   并且「压力波动幅度阈值」一项已从表单下线 ⇒ 8.1 的 label 集合只能在 staging 换上对应构建后才成立，
+ *   故整条 8.1 挂 T419-settings-labels 部署守卫（缺标记 ⇒ 显式 post-deploy 跳过；定时/手动 strict 阶段 ⇒ 判红）。
  */
 
 const SETTINGS_API = '/api/v1/admin/settings'
@@ -79,9 +84,11 @@ const FORM_FIELDS: { label: string; key: keyof Settings }[] = [
   { label: '数据保留天数', key: 'retentionDays' },
   { label: '最大患者数', key: 'maxPatients' },
   { label: '每日佩戴目标时长（h）', key: 'dailyWearTargetHours' },
-  { label: '压力波动幅度阈值（%）', key: 'pressureFluctuationPct' },
-  { label: '佩戴中断判定时间（分钟）', key: 'wearInterruptMinutes' },
-  { label: '传感器漂移告警阈值（N）', key: 'sensorDriftN' },
+  // T419 S-6：「压力波动幅度阈值」表单项已按已停用口径下线 ⇒ 这里不能再按 label 取它。
+  // 该键的载荷回显（GET 现值原样 PUT 回去）由 apps/admin-web/test/settings-visible-terms.spec.ts 守，
+  // 缺键会被后端按 [1,100] 判 400，所以下线只能停在 UI 层。
+  { label: '设备离线判定时间（分钟）', key: 'wearInterruptMinutes' },
+  { label: '传感器标定异常告警阈值（N）', key: 'sensorDriftN' },
 ]
 
 /** 压力阈值配置卡（T289 12.4 三档；label 也随拆卡改名：压力偏高阈值（N）→ 偏高上限（N）） */
@@ -97,6 +104,16 @@ test.describe('08-系统配置（真实模式）', () => {
   })
 
   test('8.1 表单回显逐字段 == GET /admin/settings（库→接口→页面链路）', async ({ page }) => {
+    await requireDeployedBuild(page, {
+      marker: 'T419-settings-labels',
+      why: '本条按收口后的 label 取字段（含「压力波动幅度阈值」已从表单下线），旧包结构对不上',
+      probe: async (p) =>
+        (await p
+          .locator('.settings-form .el-form-item')
+          .filter({ hasText: '设备离线判定时间（分钟）' })
+          .count()) > 0,
+    })
+
     const api = await readSettings(page)
 
     // 逐字段比对（不是「页面有数字」这种弱断言）
