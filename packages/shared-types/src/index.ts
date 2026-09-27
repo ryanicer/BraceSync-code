@@ -89,7 +89,7 @@ export interface Device {
 export interface Team {
   teamId: string;
   name: string;
-  memberCount: number;         // T385 口径：本团队成员数（按 doctors.team_id / technicians.team_id 实时计数，非 teams.member_count 维护列）
+  memberCount: number;         // T385 口径：本团队成员数（按 doctors.team_id / technicians.team_id 实时计数，非 teams.member_count 维护列）；T429 起只数 status=enabled 的在职成员
   patientCount: number;          // T371 口径：本团队患者数（按 patients.team_id 实时计数，非 teams.patient_count 快照列）
   /** T059 团队管理写功能（GET /teams 扩展返回，可选字段对齐既有读路径） */
   leader?: string | null;         // 负责人 doctorId
@@ -112,7 +112,7 @@ export interface TeamDetail extends Team {
  *  字段名对齐后端 model.TeamStatsDTO 的 json tag（services/user-service/internal/model/model.go，TeamStatsDTO 定义处） */
 export interface TeamStats {
   teamCount: number;        // 团队总数
-  memberCount: number;      // 成员总数（医生 + 技师，T385 口径：按 team_id 实时计数后按团队求和，非 teams.member_count 汇总）
+  memberCount: number;      // 成员总数（医生 + 技师，T385 口径：按 team_id 实时计数后按团队求和，非 teams.member_count 汇总；T429 口径：禁用账号不计入）
   managedPatientCount: number;    // 管理患者数（已分配团队的患者）
   unassignedPatientCount: number; // 待分配患者数（未分配团队）
 }

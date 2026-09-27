@@ -172,7 +172,7 @@ type PatientProfileUpdate struct {
 type TeamRow struct {
 	TeamID       string
 	Name         string
-	MemberCount  int    // T385：teamMemberCountExpr 实时数（医生+技师挂本团队），非 teams.member_count 维护列
+	MemberCount  int    // T385：teamMemberCountExpr 实时数（挂本团队的医生+技师），非 teams.member_count 维护列；T429 起只数 status=enabled
 	PatientCount int    // T371-B1：teamPatientCountExpr 实时数，非 teams.patient_count 快照列
 	Leader       string // 负责人 doctor_id，无负责人为空串（T333）
 	LeaderName   string // 负责人姓名（join doctors.name），无负责人为空串（T333）
