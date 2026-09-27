@@ -39,10 +39,11 @@ type t399Action struct {
 	action string
 }
 
-// t399ExpectedActions 七条收口写端点的动作名。
+// t399ExpectedActions 设备域收口写端点的动作名（T387 七条 + T404 注册 = 八条）。
 // 增删一条 = 设备域收口面变了，必须同时改 t389GatedWrites 与 api-contracts.ts。
 func t399ExpectedActions() []t399Action {
 	return []t399Action{
+		{"register", "RegisterDevice", "register a device"},
 		{"bind", "Bind", "bind a device"},
 		{"rebind", "Rebind", "rebind a device"},
 		{"unbind", "Unbind", "unbind a device"},
@@ -66,7 +67,7 @@ func t399EndpointByName(t *testing.T, epName string) t387Ep {
 
 // ── 1. 逐端点：403 文案里的动作名必须是这条端点自己的动作 ──────────────
 
-// TestT399_DenyMessageNamesTheEndpointItWasHitOn 用 ROLE_DOCTOR 逐条打七条写端点，
+// TestT399_DenyMessageNamesTheEndpointItWasHitOn 用 ROLE_DOCTOR 逐条打收口的八条写端点，
 // 按整串相等判定（不是 Contains）：换成别端点的动作名、改措辞、加后缀，都判红。
 func TestT399_DenyMessageNamesTheEndpointItWasHitOn(t *testing.T) {
 	want := fmt.Sprintf("role %q may not %%s", roleDoctor)
@@ -101,7 +102,7 @@ func TestT399_ActionNamesArePairwiseDistinct(t *testing.T) {
 		}
 		seen[a.action] = a.epName
 	}
-	assert.Len(t, acts, 7, "设备域收口面是七条写端点，本表条数须与之相等")
+	assert.Len(t, acts, 8, "设备域收口面是八条写端点（T387 七条 + T404 注册），本表条数须与之相等")
 }
 
 // ── 3. 三张表互相对齐：动作名表 / 越权现场表 / 路由守卫表不许各说各话 ──
@@ -111,7 +112,7 @@ func TestT399_ActionTableCoversExactlyTheGatedRoutes(t *testing.T) {
 	for _, g := range t389GatedWrites {
 		gated[g.epName] = true
 	}
-	require.Len(t, t389GatedWrites, 7, "已收口路由表条数漂移，先回看 T389 N3")
+	require.Len(t, t389GatedWrites, 8, "已收口路由表条数漂移（T404 后是八条），先回看 T389 N3")
 
 	acts := t399ExpectedActions()
 	require.Len(t, acts, len(t389GatedWrites), "动作名表与已收口路由表条数不一致")

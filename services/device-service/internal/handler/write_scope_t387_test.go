@@ -4,8 +4,11 @@
 // 写端点在服务层零判定，而网关 staffOnlyPatterns 把医护与客服一并放行 ⇒ 医护令牌能把设备
 // 绑到任意患者名下（含他团队患者）、改写他人安装备注与签名、覆盖校准基线。
 //
+// T404 在本族补第八条：POST /api/v1/devices 设备注册。判定序、放行面与拒绝形状与这七条逐字同形，
+// 于是下面判据一、二里的条数按八条计（注册那条的脏数据面是「任意 deviceId 无归属幂等入库」）。
+//
 // 本文件守四件事（卡面判据二、三）：
-//  1. 医护 / 客服 / 患者 / 身份缺失 / 未知角色 → 403，且七条端点的写仓储与读探测计数增量均为 0
+//  1. 医护 / 客服 / 患者 / 身份缺失 / 未知角色 → 403，且八条端点的写仓储与读探测计数增量均为 0
 //     （判定排在 JSON 解析与任何仓储访问之前）；
 //  2. 反证：技师与运营管理员对同一组端点照常 200，各自的目标写方法恰好落库一次；
 //  3. 拒绝形状与「资源根本不存在」逐字同形 ⇒ deviceId / installId 存在性不作为探测面；
@@ -47,7 +50,7 @@ const (
 )
 
 // t387DefaultRole 给**既有用例**的共享请求夹具补默认身份：仅当这条请求打在本卡新收口的
-// 七条写端点上、且调用方没显式给 X-Role 时，按技师代发。
+// 写端点上（T387 七条 + T404 第八条注册）、且调用方没显式给 X-Role 时，按技师代发。
 //
 // 为什么按路径判定而不是无条件补：handler_http_test / install_*_test / t299 / t356 里的
 // 夹具测的是技师安装流程的业务行为（操作人一律 TECH-*），期望值不该因本卡逐条改写；
@@ -67,11 +70,12 @@ func t387DefaultRole(method, path string, headers map[string]string) map[string]
 	return out
 }
 
-// t387GatedWritePath 与 write_scope_t387.go 的七条挂载点一一对应（GET 安装记录/设备详情不在其列）
+// t387GatedWritePath 与 write_scope_t387.go 的八条挂载点一一对应（GET 安装记录/设备详情不在其列）。
+// 第八条是 T404 补的 POST /api/v1/devices 注册：它不带 /:deviceId 前缀，只能按整串精确匹配。
 func t387GatedWritePath(method, path string) bool {
 	switch method {
 	case http.MethodPost:
-		if path == "/api/v1/install-records" || path == "/api/v1/baselines" {
+		if path == "/api/v1/devices" || path == "/api/v1/install-records" || path == "/api/v1/baselines" {
 			return true
 		}
 		if !strings.HasPrefix(path, "/api/v1/devices/") {
@@ -88,7 +92,7 @@ func t387GatedWritePath(method, path string) bool {
 	return false
 }
 
-// t387Store 计数壳：包住 testutil.FakeStore，记录七条写方法与三条只读探测的调用次数。
+// t387Store 计数壳：包住 testutil.FakeStore，记录八条写方法与三条只读探测的调用次数。
 // 拒绝路径的硬判据就是这张计数表增量全 0 —— 返回 403 但已经落过库，等于没拦。
 type t387Store struct {
 	*testutil.FakeStore
@@ -147,6 +151,11 @@ func (c t387Counters) readDelta(now t387Counters) map[string]int {
 		}
 	}
 	return out
+}
+
+func (s *t387Store) RegisterDevice(ctx context.Context, d *model.Device) (bool, error) {
+	s.writes["RegisterDevice"]++
+	return s.FakeStore.RegisterDevice(ctx, d)
 }
 
 func (s *t387Store) Bind(ctx context.Context, p repo.BindParams) (*repo.BindOutcome, error) {
@@ -290,8 +299,8 @@ func t387Install(t *testing.T, st *t387Store, deviceID string) int64 {
 	return id
 }
 
-// t387Endpoints 卡面点名的七条写端点。absent=true 时把路径里的资源号换成不存在的号，
-// 供「拒绝形状与查无同形」那条判据复用同一张表。
+// t387Endpoints 设备域收口的写端点：T387 七条 + T404 注册（第八条）。absent=true 时把资源号换成
+// 不存在的号（注册那条的资源号在 body 里，不在路径上），供「拒绝形状与查无同形」那条判据复用同一张表。
 func t387Endpoints() []t387Ep {
 	dev := func(absent bool) string {
 		if absent {
@@ -306,6 +315,17 @@ func t387Endpoints() []t387Ep {
 		return "/api/v1/install-records/" + strconv.FormatInt(id, 10)
 	}
 	return []t387Ep{
+		{
+			name: "register", method: http.MethodPost, write: "RegisterDevice",
+			prepare: func(t *testing.T, st *t387Store, absent bool) (string, any) {
+				d := dev(absent)
+				if !absent {
+					// 已入库的设备：再注册一次是幂等返回既有记录，写计数照旧 +1
+					t387Register(t, st, d)
+				}
+				return "/api/v1/devices", map[string]string{"deviceId": d}
+			},
+		},
 		{
 			name: "bind", method: http.MethodPost, write: "Bind",
 			prepare: func(t *testing.T, st *t387Store, absent bool) (string, any) {
@@ -485,6 +505,7 @@ func foldT387IDs(msg string) string {
 // 那等于让医护用「400 / 403 谁先来」探端点差异。
 func TestT387_DenyPrecedesBodyParsing(t *testing.T) {
 	cases := []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/devices"},
 		{http.MethodPost, "/api/v1/devices/" + t387Device + "/bind"},
 		{http.MethodPost, "/api/v1/devices/" + t387Device + "/wifi"},
 		{http.MethodPost, "/api/v1/install-records"},
