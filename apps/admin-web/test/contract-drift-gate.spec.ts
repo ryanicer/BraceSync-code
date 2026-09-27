@@ -291,7 +291,9 @@ describe('T269 真实模式契约守卫', () => {
       ok: false,
       status: 403,
       headers: { get: () => null },
-      json: async () => ({ code: 403, message: 'abnormal report is staff-only', data: null }),
+      // code 取 40403 是 T402 甲-1 之后告警域越权响应体的实际形状（旧值裸 403）。
+      // 本用例断言的是「透出后端文案」，不读这一格，改它只为让夹具与后端报文形状对齐。
+      json: async () => ({ code: 40403, message: 'abnormal report is staff-only', data: null }),
     })
     await expect(exportAbnormalReportApi({ patientId: 'P00001', start: '2026-09-01', end: '2026-09-03' }))
       .rejects.toThrow('abnormal report is staff-only')

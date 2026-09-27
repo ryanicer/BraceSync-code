@@ -12,11 +12,13 @@
 //     写成设备域写端点的响应契约，故这里把码钉成字面量 —— 改常量必红。
 //
 // 只钉设备域这一条（PM 09-25 口径）：
-//   - user-service 的越权码是 10403、file-service 是 60003，本卡不动它们；
+//   - user-service 的越权码是 10403、file-service 是 60403（原为 60003，T402 甲-1 于 09-27 收为
+//     「域号 6 + 0 + HTTP 三位」），本卡不动它们；
 //   - 同数字不同契约：data-service 的 CodeDeviceIDMismatch 也是 20403，但它的 HTTP 状态是
 //     400、语义是「上报 deviceId 与路径不一致」（见 services/data-service/internal/model/model.go）。
 //     故这里锁的是「device-service 的 403 越权响应体」，不是「20403 全仓唯一」这件事；
-//     两域各自锁各自的码，谁将来想做跨服务统一码表，得先改掉 data-service 那一格。
+//     两域各自锁各自的码，谁将来想做跨服务统一码表，得先改掉 data-service 那一格
+//     （T402 丙-1 已立项改它，但按 Boss 09-27 裁定缓动，等硬件侧只读确认，故本句仍成立）。
 package handler
 
 import (

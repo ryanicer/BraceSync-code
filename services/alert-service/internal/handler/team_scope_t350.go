@@ -27,12 +27,12 @@ func (h *Handler) applyDoctorTeamScope(w http.ResponseWriter, r *http.Request, f
 	}
 	adminID := r.Header.Get(headerUserID)
 	if adminID == "" {
-		h.reject(w, codeForbidden, "missing user identity")
+		h.reject(w, http.StatusForbidden, codeForbidden, "missing user identity")
 		return false
 	}
 	teamID, _, err := h.public.DoctorTeamByAdmin(r.Context(), adminID)
 	if err != nil {
-		h.reject(w, codeInternalError, "resolve doctor team failed")
+		h.reject(w, http.StatusInternalServerError, codeInternalError, "resolve doctor team failed")
 		return false
 	}
 	f.TeamScoped = true
