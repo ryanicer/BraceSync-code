@@ -5,6 +5,7 @@
   "versionName": "1.0.0",
   "versionCode": "100",
   "transformPx": false,
+  "uniStatistics": { "enable": false },
   "app-plus": {},
   "h5": {
     "title": "矫治通 · 技师端",
