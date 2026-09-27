@@ -4,10 +4,9 @@
 // 两侧都是符号 ⇒ 把 30403 改回裸 HTTP 的 403、或改成别的值，用例跟着常量走，逐格仍绿。
 // 形状照 device-service 的 code_lock_t389_test.go 先例（常量层 + 线上报文层各锁一次）。
 //
-// 本域另有一格未收口（属 T402 丙-1，缓动）：CodeDeviceIDMismatch = 20403 与设备域撞值。
-// 它的 HTTP 状态是 400、语义是「上报 deviceId 与路径不一致」，Boss 22:07 裁定要先由
-// Andy 或硬件方只读确认设备直连通道有无按 20403 数字含义分支，确认前不动它。
-// 本文件不锁那一格，只锁 CodeForbidden。
+// 本域另一格（原取 20403、与设备域 CodeForbidden 撞值，即 T402 丙-1）已由 T437 收口：
+// CodeDeviceIDMismatch 现为本域形状的 30400，那一格由 code_lock_t437_test.go 锁（含跨服务
+// 码位唯一性扫描），本文件仍只锁 CodeForbidden。
 package handler
 
 import (

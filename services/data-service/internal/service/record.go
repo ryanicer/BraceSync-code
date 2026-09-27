@@ -628,7 +628,7 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 // ─────────────────────────────────────────────────────────────
 
 // resolveDeviceID 身份解析：gateway 注入的 X-Device-Id 优先（验签归 gateway）；
-// 头与体同时存在且不一致 → 20403；均缺失 → 20400。
+// 头与体同时存在且不一致 → 30400；均缺失 → 20400。
 // gateway 设备验签未上线前允许仅用 body device_id 联调（缺口已在自报标注）。
 func resolveDeviceID(headerID, bodyID string) (string, *model.AppError) {
 	if headerID != "" {

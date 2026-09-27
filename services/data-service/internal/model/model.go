@@ -66,10 +66,13 @@ func CSTZone() *time.Location { return cstZone }
 // ─────────────────────────────────────────────────────────────
 
 const (
-	CodeOK               = 0
-	CodeInvalidParam     = 20400 // 参数非法（含 points 长度 != 20、批量 >100 帧）
-	CodeBadTimestamp     = 20402 // timestamp 超出合法区间（含补传 >7 天时间窗）
-	CodeDeviceIDMismatch = 20403 // X-Device-Id 头与请求体 device_id 不一致
+	CodeOK           = 0
+	CodeInvalidParam = 20400 // 参数非法（含 points 长度 != 20、批量 >100 帧）
+	CodeBadTimestamp = 20402 // timestamp 超出合法区间（含补传 >7 天时间窗）
+	// CodeDeviceIDMismatch 原为 20403，与 device-service 的 CodeForbidden 撞值（同数字不同契约：
+	// 那边 HTTP 403 越权、这边 HTTP 400 上报身份不一致）。T437 按 T402 甲-1 形状收为本域
+	// 「域号 3 + 0 + HTTP 状态三位」，20403 此后仅设备域持有（见 code_lock_t437_test.go 的跨服务扫描）。
+	CodeDeviceIDMismatch = 30400 // X-Device-Id 头与请求体 device_id 不一致
 	CodeDeviceNotFound   = 20404 // device_id 未注册
 	CodeDeviceUnbound    = 20409 // 设备未绑定患者
 	CodeRateLimited      = 20429 // 限流（设备按 Retry-After 退避）
@@ -77,8 +80,7 @@ const (
 	CodeQueryParam       = 30001 // 数据域：查询参数非法
 	// CodeForbidden 按 T402 甲-1 收为「域号 3 + 0 + HTTP 状态三位 403」。旧值是裸 HTTP 状态数字
 	// 403，与 user 10403 / device 20403 / msg 50403 的形状不一致（那三域早按本规则取值）。
-	// 本域另有 CodeDeviceIDMismatch = 20403 与 device 域撞值一事属 T402 丙-1，缓动等硬件侧
-	// 只读确认，故本卡未改它 —— 别把这条当已收口。
+	// 本域与设备域撞值的另一格 CodeDeviceIDMismatch 已由 T437 一并收为 30400，两域不再共用 20403。
 	CodeForbidden = 30403 // 越权访问（水平越权 / 无数据权限），HTTP 403
 	CodeInternal  = 90001 // 系统内部错误
 )
