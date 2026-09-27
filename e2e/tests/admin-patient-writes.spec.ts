@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
@@ -156,5 +156,136 @@ test.describe('批量分配', () => {
     // 写通道真落库：列表行的绑定团队列取到新团队，而不是只弹个提示
     const listRow = tableRows(page, page.locator('.patient-list-card')).filter({ hasText: '王小红' })
     await expect(listRow).toContainText('术后康复治疗组')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────
+// T432 档案写三入口：编辑档案 / 改手机号 / 解绑微信
+//
+// 为什么这三条要落在 Playwright 而不是 vitest：admin-web 的 vitest 环境是 happy-dom，
+// EP 2.14.4 的 FormItem.validate 在该环境下以 undefined 作 rejection 值（实测 validateState
+// 停在 is-validating），Form 侧收集到的 validationErrors 为空 ⇒ validateField 对非法值返回 true，
+// 「不过校验就不发请求」这一格在 jsdom 类环境里量不出来（同环境直跑 async-validator 是正常的）。
+// 真实浏览器里 EP 的规则渲染与拦截都成立，正是本文件 姓名/手机号 必填两格一直在绿的东西。
+// ─────────────────────────────────────────────────────────────
+
+/** 打开林小雨（PT-001）详情抽屉 */
+async function openDetail(page: Page, name = '林小雨') {
+  await tableRows(page).filter({ hasText: name }).click()
+  const drawer = page.locator('.el-drawer')
+  await expect(drawer).toBeVisible()
+  return drawer
+}
+
+test.describe('编辑档案', () => {
+  test('详情抽屉给出三个新入口', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await expect(drawer.getByRole('button', { name: '编辑档案' })).toBeVisible()
+    await expect(drawer.getByRole('button', { name: '改手机号' })).toBeVisible()
+    await expect(drawer.getByRole('button', { name: '解绑微信' })).toBeVisible()
+  })
+
+  test('改诊断保存后列表行取到新值（真落库，不是只弹提示）', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '编辑档案' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '编辑档案' })
+    await expect(dialog).toBeVisible()
+    // 打开时按当前档案预填
+    await expect(dialog.locator('input[placeholder="请输入诊断"]')).toHaveValue('青少年特发性脊柱侧弯')
+    await dialog.locator('input[placeholder="请输入诊断"]').fill('姿势性脊柱侧弯E2E')
+    await dialog.getByRole('button', { name: '保存' }).click()
+    await expect(adminMessage(page)).toContainText('档案已保存')
+    await expect(tableRows(page).filter({ hasText: '林小雨' })).toContainText('姿势性脊柱侧弯E2E')
+  })
+
+  test('一个字都没改 ⇒ 保存置灰（空编辑后端判 400，不该发出去）', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '编辑档案' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '编辑档案' })
+    const save = dialog.getByRole('button', { name: '保存' })
+    await expect(save).toBeDisabled()
+  })
+
+  test('清空姓名拦在提交前：档案编辑没有「置为空」通道', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '编辑档案' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '编辑档案' })
+    await dialog.locator('input[placeholder="请输入姓名"]').fill('')
+    await expect(dialog.locator('.form-error')).toContainText('姓名不可清空')
+    await expect(dialog.getByRole('button', { name: '保存' })).toBeDisabled()
+  })
+
+  test('Cobb 角越界（后端值域 0-180）拦在提交前', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '编辑档案' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '编辑档案' })
+    await dialog.locator('input[placeholder="请输入Cobb角"]').fill('200')
+    await expect(dialog.locator('.form-error')).toContainText('Cobb角需为 0-180 之间的数字')
+    await expect(dialog.getByRole('button', { name: '保存' })).toBeDisabled()
+  })
+})
+
+test.describe('改手机号', () => {
+  test('输入框不预填（读侧 phone 恒空，预填＝把空值伪装成原号）', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '改手机号' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '修改手机号' })
+    await expect(dialog.locator('input[placeholder="请输入11位新手机号"]')).toHaveValue('')
+    await expect(dialog).toContainText('原因随请求写入服务端审计日志')
+  })
+
+  test('号码格式错 ⇒ Element Plus 规则文案 + 弹窗不关（不发出请求）', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '改手机号' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '修改手机号' })
+    await dialog.locator('input[placeholder="请输入11位新手机号"]').fill('139000011')
+    await dialog.locator('textarea[placeholder="例如：患者换号，本人来电申请"]').fill('患者换号')
+    await dialog.getByRole('button', { name: '确定' }).click()
+    await expect(dialog.locator('.el-form-item__error')).toContainText('手机号需为 11 位、以 1 开头的数字')
+    await expect(dialog).toBeVisible()
+  })
+
+  test('不填原因 ⇒ 拦下（后端不校验 reason，但没理由的改号无从追责）', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '改手机号' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '修改手机号' })
+    await dialog.locator('input[placeholder="请输入11位新手机号"]').fill('13900001234')
+    await dialog.getByRole('button', { name: '确定' }).click()
+    await expect(dialog.locator('.el-form-item__error')).toContainText('请填写变更原因')
+    await expect(dialog).toBeVisible()
+  })
+
+  test('号码 + 原因齐 ⇒ 提交成功', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '改手机号' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '修改手机号' })
+    await dialog.locator('input[placeholder="请输入11位新手机号"]').fill('13900001234')
+    await dialog.locator('textarea[placeholder="例如：患者换号，本人来电申请"]').fill('本人来电换号')
+    await dialog.getByRole('button', { name: '确定' }).click()
+    await expect(adminMessage(page)).toContainText('手机号已更新')
+    await expect(dialog).toBeHidden()
+  })
+})
+
+test.describe('解绑微信', () => {
+  test('取消 ⇒ 不提示、不改档案', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '解绑微信' }).click()
+    const box = page.locator('.el-message-box')
+    await expect(box).toBeVisible()
+    // 后果文案只写实测得到的那一条（解绑后再用微信登录进「重新绑定手机号」流程）
+    await expect(box).toContainText('重新绑定手机号')
+    await box.getByRole('button', { name: '取消' }).click()
+    await expect(box).toBeHidden()
+    await expect(page.locator('.el-message')).toHaveCount(0)
+  })
+
+  test('确认解绑 ⇒ 提交成功（后端无条件置空 openid，未绑过也回 200）', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '解绑微信' }).click()
+    const box = page.locator('.el-message-box')
+    await expect(box).toContainText('PT-001')
+    await box.getByRole('button', { name: '确认解绑' }).click()
+    await expect(adminMessage(page)).toContainText('已解绑微信')
   })
 })

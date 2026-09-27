@@ -252,7 +252,94 @@ export function mockCreatePatient(input: CreatePatientInput): Patient {
     updatedAt: now,
   }
   PATIENTS.push(patient)
+  // T432：号码入「判重台账」，否则 mock 下永远撞不出后端那个 409
+  if (input.phone) PHONE_BOOK.set(patient.patientId, input.phone)
   return patient
+}
+
+// ========== T432 管理端三入口（改手机号 / 档案编辑 / 解绑微信）==========
+// 语义逐条对齐 services/user-service 的三个 handler，形不似则真实模式必 400/409：
+//   updatePatientPhone  admin_patient.go:61-135  → validPhone 判格式、hash 撞号（排除自身）判撞、成功只回 {patientId}
+//   updatePatientAdmin  admin_patient.go:154-199 → DisallowUnknownFields 拒超集、nil=不改、空编辑 400
+//   unbindWechat        admin_patient.go:24-52   → 无条件置 NULL（未绑定亦成功）、成功只回 {patientId}
+
+/** patientId → 明文号码。真实库是 phone_enc + phone_hash，读侧不投影（T361），mock 只留判重所需 */
+const PHONE_BOOK = new Map<string, string>()
+
+/** 后端把 reason 只写进服务日志（admin_patient.go:125-132），mock 留一份流水供用例断言「reason 真随请求送出」 */
+export const MOCK_PHONE_AUDIT: { patientId: string; phone: string; reason: string; at: string }[] = []
+
+/** 与后端 validPhone（handler.go:1021-1028：长度 11、首位 1、全数字）同判据 */
+const PHONE_RE_MOCK = /^1[0-9]{10}$/
+
+/** 后端 editableSet 之外的键一律拒收（admin_patient.go:164-175 DisallowUnknownFields） */
+const PATIENT_EDIT_UNKNOWN_KEYS = ['phone', 'teamId', 'primaryDoctorId', 'doctorId', 'status']
+
+export interface PatientProfilePatch {
+  name?: string
+  gender?: 'male' | 'female'
+  age?: number
+  diagnosis?: string
+  cobbAngle?: number
+}
+
+/** 改手机号：格式 → 撞号（排除自身）→ 落号 + 刷 updated_at。reason 后端只进审计日志、不校验。 */
+export function mockUpdatePatientPhone(patientId: string, phone: string, reason: string): { patientId: string } {
+  const p = PATIENTS.find((x) => x.patientId === patientId)
+  if (!p) throw new Error('患者不存在')
+  if (!PHONE_RE_MOCK.test(phone)) throw new Error('手机号格式不正确：需 11 位且以 1 开头')
+  for (const [id, taken] of PHONE_BOOK) {
+    if (id !== patientId && taken === phone) throw new Error('该手机号已被其他患者使用')
+  }
+  PHONE_BOOK.set(patientId, phone)
+  MOCK_PHONE_AUDIT.push({ patientId, phone, reason, at: new Date().toISOString() })
+  p.updatedAt = new Date().toISOString()
+  return { patientId }
+}
+
+/** 档案编辑：只发改过的键；返回更新后的整行（后端 updatePatientAdmin 成功回 PatientDTO） */
+export function mockUpdatePatientProfile(patientId: string, patch: PatientProfilePatch): Patient {
+  const p = PATIENTS.find((x) => x.patientId === patientId)
+  if (!p) throw new Error('患者不存在')
+  const keys = Object.keys(patch)
+  for (const bad of PATIENT_EDIT_UNKNOWN_KEYS) {
+    if (keys.includes(bad)) throw new Error(`请求含档案编辑白名单之外的字段：${bad}`)
+  }
+  if (keys.length === 0) throw new Error('没有需要保存的修改')
+  if (patch.name !== undefined) {
+    const name = patch.name.trim()
+    if (!name || name.length > 64) throw new Error('姓名需为 1-64 个字符')
+    p.name = name
+  }
+  if (patch.gender !== undefined) {
+    if (patch.gender !== 'male' && patch.gender !== 'female') throw new Error('性别只能是 male 或 female')
+    p.gender = patch.gender
+  }
+  if (patch.age !== undefined) {
+    if (patch.age < 0 || patch.age > 150) throw new Error('年龄需在 0-150 之间')
+    p.age = patch.age
+  }
+  if (patch.diagnosis !== undefined) {
+    if (patch.diagnosis.length > 255) throw new Error('诊断超过 255 个字符')
+    p.diagnosis = patch.diagnosis
+  }
+  if (patch.cobbAngle !== undefined) {
+    if (patch.cobbAngle < 0 || patch.cobbAngle > 180) throw new Error('Cobb 角需在 0-180 之间')
+    p.cobbAngle = patch.cobbAngle
+  }
+  p.updatedAt = new Date().toISOString()
+  return p
+}
+
+/**
+ * 解绑微信。后端是无条件 `SET wx_openid = NULL`（pg.go:168-171），对未绑定患者亦回 200，
+ * 而患者域读侧没有 openid 字段可镜像 ⇒ mock 刻意不模拟「已绑 / 未绑」两态，只镜像存在性。
+ */
+export function mockUnbindPatientWechat(patientId: string): { patientId: string } {
+  const p = PATIENTS.find((x) => x.patientId === patientId)
+  if (!p) throw new Error('患者不存在')
+  p.updatedAt = new Date().toISOString()
+  return { patientId }
 }
 
 /** 分配/更改患者团队（幂等：同 teamId no-op，不变更 updatedAt） */

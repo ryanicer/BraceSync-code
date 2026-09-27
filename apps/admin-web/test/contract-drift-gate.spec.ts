@@ -32,6 +32,9 @@ import {
   processAlertApi,
   fetchAbnormalReport,
   exportAbnormalReportApi,
+  updatePatientPhoneApi,
+  updatePatientProfileApi,
+  unbindPatientWechatApi,
   teamNameOf,
   doctorNameOf,
 } from '../src/api'
@@ -421,5 +424,46 @@ describe('T338 医护账号真实模式守卫', () => {
     expect(req.url).toBe('/api/v1/admin/doctors/D0001/reset-password')
     expect(req.method).toBe('POST')
     expect(pwd).toBe('Brzzzz2345ab#7')
+  })
+})
+
+// ===== T432 患者写三入口：真实模式线形守卫 =====
+// 三个端点后端早在 main（handler.go:240-242），本卡只把前端接上。接错的代价不对称：
+// 档案 PUT 少发一个键＝服务端判 nil 静默不改（页面看不出来），多发一个键＝DisallowUnknownFields 判 400，
+// 所以「只发这几个键」和「不得发那些键」两条都要钉住。
+describe('T432 患者写三入口真实模式守卫', () => {
+  it('改手机号 ⇒ PUT /admin/patients/:id/phone，phone 与 reason 同体下发', async () => {
+    requestMock.mockResolvedValue({ patientId: 'P00001' })
+    await updatePatientPhoneApi('P00001', '13800001234', '患者换号，本人来电')
+    expect(lastRequest()).toEqual({
+      url: '/api/v1/admin/patients/P00001/phone',
+      method: 'PUT',
+      data: { phone: '13800001234', reason: '患者换号，本人来电' },
+    })
+  })
+
+  it('解绑微信 ⇒ POST 且无请求体（后端只读路径参数，admin_patient.go:29-33）', async () => {
+    requestMock.mockResolvedValue({ patientId: 'P00001' })
+    await unbindPatientWechatApi('P00001')
+    const req = lastRequest()
+    expect(req.url).toBe('/api/v1/admin/patients/P00001/unbind-wechat')
+    expect(req.method).toBe('POST')
+    expect(req.data).toBeUndefined()
+  })
+
+  it('档案编辑 ⇒ PUT /admin/patients/:id，body 只有改动过的键', async () => {
+    requestMock.mockResolvedValue({ ...patientRow, name: '改名后' })
+    await updatePatientProfileApi('P00001', { name: '改名后' })
+    expect(lastRequest().data).toEqual({ name: '改名后' })
+  })
+
+  it('档案编辑不得夹带 phone/teamId/status，也不得把未改的项补成默认值', async () => {
+    requestMock.mockResolvedValue(patientRow)
+    await updatePatientProfileApi('P00001', { diagnosis: '', age: 15 })
+    const data = lastRequest().data ?? {}
+    expect(data).toEqual({ diagnosis: '', age: 15 })
+    for (const forbidden of ['phone', 'teamId', 'primaryDoctorId', 'doctorId', 'status', 'name', 'cobbAngle']) {
+      expect(data).not.toHaveProperty(forbidden)
+    }
   })
 })
