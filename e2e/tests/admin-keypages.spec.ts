@@ -327,10 +327,9 @@ test.describe('角色管理（T253-11.2）', () => {
     // 并把整份词表钉住（多一档职称或少一档角色都判红）。
     await dialog.locator('.role-template').click()
     const dropdown = page.locator('.el-select-dropdown:visible .el-select-dropdown__item')
-    const templateOptions = await dropdown.evaluateAll((items) =>
-      items.map((it) => (it.textContent ?? '').trim()),
-    )
-    expect(templateOptions, '权限模板下拉 = 稿面三档 + 自定义，职称（主任医师/康复师/护士）不得回潮').toEqual([
+    // toHaveText 而非 evaluateAll：click() 只保证点击已发出，Element Plus 的 popper 下一帧才挂载，
+    // 立即读 DOM 会把「还没渲染」读成空列表（CI 2 workers 下 3/3 命中、本地 6 次命中 1 次，Received 恒为 []）。
+    await expect(dropdown, '权限模板下拉 = 稿面三档 + 自定义，职称（主任医师/康复师/护士）不得回潮').toHaveText([
       '自定义', '运营管理员', '医护', '客服',
     ])
     await dropdown.filter({ hasText: '医护' }).first().click()
