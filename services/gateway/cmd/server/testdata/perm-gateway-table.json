@@ -610,7 +610,7 @@
       "method": "GET",
       "path": "/api/v1/admin/abnormal-reports",
       "deny": false,
-      "why": "staff-only"
+      "why": "abnormal-report 角色白名单"
     },
     {
       "role": "ROLE_DOCTOR",
