@@ -102,7 +102,9 @@ func TestT257_UpdatePermissions_StoresExplicitItems(t *testing.T) {
 	assert.Contains(t, e.store.lastPermJSON, `"items":["alerts.view"]`)
 	assert.Equal(t, []string{"alerts.view"}, decodePerms(t, resp.Data).Items, "显式清单原样回显，不被物化")
 
-	// 未给 items（老前端）⇒ 写 null，读时仍按未细化物化
+	// 未给 items ⇒ 子权限维度不动（T423）。这里之所以仍落 null：夹具的 store.role 是 nil，
+	// 「库里没有原值」= 没有可保的东西（写通道对不存在的角色由 updRoleOK 放行，故 200）。
+	// 省略键真正要判的那一格（库里有显式清单时必须保住）在 permissions_t423_test.go。
 	w, resp = e.do(http.MethodPut, "/api/v1/admin/roles/ROLE_DOCTOR/permissions",
 		map[string]any{"scope": "team", "modules": []string{"alerts"}}, nil)
 	require.Equal(t, http.StatusOK, w.Code, resp.Message)
