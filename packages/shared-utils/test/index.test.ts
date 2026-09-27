@@ -112,6 +112,24 @@ describe('formatAlertValue (T235)', () => {
     expect(formatAlertValue('wear_interrupt', -5)).toBe('0min')
   })
 
+  // T433 缺陷三：该类型落库是分钟（engine.go need = targetHours*60），显示要按小时换算。
+  // 改前这一格没有用例，'h' 后缀直接拼分钟数 ⇒ 现网弹窗「阈值: 540h」。
+  it('wear_duration_short → 分钟落库按小时显示', () => {
+    expect(formatAlertValue('wear_duration_short', 540)).toBe('9h')
+    expect(formatAlertValue('wear_duration_short', 1080)).toBe('18h')
+    expect(formatAlertValue('wear_duration_short', 390)).toBe('6.5h')
+    expect(formatAlertValue('wear_duration_short', 612)).toBe('10.2h')
+  })
+
+  it('wear_duration_short 零值与负值（零是合法读数，不许变空串）', () => {
+    expect(formatAlertValue('wear_duration_short', 0)).toBe('0h')
+    expect(formatAlertValue('wear_duration_short', -30)).toBe('0h')
+  })
+
+  it('wear_duration_short 阈值带前缀（患者端写法）', () => {
+    expect(formatAlertValue('wear_duration_short', 1080, { prefix: '>' })).toBe('>18h')
+  })
+
   it('unknown type → bare value, no unit', () => {
     expect(formatAlertValue('foobar', 5)).toBe('5')
     expect(formatAlertValue('foobar', 5, { prefix: '>' })).toBe('>5')

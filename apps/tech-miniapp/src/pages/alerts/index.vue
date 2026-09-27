@@ -2,7 +2,7 @@
   <view class="page">
     <view class="page-header">
       <text class="page-title">告警通知</text>
-      <text class="page-subtitle">共 {{ filteredAlerts.length }} 条告警</text>
+      <text class="page-subtitle">{{ countText }}</text>
     </view>
 
     <!-- 筛选 -->
@@ -46,9 +46,9 @@
                 <text class="meta-label">传感器</text>
                 <text class="meta-value">{{ alert.sensorPoint }}</text>
               </view>
-              <view v-if="alert.actualValue" class="meta-item">
+              <view v-if="hasAlertNumber(alert.actualValue)" class="meta-item">
                 <text class="meta-label">实际值</text>
-                <text class="meta-value meta-warn">{{ formatAlertValue(alert.type, alert.actualValue) }}</text>
+                <text class="meta-value meta-warn">{{ alertValueText(alert.type, alert.actualValue) }}</text>
               </view>
             </view>
           </view>
@@ -79,15 +79,27 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
-import { formatAlertValue, alertTypeLabel } from '@bracesync/shared-utils'
+import type { Alert } from '@bracesync/shared-types'
+import { alertTypeLabel } from '@bracesync/shared-utils'
 import { request } from '../../utils/request'
+import { listAlerts } from '../../api/alert'
+import { fetchAllPages } from '../../utils/paging'
+import { hasAlertNumber, alertValueText, buildAlertDetailLines } from '../../utils/alertDisplay'
+
+// 与改前页面写死的单页大小一致（alert-service 缺省 20、上限 100，本卡不动这个数）
+const PAGE_SIZE = 50
 
 // 数据
 const alerts = ref<Alert[]>([])
+const total = ref(0)
+const truncated = ref(false)
 const filter = ref<'all' | 'pending' | 'processed'>('all')
 const loading = ref(false)
 const error = ref('')
+
+// 页头数字：改前是 filteredAlerts.length（最多一页），接口 total 被丢掉（T433 缺陷一）
+const countText = computed(() =>
+  truncated.value ? `共 ${total.value} 条告警，已加载 ${alerts.value.length} 条` : `共 ${total.value} 条告警`)
 
 // 过滤
 const filteredAlerts = computed(() => {
@@ -119,13 +131,14 @@ async function loadAlerts() {
   loading.value = true
   error.value = ''
   try {
-    // 契约: GET /api/v1/alerts?page=1&pageSize=50
-    const res = await request<PaginatedResponse<Alert>>({
-      url: '/api/v1/alerts',
-      method: 'GET',
-      data: { page: 1, pageSize: 50 },
-    })
-    alerts.value = res.list || []
+    // 契约: GET /api/v1/alerts?page=N&pageSize=50，逐页取满（改前只发 page=1 一页）
+    const agg = await fetchAllPages<Alert>(
+      (page, pageSize) => listAlerts({ page, pageSize }),
+      { pageSize: PAGE_SIZE },
+    )
+    alerts.value = agg.rows
+    total.value = agg.total
+    truncated.value = agg.truncated
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
@@ -135,20 +148,9 @@ async function loadAlerts() {
 
 // 查看详情
 function viewDetail(alert: Alert) {
-  const lines = [
-    `类型: ${alertTypeLabel(alert.type)}`,
-    `患者: ${alert.patientId}`,
-    `设备: ${alert.deviceId}`,
-    alert.sensorPoint ? `传感器: ${alert.sensorPoint}` : '',
-    alert.thresholdValue ? `阈值: ${formatAlertValue(alert.type, alert.thresholdValue)}` : '',
-    alert.actualValue ? `实际值: ${formatAlertValue(alert.type, alert.actualValue)}` : '',
-    `详情: ${alert.detail}`,
-    alert.processNote ? `处理备注: ${alert.processNote}` : '',
-    `状态: ${alert.processStatus === 'pending' ? '待处理' : '已处理'}`,
-  ].filter(Boolean)
   uni.showModal({
     title: `告警 ${alert.alertId}`,
-    content: lines.join('\n'),
+    content: buildAlertDetailLines(alert).join('\n'),
     showCancel: false,
   })
 }

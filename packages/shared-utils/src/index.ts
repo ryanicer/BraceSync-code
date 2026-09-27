@@ -41,12 +41,18 @@ export function isPressureHigh(value: number, threshold: number): boolean {
 /**
  * T235：按 Alert.type 格式化 actualValue / thresholdValue 显示口径（跨三端共享）
  *
- * Alert.actualValue 是多义字段，含义随 type 变：
- *   pressure_high        → 压力（N）
- *   pressure_fluctuation → 百分比（后端 engine.go 明确用 %%）
- *   sensor_drift         → 空载读数（N，可能负，显示层归零）
- *   wear_interrupt       → 分钟数
- *   wear_duration_short  → 小时数（设计稿 告警管理.html:250「18h / 6.5h」）
+ * Alert.actualValue 是多义字段，含义随 type 变。左边是**落库口径**（engine.go 写什么），
+ * 右边是**显示口径**（本函数吐什么），两者只在小时/分钟这一档上不同：
+ *   pressure_high        → 压力（N）            → 原样 + 'N'
+ *   pressure_fluctuation → 百分比               → 原样 + '%'
+ *   sensor_drift         → 空载读数（N，可负）  → 归零 + 'N'
+ *   wear_interrupt       → 分钟数               → 取整 + 'min'
+ *   wear_duration_short  → 分钟数               → 除以 60 + 'h'
+ *     落库=分钟的依据：engine.go EvaluateWearDurationShort 写 need = targetHours*60、
+ *     actual = wearMinutes；engine_supplement_test.go:246 逐值钉「阈值以分钟口径落库」。
+ *     显示=小时的依据：设计稿 admin/告警管理.html:252 同一行写 18h / 6.5h，
+ *     而 seed.sql:193 该条落库 1080.0 / 390.0（分钟）。
+ *     改前这里按分钟直标 'h' ⇒ 540 分钟显示成「540h」，与同弹窗「低于目标 9 小时」自相矛盾（T433 缺陷三）。
  *   未知 type            → 原样数字，不硬编码单位
  *
  * @param type Alert.type
@@ -67,8 +73,10 @@ export function formatAlertValue(
       return `${prefix}${value.toFixed(1)}%`
     case 'wear_interrupt':
       return `${prefix}${Math.max(0, Math.round(value))}min`
-    case 'wear_duration_short':
-      return `${prefix}${value}h`
+    case 'wear_duration_short': {
+      const rounded = Math.round(Math.max(0, value) / 6) / 10 // 分钟 → 小时，保留 1 位小数
+      return `${prefix}${Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)}h`
+    }
     default:
       return `${prefix}${value}`
   }

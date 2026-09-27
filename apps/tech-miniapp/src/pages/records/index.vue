@@ -3,7 +3,7 @@
     <view class="page-header">
       <text class="back-link" @click="goHome">← 返回</text>
       <text class="page-title">安装记录</text>
-      <text class="page-subtitle">共 {{ filteredRecords.length }} 条记录</text>
+      <text class="page-subtitle">{{ countText }}</text>
     </view>
 
     <!-- 筛选：WiFi 状态 + 可达性状态 -->
@@ -66,8 +66,14 @@
 import { ref, computed, onMounted } from 'vue'
 import type { InstallRecord } from '@bracesync/shared-types'
 import { listInstallRecords } from '../../api/install'
+import { fetchAllPages } from '../../utils/paging'
+
+/** 与后端 defaultPageSize 对齐（device-service repo/query.go:25） */
+const PAGE_SIZE = 20
 
 const records = ref<InstallRecord[]>([])
+const total = ref(0)
+const truncated = ref(false)
 const wifiFilter = ref<'all' | 'connected' | 'unconfigured'>('all')
 const loading = ref(false)
 const error = ref('')
@@ -76,14 +82,23 @@ async function loadRecords() {
   loading.value = true
   error.value = ''
   try {
-    const res = await listInstallRecords({})
-    records.value = res.list || []
+    const agg = await fetchAllPages<InstallRecord>(
+      (page, pageSize) => listInstallRecords({ page, pageSize }),
+      { pageSize: PAGE_SIZE },
+    )
+    records.value = agg.rows
+    total.value = agg.total
+    truncated.value = agg.truncated
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载失败'
   } finally {
     loading.value = false
   }
 }
+
+// 页头数字：改前用的是「已加载数组长度」，接口 total 被丢掉（T433 缺陷一）
+const countText = computed(() =>
+  truncated.value ? `共 ${total.value} 条记录，已加载 ${records.value.length} 条` : `共 ${total.value} 条记录`)
 
 const filteredRecords = computed(() => {
   return records.value.filter((r) => {

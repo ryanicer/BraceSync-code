@@ -37,6 +37,12 @@ export const techRoutes = {
   wifiConfig: '/#/pages/wifi-config/index',
   records: '/#/pages/records/index',
   complete: '/#/pages/complete/index',
+  /**
+   * T433：告警页在首页没有任何入口（稿面 docs/design/tech/home.html 只有两张卡），
+   * 现网只能像 Alice T428 走查那样手敲 hash 直达 —— 「补入口」是否要做已登记待裁，
+   * 这条 route 的存在本身就是那格的现场记录。
+   */
+  alerts: '/#/pages/alerts/index',
 } as const
 
 /**
