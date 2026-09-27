@@ -239,6 +239,36 @@ test('L9-L5-已登录 monitor 页刷新后保持', async ({ page }) => {
 })
 
 // ---------------------------------------------------------------------
+// L11: 微信授权码失效（HTTP 401 + code=10401）→ 按凭据错误提示，不得共用服务异常兜底句（T434）
+// 后端出处：user-service handler.go wxLogin → model.CodeUnauthorized = 10401
+// 契约出处：PRD §7A.1.1 通用约束「网络失败与凭证错误必须分别提示，禁止一锅烩兜底文案」
+// ---------------------------------------------------------------------
+test('L11-授权码失效提示凭证文案且不跳转', async ({ page }) => {
+  await page.route(WX_LOGIN_ROUTE, async (route) => {
+    return route.fulfill({
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: 10401,
+        message: 'wechat code invalid',
+        data: null,
+      }),
+    })
+  })
+
+  const el = loginPage(page)
+  await el.wechatBtn.click()
+
+  // 严格断言（不沿用 L3/L6 的 try/catch 降级）：文案必须来自 10401 分支本身
+  await expect(toast(page, '授权信息已失效，请重新登录')).toBeVisible({ timeout: 5000 })
+  await expect(page).toHaveURL(/pages\/login/)
+
+  // 未登录成功：不得写入 token
+  const token = await page.evaluate(() => localStorage.getItem('bracesync_token'))
+  expect(token).toBeNull()
+})
+
+// ---------------------------------------------------------------------
 // L10: 多次点击登录无死循环
 // ---------------------------------------------------------------------
 test('L10-多次点击登录无死循环', async ({ page }) => {
