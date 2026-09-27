@@ -128,10 +128,13 @@ func renderPermissions(perms model.RolePermissionsDTO) model.RolePermissionsDTO 
 // 于是不管怎么改前端，任何一次保存都会把未细化永久洗成显式清单（卡面「null 不被洗」）。
 // 库里已是显式清单的角色不反转成 null：显式全勾 ≢ 未细化（三态语义见 model.RolePermissionsDTO）。
 //
+// 走到这里的 items 一律是客户端**显式给的**（含显式 null）。「省略 items 键」在
+// updatePermissions 里先被换成库里原值再进来，两条分支分开，见 itemsKeptFromStored（T423）。
+//
 // stored == nil（库里没有这一行）⇒ 只走客户端原值：没有现状可比对，且写通道会自己 404。
 func reconcileItems(stored *model.RolePermissionsDTO, items, modules []string) []string {
 	if items == nil {
-		return nil // 不细化（老前端省略 / 显式 null），不物化回写
+		return nil // 显式 null = 不细化，不物化回写
 	}
 	if stored == nil {
 		return items
@@ -144,6 +147,35 @@ func reconcileItems(stored *model.RolePermissionsDTO, items, modules []string) [
 		return nil
 	}
 	return merged
+}
+
+// itemsKeptFromStored 请求体省略 items 键时的落库清单（T423，T413 报告第六节 E3）。
+//
+// 省略 = 「这一次不动子权限」，不是「把子权限洗成未细化」。库里是显式清单时写回 null 等于
+// 把收窄过的授权静默升格成组内全勾（放权方向），医疗权限系统宁紧勿松，故保持库内原值。
+// 三格：
+//   - stored == nil（角色行不存在）⇒ nil：没有原值可保，写通道随后自己 404；
+//   - 库里本就未细化（stored.Items == nil）⇒ nil：未细化保持未细化；
+//   - 库里是显式清单 ⇒ 原样保住，只把所属模块本次被关掉的键剪掉——
+//     这份清单若由客户端显式提交，validatePermissionItems 会以「模块未勾」拒掉，
+//     省略键不该绕过同一条校验留下一份渲染不出来的死配置（剪掉是收权方向，不放权）。
+//
+// 空切片要原样是空切片：[] 是显式全不勾，与未细化是两个态。
+func itemsKeptFromStored(stored *model.RolePermissionsDTO, modules []string) []string {
+	if stored == nil || stored.Items == nil {
+		return nil
+	}
+	granted := make(map[string]struct{}, len(modules))
+	for _, m := range modules {
+		granted[m] = struct{}{}
+	}
+	out := make([]string, 0, len(stored.Items))
+	for _, key := range stored.Items {
+		if _, ok := granted[permissionItemModule[key]]; ok {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 // addedModules 本次新勾上的模块（保持 req 侧顺序，便于断言）
@@ -251,10 +283,9 @@ func (h *Handler) getMyPermissions(c *gin.Context) {
 			return
 		}
 		dto.Scope, dto.Modules = perms.Scope, perms.Modules
-		dto.Items = perms.Items
-		if dto.Items == nil {
-			dto.Items = materializeItems(perms.Modules)
-		}
+		// T423 顺手项（T413 报告第六节 E4）：物化只有一条规则，走 renderPermissions，
+		// 不在这个端点里再内联一份「nil 就按目录展开」的同形代码
+		dto.Items = renderPermissions(perms).Items
 	}
 	ok(c, dto)
 }

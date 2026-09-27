@@ -1842,12 +1842,29 @@ func (h *Handler) getPermissions(c *gin.Context) {
 //
 // scope/modules 为整体替换；items 不是（T413）：加权方向按库里现状补齐新模块的子权限，
 // 且库里原本未细化时保持未细化，详见 reconcileItems。
+//
+// items 的三态在请求侧要分得开（T423，T413 报告第六节 E3）：省略键 = 子权限维度不动，
+// 显式 null = 落未细化，给清单 = 显式细化。三者直接收进 []string 时分不出前两态
+// （都是 nil），所以请求体先用 json.RawMessage 收 items 键。
 func (h *Handler) updatePermissions(c *gin.Context) {
 	roleID := c.Param("roleId")
-	var req model.RolePermissionsDTO
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var raw struct {
+		Scope   string          `json:"scope"`
+		Modules []string        `json:"modules"`
+		Items   json.RawMessage `json:"items"`
+	}
+	if err := c.ShouldBindJSON(&raw); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
+	}
+	req := model.RolePermissionsDTO{Scope: raw.Scope, Modules: raw.Modules}
+	itemsOmitted := raw.Items == nil
+	if !itemsOmitted {
+		// 显式 null 解进 []string 仍是 nil = 未细化；类型不对（字符串 / 对象）在这里拒掉
+		if err := json.Unmarshal(raw.Items, &req.Items); err != nil {
+			fail(c, model.ErrInvalidParam("invalid request body: items: %v", err))
+			return
+		}
 	}
 	if _, scopeOK := validScopes[req.Scope]; !scopeOK {
 		fail(c, model.ErrInvalidParam("invalid scope: %s (all|team|all_patients)", req.Scope))
@@ -1870,7 +1887,11 @@ func (h *Handler) updatePermissions(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	req.Items = reconcileItems(stored, req.Items, req.Modules)
+	if itemsOmitted {
+		req.Items = itemsKeptFromStored(stored, req.Modules)
+	} else {
+		req.Items = reconcileItems(stored, req.Items, req.Modules)
+	}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		fail(c, model.ErrInternal("marshal permissions failed"))
