@@ -223,6 +223,12 @@ func toBindResponse(r *service.BindResult) BindResponseDTO {
 
 // register 设备注册（契约 registerDevice；重复注册幂等返回既有记录）
 func (h *Handler) register(c *gin.Context) {
+	// T404：注册与同族七条同为写动作，身份门禁排在方法体最前 —— 先于 JSON 解析与仓储访问，
+	// 于是「非法 body 的医护」也拿 403 而不是 400（否则 body 合法性变成身份探测面），
+	// 且任意 deviceId 不再能被无归属身份幂等入库。
+	if !h.assertDeviceWriteRole(c, "register a device") {
+		return
+	}
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
