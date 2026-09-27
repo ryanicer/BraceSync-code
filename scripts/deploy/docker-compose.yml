@@ -13,6 +13,10 @@ services:
       - ./certs:/etc/nginx/certs:ro
       # T066：admin-web 静态资源挂载（443 入口 /admin/）
       - ./apps/admin-web/dist:/usr/share/nginx/html/admin:ro
+      # T427：两小程序 H5 走查站挂载（staging 由 deploy-staging.sh ③-b 构建后填充；
+      #        未出包的 environments 下这两个目录为空 ⇒ 访问 /patient-h5/、/tech-h5/ 得 403/404，不影响 /admin/ 与 /api/）
+      - ./apps/patient-h5/dist:/usr/share/nginx/html/patient-h5:ro
+      - ./apps/tech-h5/dist:/usr/share/nginx/html/tech-h5:ro
     depends_on:
       gateway:
         condition: service_healthy
