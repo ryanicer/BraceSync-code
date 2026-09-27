@@ -187,6 +187,12 @@ type InstallRecord struct {
 	SignatureURL *string
 	WifiStatus   string // connected / unconfigured
 	CreatedAt    time.Time
+	// T418 详情展示列：仅 GetInstall 的 LEFT JOIN patients/technicians/devices 填充
+	// （列表投影走 InstallListItem，不经这些字段；写侧不填 ⇒ nil）。
+	// nil = 关联行缺失（患者/技师被删、设备未注册），详情接口回 null 而不是伪造空串。
+	PatientName *string
+	TechName    *string
+	DeviceModel *string
 }
 
 // Baseline baselines 表行

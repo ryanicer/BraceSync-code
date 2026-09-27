@@ -51,6 +51,13 @@ export interface Doctor {
   phoneState: PhoneState;        // T361：与 phoneMasked 配套，区分「没有」与「读不出」
   patientCount: number;          // T371 口径：主诊患者数（patients.primary_doctor_id 计数，不带团队维度）
   status: 'enabled' | 'disabled';
+  // T314 医护账号页并进的 admins 侧三列（GET /api/v1/doctors 同一行返回）。
+  // 键恒在（Go 侧无 omitempty），值可 null = 该档案未绑登录账号（seed D0002/D0003）⇒ 前端渲染破折号。
+  // T418 归口：原先只在 admin-web 本地 DoctorWithAccount 声明，契约漏账被对拍门禁 ignore 三行。
+  // accountStatus 是登录能力层（admins.status），与上面的 status（档案层）分列展示，别合并语义。
+  username?: string | null;
+  accountStatus?: string | null;
+  createdAt?: string | null;
 }
 
 export interface Technician {
@@ -189,9 +196,9 @@ export interface InstallRecord {
   deviceId: string;
   patientId: string;
   techId: string;
-  /** 患者姓名（T030：GET /api/v1/install-records 后端 join 返回） */
+  /** 患者姓名（T030：列表 join；T418 起详情接口 GetInstall 也 join 带出。关联行缺失为 null） */
   patientName?: string | null;
-  /** 技师姓名（T030：同上） */
+  /** 技师姓名（同上） */
   techName?: string | null;
   calibrateTime: string;
   baselineId: string | null;     // 引用 Baseline（单一数据源）
@@ -216,6 +223,12 @@ export interface InstallRecordDetail extends InstallRecordRow {
   offsetValues: number[];
   /** 建档时间（设计稿 安装记录.html:181「安装时间」，列表 DTO 无该字段） */
   createdAt: string;
+  /**
+   * 设备型号（设计稿 安装记录.html:177「设备型号」行 · T312 I-3 登记项）。
+   * T418：详情接口 LEFT JOIN devices 带出；设备行缺失为 null（列表页 deviceListDTO 早有该列，
+   * 详情此前没有 ⇒ 页面当时只能「不为此多拉一次设备列表」而放弃这一行）。
+   */
+  model?: string | null;
 }
 
 export interface Baseline {
@@ -423,6 +436,26 @@ export interface DashboardKPI {
   avgWearHours: number;
   deviceOnlineRate: number;
   monthNewPatients: number;
+
+  // T248 1.1 对比基准（PRD §7D.1「对比基准」列）。T418 归口：后端 09xx 起就随 KPI 同行返回，
+  // 契约一直没登记，被对拍门禁 ignore 十二行。键恒在（Go 无 omitempty），值可 null：
+  //  - prev* = 紧邻当前窗口的等长前窗原值（today→昨日、week→前一 7 日、month→前一 30 日）
+  //  - *ChangePct = 相对前窗的变化百分比；avgWearHoursDelta = 绝对差（小时）
+  //  - 前窗为 0 或无基准 ⇒ null（不以 0 冒充「持平」）
+  // 🔴 deviceOnlineRate 无历史在线率表，prevDeviceOnlineRate / deviceOnlineRateDelta 恒 null
+  //   （补齐需按日快照 = schema 变更，另卡）。
+  prevTotalPatients?: number | null;
+  prevTodayActiveWear?: number | null;
+  prevTodayAlerts?: number | null;
+  prevAvgWearHours?: number | null;
+  prevDeviceOnlineRate?: number | null;
+  prevMonthNewPatients?: number | null;
+  activeWearChangePct?: number | null;
+  alertsChangePct?: number | null;
+  avgWearHoursDelta?: number | null;
+  deviceOnlineRateDelta?: number | null;      // 恒 null，见上
+  totalPatientsChangePct?: number | null;
+  monthNewPatientsChangePct?: number | null;
 }
 
 export interface TeamRanking {

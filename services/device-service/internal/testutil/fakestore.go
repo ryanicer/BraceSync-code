@@ -307,7 +307,30 @@ func (f *FakeStore) GetInstall(_ context.Context, installID int64) (*model.Insta
 			cp.OffsetValues = append([]float32(nil), b.OffsetValues...)
 		}
 	}
+	// T418：对齐 PGStore 新增的 LEFT JOIN devices —— 设备行在 ⇒ 型号带出，设备行缺失 ⇒ nil
+	cp.DeviceModel = nil
+	if d, has := f.devices[rec.DeviceID]; has {
+		m := d.Model
+		cp.DeviceModel = &m
+	}
 	return &cp, nil
+}
+
+// AddInstallJoinNames T418 测试注入：详情 LEFT JOIN patients/technicians 的姓名两列。
+//
+// 本夹具对 users 域只存存在性（AddPatient/AddTech）不存名字，姓名由用例显式塞入；
+// 不调用本方法的用例两列为 nil —— 与 PG 里「关联行缺失」同一形状，别当默认值铺开
+// （会抹掉「未注入必为 null」这一格覆盖）。
+func (f *FakeStore) AddInstallJoinNames(installID int64, patientName, techName string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.installs[installID]
+	if !ok {
+		return
+	}
+	pn, tn := patientName, techName
+	rec.PatientName = &pn
+	rec.TechName = &tn
 }
 
 func (f *FakeStore) SaveBaseline(_ context.Context, installID int64, offsets []float32, calibratorID string) (int64, error) {

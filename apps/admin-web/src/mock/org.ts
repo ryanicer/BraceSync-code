@@ -2,6 +2,7 @@
 import type { Team, TeamDetail, TeamMember, TeamStats, Doctor, Technician, InstallRecordRow, InstallRecordDetail } from '@bracesync/shared-types'
 import { PHONE_PLACEHOLDER } from '../utils/phoneField'
 import { mockPatients, mockPatientDetail } from './patients'
+import { mockDeviceModel } from './devices'
 
 /** T059 成员管理视图（GET /teams/:teamId/members 本地类型；shared-types.TeamMembers 为一期只读契约，此处用 TeamMember 统一字段） */
 export interface TeamMembersView {
@@ -144,7 +145,8 @@ export function mockInstallRecords(params: { keyword?: string; page?: number; pa
 export function mockInstallRecordDetail(installId: string): InstallRecordDetail {
   const row = INSTALL_RECORDS.find((r) => r.installId === installId)
   if (!row) throw new Error(`安装记录不存在: ${installId}`)
-  return { ...row, offsetValues: [...(INSTALL_OFFSETS[installId] ?? [])], createdAt: row.calibrateTime }
+  // model：T418 起真实接口也 LEFT JOIN devices 带出（设计稿 安装记录.html:177 设备型号行）
+  return { ...row, offsetValues: [...(INSTALL_OFFSETS[installId] ?? [])], createdAt: row.calibrateTime, model: mockDeviceModel(row.deviceId) }
 }
 
 export function mockTechName(techId: string): string {

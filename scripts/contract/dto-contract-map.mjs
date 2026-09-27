@@ -16,17 +16,10 @@ export const CONTRACT_MAP = {
   TeamStatsDTO: { ts: 'TeamStats' },
   TeamMemberDTO: { ts: 'TeamMember' },
   TeamMembersDTO: { ts: 'TeamMembers' },
-  DoctorDTO: {
-    ts: 'Doctor',
-    // T356 实测：T314 把 admins 侧三列并进了 GET /api/v1/doctors 的同一行，
-    // 页面在 apps/admin-web/src/api/medicalAccount.ts:33 自己声明了 accountStatus 来读，
-    // 契约 Doctor 一直没补这三列 —— 真实不一致，报 PM 归口，本卡不改契约。
-    ignore: {
-      username: 'T314 并列，契约 Doctor 未声明（真实不一致，见交件 5.4）',
-      accountStatus: 'T314 并列，页面用本地类型读，契约未声明（真实不一致）',
-      createdAt: 'T314 并列，契约 Doctor 未声明（真实不一致）',
-    },
-  },
+  // T418 归口（原 ignore 三行）：DoctorDTO 的 username / accountStatus / createdAt 是 T314 并进的
+  // admins 侧三列，页面此前用 admin-web 本地 DoctorWithAccount 声明。三列已补进契约 Doctor
+  // （Go 无 omitempty ⇒ 键恒在、值可 null = 未绑登录账号），本地类型收口为 Doctor 别名。
+  DoctorDTO: { ts: 'Doctor' },
   TechnicianDTO: { ts: 'Technician' },
   FeedbackDTO: { ts: 'Feedback' },
   OrthosisPlanDTO: { ts: 'OrthosisPlan' },
@@ -86,41 +79,23 @@ export const CONTRACT_MAP = {
   },
   deviceListDTO: { ts: 'Device' },
   installListDTO: { ts: 'InstallRecordRow' },
-  installDetailDTO: {
-    ts: 'InstallRecordDetail',
-    // T356 实测：契约把 InstallRecordDetail 写成 extends InstallRecordRow，于是「继承」了
-    // 列表专用的两个 join 名字列，而详情 DTO 从来不回它们 —— 真实不一致（契约建模口径），报 PM。
-    ignore: {
-      patientName: '列表 join 列；详情接口不回，契约按继承声明它（真实不一致，见交件 5.4）',
-      techName: '同上',
-    },
-  },
+  // T418 归口（原 ignore 两行）：契约 InstallRecordDetail 按 extends InstallRecordRow 继承了
+  // patientName / techName，此前详情 DTO 从不回、靠前端拿列表行兜底。现 GetInstall 补了
+  // LEFT JOIN patients/technicians，两列在详情里真回；同时新增 model 列
+  // （设计稿 安装记录.html:177「设备型号」，T312 I-3 登记项），三列都是 nullable。
+  installDetailDTO: { ts: 'InstallRecordDetail' },
   BindingDTO: { ts: null, reason: '契约未声明（绑定历史条目，运营后台用本地类型）' },
   BindResponseDTO: { ts: null, reason: '写响应信封（绑定/换绑结果），契约未声明' },
 
   // ===== data-service =====
   healthReportDTO: { ts: 'HealthReport' },
   PressureRecordDTO: { ts: 'PressureRecord' },
-  DashboardKPIDTO: {
-    ts: 'DashboardKPI',
-    // T356 实测：后端 09xx 起把环比（prev* / *ChangePct / *Delta）12 列一起回了，
-    // 契约 DashboardKPI 只声明 6 列，页面也没消费环比（grep 无命中）——
-    // 属「后端多回 + 契约未声明」，不影响读侧，登记后报 PM 决定是否补契约。
-    ignore: {
-      prevTodayActiveWear: '环比列，契约未声明且页面未消费（见交件 5.4）',
-      prevTodayAlerts: '同上',
-      prevAvgWearHours: '同上',
-      prevTotalPatients: '同上',
-      prevMonthNewPatients: '同上',
-      prevDeviceOnlineRate: '同上',
-      activeWearChangePct: '同上',
-      alertsChangePct: '同上',
-      avgWearHoursDelta: '同上',
-      deviceOnlineRateDelta: '同上',
-      totalPatientsChangePct: '同上',
-      monthNewPatientsChangePct: '同上',
-    },
-  },
+  // T418 归口（原 ignore 十二行）：T248 1.1 的环比列（prev* / *ChangePct / *Delta）自 09xx 起
+  // 就与 KPI 同行返回，契约 DashboardKPI 只声明了 6 列。十二列已补进契约（键恒在、值可 null：
+  // 前窗为 0 或无基准 ⇒ null），页面消费与否是另一回事。
+  // 🔴 prevDeviceOnlineRate / deviceOnlineRateDelta 恒 null —— 设备在线率无历史表，
+  //    补齐要新增按日快照（schema 变更），已作为待裁项另卡跟，不因「恒 null」再豁免这两列。
+  DashboardKPIDTO: { ts: 'DashboardKPI' },
   TeamRankingDTO: { ts: 'TeamRanking' },
   DoctorRankingDTO: { ts: 'DoctorRanking' },
   DailyWearDayDTO: { ts: null, reason: '契约未声明（患者端日佩戴聚合，小程序用本地类型）' },
@@ -128,8 +103,18 @@ export const CONTRACT_MAP = {
   // ⚠ 命名撞车：这个 Go DeviceConfig 是「云端→设备」的协议捎带下发结构（协议 §4.1，键是
   // snake_case 的 interval_minutes / config_version），跟 shared-types 里那个 camelCase 的
   // DeviceConfig 同名不同物；且 shared-types DeviceConfig 在 admin-web 里零消费。
-  // 对拍会判出 4 处键名不一致，实为两回事 —— 登记不比对，另报 PM（改产品码不在本卡范围）。
-  DeviceConfig: { ts: null, reason: '设备协议结构（snake_case，与同名契约接口不是一回事；见交件 5.4 命名撞车）' },
+  // 对拍会判出 4 处键名不一致，实为两回事 —— 登记不比对。
+  // T418 结论「不补」（Boss 拍「补不了的书面论证」）：
+  //  1) 两侧不是同一个东西：Go 侧是下行协议帧（键名由固件按 snake_case 解析），TS 侧是
+  //     一期设想的「设备配置」展示模型；把任一侧改成对齐另一侧 = 改协议或改展示语义。
+  //  2) 改 Go 侧 json tag ⇒ 现网设备收不到 config_version 的解析口径变化，属设备协议变更，
+  //     不在前端/契约层能自修的范围（需固件侧确认，走设备协议文档改版）。
+  //  3) 改 TS 侧（或删掉）⇒ shared-types DeviceConfig 零消费方，删了没有读者受益，
+  //     留着也只是命名撞车；改名为 DeviceConfigView 反而会让协议文档 §4.1 的引用失配。
+  //  4) 门禁面：C1c 要求「Go 与 TS 同名结构体必须登记」，所以本条 ts:null 不能删——
+  //     删了会判「未登记」红，而不是变干净。
+  // 稿面登记交 Peter 回写（api-contracts.ts 侧的 DeviceConfig 注释加「非设备协议帧」限定）。
+  DeviceConfig: { ts: null, reason: '设备协议结构（snake_case，与同名契约接口不是一回事；T418 结论不补，理由见本段注释）' },
 
   // ===== msg-service =====
   NotifyRuleDTO: { ts: 'NotifyRule' },

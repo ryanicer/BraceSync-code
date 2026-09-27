@@ -67,7 +67,8 @@
     </div>
 
     <!-- T289 9.1（设计稿 安装记录.html:168-197 详情抽屉）：20 点偏移值网格 + 安装备注。
-         设计稿 :177「设备型号」行不做：installDetailDTO 无 model 字段，前端也不为此多拉一次设备列表 -->
+         设计稿 :177「设备型号」行：T418 起详情接口 installDetailDTO 回 model（LEFT JOIN devices），
+         此前该列只有列表 DTO 有 ⇒ 页面不为此多拉一次设备列表，行只能空着（T312 I-3） -->
     <el-drawer v-model="drawerVisible" title="安装详情" size="520px">
       <div v-if="detail" class="detail">
         <el-tag :type="CALIB_TAG[detail.calibStatus] ?? 'info'" size="small" class="detail-calib">
@@ -78,6 +79,7 @@
             {{ detail.patientName || patientNameOf(detail.patientId) }}
           </el-descriptions-item>
           <el-descriptions-item label="设备ID">{{ detail.deviceId }}</el-descriptions-item>
+          <el-descriptions-item label="设备型号">{{ detail.model || '—' }}</el-descriptions-item>
           <el-descriptions-item label="技师">{{ detail.techName || techNameOf(detail.techId) }}</el-descriptions-item>
           <el-descriptions-item label="安装时间">{{ formatTime(detail.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="WiFi">{{ detail.wifiStatus === 'connected' ? '已连接' : '未连接' }}</el-descriptions-item>
@@ -175,8 +177,8 @@ async function openDetail(row: InstallRecordRow) {
   drawerVisible.value = true
   try {
     const d = await fetchInstallRecordDetail(row.installId)
-    // 真实模式 installDetailDTO 不回 patientName/techName（只有列表 DTO join 了姓名），
-    // 而从列表页直接点详情时本地姓名字典也可能还没灌过 ⇒ 用被点行的姓名兜底，否则抽屉里显示 ID
+    // T418 起详情接口也 join 姓名（installDetailDTO.patientName/techName）；仍保留被点行的兜底：
+    // 关联的 patients/technicians 行缺失时详情两列是 null，不回落到列表行就显示空白
     detail.value = {
       ...d,
       patientName: d.patientName || row.patientName,
