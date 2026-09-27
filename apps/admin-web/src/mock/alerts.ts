@@ -1,5 +1,6 @@
 // 告警域 mock 数据（对齐 api-contracts.ts getAlerts/processAlert，复用 T019B alerts 数据模式）
 import type { Alert } from '@bracesync/shared-types'
+import { isHiddenAlertType } from '@bracesync/shared-utils'
 
 const ALERTS: Alert[] = [
   {
@@ -263,7 +264,8 @@ interface AbnormalDetailRow {
 
 // 中文口径与后端 handler/report.go 的 reportAlertTypeLabels 保持一致（措辞跟「告警管理」页现状一致）
 // T419 G-6：wear_interrupt / sensor_drift 改名收口（码值不动），与 T421 改后的后端标签表同批上线；
-// pressure_fluctuation 不在新四类里，其标签只服务已入库历史行的可读性（PRD §7D.6 历史数据处置 A/B/C 未裁）。
+// T430（PRD §7D.6 历史数据处置拍 C·Boss 09-27）：pressure_fluctuation 改为界面与 CSV 都不展示、数据不删。
+// 🔴 这一格的键必须留着：它既喂 mock 明细生成器（模拟库里已入库的历史行），也防标签查不到键退化成裸码值。
 const REPORT_TYPE_LABELS: Record<string, string> = {
   pressure_high: '压力偏高',
   pressure_fluctuation: '压力波动',
@@ -386,7 +388,9 @@ function csvField(v: string | number | null): string {
 
 /** mock 模式的 CSV 正文（含 BOM，与后端导出同口径，便于前端下载链路在 mock 下也可点） */
 export function mockAbnormalReportCsv(q: AbnormalReportQuery): string {
-  const rows = abnormalRowsFor(q)
+  // T430（PM 09-27 19:00 裁定四）：CSV 类型列与界面同口径 —— 已裁砍除类型的历史行不进明细，数据层不删。
+  // 后端同律在 services/alert-service/internal/handler/report.go 的导出路径。
+  const rows = abnormalRowsFor(q).filter((r) => !isHiddenAlertType(r.type))
   const lines = [REPORT_CSV_HEADER.map(csvField).join(',')]
   for (const r of rows) {
     lines.push([

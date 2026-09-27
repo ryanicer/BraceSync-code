@@ -7,9 +7,10 @@
                🔴 码值不动（改码要动 DB CHECK 与多处映射面）。
                T419 G-6/S-6：下拉收口为四类 —— 第五项「压力波动」随 Boss 2026-09-23 砍类型裁定摘除
                （PRD §7D.6 待下线清单 ⑦，同文件旧注「仅历史行」一并改写）。
-               历史行的中文标签仍在（mock/alerts.ts REPORT_TYPE_LABELS + shared-utils ALERT_TYPE_LABELS），
-               属 PRD §7D.6「历史数据处置 A/B/C」裁定前按 A 描述现状 ⇒ 裁 A 才保留、裁 C 才随第二批删除，
-               本卡不动（改了会让已入库行露出码值 pressure_fluctuation）。 -->
+               T430（PRD §7D.6 历史数据处置拍 C，Boss 09-27）：已入库历史行改为「界面隐藏、数据不删」，
+               判据在 shared-utils 的 isHiddenAlertType，本列表按类型滤掉历史行（见 loadData）。
+               🔴 ALERT_TYPE_LABELS / mock REPORT_TYPE_LABELS 的键一律保留：查不到键会让历史行露出
+               裸码值 pressure_fluctuation，与「隐藏」相反。 -->
           <el-select v-model="typeFilter" placeholder="全部类型" clearable class="filter-select" @change="handleSearch">
             <el-option label="压力偏高" value="pressure_high" />
             <el-option label="设备离线" value="wear_interrupt" />
@@ -89,6 +90,8 @@
               </template>
             </el-table-column>
           </el-table>
+          <!-- 🔴 分页「共 N 条」用后端 total，仍含被本卡隐藏的历史行 ⇒ 单页可见行数可能少于 pageSize。
+               要 total 也收窄得给 GET /alerts 加排除式类型参数（后端改动，超出本卡「纯前端过滤」口径）。 -->
           <el-pagination
             class="pagination"
             v-model:current-page="page"
@@ -232,7 +235,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Alert } from '@bracesync/shared-types'
-import { formatAlertValue, alertTypeLabel } from '@bracesync/shared-utils'
+import { formatAlertValue, alertTypeLabel, isHiddenAlertType } from '@bracesync/shared-utils'
 import {
   fetchAlerts, processAlertApi, startProcessingAlertApi, patientNameOf,
   fetchAlertRules, saveAlertPointRulesApi, resetAlertPointRulesApi, saveAlertGlobalRulesApi,
@@ -293,7 +296,7 @@ async function loadData() {
       page: page.value,
       pageSize: pageSize.value,
     })
-    list.value = res.list
+    list.value = res.list.filter((row) => !isHiddenAlertType(row.type))
     total.value = res.total
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')

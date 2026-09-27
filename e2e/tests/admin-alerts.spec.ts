@@ -3,8 +3,10 @@ import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } fr
 
 /**
  * admin-web 告警管理：列表渲染 + 类型/状态筛选 + 处理流程（复用 T019B processAlert 模式）
- * mock 数据对齐 mock/alerts.ts：7 条（pending 3 / processing 1 / processed 3；
- * pressure_high 2 / wear_interrupt 2 / wear_duration_short 1）
+ * mock 数据对齐 mock/alerts.ts：库里 7 条（pending 3 / processing 1 / processed 3；
+ * pressure_high 2 / wear_interrupt 2 / wear_duration_short 1）。
+ * 🔴 T430（PRD §7D.6 历史数据处置拍 C）：其中 ALR-003（pressure_fluctuation）属已裁砍除类型的
+ * 历史行 ⇒ 列表只渲染 6 行，但分页 total 仍是后端给的 7（本卡口径纯前端过滤，不改后端计数）。
  */
 
 test.beforeEach(async ({ page }) => {
@@ -13,9 +15,9 @@ test.beforeEach(async ({ page }) => {
 })
 
 test.describe('告警列表', () => {
-  test('渲染 7 条告警且列信息完整', async ({ page }) => {
+  test('渲染 6 条告警且列信息完整（mock 库内 7 条，ALR-003 属已裁砍除类型的历史行）', async ({ page }) => {
     const rows = tableRows(page)
-    await expect(rows).toHaveCount(7)
+    await expect(rows).toHaveCount(6)
     // 首行 ALR-001：压力偏高 / 林小雨 / 待处理 / 进行中
     const first = rows.first()
     await expect(first).toContainText('压力偏高')
@@ -28,6 +30,22 @@ test.describe('告警列表', () => {
     await expect(first).toContainText('进行中')
   })
 
+  // T430（PRD §7D.6 历史数据处置拍 C·Boss 2026-09-27）：已裁砍除类型的历史行只在展示面隐藏，
+  // mock 数据里 ALR-003（pressure_fluctuation）仍在 ⇒ 这条断言判的是「页面不渲染」而不是「数据没了」。
+  test('已裁砍除类型的历史行不出现在列表（中文标签与裸码值都不许露）', async ({ page }) => {
+    const rows = tableRows(page)
+    await expect(rows).toHaveCount(6)
+    await expect(rows.filter({ hasText: '压力波动' })).toHaveCount(0)
+    await expect(rows.filter({ hasText: 'P05 压力波动异常' })).toHaveCount(0)
+    // 反向前缀：其余六行的类型列必须还是四类中文（滤多了会连正常行一起吃掉）
+    const types = await rows.evaluateAll((trs) =>
+      trs.map((tr) => (Array.from(tr.querySelectorAll('td'))[3]?.textContent ?? '').trim()),
+    )
+    expect(types).toHaveLength(6)
+    // 不按顺序比：中文字典序在 JS 里是码位序，写成有序数组反而脆
+    expect(new Set(types)).toEqual(new Set(['压力偏高', '设备离线', '传感器标定异常', '佩戴时长不足']))
+  })
+
   // T289 2.5：设计稿 告警管理.html:246 九列 = 时间/患者/设备/告警类型/采集点/阈值/实际值/状态/操作；
   // 「详情」「恢复态」为 PRD 多出的列，排在设计稿列之后（T245：多出列不自行判删）。
   test('列清单与列序对齐设计稿', async ({ page }) => {
@@ -38,14 +56,17 @@ test.describe('告警列表', () => {
     expect(heads).toEqual(['时间', '患者', '设备', '告警类型', '采集点', '阈值', '实际值', '详情', '状态', '恢复态', '操作'])
   })
 
+  // T430：原先吃 ALR-003（压力波动）这条已处理行，现该行不渲染 ⇒ 改吃 ALR-006（设备离线·已处理·张建国）
   test('已处理告警显示处理人', async ({ page }) => {
-    const row = tableRows(page).filter({ hasText: 'P05 压力波动异常' })
+    const row = tableRows(page).filter({ hasText: '设备离线超过 1 小时' })
     await expect(row).toContainText('已处理')
     await expect(row).toContainText('张建国')
   })
 
-  test('分页组件显示共 7 条', async ({ page }) => {
+  // T430 登记的口径缺口：分页「共 N 条」用后端 total，本卡是纯前端过滤 ⇒ 6 行配「共 7 条」是当前现状
+  test('分页组件显示共 7 条（后端 total 未收窄，可见行 6 条）', async ({ page }) => {
     await expect(page.locator('.el-pagination')).toContainText('共 7 条')
+    await expect(tableRows(page)).toHaveCount(6)
   })
 })
 
@@ -69,14 +90,14 @@ test.describe('筛选', () => {
     await expect(rows.first()).toContainText('陈子航')
   })
 
-  test('清空筛选恢复 7 条', async ({ page }) => {
+  test('清空筛选恢复 6 条（库内 7 条，砍除类型那条仍隐藏）', async ({ page }) => {
     await pickSelectOption(page, page.locator('.filter-select').first(), '压力偏高')
     await expect(tableRows(page)).toHaveCount(2)
     // clearable：EP 2.14 新 select 的清空图标 hover 才渲染（.el-select__clear）
     const typeSelect = page.locator('.filter-select').first()
     await typeSelect.hover()
     await typeSelect.locator('.el-select__clear').click()
-    await expect(tableRows(page)).toHaveCount(7)
+    await expect(tableRows(page)).toHaveCount(6)
   })
 })
 
@@ -95,7 +116,8 @@ test.describe('处理流程', () => {
   })
 
   test('已处理告警无处理按钮', async ({ page }) => {
-    const row = tableRows(page).filter({ hasText: 'P05 压力波动异常' })
+    // T430：改吃 ALR-006（原样本 ALR-003 属砍除类型，已不渲染）
+    const row = tableRows(page).filter({ hasText: '设备离线超过 1 小时' })
     await expect(row.getByRole('button', { name: '处理' })).toHaveCount(0)
   })
 
@@ -135,10 +157,12 @@ test.describe('告警类型术语与三态（T289 2.6 / 2.7）', () => {
     expect(cells.length, '须有数据行').toBeGreaterThan(0)
     for (const cellsRow of cells) {
       const alertType = cellsRow[3]
-      // T419：枚举里保留「压力波动」= ALR-003 这条已入库历史行的中文标签（PRD §7D.6 历史数据
-      // 处置 A/B/C 未裁，裁定前按 A「保留可读」描述现状；裁 C 才随第二批删标签）。
-      expect(['压力偏高', '设备离线', '佩戴时长不足', '传感器标定异常', '压力波动'], `告警类型列须是设计稿术语，实际「${alertType}」`).toContain(alertType)
+      // T430（PRD §7D.6 历史数据处置拍 C·Boss 09-27）：枚举收口为四类 —— 唯一带「压力波动」标签的
+      // 历史行（ALR-003）已在列表侧隐藏，中文标签与裸码值都不该再出现在这一列。
+      expect(['压力偏高', '设备离线', '佩戴时长不足', '传感器标定异常'], `告警类型列须是设计稿四类术语，实际「${alertType}」`).toContain(alertType)
     }
+    // 隐藏是「不渲染这一行」，不是「把标签洗成空」：整表既无中文标签也无码值
+    expect(cells.some((c) => c[3] === '压力波动' || c[3] === 'pressure_fluctuation'), '砍除类型不得出现在类型列').toBe(false)
     // wear_interrupt 行必须显示「设备离线」，sensor_drift 行必须显示「传感器标定异常」
     expect(cells.find((c) => c[2] === 'DEV-B7E456')?.[3]).toBe('设备离线')
     expect(cells.find((c) => c[2] === 'DEV-C9D789')?.[3]).toBe('传感器标定异常')
@@ -178,7 +202,8 @@ test.describe('告警类型术语与三态（T289 2.6 / 2.7）', () => {
   })
 
   test('已处理行既无「开始处理」也无「处理」（后端 processed 重开会 409）', async ({ page }) => {
-    const row = tableRows(page).filter({ hasText: 'P05 压力波动异常' })
+    // T430：改吃 ALR-005（原样本 ALR-003 属砍除类型，已不渲染）
+    const row = tableRows(page).filter({ hasText: 'P03 压力偏高' })
     await expect(row.first().getByRole('button', { name: '处理', exact: true })).toHaveCount(0)
     await expect(row.first().getByRole('button', { name: '开始处理' })).toHaveCount(0)
   })
@@ -267,7 +292,7 @@ test.describe('医护角色进告警管理（T351）', () => {
 
   test('列表照常渲染，两张 admin 专属配置 Tab 不出现', async ({ page }) => {
     await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
-    await expect(tableRows(page)).toHaveCount(7)
+    await expect(tableRows(page)).toHaveCount(6)
 
     await expect(page.getByRole('tab', { name: '告警列表' })).toBeVisible()
     await expect(page.getByRole('tab', { name: '处理流程' })).toBeVisible()

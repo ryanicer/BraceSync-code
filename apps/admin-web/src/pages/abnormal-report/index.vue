@@ -137,7 +137,7 @@ import type { Patient } from '@bracesync/shared-types'
 import { alertTypeLabel } from '@bracesync/shared-utils'
 import { doctorNameOf, fetchAbnormalReport, exportAbnormalReportApi, fetchPatients, teamNameOf } from '../../api'
 import type { AbnormalReport } from '../../mock/alerts'
-import { kpiFromReport, lastNDays, monthToDate, rangeDays, stampText, summaryLines, type ReportKpi, type ReportRange } from '../../utils/abnormal-report'
+import { kpiFromReport, lastNDays, monthToDate, rangeDays, stampText, summaryLines, visibleByType, type ReportKpi, type ReportRange } from '../../utils/abnormal-report'
 import { useAuthStore } from '../../stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend)
@@ -217,10 +217,12 @@ const trendData = computed(() => {
 })
 const composeData = computed(() => {
   const r = report.value
-  if (!r || r.byType.length === 0) return null
+  if (!r) return null
+  const items = visibleByType(r)
+  if (items.length === 0) return null
   return {
-    labels: r.byType.map((x) => alertTypeLabel(x.key)),
-    datasets: [{ data: r.byType.map((x) => x.count), backgroundColor: ['#e74c3c', '#f39c12', '#3498db', '#9b59b6', '#1abc9c'] }],
+    labels: items.map((x) => alertTypeLabel(x.key)),
+    datasets: [{ data: items.map((x) => x.count), backgroundColor: ['#e74c3c', '#f39c12', '#3498db', '#9b59b6', '#1abc9c'] }],
   }
 })
 /** 无数据时 KPI 显示 0、图表显示空态文案、不隐藏卡片（稿面「区间规则」） */
