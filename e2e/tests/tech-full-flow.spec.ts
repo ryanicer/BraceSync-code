@@ -68,7 +68,7 @@ test.describe('技师端全链路', () => {
     await page.locator('.action-btn', { hasText: '查看安装记录' }).click()
     await expect(page).toHaveURL(/pages\/records/, { timeout: 10_000 })
     await expect(page.getByText('安装记录').first()).toBeVisible()
-    await expect(page.locator('.record-card')).toHaveCount(6)
+    await expect(page.locator('.record-card')).toHaveCount(26) // T433：mock 集 6 → 26（跨页取满）
   })
 })
 
@@ -83,7 +83,7 @@ test.describe('快捷入口跳转', () => {
     await page.locator('.action-btn', { hasText: '查看安装记录' }).click()
     await expect(page).toHaveURL(/pages\/records/, { timeout: 10_000 })
     await expect(page.getByText('安装记录').first()).toBeVisible()
-    await expect(page.locator('.record-card')).toHaveCount(6)
+    await expect(page.locator('.record-card')).toHaveCount(26) // T433：mock 集 6 → 26（跨页取满）
   })
 
   test('完成页继续安装下一台跳转', async ({ page }) => {

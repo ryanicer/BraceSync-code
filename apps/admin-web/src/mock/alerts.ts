@@ -44,9 +44,13 @@ const ALERTS: Alert[] = [
   },
   // T289 2.6/2.7：新类型（wear_duration_short）+ 第三态（processing）各一条，
   // 否则「佩戴时长不足」与「处理中」在 mock 下没有可渲染的行。
+  // T433 缺陷三：旧值 18 / 6.5 按**小时**写，与后端分钟落库口径相反
+  // （engine.go EvaluateWearDurationShort 写 need = targetHours*60），
+  // 是「共享格式化层把分钟标成 h」在 mock 门禁下一直看不见的直接原因。
+  // 现按分钟写（同 seed.sql:193 的 1080.0 / 390.0），显示仍是稿面的 18h / 6.5h。
   {
     alertId: 'ALR-007', patientId: 'PT-004', deviceId: 'DEV-D2A012', type: 'wear_duration_short',
-    detail: '当日佩戴 6.5 小时，低于目标 18 小时', sensorPoint: '', thresholdValue: 18, actualValue: 6.5,
+    detail: '当日佩戴 6.5 小时，低于目标 18 小时', sensorPoint: '', thresholdValue: 1080, actualValue: 390,
     timestamp: '2026-08-10T08:05:00+08:00', readStatus: 'unread', processStatus: 'processing',
     resolvedStatus: 'active', resolvedAt: null, inProgressAt: '2026-08-10T08:30:00+08:00',
     processedBy: null, processedAt: null, processNote: null,

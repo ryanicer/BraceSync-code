@@ -39,6 +39,7 @@ const LEGITIMATE: Array<{ file: string; on: string; why: string }> = [
   { file: 'apps/patient-miniapp/src/mock/device.ts', on: '是 T380 清理过的假串形态', why: '注释点名被替换掉的旧值' },
   { file: 'apps/tech-miniapp/src/api/install.ts', on: '是 3 位尾号假串', why: '注释点名被替换掉的旧值' },
   { file: 'apps/tech-miniapp/src/api/install.ts', on: "deviceId: `PRS-ML05-RC-", why: '模板前缀段（8 位日期 + 3 位序号分开拼），最终值由下面的合成用例校验' },
+  { file: 'apps/tech-miniapp/src/api/alert.ts', on: "deviceId: `PRS-ML05-RC-", why: 'T433 告警 mock 沿用同一保留合成批次的模板前缀段' },
   { file: 'apps/tech-miniapp/src/pages/bind/index.vue', on: 'T362: 去掉 T089 的 mock 硬编码', why: 'T362 留下的历史说明注释' },
   { file: 'apps/tech-miniapp/src/utils/bind-copy.ts', on: '旧示例', why: '注释点名被替换掉的旧示例串' },
   { file: 'apps/tech-miniapp/test/bind-scan.spec.ts', on: 'T380 — 同页设备ID 示例口径', why: '文件头注释' },
@@ -128,7 +129,11 @@ describe('mock 号段取值（不冒充现网设备）', () => {
     const src = read('apps/tech-miniapp/src/api/install.ts')
     const dateSeg = src.match(/deviceId: `PRS-ML05-RC-(\d{8})\$\{String\(i \+ 1\)\.padStart\(3, '0'\)\}`/)?.[1]
     expect(dateSeg).toBe('19700101')
-    const ids = [0, 1, 2, 3, 4, 5].map((i) => `PRS-ML05-RC-${dateSeg}${String(i + 1).padStart(3, '0')}`)
+    // 条数不写死：T433 把 mock 集从 6 扩到 26 正是为了让翻页那条腿在本地被执行，
+    // 这里若钉 6 就等于让门禁替旧基数背书。
+    const total = Number(src.match(/const MOCK_INSTALL_TOTAL = (\d+)/)?.[1])
+    expect(total).toBeGreaterThan(20)
+    const ids = Array.from({ length: total }, (_, i) => `PRS-ML05-RC-${dateSeg}${String(i + 1).padStart(3, '0')}`)
     for (const id of ids) {
       expect(id).toMatch(DEVICE_ID_SHAPE)
       expect(id).toHaveLength(23)

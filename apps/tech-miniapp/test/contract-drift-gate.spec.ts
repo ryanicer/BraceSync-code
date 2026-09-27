@@ -3,9 +3,12 @@
 // 目标：与 admin-web 侧互为补充，证明前端真实消费路径上「读取的字段名」与后端/契约一致。
 // 本 spec 只覆盖「当前全绿」的端点。listInstallRecords 因 T143 未合入 + 本单限制作业边界（不动业务代码），
 // 暂不入本门禁；待 Iris 修复（改读 res.list）后可在此补充该域。
+// T433 已补：安装记录 + 告警两个分页域（翻页参数上行、list/total 下行）。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { bindDevice, setDeviceWifi } from '../src/api/device'
 import { getProvisionKey, clearProvisionKeyCache } from '../src/api/provision'
+import { listInstallRecords } from '../src/api/install'
+import { listAlerts } from '../src/api/alert'
 
 // 走真实路径：强制 USE_MOCK=false，并让 request 可控（对齐 test/provision-cache.spec.ts 既有模式）。
 vi.mock('../src/utils/request', () => {
@@ -59,5 +62,27 @@ describe('T144 契约漂移门禁（tech-miniapp 真实路径）', () => {
     const res = await getProvisionKey('device-001')
     expect(res.provision_key_hex).toBeTruthy()
     expect(res.expires_in_sec).toBeGreaterThan(0)
+  })
+
+  // T433 缺陷一：两页此前只取第一页且把本页条数当总数 —— 这里钉住「翻页参数上行、total 下行」，
+  // 防止后人又把 total 读丢（读丢时页头数字会退回本页条数，正是本卡修的那个形态）。
+  it('T433 listInstallRecords 真实路径：page/pageSize 上行，list/total 下行', async () => {
+    request.mockResolvedValue({ list: [{ installId: 'INS-1' }], total: 31, page: 2, pageSize: 20 })
+    const res = await listInstallRecords({ page: 2, pageSize: 20 })
+    expect((request.mock.calls[0][0] as { url: string }).url)
+      .toBe('/api/v1/install-records?page=2&pageSize=20')
+    expect(res.list).toHaveLength(1)
+    expect(res.total).toBe(31)
+  })
+
+  it('T433 listAlerts 真实路径：page/pageSize 上行，list/total 下行', async () => {
+    request.mockResolvedValue({ list: [{ alertId: 'ALR-1' }], total: 86, page: 1, pageSize: 50 })
+    const res = await listAlerts({ page: 1, pageSize: 50 })
+    const call = request.mock.calls[0][0] as { url: string; method: string; data: Record<string, unknown> }
+    expect(call.url).toBe('/api/v1/alerts')
+    expect(call.method).toBe('GET')
+    expect(call.data).toMatchObject({ page: 1, pageSize: 50 })
+    expect(res.list).toHaveLength(1)
+    expect(res.total).toBe(86)
   })
 })

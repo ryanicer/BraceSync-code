@@ -45,6 +45,13 @@
         <text class="action-arrow">›</text>
       </view>
     </view>
+
+    <!-- T433 缺陷四：登录态此前在全端无退出通道（Alice T428 走查附带观察，PM 21:22 裁定并入本卡） -->
+    <view class="logout-area">
+      <view class="logout-btn" @click="handleLogout">
+        <text class="logout-text">退出登录</text>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -65,6 +72,18 @@ function goBind() {
 
 function goRecords() {
   uni.navigateTo({ url: '/pages/records/index' })
+}
+
+function handleLogout() {
+  uni.showModal({
+    title: '退出登录',
+    content: '确定要退出登录吗？',
+    success: (res) => {
+      if (!res.confirm) return
+      authStore.logout()
+      uni.reLaunch({ url: '/pages/login/index' })
+    },
+  })
 }
 
 onMounted(() => {
@@ -104,4 +123,7 @@ onMounted(() => {
 .action-card.secondary .action-desc { color: #9ca3af; opacity: 1; }
 .action-arrow { font-size: 48rpx; opacity: 0.7; }
 .action-card.secondary .action-arrow { color: #9ca3af; }
+.logout-area { padding: 64rpx 48rpx 0; display: flex; justify-content: center; }
+.logout-btn { padding: 20rpx 64rpx; border: 3rpx solid #e5e7eb; border-radius: 999rpx; background: #fff; }
+.logout-text { font-size: 28rpx; color: #6b7280; }
 </style>

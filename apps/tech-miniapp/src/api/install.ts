@@ -70,36 +70,50 @@ interface ListInstallParams {
   wifiStatus?: 'connected' | 'unconfigured'
 }
 
+/** mock 集大小：刻意 > 后端缺省单页 20，让「翻页取满」那条腿在本地 e2e 里真被执行（T433） */
+const MOCK_INSTALL_TOTAL = 26
+
+function mockInstallSeed(): InstallRecord[] {
+  const names = ['张明远', '李欣怡', '王子轩', '刘思雨', '陈俊豪', '杨梓涵']
+  return Array.from({ length: MOCK_INSTALL_TOTAL }).map((_, i) => ({
+    installId: `INS-202609-${String(i + 1).padStart(3, '0')}`,
+    // T406（U4）：旧值 `PRS-ML05-RC-00${i + 1}` 是 3 位尾号假串（现网精确命中 0）。
+    // 这里不改成现网串——现网 5 台是 20260701001–005 批次（T406 只读 GET /devices 实测），
+    // mock 冒充现网设备会让「本地绿、联调对不上号」更难查；故用形态合法
+    // （日期 8 + 序号 3）但属保留合成批次的 19700101 日期段，epoch 日期永不可能是真实装机日。
+    // 首条被 e2e/tests/tech-records.spec.ts 断言，改这里要同步改那条用例。
+    deviceId: `PRS-ML05-RC-19700101${String(i + 1).padStart(3, '0')}`,
+    patientId: `pat-${String((i % names.length) + 1).padStart(3, '0')}`,
+    patientName: names[i % names.length],
+    techId: 'T-001',
+    techName: '李技师',
+    calibrateTime: new Date(Date.now() - i * 86400000).toISOString(),
+    baselineId: i % 3 === 2 ? null : `BSL-202609${String(i + 1).padStart(2, '0')}-ABC`,
+    notes: i === 0 ? '患者初诊安装，支具型号 ML05' : '',
+    signatureUrl: '',
+    wifiStatus: i % 2 === 0 ? 'connected' : 'unconfigured',
+  }))
+}
+
 /**
- * 安装记录列表（真实：GET /install-records，后端 T084 未实现）
+ * 安装记录列表（真实：GET /install-records）
+ * mock 分支按 page/pageSize 切片回 { list, total }，与后端 pageData 信封同形
+ * （services/device-service/internal/handler/query.go:63-68），
+ * 否则 mock 下永远「一页装得下」，T433 格二（取数只发一页）本地测不出来。
  */
 export async function listInstallRecords(
   params: ListInstallParams = {}
 ): Promise<{ list: InstallRecord[]; total: number }> {
+  const pageSize = params.pageSize ?? 20
+  const page = params.page ?? 1
   if (USE_MOCK) {
     // T089-MOCK: 等后端 T084 就绪后切换
     await new Promise((r) => setTimeout(r, 200))
-    const seed: InstallRecord[] = Array.from({ length: 6 }).map((_, i) => ({
-      installId: `INS-2026090${i + 1}-00${i + 1}`,
-      // T406（U4）：旧值 `PRS-ML05-RC-00${i + 1}` 是 3 位尾号假串（现网精确命中 0）。
-      // 这里不改成现网串——现网 5 台是 20260701001–005 批次（T406 只读 GET /devices 实测），
-      // mock 冒充现网设备会让「本地绿、联调对不上号」更难查；故用形态合法
-      // （日期 8 + 序号 3）但属保留合成批次的 19700101 日期段，epoch 日期永不可能是真实装机日。
-      // 首条被 e2e/tests/tech-records.spec.ts 断言，改这里要同步改那条用例。
-      deviceId: `PRS-ML05-RC-19700101${String(i + 1).padStart(3, '0')}`,
-      patientId: `pat-00${i + 1}`,
-      patientName: ['张明远', '李欣怡', '王子轩', '刘思雨', '陈俊豪', '杨梓涵'][i],
-      techId: 'T-001',
-      techName: '李技师',
-      calibrateTime: new Date(Date.now() - i * 86400000).toISOString(),
-      baselineId: i % 3 === 2 ? null : `BSL-202609${String(i + 1).padStart(2, '0')}-ABC`,
-      notes: i === 0 ? '患者初诊安装，支具型号 ML05' : '',
-      signatureUrl: '',
-      wifiStatus: i % 2 === 0 ? 'connected' : 'unconfigured',
-    }))
-    return { total: seed.length, list: seed }
+    const seed = mockInstallSeed()
+    const start = (page - 1) * pageSize
+    return { total: seed.length, list: seed.slice(start, start + pageSize) }
   }
-  const qs = Object.entries(params)
+  const qs = Object.entries({ page, pageSize, wifiStatus: params.wifiStatus })
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
     .join('&')
