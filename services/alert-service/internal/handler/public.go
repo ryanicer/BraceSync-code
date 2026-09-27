@@ -25,11 +25,15 @@ import (
 	"github.com/bracesync/bracesync/services/alert-service/internal/repo"
 )
 
-// codeNotFound 资源不存在（HTTP 状态码同步映射）
+// 越权与资源不存在两格按 T402 甲-1 收为「域号 4 + 0 + HTTP 状态三位」（旧值 403/404 是裸
+// HTTP 状态数字，与 reject 的 HTTP 状态共用一个参数，改值会连状态一起改）。
+// 域号取 4 的理由：架构 §3.5 分段表里 alert 域占 4xxxx（user 1、device 2、data 3、alert 4、msg 5、file 6）。
+// codeConflict 与 handler.go 的 codeInvalidParam/codeInternalError 仍留裸数字：Boss 22:07 勾的是丁-2
+// （只收 403 与 404），其余裸码留给告警域自己的卡，这是有意的中间态而不是漏项。
 const (
-	codeNotFound  = 404
-	codeForbidden = 403
-	codeConflict  = 409 // T257 2.7：已处理的告警不允许重新进入「处理中」
+	codeNotFound  = 40404 // HTTP 404 资源不存在
+	codeForbidden = 40403 // HTTP 403 角色无权 / 越界读
+	codeConflict  = 409   // T257 2.7：已处理的告警不允许重新进入「处理中」
 )
 
 // 身份头（gateway JWT 鉴权后注入）
@@ -165,7 +169,7 @@ func (h *Handler) SetPublicStore(s PublicAlertStore) { h.public = s }
 //     缺失 X-User-Id → 403（fail-closed）
 func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 	if h.public == nil {
-		h.reject(w, codeInternalError, "public store not configured")
+		h.reject(w, http.StatusInternalServerError, codeInternalError, "public store not configured")
 		return
 	}
 	q := r.URL.Query()
@@ -180,7 +184,7 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 	if !isStaffRole(r.Header.Get(headerRole)) {
 		userID := r.Header.Get(headerUserID)
 		if userID == "" {
-			h.reject(w, codeForbidden, "missing user identity")
+			h.reject(w, http.StatusForbidden, codeForbidden, "missing user identity")
 			return
 		}
 		filter.PatientID = userID // 强制覆盖，不接受调用方传入的 patientId
@@ -190,13 +194,13 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 	if filter.Type != "" {
 		if _, ok := validAlertTypes[filter.Type]; !ok {
-			h.reject(w, codeInvalidParam, "invalid type: "+filter.Type)
+			h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid type: "+filter.Type)
 			return
 		}
 	}
 	if filter.Status != "" {
 		if _, ok := validProcessStatus[filter.Status]; !ok {
-			h.reject(w, codeInvalidParam, "invalid status: "+filter.Status)
+			h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid status: "+filter.Status)
 			return
 		}
 	}
@@ -205,7 +209,7 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("page"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
-			h.reject(w, codeInvalidParam, "invalid page: "+v)
+			h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid page: "+v)
 			return
 		}
 		filter.Page = n
@@ -214,7 +218,7 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("pageSize"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > maxPageSize {
-			h.reject(w, codeInvalidParam, "invalid pageSize: "+v)
+			h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid pageSize: "+v)
 			return
 		}
 		filter.PageSize = n
@@ -223,7 +227,7 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 	rows, total, err := h.public.ListAlerts(r.Context(), filter)
 	if err != nil {
 		h.log.Error().Err(err).Msg("list alerts failed")
-		h.reject(w, codeInternalError, "list alerts failed")
+		h.reject(w, http.StatusInternalServerError, codeInternalError, "list alerts failed")
 		return
 	}
 	items := make([]AlertItem, 0, len(rows))
@@ -246,7 +250,7 @@ func (h *Handler) listAlerts(w http.ResponseWriter, r *http.Request) {
 // 无 body / note 为空 ⇒ 传空串给 repo，行为与本条改动前完全一致。
 func (h *Handler) processAlert(w http.ResponseWriter, r *http.Request) {
 	if h.public == nil {
-		h.reject(w, codeInternalError, "public store not configured")
+		h.reject(w, http.StatusInternalServerError, codeInternalError, "public store not configured")
 		return
 	}
 	alertID, ok := h.parseAlertID(w, r)
@@ -260,11 +264,11 @@ func (h *Handler) processAlert(w http.ResponseWriter, r *http.Request) {
 	exists, err := h.public.ProcessAlert(r.Context(), alertID, r.Header.Get(headerUserID), note)
 	if err != nil {
 		h.log.Error().Err(err).Int64("alert_id", alertID).Msg("process alert failed")
-		h.reject(w, codeInternalError, "process alert failed")
+		h.reject(w, http.StatusInternalServerError, codeInternalError, "process alert failed")
 		return
 	}
 	if !exists {
-		h.reject(w, codeNotFound, "alert not found: "+r.PathValue("alertId"))
+		h.reject(w, http.StatusNotFound, codeNotFound, "alert not found: "+r.PathValue("alertId"))
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope{Code: codeSuccess, Message: "success"})
@@ -285,7 +289,7 @@ type processNoteRequest struct {
 func (h *Handler) parseProcessNote(w http.ResponseWriter, r *http.Request) (string, bool) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
 	if err != nil {
-		h.reject(w, codeInvalidParam, "read body: "+err.Error())
+		h.reject(w, http.StatusBadRequest, codeInvalidParam, "read body: "+err.Error())
 		return "", false
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
@@ -293,12 +297,12 @@ func (h *Handler) parseProcessNote(w http.ResponseWriter, r *http.Request) (stri
 	}
 	var req processNoteRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		h.reject(w, codeInvalidParam, "invalid json: "+err.Error())
+		h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid json: "+err.Error())
 		return "", false
 	}
 	note := strings.TrimSpace(req.Note)
 	if utf8.RuneCountInString(note) > maxProcessNote {
-		h.reject(w, codeInvalidParam, "note too long: max 512 characters")
+		h.reject(w, http.StatusBadRequest, codeInvalidParam, "note too long: max 512 characters")
 		return "", false
 	}
 	return note, true
@@ -309,7 +313,7 @@ func (h *Handler) parseProcessNote(w http.ResponseWriter, r *http.Request) (stri
 // 已 processed → 409（处理完的记录不允许重新打开）；不存在 404；alertId 非法 400。
 func (h *Handler) startProcessingAlert(w http.ResponseWriter, r *http.Request) {
 	if h.public == nil {
-		h.reject(w, codeInternalError, "public store not configured")
+		h.reject(w, http.StatusInternalServerError, codeInternalError, "public store not configured")
 		return
 	}
 	alertID, ok := h.parseAlertID(w, r)
@@ -319,15 +323,15 @@ func (h *Handler) startProcessingAlert(w http.ResponseWriter, r *http.Request) {
 	st, err := h.public.StartProcessing(r.Context(), alertID)
 	if err != nil {
 		h.log.Error().Err(err).Int64("alert_id", alertID).Msg("start processing alert failed")
-		h.reject(w, codeInternalError, "start processing alert failed")
+		h.reject(w, http.StatusInternalServerError, codeInternalError, "start processing alert failed")
 		return
 	}
 	if !st.Exists {
-		h.reject(w, codeNotFound, "alert not found: "+r.PathValue("alertId"))
+		h.reject(w, http.StatusNotFound, codeNotFound, "alert not found: "+r.PathValue("alertId"))
 		return
 	}
 	if st.Status == "processed" {
-		h.reject(w, codeConflict, "alert already processed: "+r.PathValue("alertId"))
+		h.reject(w, http.StatusConflict, codeConflict, "alert already processed: "+r.PathValue("alertId"))
 		return
 	}
 	inProgressAt := ""
@@ -353,7 +357,7 @@ func (h *Handler) parseAlertID(w http.ResponseWriter, r *http.Request) (int64, b
 	idStr := r.PathValue("alertId")
 	alertID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil || alertID < 1 {
-		h.reject(w, codeInvalidParam, "invalid alertId: "+idStr)
+		h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid alertId: "+idStr)
 		return 0, false
 	}
 	return alertID, true

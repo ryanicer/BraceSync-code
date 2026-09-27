@@ -75,8 +75,12 @@ const (
 	CodeRateLimited      = 20429 // 限流（设备按 Retry-After 退避）
 	CodePatientNotFound  = 10404 // 患者档案不存在（档案 owner 是 user-service：同其 CodeNotFound / device-service CodeUserResNotFound 的 10404；T340）
 	CodeQueryParam       = 30001 // 数据域：查询参数非法
-	CodeForbidden        = 403   // 越权访问（水平越权 / 无数据权限）
-	CodeInternal         = 90001 // 系统内部错误
+	// CodeForbidden 按 T402 甲-1 收为「域号 3 + 0 + HTTP 状态三位 403」。旧值是裸 HTTP 状态数字
+	// 403，与 user 10403 / device 20403 / msg 50403 的形状不一致（那三域早按本规则取值）。
+	// 本域另有 CodeDeviceIDMismatch = 20403 与 device 域撞值一事属 T402 丙-1，缓动等硬件侧
+	// 只读确认，故本卡未改它 —— 别把这条当已收口。
+	CodeForbidden = 30403 // 越权访问（水平越权 / 无数据权限），HTTP 403
+	CodeInternal  = 90001 // 系统内部错误
 )
 
 // AppError 业务错误：携带统一响应 code 与建议 HTTP 状态

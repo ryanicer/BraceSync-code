@@ -29,7 +29,9 @@ import (
 	"github.com/bracesync/bracesync/services/alert-service/internal/scanner"
 )
 
-// 业务错误码（统一响应体 code 字段；HTTP 状态码同步映射）
+// 业务错误码（统一响应体 code 字段）。
+// T402 丁-2：本轮只把越权与不存在两格收进「域号 4 + 0 + HTTP 三位」（见 public.go），
+// 下面两格仍是裸 HTTP 数字，属有意保留的中间态，收口留给告警域自己的卡。
 const (
 	codeSuccess       = 0
 	codeInvalidParam  = 400
@@ -94,18 +96,18 @@ func (h *Handler) Router() *http.ServeMux {
 func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
 	if err != nil {
-		h.reject(w, codeInvalidParam, "read body: "+err.Error())
+		h.reject(w, http.StatusBadRequest, codeInvalidParam, "read body: "+err.Error())
 		return
 	}
 	var req EvalRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		h.reject(w, codeInvalidParam, "invalid json: "+err.Error())
+		h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid json: "+err.Error())
 		return
 	}
 	frame, err := req.ToPressureFrame()
 	if err != nil || frame.PatientID == "" || frame.DeviceID == "" {
 		metrics.InlineEvaluatedTotal.WithLabelValues(metrics.OutcomeDropped).Inc()
-		h.reject(w, codeInvalidParam, "invalid frame ref (need device_id/patient_id/20 points)")
+		h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid frame ref (need device_id/patient_id/20 points)")
 		return
 	}
 
@@ -131,7 +133,7 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 		// 落库失败 → 非 0 码触发调用方降级入队，补偿评估兜底（不丢告警）
 		metrics.InlineEvaluatedTotal.WithLabelValues(metrics.OutcomeEvalError).Inc()
 		h.log.Error().Err(err).Str("device_id", frame.DeviceID).Msg("inline alert persist failed, caller will degrade")
-		h.reject(w, codeInternalError, "persist alert failed")
+		h.reject(w, http.StatusInternalServerError, codeInternalError, "persist alert failed")
 		return
 	}
 	alert.AlertID = alertID // 落库后回填，Notify 时使用
@@ -150,10 +152,14 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// reject 非 0 码响应（HTTP 状态码与 code 一致，调用方 HTTPAlertClient 视为不可用）
-func (h *Handler) reject(w http.ResponseWriter, code int, message string) {
-	h.log.Warn().Int("code", code).Msg(message)
-	writeJSON(w, code, envelope{Code: code, Message: message})
+// reject 非 0 码响应。
+// T402 甲-1 前置：本函数原来只收一个 code，函数体里把同一个入参既当 HTTP 状态又当业务码
+// （writeJSON(w, code, envelope{Code: code, ...})），于是「改业务码」必然连带改 HTTP 状态。
+// 现拆成两个参数，32 个调用点各自显式给出 HTTP 状态；HTTP 状态取值与拆分前逐格相同。
+// 调用方 data-service 的 HTTPAlertClient 仍按「非 2xx 视为不可用」处理，判定依据是 HTTP 状态，未受影响。
+func (h *Handler) reject(w http.ResponseWriter, httpStatus, code int, message string) {
+	h.log.Warn().Int("http_status", httpStatus).Int("code", code).Msg(message)
+	writeJSON(w, httpStatus, envelope{Code: code, Message: message})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
