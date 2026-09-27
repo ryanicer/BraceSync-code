@@ -144,6 +144,13 @@
         <el-button type="primary" @click="openAssignTeam">分配团队</el-button>
         <!-- T372：异常报告按设计稿拆为独立页，抽屉只留跳转入口（稿「进入条件①」：进入后患者自动定位） -->
         <el-button @click="goAbnormalReport">异常报告</el-button>
+        <!-- T432 运营自助三入口。依据分层：「编辑档案」有 PRD §7D.3 子功能「编辑患者弹窗」五项撑着，
+             落点取抽屉（同节 :1113 明写「行内按钮形态属呈现差异、PRD 允许经弹窗承载」）；
+             「改手机号」「解绑微信」在 PRD 与设计稿均无条文，属本卡新增（Boss 09-27 20:1x 诉求），
+             稿面与 PRD 回写归口已登记在卡，本卡不改文档。 -->
+        <el-button @click="openEditProfile">编辑档案</el-button>
+        <el-button @click="openEditPhone">改手机号</el-button>
+        <el-button type="danger" plain :loading="unbinding" @click="confirmUnbindWechat">解绑微信</el-button>
       </div>
     </el-drawer>
 
@@ -202,21 +209,80 @@
         <el-button type="primary" :loading="assigning" @click="confirmAssign">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- T432 编辑档案弹窗。依据：PRD §7D.3:1119「编辑患者弹窗：修改姓名 / 性别 / 年龄 / 诊断 / Cobb 角度」，
+         五项与后端 adminPatientEditRequest（admin_patient.go:140-146）白名单一一对应；
+         白名单外的键会被 DisallowUnknownFields 判 400（同文件 :170-175），所以这里刻意不排团队 / 医生 / 状态。 -->
+    <el-dialog v-model="editVisible" title="编辑档案" width="520px" :close-on-click-modal="false">
+      <el-form label-width="80px">
+        <el-form-item label="姓名">
+          <el-input v-model="editForm.name" placeholder="请输入姓名" />
+        </el-form-item>
+        <el-form-item label="性别">
+          <el-radio-group v-model="editForm.gender">
+            <el-radio label="male">男</el-radio>
+            <el-radio label="female">女</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="年龄">
+          <el-input v-model="editForm.age" placeholder="请输入年龄" />
+        </el-form-item>
+        <el-form-item label="诊断">
+          <el-input v-model="editForm.diagnosis" placeholder="请输入诊断" />
+        </el-form-item>
+        <el-form-item label="Cobb角">
+          <el-input v-model="editForm.cobbAngle" placeholder="请输入Cobb角" />
+        </el-form-item>
+      </el-form>
+      <!-- 后端对「字段缺席」和「字段值为空」是两套语义（nil=不改 / 传值则校验值域），
+           而页面把原值预填进了输入框 ⇒ 用户清空某项既不是「不改」也存不进去，必须显式拦在这里 -->
+      <div v-if="editErrors.length" class="form-errors">
+        <div v-for="msg in editErrors" :key="msg" class="form-error">{{ msg }}</div>
+      </div>
+      <div class="dialog-note">只提交改动过的项；未改动的字段不会下发。</div>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!canSaveProfile" :loading="savingProfile" @click="confirmEditProfile">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- T432 改手机号弹窗（PUT /admin/patients/:id/phone，admin_patient.go:61-135）。
+         输入框刻意留空、不预填当前号码：患者域读侧不投影 phone_enc（shared-types/index.ts:20-23 T361），
+         拿到的 phone 恒为空串，预填等于把空值伪装成「原号」。
+         也不做医护页那套「留空即不改」三态（utils/phoneField.ts）—— 本端点 validPhone 对空串判 400，
+         只有「换成这个号」一种语义，没有清空通道。 -->
+    <el-dialog v-model="phoneVisible" title="修改手机号" width="460px" :close-on-click-modal="false">
+      <el-form ref="phoneFormRef" :model="phoneForm" :rules="phoneRules" label-width="80px">
+        <el-form-item label="新手机号" prop="phone">
+          <el-input v-model="phoneForm.phone" placeholder="请输入11位新手机号" maxlength="11" />
+        </el-form-item>
+        <el-form-item label="变更原因" prop="reason">
+          <el-input v-model="phoneForm.reason" type="textarea" :rows="2" placeholder="例如：患者换号，本人来电申请" />
+        </el-form-item>
+      </el-form>
+      <div class="dialog-note">原因随请求写入服务端审计日志（含改前/改后快照）。</div>
+      <template #footer>
+        <el-button @click="phoneVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingPhone" @click="confirmPhone">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import QRCode from 'qrcode'
 import type { Patient, Team, Doctor } from '@bracesync/shared-types'
 import {
   fetchPatients, fetchTeams, fetchDoctors, teamNameOf, doctorNameOf,
   createPatientApi, assignPatientTeamApi, batchBindPatientsApi,
+  updatePatientPhoneApi, updatePatientProfileApi, unbindPatientWechatApi,
 } from '../../api'
-import type { BatchBindFailure } from '../../mock/patients'
+import type { BatchBindFailure, PatientProfilePatch } from '../../mock/patients'
+import { PHONE_RE } from '../../utils/phoneField'
 
 /** T269 D1：后端 /admin/patients 已 join 出团队名与医生名，优先用返回值显示 */
 type PatientRow = Patient & { teamName?: string | null; doctorName?: string | null }
@@ -258,6 +324,29 @@ const createRules = {
 const assignVisible = ref(false)
 const assigning = ref(false)
 const assignTeamId = ref('')
+
+// T432 编辑档案（PUT /admin/patients/:id）
+const editVisible = ref(false)
+const savingProfile = ref(false)
+const editForm = ref({ name: '', gender: '' as '' | 'male' | 'female', age: '', diagnosis: '', cobbAngle: '' })
+/** 打开弹窗时的档案快照 —— 「只发改过的键」与「不可清空」判定都以它为基准，不用实时表单自比 */
+const editBase = ref<{ name: string; gender: string; age: string; diagnosis: string; cobbAngle: string } | null>(null)
+
+// T432 改手机号（PUT /admin/patients/:id/phone）
+const phoneVisible = ref(false)
+const savingPhone = ref(false)
+const unbinding = ref(false)
+const phoneFormRef = ref<FormInstance>()
+const phoneForm = ref({ phone: '', reason: '' })
+const phoneRules = {
+  phone: [
+    { required: true, message: '请输入新手机号', trigger: 'blur' },
+    { pattern: PHONE_RE, message: '手机号需为 11 位、以 1 开头的数字', trigger: 'blur' },
+  ],
+  // 后端不校验 reason（只写进审计日志，admin_patient.go:125-132），必填是页面自己加的：
+  // 没有理由的改号在事后无从追责。
+  reason: [{ required: true, message: '请填写变更原因', trigger: 'blur' }],
+}
 
 // 批量分配（4.2 独立卡片）
 const batchLoading = ref(false)
@@ -435,6 +524,154 @@ async function confirmAssign() {
   }
 }
 
+/**
+ * 值域逐条对齐 buildAdminPatientEdit（admin_patient.go:201-247）：姓名 1-64 字符、
+ * 年龄 0-150 整数、Cobb 角 0-180、诊断 ≤255 字符（且允许清空——它是唯一的置空通道，类型 *string）。
+ * 姓名/年龄/Cobb 在后端无「置为空」通道，页面把原值预填进了输入框 ⇒ 用户清空它既不是「不改」也存不进去，
+ * 必须在点保存前就讲清楚，不能让运营以为改了、实际服务端收到的是缺键。
+ */
+const editErrors = computed<string[]>(() => {
+  const base = editBase.value
+  if (!base) return []
+  const f = editForm.value
+  const out: string[] = []
+  const name = f.name.trim()
+  const nameLen = [...name].length
+  if (!name) out.push('姓名不可清空：档案编辑没有「置为空」通道，请填新姓名')
+  else if (nameLen > 64) out.push('姓名不能超过 64 个字符')
+  const age = f.age.trim()
+  if (age === '') {
+    if (base.age !== '') out.push('年龄不可清空：留空等于不修改，请填 0-150 的新年龄')
+  } else if (!/^\d+$/.test(age) || Number(age) > 150) {
+    out.push('年龄需为 0-150 的整数')
+  }
+  const cobb = f.cobbAngle.trim()
+  const cobbNum = Number(cobb)
+  if (cobb === '') {
+    if (base.cobbAngle !== '') out.push('Cobb角不可清空：留空等于不修改，请填新的角度')
+  } else if (!Number.isFinite(cobbNum) || cobbNum < 0 || cobbNum > 180) {
+    out.push('Cobb角需为 0-180 之间的数字')
+  }
+  if ([...f.diagnosis].length > 255) out.push('诊断不能超过 255 个字符')
+  return out
+})
+
+/**
+ * 只发改过的键 —— 后端 adminPatientEditRequest 用指针区分「字段缺席(nil)=不改」与
+ * 「显式传值=改」，且 gender/age 的空值形态会被值域校验判 400，所以全量下发既写坏没动的字段也存不进去。
+ * 无改动时返回 null ⇒ 保存按钮置灰（空编辑后端判 400「no updatable fields」，admin_patient.go:243-245）。
+ */
+const editPatch = computed<PatientProfilePatch | null>(() => {
+  const base = editBase.value
+  if (!base || editErrors.value.length > 0) return null
+  const f = editForm.value
+  const patch: PatientProfilePatch = {}
+  const name = f.name.trim()
+  if (name !== base.name.trim()) patch.name = name
+  if (f.gender !== base.gender && f.gender) patch.gender = f.gender
+  const age = f.age.trim()
+  if (age !== base.age && age !== '') patch.age = Number(age)
+  if (f.diagnosis !== base.diagnosis) patch.diagnosis = f.diagnosis
+  const cobb = f.cobbAngle.trim()
+  if (cobb !== base.cobbAngle && cobb !== '') patch.cobbAngle = Number(cobb)
+  return Object.keys(patch).length > 0 ? patch : null
+})
+
+const canSaveProfile = computed(() => editPatch.value !== null)
+
+function openEditProfile() {
+  const d = detail.value
+  if (!d) return
+  const snap: typeof editForm.value = {
+    name: d.name ?? '',
+    gender: d.gender ?? '',
+    age: d.age == null ? '' : String(d.age),
+    diagnosis: d.diagnosis ?? '',
+    cobbAngle: d.cobbAngle == null ? '' : String(d.cobbAngle),
+  }
+  editBase.value = snap
+  editForm.value = { ...snap }
+  editVisible.value = true
+}
+
+async function confirmEditProfile() {
+  const patch = editPatch.value
+  if (!detail.value || !patch) return
+  savingProfile.value = true
+  try {
+    const result = await updatePatientProfileApi(detail.value.patientId, patch)
+    // 写响应是 PatientDTO，不带列表 join 出的团队名/医生名 ⇒ 叠加而非整体替换，避免抽屉退化成显示编号
+    detail.value = { ...detail.value, ...result }
+    ElMessage.success('档案已保存')
+    editVisible.value = false
+    loadData()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    savingProfile.value = false
+  }
+}
+
+function openEditPhone() {
+  if (!detail.value) return
+  phoneForm.value = { phone: '', reason: '' }
+  phoneFormRef.value?.clearValidate()
+  phoneVisible.value = true
+}
+
+async function confirmPhone() {
+  if (!detail.value || !phoneFormRef.value) return
+  // 逐字段校验：与 confirmCreate 同因（避免 strict mode 下多元素报错）
+  const validPhone = await phoneFormRef.value.validateField('phone').then(() => true).catch(() => false)
+  if (!validPhone) return
+  const validReason = await phoneFormRef.value.validateField('reason').then(() => true).catch(() => false)
+  if (!validReason) return
+  savingPhone.value = true
+  try {
+    await updatePatientPhoneApi(
+      detail.value.patientId,
+      phoneForm.value.phone.trim(),
+      phoneForm.value.reason.trim(),
+    )
+    ElMessage.success('手机号已更新')
+    phoneVisible.value = false
+    loadData()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '修改失败')
+  } finally {
+    savingPhone.value = false
+  }
+}
+
+/**
+ * 后端是无条件 `SET wx_openid = NULL`（pg.go:168-171），对从未绑过微信的患者亦回 200，
+ * 而患者域读侧没有 openid 字段可判两态 ⇒ 文案不断言「该患者已绑定微信」，只讲解绑后的后果
+ * （「重新绑定手机号」一支已由 wxLogin 未绑定分支 10601+bindToken 核实，handler.go:648-665）。
+ */
+async function confirmUnbindWechat() {
+  const d = detail.value
+  if (!d) return
+  try {
+    await ElMessageBox.confirm(
+      `确认解绑患者 ${d.patientId} 的微信？解绑后该患者再用微信登录会进入「重新绑定手机号」流程。此操作会写入审计日志。`,
+      '解绑微信',
+      { type: 'warning', confirmButtonText: '确认解绑', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 取消或关掉弹层都不发请求
+  }
+  unbinding.value = true
+  try {
+    await unbindPatientWechatApi(d.patientId)
+    ElMessage.success('已解绑微信')
+    loadData()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '解绑失败')
+  } finally {
+    unbinding.value = false
+  }
+}
+
 // 批量分配（4.2）
 async function confirmBatch() {
   if (!canConfirmBatch.value) return
@@ -554,7 +791,29 @@ onMounted(async () => {
 }
 .drawer-actions {
   margin-top: 16px;
-  text-align: right;
+  /* T432：抽屉内动作从 2 个增到 5 个，420px 抽屉一行放不下 ⇒ 换行右对齐。
+     EP 默认给相邻按钮加 margin-left:12px，换行后行首那颗会被顶出 12px，故由 gap 统一控制间距。 */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.drawer-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+.form-errors {
+  margin: 0 0 12px 80px;
+}
+.form-error {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--el-color-danger);
+}
+.dialog-note {
+  margin-left: 80px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #999;
 }
 .batch-team-select {
   width: 180px;

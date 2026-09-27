@@ -131,6 +131,38 @@ export async function batchBindPatientsApi(patientIds: string[], teamId: string)
   return request<patientMock.BatchBindResult>({ url: '/api/v1/admin/patients/batch-bind', method: 'POST', data: { patientIds, teamId } })
 }
 
+/**
+ * T432 管理端改手机号（PUT /admin/patients/:id/phone，T085）。
+ * reason 必填属前端表单口径 —— 后端只把它写进审计日志、不校验（admin_patient.go:125-132）。
+ * 成功响应只有 {patientId}，回不了新号，故页面不指望它刷新号码展示。
+ */
+export async function updatePatientPhoneApi(patientId: string, phone: string, reason: string): Promise<{ patientId: string }> {
+  if (USE_MOCK) { await delay(); return patientMock.mockUpdatePatientPhone(patientId, phone, reason) }
+  const url = `/api/v1/admin/patients/${encodeURIComponent(patientId)}/phone`
+  return request<{ patientId: string }>({ url, method: 'PUT', data: { phone, reason } })
+}
+
+/**
+ * T432 档案编辑（PUT /admin/patients/:id，T248 4.3）。
+ * 🔴 只下发改过的键：后端是指针语义（nil=不改）+ DisallowUnknownFields，
+ * 多带 phone / teamId / status 任一 key 就整单 400，一个 key 都不给也是 400。
+ */
+export async function updatePatientProfileApi(patientId: string, patch: patientMock.PatientProfilePatch): Promise<Patient> {
+  if (USE_MOCK) { await delay(); return patientMock.mockUpdatePatientProfile(patientId, patch) }
+  const url = `/api/v1/admin/patients/${encodeURIComponent(patientId)}`
+  return request<Patient>({ url, method: 'PUT', data: patch as unknown as Record<string, unknown> })
+}
+
+/**
+ * T432 解绑微信（POST /admin/patients/:id/unbind-wechat，T085）。
+ * 后端无条件置 NULL，未绑定的患者亦返回 200；患者域读侧无 openid，故页面无法显示绑定态。
+ */
+export async function unbindPatientWechatApi(patientId: string): Promise<{ patientId: string }> {
+  if (USE_MOCK) { await delay(); return patientMock.mockUnbindPatientWechat(patientId) }
+  const url = `/api/v1/admin/patients/${encodeURIComponent(patientId)}/unbind-wechat`
+  return request<{ patientId: string }>({ url, method: 'POST' })
+}
+
 // ========== Alert（复用 T019B 已验证端点） ==========
 
 export async function fetchAlerts(params: { patientId?: string; type?: string; status?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<Alert>> {
