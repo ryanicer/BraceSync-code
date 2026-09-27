@@ -12,6 +12,12 @@
 // 🔴 形状断言只走解析、不走子串：jsonb 回读在冒号后带空格，且键按字典序重排，
 // 按 Go 紧凑 JSON 的字面量去 Contains 会静默恒假（首版就是这么红的）。
 //
+// 🔴 同一份 JSON 要两种读法就解两次，别塞进一个 struct：items 既要按 []string 读
+// （判 null 塌没塌成空数组），又要按 *[]string 读（分出 null 与 []）。塞在一个 struct 里
+// 无论写成命名字段（无 json tag，键名对不上）还是匿名嵌入（同名字段按深度只保留最浅的那个、
+// 深的那个被抑制），指针对那一格都恒为 nil —— 又是一条静默恒假断言（第二版就是这么红的，
+// 见 CI run 36302184565 / job 108571765594）。
+//
 // 只在集成层跑（testcontainers 起的临时 PG，不碰 staging seed；建的角色跑完删）。
 package repo
 
@@ -24,27 +30,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// t423ItemsShape 用指针收 items 键，把 null 与 [] 分开：
-// 键值 null 时 ptr 为 nil；键值 [] 时 ptr 指着一个空切片。
-// 键缺失与 null 同形，那一格不在这里判（请求侧的「省略」态由 handler 层用例覆盖）。
-type t423ItemsShape struct {
-	Items *[]string `json:"items"`
-}
-
 // t423Perms 读库内某角色 permissions_json：一次给出原文串 + items 的两种读法。
+// 两次独立解析（见文件头：合成一次必有一格恒 nil）。
+//   - items：[]string 读法，null 与「键缺失」都是 nil，[] 是非 nil 空切片
+//   - itemsPtr：*[]string 读法，null 与「键缺失」都是 nil 指针，[] 是「指着空切片的非 nil 指针」
 func t423Perms(t *testing.T, roleID string) (raw string, items []string, itemsPtr *[]string) {
 	t.Helper()
-	var perms struct {
-		Items []string `json:"items"`
-		Probe t423ItemsShape
-	}
 	ctx := context.Background()
 	row, err := itStore.GetRole(ctx, roleID)
 	require.NoError(t, err)
 	require.NotNil(t, row, "临时角色 %s 应存在", roleID)
-	require.NoError(t, json.Unmarshal([]byte(row.PermissionsJSON), &perms),
+
+	var loose struct {
+		Items []string `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(row.PermissionsJSON), &loose),
 		"%s 的 permissions_json 解析失败：%s", roleID, row.PermissionsJSON)
-	return row.PermissionsJSON, perms.Items, perms.Probe.Items
+	var strict struct {
+		Items *[]string `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(row.PermissionsJSON), &strict),
+		"%s 的 permissions_json 解析失败：%s", roleID, row.PermissionsJSON)
+	return row.PermissionsJSON, loose.Items, strict.Items
 }
 
 func TestITT423PermissionsItemsThreeStatesRoundTrip(t *testing.T) {
