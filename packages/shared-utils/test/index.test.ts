@@ -5,6 +5,10 @@ import {
   pressureChangeRate,
   isPressureHigh,
   formatAlertValue,
+  ALERT_TYPE_LABELS,
+  HIDDEN_ALERT_TYPES,
+  isHiddenAlertType,
+  alertTypeLabel,
 } from '../src/index'
 
 describe('formatPressure', () => {
@@ -115,5 +119,32 @@ describe('formatAlertValue (T235)', () => {
 
   it('no prefix by default', () => {
     expect(formatAlertValue('pressure_high', 40)).toBe('40.00N')
+  })
+})
+
+describe('isHiddenAlertType (T430 展示侧隐藏)', () => {
+  it('已裁砍除的历史类型在隐藏集合里', () => {
+    expect(HIDDEN_ALERT_TYPES).toContain('pressure_fluctuation')
+    expect(isHiddenAlertType('pressure_fluctuation')).toBe(true)
+  })
+
+  it('现行四类不被误伤（隐藏集合只收砍除项）', () => {
+    for (const type of ['pressure_high', 'wear_interrupt', 'wear_duration_short', 'sensor_drift']) {
+      expect(isHiddenAlertType(type)).toBe(false)
+    }
+  })
+
+  it('空值与未知码值都不隐藏，交由展示层原样处理', () => {
+    expect(isHiddenAlertType(undefined)).toBe(false)
+    expect(isHiddenAlertType(null)).toBe(false)
+    expect(isHiddenAlertType('')).toBe(false)
+    expect(isHiddenAlertType('legacy_type')).toBe(false)
+  })
+
+  it('🔴 隐藏类型必须仍留在词表里：删键会让历史行露出裸码值', () => {
+    for (const type of HIDDEN_ALERT_TYPES) {
+      expect(type in ALERT_TYPE_LABELS).toBe(true)
+      expect(alertTypeLabel(type)).not.toBe(type)
+    }
   })
 })

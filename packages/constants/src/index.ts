@@ -17,7 +17,7 @@ export type AlertType = (typeof ALERT_TYPES)[keyof typeof ALERT_TYPES]
 export const DEFAULT_THRESHOLDS = {
   /** 压力偏高阈值 (N)，T203: 45 → 5 */
   PRESSURE_HIGH_N: 5,
-  /** 压力波动幅度阈值 (%)；T257 2.6 引擎已停产生、T419 S-6 后台表单项下线，键与默认值保留（PRD §7D.6 A/B/C 未裁） */
+  /** 压力波动幅度阈值 (%)；T257 2.6 引擎已停产生、T419 S-6 后台表单项下线，键与默认值保留（T430：PRD §7D.6 已拍 C＝历史行界面隐藏、数据不删，配置存储面不动） */
   PRESSURE_FLUCTUATION_PCT: 30,
   /** 设备离线判定时间 (分钟，须 ≥2×采集间隔)；键名 wear_interrupt 是码值，T419 G-6 只改显示口径 */
   WEAR_INTERRUPT_MINUTES: 60,

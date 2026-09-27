@@ -172,26 +172,52 @@ async function kpiTotal(page: Page): Promise<number> {
   return Number(raw)
 }
 
+/**
+ * 「② 构成」段的次数之和（文本视图，与饼图同一份 byType）。
+ * T430 后这条求和不再等于 KPI 总次数：砍除类型的历史行只从展示/导出面收口，汇总不动。
+ */
+async function composeCountSum(page: Page): Promise<number> {
+  const compose = (await summaryLines(page).nth(1).textContent())!
+  return [...compose.matchAll(/(\d+) 次（/g)].map((m) => Number(m[1])).reduce((n, c) => n + c, 0)
+}
+
 const exportButton = (page: Page): Locator => page.getByRole('button', { name: '导出 CSV' })
 const queryButton = (page: Page): Locator => page.locator('.filter-row').getByRole('button', { name: '查询' })
 
 test.describe('导出与区间筛选（T300 判据随页迁移）', () => {
-  test('默认区间导出 CSV：BOM + 16 列 + 明细行数 = KPI 总次数（汇总与明细同源）', async ({ page }) => {
+  test('固定区间导出 CSV：BOM + 16 列 + 明细行数 = 展示面「② 构成」次数之和', async ({ page }) => {
+    // 🔴 区间必须钉死，不能沿用默认「近 7 天」：mock 的类型按 (患者序 + UTC 日序) 确定性轮转，
+    // 默认窗口是否恰好含一条砍除类型的历史行随「今天」漂移 ⇒ 下面的 total/visible 两格会闪红。
+    // 2020-03-01~03 对 PT-001 实测：总 3 条、其中 1 条 pressure_fluctuation、可见 2 条。
+    const HIDDEN_WINDOW = { start: '2020-03-01', end: '2020-03-03', total: 3, visible: 2 }
+    await setRange(page, HIDDEN_WINDOW.start, HIDDEN_WINDOW.end)
+    await queryButton(page).click()
+    // 先等查询落地再读数：KPI 是异步刷新，直接 textContent 会拿到进页默认窗口的那一份
+    await expect(kpiCards(page).nth(0).locator('.kpi-value')).toHaveText(String(HIDDEN_WINDOW.total))
     const total = await kpiTotal(page)
-    expect(total, 'mock 下默认区间应有事件，否则本条没有判别力').toBeGreaterThan(0)
-    const start = await page.locator('.filter-row .el-date-editor input').nth(0).inputValue()
-    const end = await page.locator('.filter-row .el-date-editor input').nth(1).inputValue()
+    expect(total, '钉死区间的总次数须与实测一致，否则本条没有判别力').toBe(HIDDEN_WINDOW.total)
 
     const download = page.waitForEvent('download')
     await exportButton(page).click()
     const file = await download
-    expect(file.suggestedFilename()).toBe(`abnormal-report-PT-001-${start}_${end}.csv`)
+    expect(file.suggestedFilename()).toBe(`abnormal-report-PT-001-${HIDDEN_WINDOW.start}_${HIDDEN_WINDOW.end}.csv`)
 
     const raw = readFileSync(await file.path())
     expect(raw.subarray(0, 3).toString('hex'), 'Excel 打开不乱码需 UTF-8 BOM').toBe('efbbbf')
     const lines = raw.toString('utf8').slice(1).trim().split('\r\n')
     expect(lines[0].split(',')).toHaveLength(16)
-    expect(lines.length - 1, 'CSV 明细行数 = KPI 总次数').toBe(total)
+
+    // T430 前的判据是「明细行数 = KPI 总次数」（汇总与明细同源）。拍 C 后明细按界面同口径滤掉
+    // 砍除类型的历史行，而总次数仍来自后端汇总（数据不删）⇒ 同源的两侧换成了「② 构成」与 CSV。
+    const composeSum = await composeCountSum(page)
+    const detail = lines.slice(1)
+    expect(composeSum, '钉死区间应恰好列出可见的 2 次').toBe(HIDDEN_WINDOW.visible)
+    expect(detail.length, 'CSV 明细行数 = ② 构成次数之和（裁定四：导出与界面同口径）').toBe(composeSum)
+    const body = lines.join('\n')
+    expect(body, '已裁砍除类型的历史行不进导出明细（中文标签）').not.toContain('压力波动')
+    expect(body, '已裁砍除类型的历史行不进导出明细（裸码值）').not.toContain('pressure_fluctuation')
+    expect(detail.length, '总次数仍含被隐藏的历史行 ⇒ 明细小于总数，差额＝本卡登记的聚合面残差')
+      .toBeLessThan(total)
   })
 
   test('区间真的参与筛选：换成 2020-03-01~03 后总次数、统计区间、导出文件名同步变', async ({ page }) => {
@@ -253,14 +279,23 @@ test.describe('导出与区间筛选（T300 判据随页迁移）', () => {
     await expect(summaryLines(page).nth(0)).toContainText('共产生异常') // 仍是修前的那份汇总
   })
 
-  test('按类型视图与总数自洽：② 构成各类型次数之和 = KPI 总次数（T300「三视图自洽」的等价判据）', async ({ page }) => {
+  test('② 构成只列未砍除类型；其次数之和小于 KPI 总次数（差额＝隐藏的历史行）', async ({ page }) => {
+    // 同上一条：区间钉死才有「差额恰好 1 条」的可判性，默认「近 7 天」含不含历史隐藏行随当天漂移。
+    await setRange(page, '2020-03-01', '2020-03-03')
+    await queryButton(page).click()
+    await expect(kpiCards(page).nth(0).locator('.kpi-value')).toHaveText('3')
     const total = await kpiTotal(page)
-    expect(total).toBeGreaterThan(0)
-    // 稿面这里是饼图（canvas 内部数据在 DOM 里读不到），② 构成段是同一份 byType 的文本视图，
-    // 用它做求和判据；按日分桶的求和已由 vitest 对 chartDataFromReport 覆盖。
+    expect(total, '钉死区间的总次数＝3（含 1 条被隐藏的历史行）').toBe(3)
+    // 稿面这里是饼图（canvas 内部数据在 DOM 里读不到），② 构成段是同一份可见 byType 的文本视图。
     const compose = (await summaryLines(page).nth(1).textContent())!
     const counts = [...compose.matchAll(/(\d+) 次（/g)].map((m) => Number(m[1]))
     expect(counts.length, `② 段应列出至少一类异常，实际「${compose}」`).toBeGreaterThan(0)
-    expect(counts.reduce((n, c) => n + c, 0), '按类型次数不重不漏 = 总次数').toBe(total)
+    expect(compose, '已裁砍除类型的中文标签不得出现在构成段').not.toContain('压力波动')
+    expect(compose, '已裁砍除类型的裸码值不得出现在构成段').not.toContain('pressure_fluctuation')
+    const sum = counts.reduce((n, c) => n + c, 0)
+    // T430 前这条判的是「不重不漏 = 总次数」。拍 C 后隐藏只发生在展示面，汇总（total/byDay）不动
+    // ⇒ 相等关系改成了「严格小于」，差额本身就是本卡登记的聚合面残差（遗留见卡内交件）。
+    expect(sum, '构成段次数＝去掉隐藏行后的 2').toBe(2)
+    expect(sum, '构成段次数应严格小于总次数，差额＝被隐藏的历史行').toBeLessThan(total)
   })
 })

@@ -58,7 +58,7 @@ test('医生工作链路：登录 → Dashboard → 告警查看 → 实时监�
   // 医生可见菜单仅 4 项，告警管理在其中
   await gotoMenu(page, '告警管理')
   await expect(page).toHaveURL(/\/alerts/)
-  await expect(tableRows(page)).toHaveCount(7) // T289 2.6/2.7：mock 告警补到 7 条（新增 wear_duration_short + processing 行）
+  await expect(tableRows(page)).toHaveCount(6) // T289 补到 7 条；T430（§7D.6 拍 C）后砍除类型的 1 条历史行不再渲染
 
   await gotoMenu(page, '实时监控')
   await expect(page).toHaveURL(/\/monitor/)

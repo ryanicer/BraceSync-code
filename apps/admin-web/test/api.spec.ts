@@ -7,6 +7,7 @@ import {
   fetchAbnormalReport,
 } from '../src/api'
 import { mockAbnormalReport, mockAbnormalReportCsv } from '../src/mock/alerts'
+import { isHiddenAlertType } from '@bracesync/shared-utils'
 import { USE_MOCK } from '../src/utils/request'
 
 describe('API 层（USE_MOCK 模式）', () => {
@@ -117,12 +118,23 @@ describe('T300 异常报告', () => {
     expect(new Set(res.byDay.map((d) => d.count)).size).toBeGreaterThan(1)
   })
 
-  it('CSV 表头 16 列、明细行数等于汇总 total', async () => {
+  // T430（PRD §7D.6 历史数据处置拍 C·Boss 09-27）：原判据「明细行数 == 汇总 total」随裁定失效——
+  // 已裁砍除类型的历史行只从导出/展示面收口，汇总（数据层）不动 ⇒ 等式换成「total 减去隐藏行」。
+  // 隐藏条数按同一份未过滤的 byType 现算，不写死数字，换区间也不会腐烂。
+  it('CSV 表头 16 列、明细行数 = 汇总 total 减去已裁砍除类型的历史行', async () => {
     const csv = mockAbnormalReportCsv(range)
     expect(csv.startsWith('\ufeff')).toBe(true)
     const lines = csv.slice(1).trim().split('\r\n')
     expect(lines[0].split(',')).toHaveLength(16)
-    expect(lines.length - 1).toBe(mockAbnormalReport(range).total)
+    const summary = mockAbnormalReport(range)
+    const hidden = summary.byType
+      .filter((x) => isHiddenAlertType(x.key))
+      .reduce((n, x) => n + x.count, 0)
+    expect(hidden, '本区间须真含被隐藏类型的历史行，否则本条没有判别力').toBeGreaterThan(0)
+    expect(lines.length - 1).toBe(summary.total - hidden)
+    const body = lines.slice(1).join('\n')
+    expect(body).not.toContain('压力波动')
+    expect(body).not.toContain('pressure_fluctuation')
   })
 
   it('区间反向或格式非法时给空汇总，不抛错', async () => {

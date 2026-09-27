@@ -1,6 +1,6 @@
 // 异常报告页（T372）纯展示层：把 GET /admin/abnormal-reports 的四视图换算成 KPI、图表与文字汇总。
 // 抽成纯模块的原因：SFC 里的换算 vitest 测不到（同 T298/T322 的教训），且这些口径要逐条钉住。
-import { alertTypeLabel } from '@bracesync/shared-utils'
+import { alertTypeLabel, isHiddenAlertType } from '@bracesync/shared-utils'
 import type { AbnormalReport, AbnormalReportCount } from '../mock/alerts'
 
 export interface ReportRange {
@@ -84,6 +84,16 @@ export function kpiFromReport(r: AbnormalReport, range: ReportRange): ReportKpi 
 }
 
 /**
+ * T430（PRD §7D.6 历史数据处置拍 C·Boss 09-27）：按类型聚合的「构成」视图收口 ——
+ * 已裁砍除类型只出现在这一处过滤里，图表与文字汇总共用它，避免两处漏一处。
+ * 🔴 只滤「按类型展开」的那一面：total / byStatus / byDay 三个投影后端不带类型维度，
+ * 前端无从扣减，硬算就是编数字（见交件登记的聚合残差）。
+ */
+export function visibleByType(r: AbnormalReport): AbnormalReportCount[] {
+  return r.byType.filter((x) => !isHiddenAlertType(x.key))
+}
+
+/**
  * 文字汇总固定 6 段模板里的 4 段（稿面 `:354`）。
  * ③ 集中点位、④ 佩戴依从性 未产出 —— 现读端点没有采集点维度与时长维度，
  * 拼出来就是编数据（派发单「不伪造」红线），缺口已在卡内登记。
@@ -92,7 +102,7 @@ export function summaryLines(r: AbnormalReport, range: ReportRange): string[] {
   const kpi = kpiFromReport(r, range)
   const lines: string[] = []
   lines.push(`① 总体：区间内共产生异常 ${kpi.total} 次，日均 ${kpi.dailyAvg} 次。`)
-  const detail = r.byType.map((x) => `${alertTypeLabel(x.key)} ${x.count} 次（${kpi.total > 0 ? round1((x.count / kpi.total) * 100) : 0}%）`).join('、')
+  const detail = visibleByType(r).map((x) => `${alertTypeLabel(x.key)} ${x.count} 次（${kpi.total > 0 ? round1((x.count / kpi.total) * 100) : 0}%）`).join('、')
   lines.push(`② 构成：${detail || '区间内无异常记录'}`)
   lines.push(`⑤ 处理情况：已处理 ${kpi.total - kpi.unprocessed} 次，未处理 ${kpi.unprocessed} 次；处理率 ${kpi.processedRate}%。`)
   lines.push('⑥ 提示：本报告为区间数据汇总，不构成诊疗结论。')

@@ -90,3 +90,14 @@ export function alertTypeLabel(type?: string | null): string {
   if (!type) return '-'
   return ALERT_TYPE_LABELS[type] ?? type
 }
+
+/**
+ * T430（PRD §7D.6 历史数据处置已拍 C·Boss 2026-09-27）：已裁砍除类型的**展示侧**隐藏集合。
+ * 口径＝界面不展示、数据不删。各消费点判据只认这一处，后续 PRD 待下线清单收敛时只动这里。
+ * 🔴 上面的 ALERT_TYPE_LABELS 键一律保留：alertTypeLabel 查不到键会回退裸码值，删键等于把历史行露成 pressure_fluctuation。
+ */
+export const HIDDEN_ALERT_TYPES: readonly string[] = ['pressure_fluctuation']
+
+export function isHiddenAlertType(type?: string | null): boolean {
+  return !!type && HIDDEN_ALERT_TYPES.includes(type)
+}

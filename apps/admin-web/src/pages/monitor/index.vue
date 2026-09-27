@@ -193,13 +193,13 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="ev in snapshot?.alerts ?? []" :key="ev.alertId">
+              <tr v-for="ev in visibleEvents" :key="ev.alertId">
                 <td>{{ fmtTime(ev.timestamp) }}</td>
                 <td><span class="event-type" :class="eventTypeClass(ev.type)">{{ alertTypeLabel(ev.type) }}</span></td>
                 <td>{{ ev.detail }}</td>
                 <td>{{ ev.sensorPoint || '—' }}</td>
               </tr>
-              <tr v-if="(snapshot?.alerts ?? []).length === 0">
+              <tr v-if="visibleEvents.length === 0">
                 <td colspan="4" class="empty-cell">无异常事件</td>
               </tr>
             </tbody>
@@ -228,7 +228,7 @@ import {
   type ChartData,
 } from 'chart.js'
 import type { Patient } from '@bracesync/shared-types'
-import { alertTypeLabel } from '@bracesync/shared-utils'
+import { alertTypeLabel, isHiddenAlertType } from '@bracesync/shared-utils'
 import { fetchPatients, fetchPatientRealtime } from '../../api'
 import type { RealtimeSnapshot, PressureHeatmapPoint } from '../../mock/patients'
 import {
@@ -333,6 +333,13 @@ const statusLabel = computed(() => {
   if (s === 'offline') return '未佩戴'
   return '加载中'
 })
+
+// T430（PRD §7D.6 拍 C）：事件流隐藏已裁砍除类型的历史行，判据与告警列表页同一处（shared-utils）。
+// 页头「异常事件数」用的是 /realtime 的 events 计数（后端今日异常值，本卡按裁定不改后端），
+// 故隐藏后表格行数可以小于该数字 —— 不是漏过滤。
+const visibleEvents = computed(() =>
+  (snapshot.value?.alerts ?? []).filter((ev) => !isHiddenAlertType(ev.type)),
+)
 
 // T296：渲染口径跟随后端下发值，缺字段（旧镜像/未部署）时回落到 T203 后的默认量纲
 function positiveNum(v: unknown): number | null {

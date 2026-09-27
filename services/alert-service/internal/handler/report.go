@@ -40,8 +40,9 @@ const (
 // 四类名称出处 PRD §7D.6）。后台「告警管理」页与本页导出的 CSV 不得叫两个名，
 // 前端侧同批上线归 T419（Iris）。
 // pressure_fluctuation 保留旧名「压力波动」：T257 2.6 起引擎不再产生该类型，
-// 但历史行仍可读（PRD 登记的历史数据处置裁定前按 A 描述现状），删掉这一格会让
-// 老告警在 CSV 里退化成裸码值。
+// 但键要与全站唯一口径源逐键同形（t421_labels_test.go 钉这条镜像关系）。
+// T430（PRD §7D.6 历史数据处置拍 C·Boss 09-27）起，该类型的历史行不再进 CSV 明细
+// （见 hiddenReportAlertTypes），所以这格标签在导出路径上已是兜底而非主路径。
 var reportAlertTypeLabels = map[string]string{
 	"pressure_high":        "压力偏高",
 	"pressure_fluctuation": "压力波动", // 仅历史行（引擎停产生）
@@ -49,6 +50,15 @@ var reportAlertTypeLabels = map[string]string{
 	"sensor_drift":         "传感器标定异常",
 	"wear_duration_short":  "佩戴时长不足",
 }
+
+// hiddenReportAlertTypes 导出的展示侧隐藏集合，与前端 packages/shared-utils/src/index.ts
+// 的 HIDDEN_ALERT_TYPES 同形（同一裁定的两侧：界面与 CSV 不得一个藏一个露）。
+// T430 口径＝界面不展示、数据不删：库里历史行照旧在，GET /alerts 照旧返回，只是不进明细。
+var hiddenReportAlertTypes = map[string]bool{
+	"pressure_fluctuation": true,
+}
+
+func isHiddenReportAlertType(code string) bool { return hiddenReportAlertTypes[code] }
 
 var reportProcessStatusLabels = map[string]string{
 	"pending":    "待处理",
@@ -222,6 +232,7 @@ func (h *Handler) abnormalReport(w http.ResponseWriter, r *http.Request) {
 // exportAbnormalReport GET /api/v1/admin/abnormal-reports/export —— CSV 明细下载。
 // 与汇总同一 WHERE、同一排序口径（时间升序输出，便于按日翻阅）。
 // 超出 repo.MaxExportRows 时只导最近若干条，并在文件末行明示截断（不把局部当全量）。
+// T430：明细按 hiddenReportAlertTypes 跳过已裁砍除类型的历史行（界面隐藏、数据不删）。
 func (h *Handler) exportAbnormalReport(w http.ResponseWriter, r *http.Request) {
 	rq, ok := h.parseReportQuery(w, r)
 	if !ok {
@@ -248,6 +259,10 @@ func (h *Handler) exportAbnormalReport(w http.ResponseWriter, r *http.Request) {
 		"开始处理时间", "处理时间", "处理人", "处理备注",
 	})
 	for _, row := range rows {
+		// 与后台界面同口径：已裁砍除类型的历史行不进导出明细（库里数据不动）
+		if isHiddenReportAlertType(row.Type) {
+			continue
+		}
 		_ = cw.Write([]string{
 			strconv.FormatInt(row.AlertID, 10),
 			csvCell(row.PatientID),

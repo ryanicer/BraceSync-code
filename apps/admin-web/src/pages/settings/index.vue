@@ -21,7 +21,8 @@
             </el-form-item>
             <!-- T419 S-6：「压力波动幅度阈值」表单项按已停用口径下线（Boss 2026-09-23 裁定问题 4 砍类型，
                  PRD §7D.12 配置项明细 V3.21 已删该需求项）。只摘 UI：form 仍回显并随 PUT 原值回传，
-                 键 threshold_pressure_fluctuation_pct 与 DB CHECK 未动（历史行可读属 A/B/C 待裁）。
+                 键 threshold_pressure_fluctuation_pct 与 DB CHECK 未动（T430：PRD §7D.6 历史数据处置已拍 C
+                 ＝历史行界面隐藏、数据不删，但本设置页两张表属配置面，PM 09-27 19:00 裁定不入本卡范围）。
                  🔴 不能连 form 的键一起删：后端 validateSettings 对该字段做 [1,100] 区间校验
                  （services/user-service/internal/handler/handler.go:2040），载荷缺键 ⇒ 解码成 0 ⇒ 整页保存必 400。
                  这条不对称由 apps/admin-web/test/settings-visible-terms.spec.ts 钉住。 -->
