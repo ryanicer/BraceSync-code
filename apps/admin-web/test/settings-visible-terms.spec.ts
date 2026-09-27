@@ -75,7 +75,8 @@ describe('T419 G-6 —— 系统配置页告警阈值字段用新术语', () => 
   it('旧词整页零命中（键名与码值不动，只锁显示文案）', async () => {
     const wrapper = await mountSettings()
     const text = wrapper.text()
-    for (const dead of ['佩戴中断', '传感器漂移', '矫智通']) {
+    // T442：Boss 09-28 定名「矫智通」⇒ 上一轮定名「矫治通」转入禁回潮词表
+    for (const dead of ['佩戴中断', '传感器漂移', '矫治通']) {
       expect(text, `可见文案里不得出现「${dead}」`).not.toContain(dead)
     }
   })

@@ -3,6 +3,8 @@ import type { Alert } from '@bracesync/shared-types'
 import { isHiddenAlertType } from '@bracesync/shared-utils'
 
 const ALERTS: Alert[] = [
+  // T442 A-2/G-6：示例 detail 里的分钟数须与 DEFAULT_GLOBAL_RULES.deviceOfflineMinutes（60）同口径，
+  // sensor_drift 自述句用收口后的类型名；pressure_fluctuation 行的旧叫法刻意保留（历史行，见 REPORT_TYPE_LABELS 上方注释）。
   {
     alertId: 'ALR-001', patientId: 'PT-001', deviceId: 'DEV-A3F312', type: 'pressure_high',
     detail: 'P10 压力持续偏高，峰值 68.5N，超出阈值 8.5N', sensorPoint: 'P10', thresholdValue: 60, actualValue: 68.5,
@@ -11,7 +13,7 @@ const ALERTS: Alert[] = [
   },
   {
     alertId: 'ALR-002', patientId: 'PT-002', deviceId: 'DEV-B7E456', type: 'wear_interrupt',
-    detail: '设备离线超过 30 分钟，疑似摘除', sensorPoint: '', thresholdValue: 0, actualValue: 0,
+    detail: '设备离线超过 60 分钟，疑似摘除', sensorPoint: '', thresholdValue: 0, actualValue: 0,
     timestamp: '2026-08-11T13:15:00+08:00', readStatus: 'unread', processStatus: 'pending',
     resolvedStatus: 'resolved', resolvedAt: '2026-08-11T14:00:00+08:00', processedBy: null, processedAt: null, processNote: null,
   },
@@ -24,7 +26,7 @@ const ALERTS: Alert[] = [
   },
   {
     alertId: 'ALR-004', patientId: 'PT-003', deviceId: 'DEV-C9D789', type: 'sensor_drift',
-    detail: 'P12 传感器数据漂移，基线偏移超过 15%', sensorPoint: 'P12', thresholdValue: 15, actualValue: 23.7,
+    detail: 'P12 传感器标定异常，基线偏移超过 15%', sensorPoint: 'P12', thresholdValue: 15, actualValue: 23.7,
     timestamp: '2026-08-11T10:00:00+08:00', readStatus: 'read', processStatus: 'pending',
     resolvedStatus: 'active', resolvedAt: null, processedBy: null, processedAt: null, processNote: null,
   },
@@ -37,7 +39,7 @@ const ALERTS: Alert[] = [
   },
   {
     alertId: 'ALR-006', patientId: 'PT-004', deviceId: 'DEV-D2A012', type: 'wear_interrupt',
-    detail: '设备离线超过 1 小时', sensorPoint: '', thresholdValue: 0, actualValue: 0,
+    detail: '设备离线满 60 分钟未恢复', sensorPoint: '', thresholdValue: 0, actualValue: 0,
     timestamp: '2026-08-10T09:30:00+08:00', readStatus: 'read', processStatus: 'processed',
     resolvedStatus: 'resolved', resolvedAt: '2026-08-10T11:00:00+08:00', processedBy: '张建国',
     processedAt: '2026-08-10T10:15:00+08:00', processNote: '患者反馈临时摘除洗澡',

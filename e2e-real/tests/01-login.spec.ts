@@ -20,8 +20,9 @@ import { requireDeployedBuild } from '../deploy-guard'
  * T279 补：1.5 = 验收卡 A-FLOW-03 步骤 4「空用户名前端拦截」（docs/tests/acceptance/admin/核心流程.md:68）。
  *          mock 侧结构上验不了（登录页只有角色下拉，没有用户名框），故只能在真实模式补。
  * T336 补：1.7 / 1.8 = 挂载点深链与刷新（前端 base 改 /admin/ 后的行为，带部署守卫）。
- * T419 补：1.9 = 登录页品牌名收口为「矫治通」（1.1 只验标题非空，新旧包都成立，
+ * T419 补：1.9 = 登录页品牌名收口（1.1 只验标题非空，新旧包都成立，
  *          品牌字符串本身交给带守卫的 1.9，免得换包前把整条 1.1 的结构检查一起跳掉）。
+ * T442 订正：Boss 09-28 06:4x 定名为「矫智通」，原 T312 L-1「应写矫治通」口径作废 ⇒ 1.9 期望串反转。
  */
 test.describe('01-登录模块', () => {
 
@@ -40,17 +41,17 @@ test.describe('01-登录模块', () => {
       ).toBeVisible()
     })
 
-    test('1.9 登录页品牌名 = 「矫治通运营平台」（T419 L-1，带部署守卫）', async ({ page }) => {
+    test('1.9 登录页品牌名 = 「矫智通运营平台」（T442 L-1 口径反转，带部署守卫）', async ({ page }) => {
       await page.goto(realRoutes.login)
       await requireDeployedBuild(page, {
-        marker: 'T419-brand-name',
-        why: '改名只动前端可见字符串，staging 换包前页面必然还是旧品牌',
+        marker: 'T442-brand-name',
+        why: '改名只动前端可见字符串，staging 换包前页面必然还是上一轮定名「矫治通」',
         probe: async (p) =>
-          (await p.locator('.login-title').filter({ hasText: '矫治通运营平台' }).count()) > 0,
+          (await p.locator('.login-title').filter({ hasText: '矫智通运营平台' }).count()) > 0,
       })
-      await expect(page.locator('.login-title')).toContainText('矫治通运营平台')
-      await expect(page.locator('.login-title')).not.toContainText('矫智通')
-      await expect(page).toHaveTitle(/矫治通/)
+      await expect(page.locator('.login-title')).toContainText('矫智通运营平台')
+      await expect(page.locator('.login-title')).not.toContainText('矫治通')
+      await expect(page).toHaveTitle(/矫智通/)
     })
   })
 

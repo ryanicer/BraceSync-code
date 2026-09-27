@@ -183,7 +183,7 @@ export function mockNotificationLogs(params: { patientId?: string; channel?: str
   const pageSize = params.pageSize ?? 10
   const records: NotificationRecord[] = [
     { recordId: 'NTF-001', patientId: 'PT-001', alertId: 'ALR-001', alertType: 'pressure_high', channel: 'wechat', status: 'sent', content: '压力偏高告警：P10 峰值 68.5N', retryCount: 0, sentAt: '2026-08-11T14:30:05+08:00', createdAt: '2026-08-11T14:30:02+08:00' },
-    { recordId: 'NTF-002', patientId: 'PT-002', alertId: 'ALR-002', alertType: 'wear_interrupt', channel: 'wechat', status: 'failed', content: '设备离线提醒：超过 30 分钟未检测到佩戴', retryCount: 3, sentAt: null, createdAt: '2026-08-11T13:15:03+08:00' },
+    { recordId: 'NTF-002', patientId: 'PT-002', alertId: 'ALR-002', alertType: 'wear_interrupt', channel: 'wechat', status: 'failed', content: '设备离线提醒：超过 60 分钟未检测到佩戴', retryCount: 3, sentAt: null, createdAt: '2026-08-11T13:15:03+08:00' },
     { recordId: 'NTF-003', patientId: 'PT-004', alertId: 'ALR-006', alertType: 'wear_interrupt', channel: 'sms', status: 'degraded', content: '设备离线提醒（订阅额度耗尽，降级短信）', retryCount: 0, sentAt: '2026-08-10T09:30:10+08:00', createdAt: '2026-08-10T09:30:04+08:00' },
     { recordId: 'NTF-004', patientId: 'PT-003', channel: 'wechat', status: 'sent', content: '佩戴提醒：今日佩戴目标 22h，已佩戴 8h', retryCount: 0, sentAt: '2026-08-11T20:00:01+08:00', createdAt: '2026-08-11T20:00:00+08:00' },
   ]

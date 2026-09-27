@@ -5,8 +5,8 @@ import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } fr
  * T275 2.3 告警处理流程画布（运行态，USE_MOCK=true）
  * mock 数据见 src/mock/flow.ts：
  * - ALR-001「P10 压力持续偏高」→ 在途实例，r1/r2 done、r3 current
- * - ALR-002「设备离线超过 30 分钟」→ 已完成实例，r6 skipped（验四色齐全）
- * - ALR-004「P12 传感器数据漂移」→ 无实例，走「选模板启动」空态
+ * - ALR-002「设备离线超过 60 分钟」→ 已完成实例，r6 skipped（验四色齐全）
+ * - ALR-004「P12 传感器标定异常」→ 无实例，走「选模板启动」空态
  */
 
 async function openFlowTab(page: Page, rowText: string) {
@@ -52,7 +52,7 @@ test.describe('处理流程画布', () => {
     await expect(shape('is-todo')).toHaveCSS('stroke', 'rgb(203, 213, 225)')
 
     // 已完成实例才有 skipped 态（灰色 + 虚线）
-    await openFlowTab(page, '设备离线超过 30 分钟')
+    await openFlowTab(page, '设备离线超过 60 分钟')
     await expect(page.locator('.rp-canvas .lf-flow-node.is-skipped')).toHaveCount(1)
     await expect(page.locator('.rp-canvas .lf-flow-node.is-done')).toHaveCount(6)
     await expect(shape('is-skipped')).toHaveCSS('stroke', 'rgb(203, 213, 225)')
@@ -143,7 +143,7 @@ test.describe('处理流程画布', () => {
   })
 
   test('无流程告警：选模板启动后进入画布，首个节点即当前节点', async ({ page }) => {
-    await openFlowTab(page, 'P12 传感器数据漂移')
+    await openFlowTab(page, 'P12 传感器标定异常')
     await expect(page.locator('.rp-start')).toContainText('该告警还没有处理流程')
     await page.getByRole('button', { name: '启动流程' }).click()
     await expect(adminMessage(page)).toContainText('流程已启动')

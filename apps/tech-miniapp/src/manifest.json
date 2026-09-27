@@ -1,5 +1,5 @@
 {
-  "name": "矫治通 · 技师端",
+  "name": "矫智通 · 技师端",
   "appid": "wxe8b673205a3dff3e",
   "description": "矫形支具安装与调试（技师端）",
   "versionName": "1.0.0",
@@ -8,7 +8,7 @@
   "uniStatistics": { "enable": false },
   "app-plus": {},
   "h5": {
-    "title": "矫治通 · 技师端",
+    "title": "矫智通 · 技师端",
     "router": { "mode": "hash", "base": "/tech-h5/" }
   },
   "mp-weixin": {
