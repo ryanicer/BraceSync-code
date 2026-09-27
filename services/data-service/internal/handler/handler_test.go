@@ -189,7 +189,7 @@ func TestUploadSingle_OK(t *testing.T) {
 	w = doReq(t, srv, http.MethodPost, "/api/v1/device/records", body, map[string]string{"X-Device-Id": hDevice})
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// 头体不一致 → 20403
+	// 头体不一致 → 30400（码值与 HTTP 400 的字面锁定在 code_lock_t437_test.go）
 	w = doReq(t, srv, http.MethodPost, "/api/v1/device/records", body, map[string]string{"X-Device-Id": "OTHER"})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	code, _ = decodeBody(t, w)
