@@ -66,4 +66,12 @@ describe('医护账号页 两处职称下拉同源（源码契约）', () => {
     const hits = pageSrc.match(/v-for="t in titleChoices"/g) ?? []
     expect(hits).toHaveLength(2)
   })
+
+  // T388（T360 验收 N1 的源码契约腿）：词表算子的输入面必须是未过滤的 rows。
+  // 上面两条 DOM 用例已能从行为上抓这一改动，这条是它的廉价哨兵 —— 有人在 titleOptions 的
+  // 实参上换成 list（筛选后的行）时，不必等浏览器态装配就能判红。
+  it('titleOptions 的输入是未过滤的 rows，不是筛选后的 list', () => {
+    expect(pageSrc).toContain('titleOptions(rows.value)')
+    expect(pageSrc).not.toContain('titleOptions(list.value)')
+  })
 })
