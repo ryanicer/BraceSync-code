@@ -56,7 +56,9 @@ func (h *Handler) resolveTeamScope(c *gin.Context) (teamScope, bool) {
 
 // listReadScope 把 teamScope 换算成设备/安装记录列表的读侧范围。
 //
-// 只收紧不放宽：不受限角色得到 TeamScoped=false，repo 侧不加团队谓词，响应逐字不变。
+// 对不受限角色只做一件事：TeamScoped=false ⇒ repo 侧不加团队谓词，响应逐字不变。
+// 受限角色一律带 teamID 下去，谓词形状（安装记录单锚 / 设备两段 union，T403 乙案）
+// 只在 repo 侧一处定义，这里不重复表达 —— 见 repo.deviceTeamCondFmt。
 func listReadScope(scope teamScope) repo.ListScope {
 	if !scope.limited {
 		return repo.ListScope{}
@@ -71,7 +73,10 @@ func denyCrossTeam(c *gin.Context, kind, id string) {
 	fail(c, model.ErrForbidden("%s %s is out of your data scope", kind, id))
 }
 
-// assertDeviceInScope 设备详情 / 绑定历史（GET /devices/:deviceId[/bindings]）的读侧门禁。
+// assertDeviceInScope 设备族三个单资源读端点的共用门禁（handler.go:248 详情 /
+// :262 绑定历史 / :289 设备基线）。T403 乙案的放宽是一起生效的：这一段判定走
+// repo.DeviceInTeam（两段 union 谓词），与设备列表同文 ⇒ 不存在「列表看得见、
+// 点详情 403」；同理绑定历史与基线也不会被留在旧的单锚口径上（不做半放宽）。
 func (h *Handler) assertDeviceInScope(c *gin.Context, deviceID string) bool {
 	scope, allowed := h.resolveTeamScope(c)
 	if !allowed {
