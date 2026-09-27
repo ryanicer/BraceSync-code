@@ -195,6 +195,37 @@ describe('模块词表与落库/后端模板同源（T345 跨端漂移门禁）'
     const keys = [...m![1].matchAll(/"([^"]+)"/g)].map((x) => x[1])
     expect(keys).toEqual(PAGE_MODULES.map((x) => x.key))
   })
+
+  // ↓ T419 格一：Boss 裁定把医护预设里的 comm 摘掉（PRD §7D.11 矩阵第 8 行「患者沟通 医护 —」）。
+  //   admin 上面那条已经把「后端模板」这一路纳入跨端门禁，doctor 此前没有任何门禁盯 ——
+  //   正是它让模板与预置行分叉了一整个版本周期而无人看见。
+  const goTemplateModules = (key: string): string[] => {
+    const m = read('services/user-service/internal/handler/roles_t252.go').match(
+      new RegExp(`Key: "${key}"[\\s\\S]*?Modules: \\[\\]string\\{([\\s\\S]*?)\\}`),
+    )
+    expect(m, `roles_t252.go 里没定位到 ${key} 模板的 Modules`).not.toBeNull()
+    return [...m![1].matchAll(/"([^"]+)"/g)].map((x) => x[1])
+  }
+
+  it('后端 doctor 角色模板不含 comm，其余预设项未顺手改动', () => {
+    const keys = goTemplateModules('doctor')
+    expect(keys).not.toContain('comm')
+    // patients 是与 comm 同性但 Boss 本次未裁的一项（矩阵第 3 行）⇒ 逐值钉住，不许顺带改
+    expect(keys).toEqual(['dashboard', 'realtime', 'patients', 'alerts', 'orthosis'])
+  })
+
+  it('mock 角色模板与后端 roleTemplates 逐值同源（三条模板全比）', () => {
+    const src = read('apps/admin-web/src/mock/system.ts')
+    for (const key of ['admin', 'doctor', 'cs']) {
+      const line = src.split(/\r?\n/).find((l) => l.includes(`key: '${key}'`))
+      expect(line, `mock/system.ts 里没定位到 ${key} 模板行`).toBeTruthy()
+      const m = line!.match(/modules: \[([^\]]*)\]/)
+      expect(m, `mock/system.ts 的 ${key} 模板没有 modules 数组`).not.toBeNull()
+      const mockKeys = [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+      // 顺序也一起比：mock 与真源不同序时，前端预勾顺序会和后端落库默认值不一致
+      expect(mockKeys, `${key} 模板 mock ≠ 后端 roleTemplates`).toEqual(goTemplateModules(key))
+    }
+  })
 })
 
 describe('roleKeyFromRoleId（T046 真实登录 roleId 映射）', () => {  it('后端 roleId → 前端 RoleKey', () => {
