@@ -8,7 +8,8 @@
 // 门禁只在内存 FakeStore 上绿过，不等于 PGStore 这条事务链路上没人绕过。
 //
 // 本文件补的就是这一格，三件事一起判：
-//  1. 七条写端点 × {医护, 客服} → HTTP 403，业务码逐字 20403（字面量，理由见 N1 说明）；
+//  1. 八条写端点 × {医护, 客服} → HTTP 403，业务码逐字 20403（字面量，理由见 N1 说明）
+//     —— T389 交件时是七条，T404 把 POST /api/v1/devices 注册补成第八条；
 //  2. 四张写表（devices / device_bindings / install_records / baselines）行数增量全 0，
 //     且目标设备行、安装记录行的关键列逐字不变 —— 计数字段用 count(*)，改值型越权（UPDATE
 //     不新增行）靠关键列捕获，两条合起来才是「零写」；
@@ -41,6 +42,8 @@ const (
 	it389Tech     = "T-IT-T389"
 	it389Doctor   = "ADM-D-IT-T389" // 医护账号号；门禁在取号之前就已拒绝，此值只为报文完整
 	it389CS       = "CS-IT-T389"
+	// it389EvilDevice 只出现在注册探针的 body 里：门禁生效 ⇒ devices 表永不该多出这一行
+	it389EvilDevice = "DEV-IT-T389-EVIL"
 )
 
 // it389EnsureTech 技师行夹具：install_records.tech_id 与 baselines.calibrator_id 均指向它
@@ -113,7 +116,7 @@ func it389Offsets() []float32 {
 	return v
 }
 
-// it389Probes 卡面七条写端点的越权探针（目标一律指向「别人的资源」，即真正有害的那一组参数）
+// it389Probes 设备域收口的八条写端点越权探针（目标一律指向「别人的资源」，即真正有害的那一组参数）
 func it389Probes(installID int64) []struct {
 	name, method, path string
 	body               any
@@ -123,6 +126,8 @@ func it389Probes(installID int64) []struct {
 		name, method, path string
 		body               any
 	}{
+		{"register", http.MethodPost, "/api/v1/devices",
+			map[string]string{"deviceId": it389EvilDevice}},
 		{"bind", http.MethodPost, "/api/v1/devices/" + it389Device + "/bind",
 			map[string]string{"patientId": it389PatientB}},
 		{"rebind", http.MethodPost, "/api/v1/devices/" + it389Device + "/rebind",

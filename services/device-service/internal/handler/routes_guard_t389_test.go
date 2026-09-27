@@ -35,8 +35,10 @@ type t389GatedWrite struct {
 	gate    string
 }
 
-// t389GatedWrites 卡面点名的七条（T387 收口面）。条数与本表逐字对应，少一条即「假覆盖」。
+// t389GatedWrites 设备域收口的写路由：T387 点名的七条 + T404 补的第八条（POST /api/v1/devices
+// 注册，原先挂在豁免表里等裁，裁后迁来此处）。条数与本表逐字对应，少一条即「假覆盖」。
 var t389GatedWrites = []t389GatedWrite{
+	{"POST /api/v1/devices", "register", "T387 assertDeviceWriteRole（T404 第八条）"},
 	{"POST /api/v1/devices/:deviceId/bind", "bind", "T387 assertDeviceWriteRole"},
 	{"POST /api/v1/devices/:deviceId/rebind", "rebind", "T387 assertDeviceWriteRole"},
 	{"POST /api/v1/devices/:deviceId/unbind", "unbind", "T387 assertDeviceWriteRole"},
@@ -48,9 +50,8 @@ var t389GatedWrites = []t389GatedWrite{
 
 // t389ExemptWrites 有意不收口的写路由 ⇒ 理由必须写全。
 // 新加一条进来就等于承认「这个写入口对医护/客服仍然敞开」，请先取得 PM 或 Boss 的裁定。
+// T404 已把本表此前的 "POST /api/v1/devices"（设备注册）迁进已收口表，勿在此重复登记。
 var t389ExemptWrites = map[string]string{
-	"POST /api/v1/devices": "设备注册（T387 遗留第 2 项）：调用方是技师安装流程与 admin-web 设备管理页，" +
-		"卡面未点名收紧；风险定性是脏数据（无归属设备入库）而非越权改绑。待裁，裁前不动。",
 	"POST /api/v1/devices/:deviceId/provision-key": "T193 归属路径：正当调用方含患者本人（领自己绑定设备的配网密钥），" +
 		"按技师/管理员 allow-list 收口会挡掉患者端；该端点已有 requireDeviceBoundToCaller 归属判定。",
 	"POST /internal/devices/:deviceId/report": "服务间内部面：不经网关、调用方是 data-service，" +
@@ -101,7 +102,7 @@ func TestT389_EveryDerivedWriteRouteIsGatedOrExempt(t *testing.T) {
 		require.False(t, gated[g.pattern] != (t389GatedWrite{}), "已收口表里 %s 重复登记", g.pattern)
 		gated[g.pattern] = g
 	}
-	require.Len(t, t389GatedWrites, 7, "卡面点名的收口面是七条，本表条数须与之相等")
+	require.Len(t, t389GatedWrites, 8, "收口面是 T387 点名的七条 + T404 补的注册，本表条数须与之相等")
 
 	for _, key := range derived {
 		_, isGated := gated[key]

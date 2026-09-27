@@ -53,7 +53,7 @@ func TestT389_ForbiddenCodeIsLockedToNumericLiteral(t *testing.T) {
 	assert.Equal(t, t389HTTPForbidden, appErr.HTTPStatus, "越权错误的 HTTP 状态契约值")
 }
 
-// ── 2. 线上层：七条写端点的拒绝响应体逐字带 code:20403 ───────────────
+// ── 2. 线上层：八条写端点的拒绝响应体逐字带 code:20403（T404 起含注册） ───────────────
 
 // t389RawReq 与 t387Req 同一套请求构造，区别只在返回**原始响应字节**：
 // 字面量要么出现在报文里，要么没出现，中间不允许有第二种解释。
