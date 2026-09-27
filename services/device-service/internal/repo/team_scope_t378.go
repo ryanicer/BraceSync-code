@@ -61,6 +61,10 @@ WHERE d.device_id = $1 AND p.team_id = $2`, deviceID, teamID).Scan(&one)
 }
 
 // InstallInTeam 安装记录是否归属该团队的患者（口径同 DeviceInTeam，T378）。
+//
+// T403：锚点是 install_records.patient_id（安装当时的历史患者），不是 devices.patient_id。
+// 写侧从不回填这一列（repo.go 只 UPDATE devices.patient_id），故设备转绑后两条锚点会分叉，
+// 本探测与 ListInstallRecords 仍一致 —— 门禁见 team_scope_t403_integration_test.go。
 func (r *PGStore) InstallInTeam(ctx context.Context, installID int64, teamID string) (bool, error) {
 	if teamID == "" {
 		return false, nil
