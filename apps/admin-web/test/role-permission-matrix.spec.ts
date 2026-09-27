@@ -156,4 +156,23 @@ describe('权限控制页 · 减权方向保存（T372 第 14 格）', () => {
     expect(payload.modules).not.toContain('alerts')
     expect(payload.items).toBeUndefined()
   })
+
+  // T413（Ella T345 第 2 轮 D-B）加权方向：新勾一个带子权限的模块时，页面手上只有
+  // LOADED 那份旧快照（矩阵页只有模块级复选框，没有组内勾选行），补不出 teams.* 三条。
+  // 本用例钉住「前端只发表达模块意图、不自己补 items」这个分工——补齐在后端
+  // services/user-service/internal/handler/permissions_t257.go reconcileItems，
+  // 用例在 permissions_t413_test.go（TestT413_Put_FillsItemsForNewlyGrantedModule）。
+  // 有人若把补齐搬到前端做，这条会红：两处各补一份 = 目录扩项时口径漂移。
+  it('新勾选带子权限的模块：前端不自己补 items（补齐归后端，T413）', async () => {
+    const { matrix } = await openMatrix()
+
+    await toggle(matrix, '团队管理', true)
+    await save(matrix)
+
+    const payload = lastSaved()
+    expect(payload.modules).toContain('teams')
+    expect(payload.items?.filter((k) => k.startsWith('teams.'))).toEqual([])
+    // 正向对照：既有模块的快照一条都不许掉（后端据此判断哪些模块是本次新增）
+    expect(payload.items).toEqual(LOADED.items)
+  })
 })

@@ -107,6 +107,92 @@ func materializeItems(modules []string) []string {
 	return out
 }
 
+// renderPermissions 读出口径：库里未细化 ⇒ 按目录物化。
+// GET 与 PUT 响应共用这一条规则（T413），前端只需照 items 渲染，不必自己判 null。
+func renderPermissions(perms model.RolePermissionsDTO) model.RolePermissionsDTO {
+	if perms.Items == nil {
+		perms.Items = materializeItems(perms.Modules)
+	}
+	return perms
+}
+
+// reconcileItems 算出 PUT 实际落库的子权限清单（T413，Ella T345 D-B）。
+//
+// 权限矩阵页只有模块级复选框（apps/admin-web/src/pages/roles/index.vue 无组内勾选行），
+// 新勾一个模块时它发回的 items 仍是打开页面时 GET 回来的旧快照，不含该模块的子权限键
+// ⇒ 不补齐就是加权方向静默丢授权。这里以「相对库里新增了哪些模块」为准并入那些模块在
+// 目录下的全部子权限；既有模块的清单原样尊重（显式全不勾 / 部分勾选都不被复活）。
+//
+// 第二格：库里原本未细化（老角色 / seed 预置三个）且补齐后正好等于 modules 的目录全集
+// ⇒ 写回 null。GET 会把 null 物化成清单返回，客户端看不出「原本未细化」这个事实，
+// 于是不管怎么改前端，任何一次保存都会把未细化永久洗成显式清单（卡面「null 不被洗」）。
+// 库里已是显式清单的角色不反转成 null：显式全勾 ≢ 未细化（三态语义见 model.RolePermissionsDTO）。
+//
+// stored == nil（库里没有这一行）⇒ 只走客户端原值：没有现状可比对，且写通道会自己 404。
+func reconcileItems(stored *model.RolePermissionsDTO, items, modules []string) []string {
+	if items == nil {
+		return nil // 不细化（老前端省略 / 显式 null），不物化回写
+	}
+	if stored == nil {
+		return items
+	}
+	merged := items
+	if added := addedModules(stored.Modules, modules); len(added) > 0 {
+		merged = unionItems(items, materializeItems(added))
+	}
+	if stored.Items == nil && sameItemSet(merged, materializeItems(modules)) {
+		return nil
+	}
+	return merged
+}
+
+// addedModules 本次新勾上的模块（保持 req 侧顺序，便于断言）
+func addedModules(stored, modules []string) []string {
+	had := make(map[string]struct{}, len(stored))
+	for _, m := range stored {
+		had[m] = struct{}{}
+	}
+	out := make([]string, 0, len(modules))
+	for _, m := range modules {
+		if _, ok := had[m]; !ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// unionItems 两份清单求并（前者顺序优先，重复键丢掉）
+func unionItems(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, key := range append(append([]string{}, a...), b...) {
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+// sameItemSet 两个清单是否为同一个集合（两边都必须无重复键：
+// req 侧由 validatePermissionItems 挡重，目录侧 materializeItems 天然唯一）
+func sameItemSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, key := range a {
+		set[key] = struct{}{}
+	}
+	for _, key := range b {
+		if _, ok := set[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // validatePermissionItems 子权限清单校验：key 必须在目录内、重复拒绝、
 // 且所属模块必须已在 modules 里勾上（否则是一条永远渲染不出来的死配置）。
 func validatePermissionItems(items, modules []string) *model.AppError {

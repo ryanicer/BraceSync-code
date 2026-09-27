@@ -208,6 +208,11 @@ function togglePerm(key: string, val: boolean) {
 // 「关勾再勾回」不该把它洗成空集（矩阵页无子权限勾选行，洗掉了界面上看不见）。
 // 前缀取第一段：目录 23 个 key 全是 `模块.动作` 形态（permissions_t257.go），
 // 无点号的裸 key 会整串当模块名比对 ⇒ 不在 modules 里就被剪掉，与后端拒绝同向。
+//
+// 🔴 反向（加权）不在这里补：本行只做减权是刻意的分工（T413）。矩阵页没有组内勾选行，
+// 新勾模块时页面手上没有该模块的子权限键，前端若也补一份就与后端 reconcileItems
+// （services/user-service/internal/handler/permissions_t257.go）两处口径漂移。
+// 页面只发「模块意图」，items 补齐与「未细化不被洗成清单」都由后端在落库前算。
 function pruneItems(modules: string[], items?: string[]): string[] | undefined {
   if (items === undefined) return undefined
   const mods = new Set(modules)
