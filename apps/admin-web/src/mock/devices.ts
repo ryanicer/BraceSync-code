@@ -52,6 +52,11 @@ export function mockDeviceDetail(deviceId: string): Device {
   return { ...dev }
 }
 
+/** 安装详情「设备型号」行用：设备行缺失返回 null（对齐真实库里 LEFT JOIN devices 未命中） */
+export function mockDeviceModel(deviceId: string): string | null {
+  return DEVICES.find((d) => d.deviceId === deviceId)?.model ?? null
+}
+
 export function mockDeviceBindings(deviceId: string): DeviceBindingRecord[] {
   return BINDINGS.filter((b) => b.deviceId === deviceId).map((b) => ({ ...b }))
 }

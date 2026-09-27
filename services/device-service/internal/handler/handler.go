@@ -165,11 +165,18 @@ type installMetaRequest struct {
 }
 
 // installDetailDTO 单条安装记录响应体（T122 GET /:id）
+//
+// T418：补 patientName / techName / model 三列（GetInstall LEFT JOIN 带出）。
+// 前两列契约 InstallRecordDetail 早就按「继承列表行」声明、此前只有列表 DTO 真回，
+// 详情页靠前端兜底；model 是设计稿 安装记录.html:177「设备型号」行的数据源（T312 I-3）。
 type installDetailDTO struct {
 	InstallID     string    `json:"installId"`
 	DeviceID      string    `json:"deviceId"`
 	PatientID     string    `json:"patientId"`
+	PatientName   *string   `json:"patientName"`
 	TechID        string    `json:"techId"`
+	TechName      *string   `json:"techName"`
+	Model         *string   `json:"model"` // devices.model；设备行缺失为 null
 	CalibrateTime string    `json:"calibrateTime"`
 	BaselineID    *string   `json:"baselineId"`
 	Notes         string    `json:"notes"`
@@ -535,7 +542,10 @@ func toInstallDetailDTO(r *model.InstallRecord) installDetailDTO {
 		InstallID:     strconv.FormatInt(r.InstallID, 10),
 		DeviceID:      r.DeviceID,
 		PatientID:     r.PatientID,
+		PatientName:   r.PatientName,
 		TechID:        r.TechID,
+		TechName:      r.TechName,
+		Model:         r.DeviceModel,
 		CalibrateTime: r.CalibrateTime.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		Notes:         strOrEmpty(r.Notes),
 		SignatureURL:  strOrEmpty(r.SignatureURL),

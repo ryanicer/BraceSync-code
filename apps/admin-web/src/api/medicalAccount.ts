@@ -25,14 +25,11 @@ function delay(ms = 150): Promise<void> {
 /**
  * GET /api/v1/doctors 的 T314 扩展列。
  * 未绑登录账号（admins 行缺失）时三列同为 null —— staging 实况：D0001 有账号，D0002/D0003 为 null。
- * shared-types 的 Doctor 是跨页共用契约（团队管理等页也吃），本页的三列扩展只在 admin-web 侧声明，
- * 不去动 packages/shared-types。
+ * T418 归口：username / accountStatus / createdAt 三列已并入 shared-types 的 Doctor
+ * （对拍门禁 dto-contract-map 因此删掉三条 ignore），本页不再本地声明，保留本名只做别名，
+ * 避免同一组键两处定义（页面消费点与契约登记面不一致）。
  */
-export interface DoctorWithAccount extends Doctor {
-  username?: string | null
-  accountStatus?: string | null
-  createdAt?: string | null
-}
+export type DoctorWithAccount = Doctor
 
 /**
  * 一行 = doctors 六列 + admins 侧三列。

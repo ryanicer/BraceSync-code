@@ -107,10 +107,14 @@ func t356Cases() []listDetailCase {
 				}}
 				return "/api/v1/install-records/" + strconv.FormatInt(id, 10)
 			},
-			// 实测：这两列只在详情投影里出现（列表 SQL 不 JOIN baselines，也不取 created_at）
+			// 实测：这三列只在详情投影里出现
 			detailOnly: map[string]string{
 				"offsetValues": "基线 20 点偏移值，列表投影不 JOIN baselines（repo/query.go InstallListItem 无此列）",
 				"createdAt":    "建档时间，契约注释即写明「列表 DTO 无该字段」（shared-types InstallRecordDetail）",
+				// T418：详情多 JOIN 了一张 devices 表拿型号；设计稿 安装记录.html:108 的列表列
+				// 里并没有「设备型号」（只有设备ID），加列要动列表 SQL 与契约 InstallRecord，
+				// 不在本卡的「补详情两列姓名」范围内 ⇒ 按独有列登记，不是豁免。
+				"model": "设备型号：详情 LEFT JOIN devices 带出（设计稿 :177 抽屉行），列表页无该列（设计稿 :108）",
 			},
 		},
 	}
