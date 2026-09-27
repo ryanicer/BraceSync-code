@@ -27,6 +27,9 @@ export interface AuthStateResult {
 /**
  * 解析 wx-login 接口 code → 状态 + 去向页面。
  * PRD §7A.1.1：0→SUCCESS，10601→NEED_BIND，10001/401→FAIL，10502/502→ERROR。
+ * T434 补：10401 → FAIL。后端 wxLogin 在 jscode2session 回业务错误时统一产出
+ * HTTP 401 + 10401（handler.go:661 / model.CodeUnauthorized），PRD §7A.1.1 通用约束
+ * 要求「凭证错误与网络失败分别提示」，故不得与未知码共用服务异常兜底句。
  */
 export function resolveWxLoginResult(code: number): AuthStateResult {
   switch (code) {
@@ -34,6 +37,12 @@ export function resolveWxLoginResult(code: number): AuthStateResult {
       return { state: 'SUCCESS', targetPage: '/pages/monitor/index' }
     case 10601:
       return { state: 'NEED_BIND', targetPage: '/pages/login/bind' }
+    case 10401:
+      return {
+        state: 'FAIL',
+        targetPage: '',
+        message: '授权信息已失效，请重新登录',
+      }
     case 10001:
     case 401:
       return {

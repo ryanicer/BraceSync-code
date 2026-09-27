@@ -4,8 +4,8 @@
  * 预期红态：stub（src/utils/auth-state.ts）固定返回错误占位值，
  * 以下断言在 Iris 实现真实状态映射前全部 FAIL。
  *
- * 覆盖 7 个分支：
- *   wx-login:  SUCCESS(0) / NEED_BIND(10601) / FAIL(10001,401) / ERROR(10502,502)
+ * 覆盖分支：
+ *   wx-login:  SUCCESS(0) / NEED_BIND(10601) / FAIL(10001,401,10401) / ERROR(10502,502)
  *   bind-phone: BOUND(0) / NO_MATCH(10602) / CONFLICT(10603)
  */
 import { describe, it, expect } from 'vitest'
@@ -47,6 +47,30 @@ describe('登录绑定状态机 — wx-login（PRD §7A.1.1）', () => {
     expect(r.state as WxLoginState).toBe('ERROR')
     expect(r.targetPage).toBe('')
     expect(r.message).toBeTruthy()
+  })
+
+  // T434：后端 wxLogin 在 jscode2session 返回业务错误时回 HTTP 401 + code 10401
+  // （services/user-service/internal/handler/handler.go:661，model.CodeUnauthorized）。
+  // 修复前它落 default，提示「服务异常，请稍后重试」，把患者侧可重试的授权码失效
+  // 说成后端故障，违反 PRD §7A.1.1「网络失败与凭证错误必须分别提示，禁止一锅烩」。
+  it('code=10401 → FAIL（凭据/授权码类），不跳转仅提示', () => {
+    const r = resolveWxLoginResult(10401)
+    expect(r.state as WxLoginState).toBe('FAIL')
+    expect(r.targetPage).toBe('')
+    expect(r.message).toBe('授权信息已失效，请重新登录')
+  })
+
+  it('code=10401 的提示不得是 default 的服务异常兜底句（T434 判据）', () => {
+    const r = resolveWxLoginResult(10401)
+    expect(r.message).not.toBe('服务异常，请稍后重试')
+    // 与真正的未知码（走 default）必须不同，否则等于没识别
+    const unknown = resolveWxLoginResult(10999)
+    expect(r.message).not.toBe(unknown.message)
+    expect(r.state).not.toBe(unknown.state)
+  })
+
+  it('10401（授权码失效）与 10502（微信服务不可用）不得同一处置', () => {
+    expect(resolveWxLoginResult(10401).state).not.toBe(resolveWxLoginResult(10502).state)
   })
 
   it('code=502 → ERROR（服务异常），不跳转仅提示', () => {
