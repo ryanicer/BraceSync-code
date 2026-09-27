@@ -7,6 +7,7 @@
  * 覆盖分支：
  *   wx-login:  SUCCESS(0) / NEED_BIND(10601) / FAIL(10001,401,10401) / ERROR(10502,502)
  *   bind-phone: BOUND(0) / NO_MATCH(10602) / CONFLICT(10603)
+ *               / RETRY(10604 与未识别码，不外跳) / REBIND(10605，回绑定引导页)
  */
 import { describe, it, expect } from 'vitest'
 import {
@@ -103,5 +104,42 @@ describe('登录绑定状态机 — bind-phone（PRD §7A.1.1）', () => {
     const r = resolveBindPhoneResult(10603)
     expect(r.state as BindPhoneState).toBe('CONFLICT')
     expect(r.targetPage).toBe('/pages/login/conflict')
+  })
+
+  it('code=10604 → RETRY：提示重新授权手机号且不外跳（PRD §7A.1.1 补充状态码）', () => {
+    const r = resolveBindPhoneResult(10604)
+    expect(r.state as BindPhoneState).toBe('RETRY')
+    expect(r.targetPage).toBe('')
+    expect(r.message).toBe('授权信息已失效，请重新授权手机号')
+  })
+
+  it('code=10605 → REBIND：提示后回绑定引导页（PRD §7A.1.1 补充状态码）', () => {
+    const r = resolveBindPhoneResult(10605)
+    expect(r.state as BindPhoneState).toBe('REBIND')
+    expect(r.targetPage).toBe('/pages/login/bind')
+    expect(r.message).toBe('操作已过期，请重新绑定')
+  })
+
+  it('T438 核心：未识别业务码不得判成会跳转的业务态', () => {
+    // 候选码取自 services/user-service/internal/model/model.go 的 bind-phone 可达码
+    const unknown = [10400, 10401, 10403, 10502, 40301, 90001, 50000, -1]
+    for (const code of unknown) {
+      const r = resolveBindPhoneResult(code)
+      expect(r.state, `code=${code} 不得落 NO_MATCH`).not.toBe('NO_MATCH')
+      expect(r.state, `code=${code} 不得落 CONFLICT`).not.toBe('CONFLICT')
+      expect(r.state, `code=${code} 不得落 BOUND`).not.toBe('BOUND')
+      expect(r.targetPage, `code=${code} 不应有跳转落点`).toBe('')
+      expect(r.message, `code=${code} 必须有患者可见文案`).toBeTruthy()
+    }
+  })
+
+  it('防回潮：NO_MATCH 只由 10602 产出、REBIND 只由 10605 产出', () => {
+    const codes = [0, 10400, 10401, 10403, 10502, 10601, 10602, 10603, 10604, 10605, 40301, 90001]
+    const statesOf = (want: BindPhoneState) =>
+      codes.filter((c) => resolveBindPhoneResult(c).state === want)
+    expect(statesOf('NO_MATCH')).toEqual([10602])
+    expect(statesOf('CONFLICT')).toEqual([10603])
+    expect(statesOf('BOUND')).toEqual([0])
+    expect(statesOf('REBIND')).toEqual([10605])
   })
 })
