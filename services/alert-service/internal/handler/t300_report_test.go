@@ -237,7 +237,8 @@ func TestT300_ExportHeadersAndRows(t *testing.T) {
 	assert.Equal(t, "待处理", records[1][11])
 
 	assert.Equal(t, "12", records[2][0])
-	assert.Equal(t, "佩戴中断", records[2][4])
+	// T421：wear_interrupt 的显示名收口为「设备离线」（Boss Q1=方案A，改名不改判定）
+	assert.Equal(t, "设备离线", records[2][4])
 	assert.Equal(t, "林小雨", records[2][2])
 	assert.Equal(t, "已处理", records[2][11])
 	assert.Equal(t, "2026-09-02 10:00:00", records[2][13])

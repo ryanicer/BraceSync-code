@@ -32,13 +32,20 @@ const (
 )
 
 // reportAlertTypeLabels 告警类型的中文口径（仅展示层；未知值原样输出）。
-// 措辞跟后台「告警管理」页现状一致（同一告警在两处不得叫两个名）；
-// T272 裁定的新名（设备离线 / 传感器标定异常）整仓尚未回写，落地后随该卡统一改。
+//
+// T421（G-6 后端镜像）：与全站唯一口径源 packages/shared-utils/src/index.ts 的
+// ALERT_TYPE_LABELS 逐键同形 —— wear_interrupt 显示「设备离线」、sensor_drift 显示
+// 「传感器标定异常」（Boss 裁定 Q1=方案A：设备离线 ≡ wear_interrupt，改名不改判定；
+// 四类名称出处 PRD §7D.6）。后台「告警管理」页与本页导出的 CSV 不得叫两个名，
+// 前端侧同批上线归 T419（Iris）。
+// pressure_fluctuation 保留旧名「压力波动」：T257 2.6 起引擎不再产生该类型，
+// 但历史行仍可读（PRD 登记的历史数据处置裁定前按 A 描述现状），删掉这一格会让
+// 老告警在 CSV 里退化成裸码值。
 var reportAlertTypeLabels = map[string]string{
 	"pressure_high":        "压力偏高",
-	"pressure_fluctuation": "压力波动",
-	"wear_interrupt":       "佩戴中断",
-	"sensor_drift":         "传感器漂移",
+	"pressure_fluctuation": "压力波动", // 仅历史行（引擎停产生）
+	"wear_interrupt":       "设备离线",
+	"sensor_drift":         "传感器标定异常",
 	"wear_duration_short":  "佩戴时长不足",
 }
 
