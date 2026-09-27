@@ -10,7 +10,7 @@ const ALERTS: Alert[] = [
   },
   {
     alertId: 'ALR-002', patientId: 'PT-002', deviceId: 'DEV-B7E456', type: 'wear_interrupt',
-    detail: '佩戴中断超过 30 分钟，疑似摘除', sensorPoint: '', thresholdValue: 0, actualValue: 0,
+    detail: '设备离线超过 30 分钟，疑似摘除', sensorPoint: '', thresholdValue: 0, actualValue: 0,
     timestamp: '2026-08-11T13:15:00+08:00', readStatus: 'unread', processStatus: 'pending',
     resolvedStatus: 'resolved', resolvedAt: '2026-08-11T14:00:00+08:00', processedBy: null, processedAt: null, processNote: null,
   },
@@ -36,7 +36,7 @@ const ALERTS: Alert[] = [
   },
   {
     alertId: 'ALR-006', patientId: 'PT-004', deviceId: 'DEV-D2A012', type: 'wear_interrupt',
-    detail: '佩戴中断超过 1 小时', sensorPoint: '', thresholdValue: 0, actualValue: 0,
+    detail: '设备离线超过 1 小时', sensorPoint: '', thresholdValue: 0, actualValue: 0,
     timestamp: '2026-08-10T09:30:00+08:00', readStatus: 'read', processStatus: 'processed',
     resolvedStatus: 'resolved', resolvedAt: '2026-08-10T11:00:00+08:00', processedBy: '张建国',
     processedAt: '2026-08-10T10:15:00+08:00', processNote: '患者反馈临时摘除洗澡',
@@ -125,7 +125,10 @@ const GRID_COLS = 5
 const DEFAULT_UNIFIED_UPPER_N = 45
 const DEFAULT_UNIFIED_LOWER_N = 10
 const DEFAULT_GLOBAL_RULES: AlertGlobalRules = {
-  deviceOfflineMinutes: 30,
+  // T419 A-2：设计稿 告警管理.html:291 与 PRD §7D.6 均为 60 分钟（原 mock 抄了示例行的 30min）；
+  // 该值落 sys_configs 的 threshold_wear_interrupt_minutes（≡ 系统配置页「设备离线判定时间」同键，T257 12.4），
+  // 旧键 device_offline_minutes 已由 T257 作废，不得复辟。
+  deviceOfflineMinutes: 60,
   dailyWearMinHours: 18,
   continuousWearMaxHours: 23,
   reportTimeoutMinutes: 5,
@@ -258,12 +261,14 @@ interface AbnormalDetailRow {
   processNote: string | null
 }
 
-// 中文口径与后端 handler/report.go 的 reportAlertTypeLabels 保持一致（措辞跟「告警管理」页现状）
+// 中文口径与后端 handler/report.go 的 reportAlertTypeLabels 保持一致（措辞跟「告警管理」页现状一致）
+// T419 G-6：wear_interrupt / sensor_drift 改名收口（码值不动），与 T421 改后的后端标签表同批上线；
+// pressure_fluctuation 不在新四类里，其标签只服务已入库历史行的可读性（PRD §7D.6 历史数据处置 A/B/C 未裁）。
 const REPORT_TYPE_LABELS: Record<string, string> = {
   pressure_high: '压力偏高',
   pressure_fluctuation: '压力波动',
-  wear_interrupt: '佩戴中断',
-  sensor_drift: '传感器漂移',
+  wear_interrupt: '设备离线',
+  sensor_drift: '传感器标定异常',
   wear_duration_short: '佩戴时长不足',
 }
 const REPORT_TYPE_KEYS = Object.keys(REPORT_TYPE_LABELS)

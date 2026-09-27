@@ -172,7 +172,7 @@ export interface Alert {
   timestamp: string;
   readStatus: 'read' | 'unread';                  // 患者侧
   processStatus: 'pending' | 'processing' | 'processed'; // 处理侧（T257 2.7 三态）
-  resolvedStatus: 'active' | 'resolved';   // 恢复态（佩戴中断设备恢复后自动 resolved）
+  resolvedStatus: 'active' | 'resolved';   // 恢复态（设备离线后恢复上报即自动 resolved；T419 G-6 显示口径，码值 wear_interrupt 不动）
   resolvedAt: string | null;
   /** T257 2.7：进入「处理中」的时刻；可选 + null 均表示从未进入过处理中（含三态上线前的历史行） */
   inProgressAt?: string | null;

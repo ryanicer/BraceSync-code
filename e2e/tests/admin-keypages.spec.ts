@@ -101,7 +101,7 @@ test.describe('系统配置', () => {
     // 字段名随稿改为 偏高上限；此处锚点从 .settings-form 换成 .pressure-tier-card，
     // 不能再用 .settings-form —— 页面上现在有两张表单卡，且该键已不在全局参数卡里。
     await expect(page.locator('.pressure-tier-card')).toContainText('偏高上限（N）')
-    await expect(page.locator('.settings-form')).toContainText('佩戴中断判定时间')
+    await expect(page.locator('.settings-form')).toContainText('设备离线判定时间')
     // T247 新增采集间隔为第一项；定位"每日佩戴目标时长"对应的 el-input-number
     const formItem = page.locator('.el-form-item', { hasText: '每日佩戴目标时长' })
     await expect(formItem.locator('.el-input-number input')).toHaveValue('22')
@@ -147,7 +147,7 @@ test.describe('系统配置', () => {
     const card = page.locator('.page-card').filter({ hasText: '告警通知规则' })
     // T289 2.6：wear_interrupt 的显示术语全站收口为「设备离线」（shared-utils ALERT_TYPE_LABELS）
     const wearRow = card.locator('tbody tr').filter({ hasText: '设备离线' })
-    // 佩戴中断默认仅微信 + 患者；追加勾选短信渠道
+    // 设备离线行默认只勾了「微信 + 患者」两档；这里追加勾选短信渠道
     await wearRow.locator('.el-checkbox').filter({ hasText: '短信' }).click()
     await expect(adminMessage(page)).toContainText('通知渠道已更新')
   })
@@ -322,7 +322,19 @@ test.describe('角色管理（T253-11.2）', () => {
     await page.getByRole('button', { name: '+ 新增角色' }).click()
     const dialog = page.locator('.el-dialog')
     await dialog.locator('input').first().fill('E2E巡检角色')
-    await pickSelectOption(page, dialog.locator('.role-template'), '康复师')
+    // T419 R-1：设计稿 权限控制.html:229 的下拉 = 自定义 + 三个预置登录角色（运营管理员/医护/客服）。
+    // 原用例选的是「康复师」= mock 多出来的职称模板，已随「职称≠角色」裁定删除 ⇒ 这里换 医护，
+    // 并把整份词表钉住（多一档职称或少一档角色都判红）。
+    await dialog.locator('.role-template').click()
+    const dropdown = page.locator('.el-select-dropdown:visible .el-select-dropdown__item')
+    const templateOptions = await dropdown.evaluateAll((items) =>
+      items.map((it) => (it.textContent ?? '').trim()),
+    )
+    expect(templateOptions, '权限模板下拉 = 稿面三档 + 自定义，职称（主任医师/康复师/护士）不得回潮').toEqual([
+      '自定义', '运营管理员', '医护', '客服',
+    ])
+    await dropdown.filter({ hasText: '医护' }).first().click()
+    await expect(dialog.locator('.role-template')).toContainText('医护')
     await dialog.getByRole('button', { name: '保存角色' }).click()
     await expect(adminMessage(page)).toContainText('角色已创建')
 

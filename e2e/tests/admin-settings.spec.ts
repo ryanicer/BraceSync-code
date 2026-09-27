@@ -15,8 +15,12 @@ import { adminRoutes, adminLogin, ADMIN_MOUNT } from '../admin-helpers'
 
 /**
  * 可编辑数字框的完整标签（含单位）。
- * 按 label 精确匹配而非 form-item 全文 —— 「数据采集间隔」的提示语里就写着
- * 「佩戴中断判定时间须 ≥ 2× 采集间隔」，用 hasText 会串到隔壁字段。
+ * 按 label 精确匹配而非 form-item 全文 —— 各字段的 form-hint 里会复述隔壁字段的名词
+ * （如「设备离线判定时间」下方的「必须 ≥ 2×采集间隔」），用 hasText 会串到采集间隔那格。
+ * T419 G-6/S-6：下两项随 PRD §7D.12 V3.20「只改显示文案、键名不动」改名；
+ * 原 pressureFluct「压力波动幅度阈值（%）」表单项已下线（T419 S-6），不在此表内
+ * ⇒ 缺席由本文件「压力波动幅度阈值表单项已下线」用例钉， PUT 仍回传该键由
+ * apps/admin-web/test/settings-visible-terms.spec.ts 钉（e2e 打 mock dev server，载荷观测不到）。
  */
 const LABELS = {
   interval: '数据采集间隔（秒）',
@@ -27,9 +31,8 @@ const LABELS = {
   // 字段名随设计稿改为 低压上限 / 偏高上限（原「压力偏高阈值（N）」并入后者）。
   pressureLow: '低压上限（N）',
   pressureHigh: '偏高上限（N）',
-  pressureFluct: '压力波动幅度阈值（%）',
-  wearInterrupt: '佩戴中断判定时间（分钟）',
-  drift: '传感器漂移告警阈值（N）',
+  wearInterrupt: '设备离线判定时间（分钟）',
+  drift: '传感器标定异常告警阈值（N）',
 } as const
 
 /** 只读回显档，不参与越界/步进/还原三类断言（契约 api-contracts.ts:303-305 前端推导） */
@@ -90,8 +93,10 @@ test.describe('系统配置 · 输入框上下限与步进（T270 A-SET-03）', 
     await page.goto(adminRoutes.settings)
     await expect(page.locator('.settings-form')).toBeVisible({ timeout: 15_000 })
     await waitSettingsLoaded(page)
-    // 9 个可编辑框都在，且标签带单位（设计稿口径：数值不能光秃秃）
+    // 8 个可编辑框都在，且标签带单位（设计稿口径：数值不能光秃秃）
     for (const key of ALL) await expect(numInput(page, key)).toBeVisible()
+    // T419 S-6：已下线的那一格连标签都不该出现（载荷侧的回传由 Vitest 页测钉住）
+    await expect(page.locator('.settings-form')).not.toContainText('压力波动幅度阈值')
   })
 
   test('越上限：失焦后夹到各字段 max，夹到顶后「+」禁用', async ({ page }) => {
@@ -102,7 +107,6 @@ test.describe('系统配置 · 输入框上下限与步进（T270 A-SET-03）', 
       wearHours: ['300', '24'],
       pressureLow: ['300', '200'],
       pressureHigh: ['300', '200'], // 走查步骤 2：填 300 → 留 200
-      pressureFluct: ['101', '100'],
       wearInterrupt: ['721', '720'],
       drift: ['999', '20'],
     }
@@ -125,7 +129,6 @@ test.describe('系统配置 · 输入框上下限与步进（T270 A-SET-03）', 
       wearHours: ['0', '1'],
       pressureLow: ['-5', '0'], // 设计稿 系统配置.html:98 min="0"
       pressureHigh: ['-1', '1'],
-      pressureFluct: ['0', '1'],
       wearInterrupt: ['3', '10'], // 走查步骤 3：填 3 → 留 10
       drift: ['0', '0.1'],
     }
@@ -155,7 +158,7 @@ test.describe('系统配置 · 输入框上下限与步进（T270 A-SET-03）', 
     expect(await drift.inputValue()).not.toMatch(/\.\d{2,}/)
   })
 
-  test('不点保存：刷新后 9 个字段全部回到改动前的值', async ({ page }) => {
+  test('不点保存：刷新后 8 个字段全部回到改动前的值', async ({ page }) => {
     const before: Record<string, string> = {}
     for (const key of ALL) before[key] = await numInput(page, key).inputValue()
     for (const key of ALL) {

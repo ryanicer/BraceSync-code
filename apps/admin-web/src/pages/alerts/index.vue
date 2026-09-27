@@ -4,13 +4,17 @@
       <el-tab-pane label="告警列表" name="list">
         <div class="page-toolbar">
           <!-- 2.6（T289，PM 09-21 23:53 答复）：类型术语按设计稿 告警管理.html:248-251 显示映射，
-               🔴 码值不动（改码要动 DB CHECK 与多处映射面）。压力波动 = 仅历史行（T257 2.6 起引擎不再产生）。 -->
+               🔴 码值不动（改码要动 DB CHECK 与多处映射面）。
+               T419 G-6/S-6：下拉收口为四类 —— 第五项「压力波动」随 Boss 2026-09-23 砍类型裁定摘除
+               （PRD §7D.6 待下线清单 ⑦，同文件旧注「仅历史行」一并改写）。
+               历史行的中文标签仍在（mock/alerts.ts REPORT_TYPE_LABELS + shared-utils ALERT_TYPE_LABELS），
+               属 PRD §7D.6「历史数据处置 A/B/C」裁定前按 A 描述现状 ⇒ 裁 A 才保留、裁 C 才随第二批删除，
+               本卡不动（改了会让已入库行露出码值 pressure_fluctuation）。 -->
           <el-select v-model="typeFilter" placeholder="全部类型" clearable class="filter-select" @change="handleSearch">
             <el-option label="压力偏高" value="pressure_high" />
             <el-option label="设备离线" value="wear_interrupt" />
             <el-option label="佩戴时长不足" value="wear_duration_short" />
             <el-option label="传感器标定异常" value="sensor_drift" />
-            <el-option label="压力波动" value="pressure_fluctuation" />
           </el-select>
           <!-- 2.7：设计稿 告警管理.html:240 状态筛选本就是四档（全部/待处理/处理中/已处理） -->
           <el-select v-model="statusFilter" placeholder="全部状态" clearable class="filter-select" @change="handleSearch">
@@ -356,7 +360,7 @@ const rules = ref<{ unifiedUpperN: number; unifiedLowerN: number; points: AlertP
   unifiedUpperN: 45,
   unifiedLowerN: 10,
   points: [],
-  globalRules: { deviceOfflineMinutes: 30, dailyWearMinHours: 18, continuousWearMaxHours: 23, reportTimeoutMinutes: 5 },
+  globalRules: { deviceOfflineMinutes: 60, dailyWearMinHours: 18, continuousWearMaxHours: 23, reportTimeoutMinutes: 5 },
 })
 const unifiedUpper = ref(45)
 const unifiedLower = ref(10)

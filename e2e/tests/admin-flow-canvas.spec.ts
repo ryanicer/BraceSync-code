@@ -5,7 +5,7 @@ import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } fr
  * T275 2.3 告警处理流程画布（运行态，USE_MOCK=true）
  * mock 数据见 src/mock/flow.ts：
  * - ALR-001「P10 压力持续偏高」→ 在途实例，r1/r2 done、r3 current
- * - ALR-002「佩戴中断超过 30 分钟」→ 已完成实例，r6 skipped（验四色齐全）
+ * - ALR-002「设备离线超过 30 分钟」→ 已完成实例，r6 skipped（验四色齐全）
  * - ALR-004「P12 传感器数据漂移」→ 无实例，走「选模板启动」空态
  */
 
@@ -52,7 +52,7 @@ test.describe('处理流程画布', () => {
     await expect(shape('is-todo')).toHaveCSS('stroke', 'rgb(203, 213, 225)')
 
     // 已完成实例才有 skipped 态（灰色 + 虚线）
-    await openFlowTab(page, '佩戴中断超过 30 分钟')
+    await openFlowTab(page, '设备离线超过 30 分钟')
     await expect(page.locator('.rp-canvas .lf-flow-node.is-skipped')).toHaveCount(1)
     await expect(page.locator('.rp-canvas .lf-flow-node.is-done')).toHaveCount(6)
     await expect(shape('is-skipped')).toHaveCSS('stroke', 'rgb(203, 213, 225)')
