@@ -11,8 +11,9 @@
 /** wx-login 返回的业务状态 */
 export type WxLoginState = 'SUCCESS' | 'NEED_BIND' | 'FAIL' | 'ERROR'
 
-/** bind-phone 返回的业务状态 */
-export type BindPhoneState = 'BOUND' | 'NO_MATCH' | 'CONFLICT'
+/** bind-phone 返回的业务状态
+ * RETRY＝留在当前页提示可重试；REBIND＝须清掉 phoneToken 回绑定引导页重新授权（T438 补） */
+export type BindPhoneState = 'BOUND' | 'NO_MATCH' | 'CONFLICT' | 'RETRY' | 'REBIND'
 
 /** 状态机解析结果 */
 export interface AuthStateResult {
@@ -68,7 +69,12 @@ export function resolveWxLoginResult(code: number): AuthStateResult {
 
 /**
  * 解析 bind-phone 接口 code → 状态 + 去向页面。
- * PRD §7A.1.1：0→BOUND，10602→NO_MATCH，10603→CONFLICT。
+ * PRD §7A.1.1：0→BOUND，10602→NO_MATCH，10603→CONFLICT，
+ * 10604→提示重新授权手机号（留在原页可重试），10605→提示后回绑定引导页。
+ * T438 修：default 原返回 NO_MATCH，而调用方三个页面都按 state 分发，
+ * bind.vue / conflict.vue 的 case 'NO_MATCH' 会把未识别业务码误跳「未匹配」页
+ * （对患者断言「没查到你的档案」），且该分支自带的 message 永远读不到。
+ * 未识别码不得占用任何会跳转的业务态 ⇒ 改为不跳转的 RETRY。
  */
 export function resolveBindPhoneResult(code: number): AuthStateResult {
   switch (code) {
@@ -78,9 +84,21 @@ export function resolveBindPhoneResult(code: number): AuthStateResult {
       return { state: 'NO_MATCH', targetPage: '/pages/login/no-match' }
     case 10603:
       return { state: 'CONFLICT', targetPage: '/pages/login/conflict' }
+    case 10604:
+      return {
+        state: 'RETRY',
+        targetPage: '',
+        message: '授权信息已失效，请重新授权手机号',
+      }
+    case 10605:
+      return {
+        state: 'REBIND',
+        targetPage: '/pages/login/bind',
+        message: '操作已过期，请重新绑定',
+      }
     default:
       return {
-        state: 'NO_MATCH',
+        state: 'RETRY',
         targetPage: '',
         message: '绑定失败，请稍后重试',
       }

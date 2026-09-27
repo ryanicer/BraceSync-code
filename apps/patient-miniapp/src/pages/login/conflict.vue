@@ -71,6 +71,13 @@ async function retryBind() {
         uni.redirectTo({ url: '/pages/login/no-match' })
         break
       }
+      case 'REBIND': {
+        // PRD §7A.1.1：phoneToken 校验失败 → 提示后回绑定引导页重新授权手机号
+        authStore.removePhoneToken()
+        uni.showToast({ title: result.message || '操作已过期，请重新绑定', icon: 'none' })
+        setTimeout(() => uni.redirectTo({ url: '/pages/login/bind' }), 1200)
+        break
+      }
       default:
         uni.showToast({ title: result.message || '绑定失败，请重试', icon: 'none' })
         break

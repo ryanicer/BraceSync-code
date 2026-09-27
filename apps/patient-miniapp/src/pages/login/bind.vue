@@ -135,6 +135,14 @@ async function doBind(phoneCode?: string) {
         uni.redirectTo({ url: '/pages/login/conflict' })
         break
       }
+      case 'REBIND': {
+        // PRD §7A.1.1：phoneToken 校验失败须回绑定引导页重新授权。此处已在绑定页，
+        // 清掉过期 token 让用户走 getPhoneNumber 重新取码，否则重试会反复撞同一个失效 token
+        phoneToken.value = null
+        authStore.removePhoneToken()
+        uni.showToast({ title: result.message || '操作已过期，请重新绑定', icon: 'none' })
+        break
+      }
       default:
         uni.showToast({ title: result.message || '绑定失败，请重试', icon: 'none' })
         break
