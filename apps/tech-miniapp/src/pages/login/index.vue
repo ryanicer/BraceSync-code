@@ -3,7 +3,7 @@
     <!-- Brand Header -->
     <view class="brand-header">
       <view class="brand-logo"><text class="brand-icon">⚡</text></view>
-      <text class="brand-name">矫智通</text>
+      <text class="brand-name">矫治通</text>
       <text class="brand-desc">矫形支具佩戴监测与管理 — 技师版</text>
     </view>
 

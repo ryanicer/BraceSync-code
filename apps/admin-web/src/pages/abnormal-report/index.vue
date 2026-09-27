@@ -321,7 +321,9 @@ onMounted(async () => {
 .date-input { width: 150px; }
 .chips { display: inline-flex; gap: 6px; }
 .chip { border: 1px solid #dcdfe6; background: #fff; border-radius: 12px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
-.chip-on { border-color: #409eff; color: #409eff; background: #ecf5ff; }
+/* T419 G-4：原写死 EP 默认蓝 #409eff/#ecf5ff，主色覆写后这一格会掉在稿面之外 ⇒ 改读 token。
+   （稿面 异常报告.html:57 的选中态是实心 #1a6db5 + 白字，实现的浅底蓝字属既有版式差异，本卡不改。） */
+.chip-on { border-color: var(--el-color-primary); color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
 .scope-tip { margin-bottom: 2px; }
 .empty-tip { color: #7f8c8d; font-size: 13px; margin: 0; }
 .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }

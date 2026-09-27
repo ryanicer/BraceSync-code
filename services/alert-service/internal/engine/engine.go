@@ -96,7 +96,7 @@ func (e *RuleEvaluator) checkSensorDrift(frame PressureFrame, _ *PressureFrame) 
 		ThresholdValue: e.SensorDriftThreshold,
 		ActualValue:    actual,
 		Severity:       "medium",
-		Message: fmt.Sprintf("传感器漂移：空载采集点 %s 读数 %.1fN 异常（阈值 %.1fN），通知技师+运营",
+		Message: fmt.Sprintf("传感器标定异常：空载采集点 %s 读数 %.1fN 异常（阈值 %.1fN），通知技师+运营",
 			point, actual, e.SensorDriftThreshold),
 	}
 }

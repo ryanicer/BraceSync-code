@@ -80,7 +80,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
-import { formatAlertValue } from '@bracesync/shared-utils'
+import { formatAlertValue, alertTypeLabel } from '@bracesync/shared-utils'
 import { request } from '../../utils/request'
 
 // 数据
@@ -95,16 +95,8 @@ const filteredAlerts = computed(() => {
   return alerts.value.filter(a => a.processStatus === filter.value)
 })
 
-// 告警类型标签
-function alertTypeLabel(type: string): string {
-  const map: Record<string, string> = {
-    pressure_high: '压力偏高',
-    wear_interrupt: '佩戴中断',
-    pressure_fluctuation: '压力波动',
-    sensor_drift: '传感器漂移',
-  }
-  return map[type] || type
-}
+// 告警类型标签：T419 G-6 删本地映射，改读 shared-utils 的 ALERT_TYPE_LABELS
+// （PRD §7C/T289 2.6 定的全站唯一口径，本函数原是其第四份副本，且漏了 wear_duration_short）。
 
 // 严重程度（用于 badge 颜色）
 function getSeverity(type: string): string {

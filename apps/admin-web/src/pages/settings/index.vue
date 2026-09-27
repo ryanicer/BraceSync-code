@@ -19,14 +19,19 @@
             <el-form-item label="每日佩戴目标时长（h）">
               <el-input-number v-model="form.dailyWearTargetHours" :min="1" :max="24" />
             </el-form-item>
-            <el-form-item label="压力波动幅度阈值（%）">
-              <el-input-number v-model="form.pressureFluctuationPct" :min="1" :max="100" />
-            </el-form-item>
-            <el-form-item label="佩戴中断判定时间（分钟）">
+            <!-- T419 S-6：「压力波动幅度阈值」表单项按已停用口径下线（Boss 2026-09-23 裁定问题 4 砍类型，
+                 PRD §7D.12 配置项明细 V3.21 已删该需求项）。只摘 UI：form 仍回显并随 PUT 原值回传，
+                 键 threshold_pressure_fluctuation_pct 与 DB CHECK 未动（历史行可读属 A/B/C 待裁）。
+                 🔴 不能连 form 的键一起删：后端 validateSettings 对该字段做 [1,100] 区间校验
+                 （services/user-service/internal/handler/handler.go:2040），载荷缺键 ⇒ 解码成 0 ⇒ 整页保存必 400。
+                 这条不对称由 apps/admin-web/test/settings-visible-terms.spec.ts 钉住。 -->
+            <!-- T419 G-6：下两项 = PRD §7D.12 V3.20「只改显示文案、键名与码值不动」的实现对齐；
+                 wearInterruptMinutes ≡ threshold_wear_interrupt_minutes，与「告警管理 · Tab2」的「设备离线阈值」同键（T257 12.4）。 -->
+            <el-form-item label="设备离线判定时间（分钟）">
               <el-input-number v-model="form.wearInterruptMinutes" :min="10" :max="720" />
               <span class="form-hint">必须 ≥ 2×采集间隔</span>
             </el-form-item>
-            <el-form-item label="传感器漂移告警阈值（N）">
+            <el-form-item label="传感器标定异常告警阈值（N）">
               <el-input-number v-model="form.sensorDriftN" :min="0.1" :max="20" :step="0.1" />
             </el-form-item>
             <el-form-item>

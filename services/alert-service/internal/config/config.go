@@ -90,13 +90,13 @@ func ValidateThresholds(collectIntervalMin, interruptThresholdMin int) error {
 	if interruptThresholdMin <= 0 {
 		return &ValidationError{
 			Code:    ErrCodeThresholdLinkage,
-			Message: fmt.Sprintf("佩戴中断阈值必须为正数（当前 %d 分钟）", interruptThresholdMin),
+			Message: fmt.Sprintf("设备离线阈值必须为正数（当前 %d 分钟）", interruptThresholdMin),
 		}
 	}
 	if minRequired := 2 * collectIntervalMin; interruptThresholdMin < minRequired {
 		return &ValidationError{
 			Code: ErrCodeThresholdLinkage,
-			Message: fmt.Sprintf("佩戴中断阈值 %dmin < 2×采集间隔(%dmin)=%dmin，须 ≥%dmin（PRD §7D.12 联动约束）",
+			Message: fmt.Sprintf("设备离线阈值 %dmin < 2×采集间隔(%dmin)=%dmin，须 ≥%dmin（PRD §7D.12 联动约束）",
 				interruptThresholdMin, collectIntervalMin, minRequired, minRequired),
 		}
 	}

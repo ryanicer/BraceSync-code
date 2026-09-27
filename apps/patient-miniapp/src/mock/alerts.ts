@@ -62,7 +62,7 @@ export function mockPatientAlerts(): Alert[] {
       patientId: 'PT-001',
       deviceId: 'DEV-A3F312',
       type: 'wear_interrupt',
-      detail: '佩戴中断超过 20 分钟',
+      detail: '设备离线超过 20 分钟',
       sensorPoint: '',
       thresholdValue: 0,
       actualValue: 0,

@@ -1,7 +1,7 @@
 <template>
   <div class="login-page">
     <div class="login-card">
-      <h1 class="login-title">🏥 矫智通运营平台</h1>
+      <h1 class="login-title">🏥 矫治通运营平台</h1>
       <p class="login-subtitle">医生 / 运营 / 客服统一后台（PRD §1.2）</p>
 
       <!-- mock 模式（USE_MOCK=true 本地开发）：预置角色下拉 + 任意密码 -->

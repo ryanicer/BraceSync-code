@@ -207,7 +207,7 @@ export function pressureAlerts7groups(): Alert[] {
     mk({ type: 'pressure_high', sensorPoint: 'P11', thresholdValue: 40, actualValue: 55.6,
       detail: '压力偏高：采集点 P11 压力 55.6N 超阈值 40.0N', timestamp: '2026-07-11T14:00:00+08:00' }),
     mk({ type: 'sensor_drift', sensorPoint: 'P08', thresholdValue: 15, actualValue: 21.4,
-      detail: '传感器漂移：空载采集点 P08 读数 21.4N 异常（阈值 15.0N），通知技师+运营',
+      detail: '传感器标定异常：空载采集点 P08 读数 21.4N 异常（阈值 15.0N），通知技师+运营',
       timestamp: '2026-07-11T09:00:00+08:00', resolvedStatus: 'resolved' }),
     // group 3 2026-07-10 (1)
     mk({ type: 'pressure_high', sensorPoint: 'P12', thresholdValue: 60, actualValue: 71.2,
@@ -230,7 +230,7 @@ export function pressureAlerts7groups(): Alert[] {
     mk({ type: 'pressure_high', sensorPoint: 'P01', thresholdValue: 20, actualValue: 22.6,
       detail: '压力偏高：采集点 P01 压力 22.6N 超阈值 20.0N', timestamp: '2026-07-05T11:00:00+08:00' }),
     mk({ type: 'sensor_drift', sensorPoint: 'P06', thresholdValue: 15, actualValue: 18.9,
-      detail: '传感器漂移：空载采集点 P06 读数 18.9N 异常（阈值 15.0N），通知技师+运营',
+      detail: '传感器标定异常：空载采集点 P06 读数 18.9N 异常（阈值 15.0N），通知技师+运营',
       timestamp: '2026-07-05T16:00:00+08:00', resolvedStatus: 'resolved' }),
   ]
 }

@@ -112,8 +112,8 @@ test.describe('处理流程', () => {
 
 test.describe('告警类型术语与三态（T289 2.6 / 2.7）', () => {
   // 2.6：设计稿 告警管理.html:248-251 四类术语（PM 09-21 23:53 答复①）。码值不动，只改显示。
-  // 断言只看「告警类型」列（td 第 4 列）——detail 文案里出现「佩戴中断」等字样是后端生成的正文，不属术语口径。
-  test('类型下拉五项文案与设计稿一致（压力波动仅历史）', async ({ page }) => {
+  // 断言只看「告警类型」列（td 第 4 列）——detail 那一列是引擎/后端生成的正文，措辞不属本页术语口径。
+  test('类型下拉四项文案与设计稿一致（压力波动筛选项已随砍类型摘除）', async ({ page }) => {
     await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
     await page.locator('.filter-select').first().click()
     const option = page.locator('.el-select-dropdown:visible .el-select-dropdown__item').first()
@@ -121,7 +121,9 @@ test.describe('告警类型术语与三态（T289 2.6 / 2.7）', () => {
     const options = await page
       .locator('.el-select-dropdown:visible .el-select-dropdown__item')
       .evaluateAll((items) => items.map((it) => (it.textContent ?? '').trim()))
-    expect(options).toEqual(['压力偏高', '设备离线', '佩戴时长不足', '传感器标定异常', '压力波动'])
+    // T419 G-6（PRD §7D.6 待下线清单 ⑦，Boss 2026-09-23 裁定问题 4）：设计稿 :248-251 = 四类，
+    // 第五项「压力波动」不再可筛。反证这条判别的两向：多一项 ⇒ 红；少一项 ⇒ 红。
+    expect(options).toEqual(['压力偏高', '设备离线', '佩戴时长不足', '传感器标定异常'])
     await page.keyboard.press('Escape')
   })
 
@@ -133,6 +135,8 @@ test.describe('告警类型术语与三态（T289 2.6 / 2.7）', () => {
     expect(cells.length, '须有数据行').toBeGreaterThan(0)
     for (const cellsRow of cells) {
       const alertType = cellsRow[3]
+      // T419：枚举里保留「压力波动」= ALR-003 这条已入库历史行的中文标签（PRD §7D.6 历史数据
+      // 处置 A/B/C 未裁，裁定前按 A「保留可读」描述现状；裁 C 才随第二批删标签）。
       expect(['压力偏高', '设备离线', '佩戴时长不足', '传感器标定异常', '压力波动'], `告警类型列须是设计稿术语，实际「${alertType}」`).toContain(alertType)
     }
     // wear_interrupt 行必须显示「设备离线」，sensor_drift 行必须显示「传感器标定异常」
@@ -158,11 +162,11 @@ test.describe('告警类型术语与三态（T289 2.6 / 2.7）', () => {
   })
 
   test('待处理行有「开始处理」，点击后转「处理中」且入口消失', async ({ page }) => {
-    const row = tableRows(page).filter({ hasText: '佩戴中断超过 30 分钟' })
+    const row = tableRows(page).filter({ hasText: '设备离线超过 30 分钟' })
     await expect(row.first()).toContainText('待处理')
     await row.first().getByRole('button', { name: '开始处理' }).click()
     await expect(adminMessage(page)).toContainText('已开始处理')
-    const after = tableRows(page).filter({ hasText: '佩戴中断超过 30 分钟' })
+    const after = tableRows(page).filter({ hasText: '设备离线超过 30 分钟' })
     await expect(after.first()).toContainText('处理中')
     await expect(after.first().getByRole('button', { name: '开始处理' })).toHaveCount(0)
     // 进入处理中后仍可「处理」→ 已处理

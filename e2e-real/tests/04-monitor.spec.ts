@@ -450,7 +450,7 @@ test.describe('04-实时监控', () => {
         alertId: 'T279-EV-2',
         timestamp: '2026-09-20T18:40:00Z',
         type: 'wear_interrupt',
-        detail: 'T279 注入事件：佩戴中断超过判定时长',
+        detail: 'T279 注入事件：设备离线超过判定时长',
         sensorPoint: '',
       },
       {
