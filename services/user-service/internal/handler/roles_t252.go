@@ -49,17 +49,20 @@ var roleTemplates = []model.RoleTemplateDTO{
 			"doctor_acct", "perm", "config",
 		}},
 	},
-	// ⚠️ doctor 模板与 ROLE_DOCTOR 预置行**不等同**，T368 之后仍是两套值：
+	// ⚠️ doctor 模板与 ROLE_DOCTOR 预置行**不等同**，T419 之后仍是两套值：
 	//    - 预置行：seed.sql 现 7 项 = dashboard / realtime / abnormal_report / alerts / orthosis /
 	//      review / review_tpl（T368 按 Boss 2026-09-24 09:3x 裁定 (a)「补库」补了 review / review_tpl，
 	//      T372 再补 abnormal_report；只跑迁移的库由 000017 播 4 项、再经 000028 → 000029 前滚到同一终态）；
-	//    - 本模板：多 patients、comm，缺 review、review_tpl —— 前两个是 T252 沿 000016 旧种子留下的
-	//      偏差，T277 只收口模板**条数与名称**，是否连预设一起对齐已登记待 PM 裁定
-	//      （改这里即改变新建角色的默认权限）⇒ 本模板仍不动（同 T368 口径），上面对预置行项数的描述才是本卡口径。
+	//    - T419 格一（Boss 裁定，PM 2026-09-27 12:4x 转达）：comm 已从本模板摘掉 —— 预置行与
+	//      PRD §7D.11 矩阵第 8 行「💬 患者沟通 医护 —」本来就不含它，三个预置登录角色身上
+	//      这条授权从来没有生效过，唯一给了它的就是这份「新增角色」默认预设；
+	//    - 🔴 本模板仍与预置行不同集：多 patients、缺 abnormal_report / review / review_tpl。
+	//      patients 对应矩阵第 3 行「👤 患者管理 医护 —」，与 comm 同性，但 Boss 本次只裁了
+	//      comm 一格 ⇒ 不顺手改；T277 起那条「是否连预设一起对齐」的未裁项继续挂在 PM 队列。
 	{
-		Key: "doctor", Name: "医护", Description: "患者数据+告警处理+沟通",
+		Key: "doctor", Name: "医护", Description: "患者数据+告警处理",
 		Permissions: model.RolePermissionsDTO{Scope: "team", Modules: []string{
-			"dashboard", "realtime", "patients", "alerts", "comm", "orthosis",
+			"dashboard", "realtime", "patients", "alerts", "orthosis",
 		}},
 	},
 	{

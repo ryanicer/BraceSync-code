@@ -47,7 +47,7 @@ export function mockRoleTemplates(): RoleTemplateItem[] {
   // services/user-service/internal/handler/roles_t252.go 的 roleTemplates，不建第二套口径。
   return [
     { key: 'admin', name: '运营管理员', description: '系统全部权限', permissions: { scope: 'all', modules: ['dashboard', 'realtime', 'patients', 'abnormal_report', 'teams', 'devices', 'alerts', 'comm', 'orthosis', 'install', 'review', 'review_tpl', 'tech', 'doctor_acct', 'perm', 'config'] } },
-    { key: 'doctor', name: '医护', description: '患者数据+告警处理+沟通', permissions: { scope: 'team', modules: ['dashboard', 'realtime', 'patients', 'alerts', 'comm', 'orthosis'] } },
+    { key: 'doctor', name: '医护', description: '患者数据+告警处理', permissions: { scope: 'team', modules: ['dashboard', 'realtime', 'patients', 'alerts', 'orthosis'] } },
     { key: 'cs', name: '客服', description: '患者沟通模块，全量患者', permissions: { scope: 'all_patients', modules: ['comm'] } },
   ]
 }
