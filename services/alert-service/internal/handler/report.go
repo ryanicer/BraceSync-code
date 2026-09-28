@@ -106,36 +106,36 @@ var abnormalReportRoles = map[string]bool{
 // 用半开区间表达「末日全天」，不依赖 ts 的小数秒精度。
 func (h *Handler) parseReportQuery(w http.ResponseWriter, r *http.Request) (reportQuery, bool) {
 	if h.public == nil {
-		h.reject(w, http.StatusInternalServerError, codeInternalError, "public store not configured")
+		h.reject(w, r, http.StatusInternalServerError, codeInternalError, "public store not configured")
 		return reportQuery{}, false
 	}
 	// T300 水平鉴权：跨患者聚合，患者 token 不得读（X-Role 缺失同样拒，fail-closed）
 	// T425：客服同样不得读（PRD §7D.11 权限矩阵第 4 行「异常报告」客服列为 —，Boss 09-27 拍 A）
 	if !abnormalReportRoles[r.Header.Get(headerRole)] {
-		h.reject(w, http.StatusForbidden, codeForbidden, "abnormal report is staff-only")
+		h.reject(w, r, http.StatusForbidden, codeForbidden, "abnormal report is staff-only")
 		return reportQuery{}, false
 	}
 	q := r.URL.Query()
 	patientID := q.Get("patientId")
 	if patientID == "" {
-		h.reject(w, http.StatusBadRequest, codeInvalidParam, "patientId is required")
+		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "patientId is required")
 		return reportQuery{}, false
 	}
 	loc := scheduler.CSTZone()
 	startStr, endStr := q.Get("start"), q.Get("end")
 	startDay, err := time.ParseInLocation(reportDayLayout, startStr, loc)
 	if err != nil {
-		h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid start: "+startStr)
+		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "invalid start: "+startStr)
 		return reportQuery{}, false
 	}
 	endDay, err := time.ParseInLocation(reportDayLayout, endStr, loc)
 	if err != nil {
-		h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid end: "+endStr)
+		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "invalid end: "+endStr)
 		return reportQuery{}, false
 	}
 	endTs := endDay.AddDate(0, 0, 1)
 	if !endTs.After(startDay) {
-		h.reject(w, http.StatusBadRequest, codeInvalidParam, "end must be >= start")
+		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "end must be >= start")
 		return reportQuery{}, false
 	}
 	filter := repo.AlertQueryFilter{PatientID: patientID, StartTs: &startDay, EndTs: &endTs}
@@ -221,7 +221,7 @@ func (h *Handler) abnormalReport(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.public.SummarizeAlerts(r.Context(), rq.filter)
 	if err != nil {
 		h.log.Error().Err(err).Msg("summarize abnormal report failed")
-		h.reject(w, http.StatusInternalServerError, codeInternalError, "summarize abnormal report failed")
+		h.reject(w, r, http.StatusInternalServerError, codeInternalError, "summarize abnormal report failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, envelope{
@@ -241,7 +241,7 @@ func (h *Handler) exportAbnormalReport(w http.ResponseWriter, r *http.Request) {
 	rows, truncated, err := h.public.ListAlertsForExport(r.Context(), rq.filter, repo.MaxExportRows)
 	if err != nil {
 		h.log.Error().Err(err).Msg("export abnormal report failed")
-		h.reject(w, http.StatusInternalServerError, codeInternalError, "export abnormal report failed")
+		h.reject(w, r, http.StatusInternalServerError, codeInternalError, "export abnormal report failed")
 		return
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Ts.Before(rows[j].Ts) })

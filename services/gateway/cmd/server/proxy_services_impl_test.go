@@ -107,12 +107,16 @@ func TestFullRoutes_UnmatchedPath_404(t *testing.T) {
 
 func TestFullRoutes_BackendDown_502WithJWT(t *testing.T) {
 	// 鉴权通过后后端不可用 → 502 兜底（鉴权与代理错误分层）
+	logs := t464CaptureLogs(t)
 	gw := startFullGateway(t, "http://127.0.0.1:1", "http://127.0.0.1:1",
 		"http://127.0.0.1:1", "http://127.0.0.1:1", "http://127.0.0.1:1", testJWTSecretMain)
 
 	code, body := httpDoFull(t, http.MethodGet, gw.URL+"/api/v1/admin/patients", "", validBearer(t))
 	assert.Equal(t, http.StatusBadGateway, code)
-	assert.Contains(t, body, "user-service unavailable")
+	// T464：服务名进 data.upstream，英文技术文本进日志（按 trace.requestId 反查）
+	requestID := t464TraceOf(t, http.StatusBadGateway, code, body, nil)
+	assert.Contains(t, body, `"upstream":"user-service"`)
+	t464TechLogContains(t, logs, requestID, "dial tcp")
 }
 
 // TestFullRoutes_ProvisionKeyGuarded T091：provision-key 端点从裸组迁入 JWT 组，

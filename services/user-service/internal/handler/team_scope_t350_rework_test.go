@@ -244,7 +244,8 @@ func TestT350R_SelfOnlyRolesKeepLegacyText(t *testing.T) {
 				w, resp := e.do(http.MethodGet, ep.path(t350rOwnPatient), nil,
 					t350Hdr(role, "ADM-001"))
 				require.Equal(t, http.StatusForbidden, w.Code, resp.Message)
-				assert.Contains(t, resp.Message, ep.legacy, "原文案逐字守住，不得被团队推导顶掉")
+				t464TechLogContains(t, w, ep.legacy) // T464：原文案是技术文本，改由日志逐字守住
+				assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体给中文短句")
 				assert.Equal(t, 0, ep.calls(e.store))
 				assert.Equal(t, "", e.store.lastPatientQuery, "self-only 闸门在触库前")
 			})
@@ -266,7 +267,7 @@ func TestT350R_PatientSelfScopeUnchanged(t *testing.T) {
 			w2, resp2 := e.do(http.MethodGet, ep.path(t350rOtherPatient), nil,
 				map[string]string{"X-Role": "patient", "X-User-Id": t350rOwnPatient})
 			assert.Equal(t, http.StatusForbidden, w2.Code, resp2.Message)
-			assert.Contains(t, resp2.Message, ep.legacy)
+			t464TechLogContains(t, w2, ep.legacy)
 		})
 	}
 }

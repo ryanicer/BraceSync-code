@@ -49,10 +49,12 @@ type evalResultData struct {
 }
 
 // envelope 统一响应体
+// T464：错误响应的 Message 为用户面中文（技术文本只进日志），Trace 回传错误码 + 请求关联号。
 type envelope struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data,omitempty"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    any         `json:"data,omitempty"`
+	Trace   *errorTrace `json:"trace,omitempty"`
 }
 
 // Handler /internal/evaluate 处理器
@@ -96,18 +98,18 @@ func (h *Handler) Router() *http.ServeMux {
 func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
 	if err != nil {
-		h.reject(w, http.StatusBadRequest, codeInvalidParam, "read body: "+err.Error())
+		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "read body: "+err.Error())
 		return
 	}
 	var req EvalRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid json: "+err.Error())
+		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "invalid json: "+err.Error())
 		return
 	}
 	frame, err := req.ToPressureFrame()
 	if err != nil || frame.PatientID == "" || frame.DeviceID == "" {
 		metrics.InlineEvaluatedTotal.WithLabelValues(metrics.OutcomeDropped).Inc()
-		h.reject(w, http.StatusBadRequest, codeInvalidParam, "invalid frame ref (need device_id/patient_id/20 points)")
+		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "invalid frame ref (need device_id/patient_id/20 points)")
 		return
 	}
 
@@ -133,7 +135,7 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 		// 落库失败 → 非 0 码触发调用方降级入队，补偿评估兜底（不丢告警）
 		metrics.InlineEvaluatedTotal.WithLabelValues(metrics.OutcomeEvalError).Inc()
 		h.log.Error().Err(err).Str("device_id", frame.DeviceID).Msg("inline alert persist failed, caller will degrade")
-		h.reject(w, http.StatusInternalServerError, codeInternalError, "persist alert failed")
+		h.reject(w, r, http.StatusInternalServerError, codeInternalError, "persist alert failed")
 		return
 	}
 	alert.AlertID = alertID // 落库后回填，Notify 时使用
@@ -157,9 +159,22 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 // （writeJSON(w, code, envelope{Code: code, ...})），于是「改业务码」必然连带改 HTTP 状态。
 // 现拆成两个参数，32 个调用点各自显式给出 HTTP 状态；HTTP 状态取值与拆分前逐格相同。
 // 调用方 data-service 的 HTTPAlertClient 仍按「非 2xx 视为不可用」处理，判定依据是 HTTP 状态，未受影响。
-func (h *Handler) reject(w http.ResponseWriter, httpStatus, code int, message string) {
-	h.log.Warn().Int("http_status", httpStatus).Int("code", code).Msg(message)
-	writeJSON(w, httpStatus, envelope{Code: code, Message: message})
+//
+// T464：message 入参是技术文本（含 err.Error() 拼接与 alertId 回显），一律只写日志；
+// 响应体给用户的是按码映射的中文短句 + trace（错误码 + 请求关联号）。
+func (h *Handler) reject(w http.ResponseWriter, r *http.Request, httpStatus, code int, message string) {
+	requestID := requestIDOf(r)
+	w.Header().Set(HeaderRequestID, requestID)
+	h.log.Warn().Int("http_status", httpStatus).Int("code", code).
+		Str("request_id", requestID).
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Msg(message)
+	writeJSON(w, httpStatus, envelope{
+		Code:    code,
+		Message: userText(code),
+		Trace:   &errorTrace{ErrorCode: code, RequestID: requestID},
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

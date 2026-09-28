@@ -31,6 +31,16 @@ const (
 // 文件域原本整个没有这一格，前端统一取 res.data 时会在本域拿到 undefined。
 // 注：alert-service 的信封把 Data 写成 json:"data,omitempty"，错误体里这一格是省掉的，
 // 属 T402 未收口面（卡内已登记），本卡不动它。
+//
+// T464：入参 message 是技术文本（含 err.Error() 直传的两处），一律只进服务端日志；
+// 响应体 message 由 userTextByCode 按码给出中文短句，trace 回传错误码 + 请求关联号。
 func errorJSON(c *gin.Context, statusCode, code int, message string) {
-	c.JSON(statusCode, gin.H{"code": code, "message": message, "data": nil})
+	requestID := requestIDOf(c)
+	logTechnical(c, code, statusCode, message, requestID)
+	c.JSON(statusCode, gin.H{
+		"code":    code,
+		"message": UserText(code),
+		"data":    nil,
+		"trace":   errorTrace{ErrorCode: code, RequestID: requestID},
+	})
 }

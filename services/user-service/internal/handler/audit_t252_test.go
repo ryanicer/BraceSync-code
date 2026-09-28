@@ -202,7 +202,7 @@ func TestT252_GetAuditLogs_RejectsBadQuery(t *testing.T) {
 			w, resp := e.do(http.MethodGet, "/api/v1/admin/audit-logs?"+tc.qs, nil, t252AdminHdr())
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 			assert.Equal(t, model.CodeInvalidParam, resp.Code)
-			assert.Contains(t, resp.Message, tc.msg)
+			t464TechLogContains(t, w, tc.msg)
 			assert.Nil(t, e.store.lastAuditFilter.From, "拒绝时不查库")
 		})
 	}

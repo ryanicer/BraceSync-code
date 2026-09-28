@@ -83,12 +83,16 @@ func TestT447_UpdateInstallMeta_WifiStatusOutsideEnum_400WithZeroWrites(t *testi
 			r, store, ls := t387Env(t)
 			path, id := t447Setup(t, store)
 			before := store.snapshot()
+			logs := t464CaptureLogs(t) // T464：字段名等技术细节改走日志通道
 
 			status, msg, code := t387Req(t, r, http.MethodPut, path, roleTech, t387Tech, t447WifiBody(bad))
 
 			require.Equal(t, http.StatusBadRequest, status, "wifiStatus=%q 竟被放行，将穿到 SQL CHECK", bad)
 			assert.Equal(t, model.CodeInvalidParam, code)
-			assert.Contains(t, msg, "wifiStatus", "文案要点明是哪个字段非法，便于前端定位")
+			// 双通道：响应体只剩中文短句，"哪个字段非法" 落在同请求的日志行里
+			assert.Equal(t, model.UserText(model.CodeInvalidParam), msg)
+			assert.True(t, t464AnyLogContains(logs, "wifiStatus"),
+				"字段名必须仍可从日志反查（技术文本被丢掉而不是改道，同样判红）")
 			assert.NotContains(t, msg, "install_records_wifi_status_check", "文案不得泄露库内约束名")
 
 			delta := before.writeDelta(store.snapshot())

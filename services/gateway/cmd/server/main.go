@@ -19,6 +19,8 @@ import (
 //   - /api/v1/devices/:id/provision-key（JWT 组，T091 收紧 / T193 放开患者）配网密钥派生：JWT + 角色白名单 RBAC + per-user 限流
 func setupRouter() *gin.Engine {
 	r := gin.Default()
+	// T464：关联号在网关生成并注入转发请求头，逐跳透传给后端服务（先于所有代理与鉴权中间件挂载）
+	r.Use(requestIDMiddleware())
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})

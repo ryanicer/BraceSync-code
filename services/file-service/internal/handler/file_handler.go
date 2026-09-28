@@ -42,6 +42,7 @@ func NewFileHandler(presigner *service.Presigner, store repo.Store) *FileHandler
 // Router 构建 file-service 路由（含 healthz）
 func (h *FileHandler) Router() *gin.Engine {
 	r := gin.New()
+	r.Use(requestIDMiddleware()) // T464：关联号须先于任何会返回错误的环节
 	r.Use(gin.Recovery())
 
 	r.GET("/healthz", func(c *gin.Context) {

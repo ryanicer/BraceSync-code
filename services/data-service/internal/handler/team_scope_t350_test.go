@@ -373,7 +373,9 @@ func TestT350R_DailyWearDenyPath(t *testing.T) {
 			assert.Equal(t, "", q.lastPID, "拒绝路径不得触达聚合查询")
 			assert.Equal(t, "", lookup.lastSeen, "团队判定必须先于存在性查询")
 			// 抹掉回显的患者号再比对：剩下的若不同，就是在泄露「这个号有没有档案」
-			shapes[tc.name] = strings.ReplaceAll(w.Body.String(), tc.patientID, "{pid}")
+			// T464：trace.requestId 每请求随机，与泄露面无关，比对前一并抹掉
+			shapes[tc.name] = t350TraceRID.ReplaceAllString(
+				strings.ReplaceAll(w.Body.String(), tc.patientID, "{pid}"), `"requestId":"{rid}"`)
 		})
 	}
 	assert.Equal(t, shapes["患者档案不存在"], shapes["跨团队患者"], "存在性不得区别于越界")
@@ -401,7 +403,9 @@ func TestT350R_DailyWearOtherRolesUnchanged(t *testing.T) {
 				"/api/v1/patients/"+hPatient+"/daily-wear", role, t350Operator)
 
 			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
-			assert.Contains(t, w.Body.String(), "your own daily-wear")
+			// T464：技术文本改走日志通道，响应体只剩中文短句（该角色的拒绝语义仍由码 30403 承载）
+			assert.Contains(t, w.Body.String(), model.UserText(model.CodeForbidden))
+			assert.NotContains(t, w.Body.String(), "your own daily-wear")
 			assert.Equal(t, "", q.lastPID)
 			assert.Empty(t, lookup.teamSeen)
 		})

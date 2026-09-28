@@ -132,7 +132,7 @@ func TestT423_Put_FullListLegStillValidates(t *testing.T) {
 			"items": []string{"comm.reply"}}, nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
-	assert.Contains(t, resp.Message, "requires module")
+	t464TechLogContains(t, w, "requires module")
 	assert.Empty(t, e2.store.lastPermJSON, "拒绝时不得触达写通道")
 }
 
@@ -161,7 +161,7 @@ func TestT423_Put_ItemsWrongTypeRejected(t *testing.T) {
 		json.RawMessage(`{"scope":"team","modules":["alerts","comm"],"items":"alerts.view"}`), nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
-	assert.Contains(t, resp.Message, "items")
+	t464TechLogContains(t, w, "items")
 	assert.Empty(t, e.store.lastPermJSON, "拒绝时不得触达写通道")
 }
 

@@ -68,6 +68,7 @@ func New(svc *service.DeviceService) *Handler { return &Handler{svc: svc} }
 // Router 组装路由（可测试）
 func (h *Handler) Router() *gin.Engine {
 	r := gin.New()
+	r.Use(requestIDMiddleware()) // T464：关联号须先于任何会返回错误的环节
 	r.Use(gin.Recovery())
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -102,19 +103,29 @@ func (h *Handler) Router() *gin.Engine {
 }
 
 // jsonResp 统一响应体（命名避开 Ella 预置测试 handler_test.go 中的 apiResponse 定义）
+// T464：错误响应的 Message 为用户面中文，技术文本只进日志；Trace 回传错误码 + 请求关联号。
 type jsonResp struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    any         `json:"data"`
+	Trace   *errorTrace `json:"trace,omitempty"`
 }
 
 func ok(c *gin.Context, data any) {
 	c.JSON(http.StatusOK, jsonResp{Code: model.CodeOK, Message: "success", Data: data})
 }
 
-// fail 错误响应：Data 为该错误的结构化附带数据（多数为 nil），供前端取机器可读字段而非解析文案
+// fail 错误响应：Data 为该错误的结构化附带数据（多数为 nil），供前端取机器可读字段而非解析文案。
+// Message 由错误码映射为中文短句，原始技术文本连同关联号写服务端日志（T464 双通道）。
 func fail(c *gin.Context, appErr *model.AppError) {
-	c.JSON(appErr.HTTPStatus, jsonResp{Code: appErr.Code, Message: appErr.Message, Data: appErr.Data})
+	requestID := requestIDOf(c)
+	logTechnical(c, appErr.Code, appErr.HTTPStatus, appErr.Message, requestID)
+	c.JSON(appErr.HTTPStatus, jsonResp{
+		Code:    appErr.Code,
+		Message: model.UserText(appErr.Code),
+		Data:    appErr.Data,
+		Trace:   &errorTrace{ErrorCode: appErr.Code, RequestID: requestID},
+	})
 }
 
 // operatorID 操作人：一律取网关注入的 X-User-Id（T261 身份单一来源）。

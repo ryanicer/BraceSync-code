@@ -44,12 +44,16 @@ func (c wxErrClient) GetPhoneNumber(_ context.Context, _ string) (string, string
 	return "", "", c.plain
 }
 
-// TestBindPhoneUpstream404_Returns65ByteWxUnavailable 复现 T166 线上故障形状。
+// TestBindPhoneUpstream404_WxUnavailable502WithTrace 复现 T166 线上故障形状。
 //
 // 根因：wechat.go 曾请求 /phonenumber/getPhoneNumber——那是微信文档里该 API 的短名、
 // 不是 URL path。微信对未知 path 返回 HTTP 404 + 空 body → wechat 包包装成普通 error
 // （非 *WechatError）→ 本 handler 落 10502 / HTTP 502。
-func TestBindPhoneUpstream404_Returns65ByteWxUnavailable(t *testing.T) {
+//
+// T464 改了本用例的取证锚点：响应体不再逐字节固定（message 换成中文短句、多了 trace）。
+// 「两层 502 可分」这件事仍然成立，判据从内容长度换成 trace——只有 user-service 的错误出口
+// 会写 trace，网关自己的兜底 502 没有；上游状态码那类技术文本改由日志通道留痕。
+func TestBindPhoneUpstream404_WxUnavailable502WithTrace(t *testing.T) {
 	t.Parallel()
 
 	e := newBindPhoneEnv(t)
@@ -61,9 +65,8 @@ func TestBindPhoneUpstream404_Returns65ByteWxUnavailable(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadGateway, rec.Code, "非业务错误应映射为 HTTP 502")
 	assert.Equal(t, model.CodeWXUnavail, resp.Code, "业务码应为 10502")
-	assert.Equal(t, `{"code":10502,"message":"wechat service unavailable","data":null}`, rec.Body.String(),
-		"T166 取证锚点：响应体逐字节固定，网关 upstream_content_length=65 才能归因到本分支；"+
-			"网关自身兜底 502 是 49 字节，用长度即可区分两层")
+	t464UserMessage(t, rec, model.CodeWXUnavail)
+	t464TechLogContains(t, rec, "phone http status 404")
 }
 
 // TestBindPhoneWechatBizError_Returns10604 *WechatError → 10604 / HTTP 200。

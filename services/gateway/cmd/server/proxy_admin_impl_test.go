@@ -110,16 +110,22 @@ func TestAdminProxy_OtherServices(t *testing.T) {
 }
 
 func TestAdminProxy_BackendDown_502(t *testing.T) {
+	logs := t464CaptureLogs(t)
 	gw := startAdminGateway(t, "http://127.0.0.1:1", "http://127.0.0.1:1", "http://127.0.0.1:1", "http://127.0.0.1:1")
 
+	// T464：message 改中文短句后，「哪条上游不可达」走 data.upstream（机器可读），
+	// 服务名与底层 dial 报错改由同一关联号的日志行反查。
 	code, body := httpDo(t, http.MethodGet, gw.URL+"/api/v1/admin/patients")
 	assert.Equal(t, http.StatusBadGateway, code)
-	assert.Contains(t, body, `"code":502`)
-	assert.Contains(t, body, "user-service unavailable")
+	requestID := t464TraceOf(t, http.StatusBadGateway, code, body, nil)
+	assert.Contains(t, body, `"upstream":"user-service"`)
+	t464TechLogContains(t, logs, requestID, "user-service")
 
 	code, body = httpDo(t, http.MethodGet, gw.URL+"/api/v1/devices")
 	assert.Equal(t, http.StatusBadGateway, code)
-	assert.Contains(t, body, "device-service unavailable")
+	requestID = t464TraceOf(t, http.StatusBadGateway, code, body, nil)
+	assert.Contains(t, body, `"upstream":"device-service"`)
+	t464TechLogContains(t, logs, requestID, "device-service")
 }
 
 func TestAdminProxy_InvalidTarget_RoutesSkipped(t *testing.T) {

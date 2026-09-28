@@ -116,7 +116,9 @@ func (h *Handler) bindPhone(c *gin.Context) {
 			ctxLogger(c).Error().
 				Str("wechat_err", wechatErrText(err)).
 				Msg("bind-phone: wechat GetPhoneNumber failed → 10502 (T166-dbg)")
-			fail(c, model.NewWXServiceUnavailable("wechat service unavailable"))
+			// T464：出口日志的 detail 带上脱敏后的上游原因，使「按 trace.requestId 反查」一条日志
+			// 就能定位到是哪一跳的哪种失败（原来只有固定串 wechat service unavailable）。
+			fail(c, model.NewWXServiceUnavailable("wechat service unavailable: %s", wechatErrText(err)))
 			return
 		}
 		// T156：先 Normalize 再 Hash，防止微信返回带 +86/不可见字符导致与 DB hash 不一致
@@ -212,13 +214,10 @@ func wechatErrText(err error) string {
 }
 
 // respondWithPhoneToken 失败分支统一响应：code + phoneToken（供客户端重试免二次微信调用）
+// msg 是原始技术文本，按 T464 只进日志；响应体 message 走错误码中文表。
 func (h *Handler) respondWithPhoneToken(c *gin.Context, code int, msg, phoneHash, openID string) {
 	pt := issuePhoneToken(h.phoneTokenSecret, phoneHash, openID, time.Now())
-	c.JSON(http.StatusOK, jsonResp{
-		Code:    code,
-		Message: msg,
-		Data:    gin.H{"phone_token": pt},
-	})
+	writeErrorJSON(c, http.StatusOK, code, msg, gin.H{"phone_token": pt})
 }
 
 // respondLoginOK 绑定成功响应：签发正式 JWT（sub=patientID，8h）。

@@ -56,6 +56,7 @@ func New(svc *service.NotifyService) *Handler { return &Handler{svc: svc} }
 // Router 组装路由（可测试）
 func (h *Handler) Router() *gin.Engine {
 	r := gin.New()
+	r.Use(requestIDMiddleware()) // T464：关联号须先于任何会返回错误的环节
 	r.Use(gin.Recovery())
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -86,10 +87,12 @@ func (h *Handler) Router() *gin.Engine {
 }
 
 // jsonResp 统一响应体（命名避开 Ella 预置测试 handler_test.go 中的 apiResponse 定义）
+// T464：错误响应的 Message 为用户面中文（技术文本只进日志），Trace 回传错误码 + 请求关联号。
 type jsonResp struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    any         `json:"data"`
+	Trace   *errorTrace `json:"trace,omitempty"`
 }
 
 func ok(c *gin.Context, data any) {
@@ -97,7 +100,14 @@ func ok(c *gin.Context, data any) {
 }
 
 func fail(c *gin.Context, appErr *model.AppError) {
-	c.JSON(appErr.HTTPStatus, jsonResp{Code: appErr.Code, Message: appErr.Message, Data: nil})
+	requestID := requestIDOf(c)
+	logTechnical(c, appErr.Code, appErr.HTTPStatus, appErr.Message, requestID)
+	c.JSON(appErr.HTTPStatus, jsonResp{
+		Code:    appErr.Code,
+		Message: model.UserText(appErr.Code),
+		Data:    nil,
+		Trace:   &errorTrace{ErrorCode: appErr.Code, RequestID: requestID},
+	})
 }
 
 // requireInternalHeader 内部接口鉴权（架构 §5.2）：X-Internal-Service 头必须非空，

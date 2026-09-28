@@ -149,7 +149,7 @@ func TestT257_UpdatePermissions_RejectsBadItems(t *testing.T) {
 				map[string]any{"scope": "team", "modules": []string{"alerts"}, "items": tc.items}, nil)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 			assert.Equal(t, model.CodeInvalidParam, resp.Code)
-			assert.Contains(t, resp.Message, tc.msg)
+			t464TechLogContains(t, w, tc.msg)
 			assert.Empty(t, e.store.lastPermJSON, "拒绝时不得触达写通道")
 		})
 	}

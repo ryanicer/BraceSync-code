@@ -131,7 +131,7 @@ func TestT274_FlowTemplate_Create_Validation400(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, w.Code, "%s → %s", c.name, resp.Message)
 			assert.Equal(t, model.CodeInvalidParam, resp.Code)
 			if c.want != "" {
-				assert.Contains(t, resp.Message, c.want)
+				t464TechLogContains(t, w, c.want)
 			}
 			assert.Empty(t, e.store.auditRows, "校验失败不得留审计")
 		})
@@ -144,7 +144,7 @@ func TestT274_FlowTemplate_Create_NameConflict409(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/flow/templates",
 		map[string]string{"name": "已占用"}, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusConflict, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "已占用")
+	t464TechLogContains(t, w, "已占用")
 }
 
 func TestT274_FlowTemplate_Create_NonAdmin403(t *testing.T) {
@@ -236,7 +236,7 @@ func TestT274_FlowTemplate_Get_NotFound404(t *testing.T) {
 	e.store.flow.tplErr = repo.ErrFlowTemplateNotFound
 	w, resp := e.do(http.MethodGet, "/api/v1/admin/flow/templates/FLOW_T_NOPE", nil, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusNotFound, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "FLOW_T_NOPE")
+	t464TechLogContains(t, w, "FLOW_T_NOPE")
 }
 
 func TestT274_FlowTemplate_Update_PartialKeepsOtherFields(t *testing.T) {
@@ -264,14 +264,14 @@ func TestT274_FlowTemplate_Update_NewEdgesMustLandOnNewNodes(t *testing.T) {
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4",
 		json.RawMessage(`{"nodes":[{"id":"N1"},{"id":"N2"}]}`), hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, `.targetNodeId "N3" is not a node`)
+	t464TechLogContains(t, w, `.targetNodeId "N3" is not a node`)
 }
 
 func TestT274_FlowTemplate_Update_NothingToSend400(t *testing.T) {
 	e := flowEnv(t)
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4", map[string]any{}, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "nothing to update")
+	t464TechLogContains(t, w, "nothing to update")
 }
 
 func TestT274_FlowTemplate_Delete(t *testing.T) {
@@ -287,7 +287,7 @@ func TestT274_FlowTemplate_Delete_InUse409(t *testing.T) {
 	e.store.flow.deleteEr = &repo.ErrFlowTemplateInUse{InstanceCount: 2}
 	w, resp := e.do(http.MethodDelete, "/api/v1/admin/flow/templates/FLOW_T0A1B2C3D4", nil, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusConflict, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "used by 2 instance")
+	t464TechLogContains(t, w, "used by 2 instance")
 	assert.Empty(t, e.store.auditRows, "删除失败不留审计")
 }
 
@@ -327,7 +327,7 @@ func TestT274_FlowInstance_Start_AlertNotFound400(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/flow/instances",
 		map[string]string{"templateId": "FLOW_T0A1B2C3D4", "alertId": "999999"}, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "alert not found")
+	t464TechLogContains(t, w, "alert not found")
 }
 
 func TestT274_FlowInstance_Start_TemplateNotFound404(t *testing.T) {
@@ -338,7 +338,7 @@ func TestT274_FlowInstance_Start_TemplateNotFound404(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/flow/instances",
 		map[string]string{"templateId": "FLOW_T_NOT_EXIST", "alertId": "9527"}, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusNotFound, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "FLOW_T_NOT_EXIST")
+	t464TechLogContains(t, w, "FLOW_T_NOT_EXIST")
 }
 
 func TestT274_FlowInstance_Start_AlreadyExists409(t *testing.T) {
@@ -347,7 +347,8 @@ func TestT274_FlowInstance_Start_AlreadyExists409(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/flow/instances",
 		map[string]string{"templateId": "FLOW_T0A1B2C3D4", "alertId": "9527"}, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusConflict, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "FLOW_I0A1B2C3D4", "409 文案带已有实例 ID，前端可直接跳详情")
+	assert.Equal(t, model.UserText(resp.Code), resp.Message, "409 给中文短句；原实例 ID 改由日志反查")
+	t464TechLogContains(t, w, "FLOW_I0A1B2C3D4")
 }
 
 func TestT274_FlowInstance_Start_Patient403(t *testing.T) {
@@ -374,7 +375,7 @@ func TestT274_FlowInstance_GetByAlert_MissingAlertID400(t *testing.T) {
 	e := flowEnv(t)
 	w, resp := e.do(http.MethodGet, "/api/v1/admin/flow/instances", nil, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "alertId query is required")
+	t464TechLogContains(t, w, "alertId query is required")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -413,7 +414,7 @@ func TestT274_FlowNodeStates_InstanceNotFound404(t *testing.T) {
 	e.store.flow.instErr = repo.ErrFlowInstanceNotFound
 	w, resp := e.do(http.MethodGet, "/api/v1/admin/flow/instances/FLOW_I_NOPE/nodes", nil, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusNotFound, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "FLOW_I_NOPE")
+	t464TechLogContains(t, w, "FLOW_I_NOPE")
 }
 
 func TestT274_FlowNodeStates_CorruptedStoredGraph500(t *testing.T) {
@@ -483,7 +484,7 @@ func TestT274_FlowAction_ConfirmNextNodeIDsMustBeRealEdge(t *testing.T) {
 	w, resp := e.do(http.MethodPost, flowActionPath+"N1/actions",
 		json.RawMessage(`{"action":"confirm","nextNodeIds":["N3"]}`), hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "is not an outgoing edge target of node N1")
+	t464TechLogContains(t, w, "is not an outgoing edge target of node N1")
 }
 
 func TestT274_FlowAction_RejectSkipsWithoutAdvance(t *testing.T) {
@@ -503,7 +504,7 @@ func TestT274_FlowAction_TransferNeedsTarget(t *testing.T) {
 	w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
 		map[string]any{"action": "transfer"}, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "targetOperator is required")
+	t464TechLogContains(t, w, "targetOperator is required")
 
 	e2 := flowEnv(t)
 	e2.store.flow.applied = &repo.FlowNodeActionRow{ActionID: 81, NodeID: "N2", Action: "transfer", Operator: "A0001"}
@@ -542,7 +543,7 @@ func TestT274_FlowAction_Validation(t *testing.T) {
 			w, resp := e.do(http.MethodPost, flowActionPath+"N1/actions", json.RawMessage(c.body), hdr(flowRoleAdmin, "A0001"))
 			assert.Equal(t, http.StatusBadRequest, w.Code, "%s → %s", c.name, resp.Message)
 			if c.want != "" {
-				assert.Contains(t, resp.Message, c.want)
+				t464TechLogContains(t, w, c.want)
 			}
 		})
 	}
@@ -554,7 +555,7 @@ func TestT274_FlowAction_Conflicts(t *testing.T) {
 	w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
 		map[string]any{"action": "confirm"}, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusConflict, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "only the current node")
+	t464TechLogContains(t, w, "only the current node")
 
 	e2 := flowEnv(t)
 	e2.store.flow.applyErr = repo.ErrFlowInstanceCompleted
@@ -574,7 +575,7 @@ func TestT274_FlowAction_NodeNotInTemplate404(t *testing.T) {
 	w, resp := e.do(http.MethodPost, flowActionPath+"N9/actions",
 		map[string]any{"action": "confirm"}, hdr(flowRoleAdmin, "A0001"))
 	assert.Equal(t, http.StatusNotFound, w.Code, resp.Message)
-	assert.Contains(t, resp.Message, "not found in this instance's template")
+	t464TechLogContains(t, w, "not found in this instance's template")
 	assert.Empty(t, e.store.flow.lastAction.Action, "节点不属于该模板时不得触达写库")
 }
 

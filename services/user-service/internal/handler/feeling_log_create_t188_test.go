@@ -112,7 +112,8 @@ func TestT188_CreateFeelingLog_RejectsThreeTier(t *testing.T) {
 		w, resp := e.do(http.MethodPost, "/api/v1/patients/"+t188Patient+"/feeling-logs",
 			t188Body(map[string]any{"feeling": v}), selfHdr(t188Patient, "patient"))
 		assert.Equal(t, http.StatusBadRequest, w.Code, "三档值 %q 应被拒", v)
-		assert.Contains(t, resp.Message, "fitted|discomfort")
+		assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+		t464TechLogContains(t, w, "fitted|discomfort")
 		assert.Zero(t, e.store.feelingSaveCalls, "校验失败不得触库")
 	}
 }
@@ -122,7 +123,8 @@ func TestT188_CreateFeelingLog_FeelingRequired(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/patients/"+t188Patient+"/feeling-logs",
 		t188Body(nil, "feeling"), selfHdr(t188Patient, "patient"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, resp.Message, "feeling is required")
+	assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+	t464TechLogContains(t, w, "feeling is required")
 	assert.Zero(t, e.store.feelingSaveCalls)
 }
 
@@ -134,7 +136,8 @@ func TestT188_CreateFeelingLog_RejectsUnknownArea(t *testing.T) {
 		w, resp := e.do(http.MethodPost, "/api/v1/patients/"+t188Patient+"/feeling-logs",
 			t188Body(map[string]any{"discomfortAreas": []string{area}}), selfHdr(t188Patient, "patient"))
 		assert.Equal(t, http.StatusBadRequest, w.Code, "部位 %q 应被拒", area)
-		assert.Contains(t, resp.Message, "discomfortArea")
+		assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+		t464TechLogContains(t, w, "discomfortArea")
 		assert.Zero(t, e.store.feelingSaveCalls)
 	}
 }
@@ -144,7 +147,8 @@ func TestT188_CreateFeelingLog_NotesLengthGuard(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/patients/"+t188Patient+"/feeling-logs",
 		t188Body(map[string]any{"notes": strings.Repeat("疼", 201)}), selfHdr(t188Patient, "patient"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, resp.Message, "notes exceeds")
+	assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+	t464TechLogContains(t, w, "notes exceeds")
 
 	// 200 字（列宽上限）按字符计，不按字节：中文 3 字节/字，按字节会误拒
 	e2 := newEnv(t, true, true)
@@ -160,7 +164,8 @@ func TestT188_CreateFeelingLog_LogDateFormat(t *testing.T) {
 		w, resp := e.do(http.MethodPost, "/api/v1/patients/"+t188Patient+"/feeling-logs",
 			t188Body(map[string]any{"logDate": bad}), selfHdr(t188Patient, "patient"))
 		assert.Equal(t, http.StatusBadRequest, w.Code, "logDate %q 应被拒", bad)
-		assert.Contains(t, resp.Message, "logDate")
+		assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+		t464TechLogContains(t, w, "logDate")
 		assert.Zero(t, e.store.feelingSaveCalls)
 	}
 }

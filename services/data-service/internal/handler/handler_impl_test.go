@@ -126,7 +126,9 @@ func TestGetDailyWear_ForbiddenOtherPatient(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, model.CodeForbidden, resp.Code)
-	assert.Contains(t, resp.Message, "your own daily-wear")
+	// T464 双通道：响应体给中文短句，技术文本只进日志
+	assert.Equal(t, model.UserText(model.CodeForbidden), resp.Message)
+	assert.NotContains(t, w.Body.String(), "your own daily-wear")
 	assert.Equal(t, "", q.lastPID, "403 之前不得调用 querier")
 }
 

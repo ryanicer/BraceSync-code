@@ -138,7 +138,7 @@ func TestT252_CreateAdminRole_RejectsBadRequests(t *testing.T) {
 			w, resp := e.do(http.MethodPost, "/api/v1/admin/roles", tc.body, t252AdminHdr())
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 			assert.Equal(t, model.CodeInvalidParam, resp.Code)
-			assert.Contains(t, resp.Message, tc.msg)
+			t464TechLogContains(t, w, tc.msg)
 			assert.Empty(t, e.store.lastRoleDesc, "拒绝时不得触达 CreateRole")
 			assert.Empty(t, e.store.auditRows)
 		})
@@ -153,7 +153,7 @@ func TestT252_CreateAdminRole_DuplicateNameConflicts(t *testing.T) {
 		map[string]any{"name": "主任医师", "template": "cs"}, t252AdminHdr())
 	assert.Equal(t, http.StatusConflict, w.Code)
 	assert.Equal(t, model.CodeConflict, resp.Code)
-	assert.Contains(t, resp.Message, "role name already exists")
+	t464TechLogContains(t, w, "role name already exists")
 	assert.Equal(t, "主任医师", e.store.lastRoleName, "查重按去空格后的名字")
 	assert.Empty(t, e.store.lastRolePerms, "重名时不得落库")
 }
@@ -164,7 +164,8 @@ func TestT252_CreateAdminRole_StoreFailures(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/roles",
 		map[string]any{"name": "角色A", "template": "cs"}, t252AdminHdr())
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, resp.Message, "check role name")
+	assert.Equal(t, model.UserText(resp.Code), resp.Message, "500 也只给中文短句")
+	t464TechLogContains(t, w, "check role name")
 
 	e2 := newEnv(t, true, true)
 	e2.store.createRoleErr = errors.New("db")
@@ -184,8 +185,8 @@ func TestT252_UpdateAdminRole_PresetNameLockedOthersEditable(t *testing.T) {
 	// 预置角色改名 → 400，且不改设计稿既有语义
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/roles/ROLE_ADMIN",
 		map[string]any{"name": "万能管理员"}, t252AdminHdr())
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, resp.Message, "preset role name is locked")
+	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
+	t464TechLogContains(t, w, "preset role name is locked")
 	assert.Nil(t, e.store.roleUpdDesc)
 
 	// 预置角色改描述/启停 → 放行
@@ -219,7 +220,8 @@ func TestT252_UpdateAdminRole_NonPresetRenameChecksConflict(t *testing.T) {
 	w2, resp2 := e2.do(http.MethodPut, "/api/v1/admin/roles/ROLE_C2",
 		map[string]any{"name": "值班医师"}, t252AdminHdr())
 	assert.Equal(t, http.StatusConflict, w2.Code)
-	assert.Contains(t, resp2.Message, "role name already exists")
+	assert.Equal(t, model.UserText(resp2.Code), resp2.Message, "响应体只给中文短句")
+	t464TechLogContains(t, w2, "role name already exists")
 	assert.Empty(t, e2.store.auditRows)
 }
 
@@ -239,7 +241,8 @@ func TestT252_UpdateAdminRole_RejectsBadRequests(t *testing.T) {
 			e := newEnv(t, true, true)
 			w, resp := e.do(http.MethodPut, "/api/v1/admin/roles/ROLE_C9", tc.body, t252AdminHdr())
 			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, resp.Message, tc.msg)
+			assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+			t464TechLogContains(t, w, tc.msg)
 			assert.Equal(t, "", e.store.lastRoleID, "拒绝时不触达 UpdateRole")
 		})
 	}
@@ -274,7 +277,7 @@ func TestT252_DeleteAdminRole(t *testing.T) {
 	w, resp := e.do(http.MethodDelete, "/api/v1/admin/roles/ROLE_CS", nil, t252AdminHdr())
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Equal(t, model.CodeForbidden, resp.Code)
-	assert.Contains(t, resp.Message, "preset role cannot be deleted")
+	t464TechLogContains(t, w, "preset role cannot be deleted")
 	assert.Equal(t, "", e.store.lastRoleID)
 
 	// 不存在 → 404（先查行拿名字写审计）
@@ -289,7 +292,8 @@ func TestT252_DeleteAdminRole(t *testing.T) {
 	e3.store.deleteRoleErr = &repo.ErrRoleInUse{MemberCount: 3}
 	w3, resp3 := e3.do(http.MethodDelete, "/api/v1/admin/roles/ROLE_C3", nil, t252AdminHdr())
 	assert.Equal(t, http.StatusConflict, w3.Code)
-	assert.Contains(t, resp3.Message, "used by 3 admin account")
+	assert.Equal(t, model.UserText(resp3.Code), resp3.Message, "响应体只给中文短句，剩余账号数改由日志反查")
+	t464TechLogContains(t, w3, "used by 3 admin account")
 	assert.Empty(t, e3.store.auditRows, "删除失败不落审计")
 
 	// 成功 → 200 + 审计带角色名

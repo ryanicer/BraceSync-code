@@ -32,11 +32,10 @@ const proxyTimeout = 10 * time.Second
 func newAlertsProxy(target *url.URL) *httputil.ReverseProxy {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.Transport = &http.Transport{ResponseHeaderTimeout: proxyTimeout}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		log.Warn().Err(err).Msg("proxy to alert-service failed")
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(`{"code":502,"message":"alert-service unavailable"}`))
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		requestID := requestIDFromRequest(r)
+		log.Warn().Err(err).Str("request_id", requestID).Msg("proxy to alert-service failed")
+		writeProxy502Body(w, requestID, "alert-service")
 	}
 	return proxy
 }

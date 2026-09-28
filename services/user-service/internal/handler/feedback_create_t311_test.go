@@ -82,7 +82,7 @@ func TestT311_CreateFeedback_PatientNotFound(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/feedbacks", t311Body(nil), selfHdr(t311Patient, "patient"))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, model.CodeNotFound, resp.Code)
-	assert.Contains(t, resp.Message, t311Patient)
+	t464TechLogContains(t, w, t311Patient)
 }
 
 // TestT311_CreateFeedback_ContentLengthBoundary 500 字放行、501 字 400。
@@ -99,7 +99,7 @@ func TestT311_CreateFeedback_ContentLengthBoundary(t *testing.T) {
 		t311Body(map[string]any{"content": strings.Repeat("长", 501)}), selfHdr(t311Patient, "patient"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
-	assert.Contains(t, resp.Message, "content")
+	t464TechLogContains(t, w, "content")
 }
 
 // TestT311_CreateFeedback_TypeTooLong type 超 feedbacks.type VARCHAR(32) → 400
@@ -109,7 +109,7 @@ func TestT311_CreateFeedback_TypeTooLong(t *testing.T) {
 		t311Body(map[string]any{"type": strings.Repeat("t", 33)}), selfHdr(t311Patient, "patient"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
-	assert.Contains(t, resp.Message, "type")
+	t464TechLogContains(t, w, "type")
 }
 
 // TestT311_CreateFeedback_BadStatus status 不在 CHECK 枚举内 → 400，不得落到库约束报错 500

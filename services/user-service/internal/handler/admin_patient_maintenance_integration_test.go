@@ -49,6 +49,9 @@ func newAdminMaintenanceEnv(t *testing.T) (*adminMaintTestEnv, *testhelper.LogCa
 	cipher, _ := phone.NewCipher(testPhoneKey)
 	h.SetPhoneCipher(cipher)
 	// 替换全局 zerolog logger 以捕获审计日志
+	// T464：必须用完还原——本包的双通道用例按全局 logger 收日志，不还原会把后面用例的日志吞掉
+	originalLogger := log.Logger
+	t.Cleanup(func() { log.Logger = originalLogger })
 	log.Logger = zerolog.New(lc)
 
 	return &adminMaintTestEnv{

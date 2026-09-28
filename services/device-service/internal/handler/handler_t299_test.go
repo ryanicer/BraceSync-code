@@ -29,7 +29,9 @@ func TestBindHTTP_PatientHasOtherDevice_Conflict(t *testing.T) {
 		map[string]string{"patientId": "P-T299-H"}, map[string]string{"X-User-Id": "TECH-H"})
 	assert.Equal(t, http.StatusConflict, status, "患者已有生效设备时再绑须 409")
 	assert.Equal(t, model.CodeConflict, resp.Code)
-	assert.Contains(t, resp.Message, "DEV-T299-H1", "message 须给出占位设备，供前端提示先解绑")
+	// T464：message 换中文短句后，占用设备号只能从 data 通道取（前端本就按 occupiedDeviceId 填弹窗）
+	assert.Equal(t, model.UserText(model.CodeConflict), resp.Message)
+	assert.Contains(t, string(resp.Data), `"occupiedDeviceId":"DEV-T299-H1"`, "data 须给出占位设备，供前端提示先解绑")
 
 	// 被拒后原绑定完好：H1 仍在该患者名下，H2 未绑定
 	_, got := env.do(t, http.MethodGet, "/api/v1/devices/DEV-T299-H1", nil, nil)
