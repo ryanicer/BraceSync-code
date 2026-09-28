@@ -184,6 +184,15 @@ function logStep(result, step, pass, actual) {
 }
 
 /**
+ * T450-③：显式跳过一条步骤（资产缺失时用，不写成 PASS）。
+ * 台账记 SKIP，finish 的 fail-closed 只数 FAIL ⇒ SKIP 不判负也不冒充通过。
+ */
+function skipStep(result, step, reason) {
+  result.steps.push({ step, result: 'SKIP', actual: String(reason || '') })
+  console.log(`  [${step}] SKIP${reason ? ' · ' + reason : ''}`)
+}
+
+/**
  * 统一外壳：target 自证 → 连接 → 跑 body → 落结果 → 设退出码。
  * body(mp, ctx) 返回 { pass }；ctx = { result, apiCall, uniqueName, logStep, shot, pageRoute, config, appDir }
  */
@@ -242,12 +251,16 @@ function finish(cfg, opts, result, pass) {
   // fail-closed：步骤台账里有 FAIL 即整例失败（不依赖 body 是否把每步都回传到结论）
   const failedSteps = result.steps.filter((s) => s.result === 'FAIL').map((s) => s.step)
   result.pass = pass && failedSteps.length === 0 && result.errors.length === 0
+  // T450-③：SKIP 既不算 FAIL 也不算 PASS —— 汇总侧要能看出这条腿没跑，而不是跑过了
+  const skippedSteps = result.steps.filter((s) => s.result === 'SKIP').map((s) => s.step)
+  result.skipped = skippedSteps.length > 0
   // errors 含 Exception + attachConsole 抓到的 Console error，任一非空即失败
   const filePath = path.join(cfg.resultsDir, `${opts.name}.json`)
   fs.writeFileSync(filePath, JSON.stringify(result, null, 2), 'utf8')
   console.log('\n===== [%s] 结果 =====', opts.name)
   console.log('步骤:', JSON.stringify(result.steps, null, 2))
   console.log('失败步骤:', failedSteps.length === 0 ? '无' : failedSteps.join(', '))
+  console.log('跳过步骤:', skippedSteps.length === 0 ? '无' : skippedSteps.join(', '))
   console.log('错误:', result.errors.length === 0 ? '无' : result.errors.join('\n'))
   console.log('总结:', result.pass ? 'PASS' : 'FAIL')
   process.exitCode = result.pass ? 0 : 1
@@ -285,6 +298,7 @@ module.exports = {
   createResult,
   attachConsole,
   logStep,
+  skipStep,
   runSpec,
 }
 

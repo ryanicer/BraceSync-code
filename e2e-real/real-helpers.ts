@@ -1,4 +1,4 @@
-import { expect, type Page, type Locator } from '@playwright/test'
+import { expect, type Page, type Locator, type Route } from '@playwright/test'
 // gotoMenu / isLoginPath 在本文件下方要被直接调用，故必须真 import 一份——
 // 下面那串 `export { ... } from '../e2e/admin-helpers'` 只转发给消费者，不产生本地绑定。
 import { gotoMenu, isLoginPath } from '../e2e/admin-helpers'
@@ -240,6 +240,16 @@ export async function getAllTagTexts(scope: Locator | Page): Promise<string[]> {
  * 都不等就收尾」的用例照样会撞上同一句报错。所以接了这个守卫的用例必须保留「等可见数据到位」
  * 的断言，别把它换成裸等时长。
  *
+ * T450 把上面那句「照样会撞上」收掉：冷缓存首包这一发跨 await 的窗口压不到零（ prefetch 需要
+ * 具体 URL 与鉴权头，而拦截器只有通配模式，拿不到），故改为「收尾竞态 ⇒ 吞掉这一次出口」。
+ * 吞的判据只有 Playwright 的三条报错原文（见 isTeardownRace），宽一格就会把真缺陷静音。
+ * 同一发被处置时页面也已经不在读它了，所以吞掉不影响用例判据；served 改为「真的填出去了一发」
+ * 才计数，用例末尾 realtimeServed() >= 1 那条反证锁因此仍成立（且比改前更严）。
+ *
+ * 第三条原文 "Test ended" 由 T450 探针补上：本地对拍（HEAD 版 helper 与本版跑同一收尾时机）里
+ * 旧写法抛的是 route.fetch: Test ended.，与 04-monitor.spec.ts afterEach 记过的那句同源（那条注释
+ * 当时就写过「会被判给同 worker 的下一条用例」）。判据表只留前两条 ⇒ 旧写法照样红，故这句必须进表。
+ *
  * mutate 只在填缓存那一次执行 —— 帧时刻因此被钉死，与本文件顶部对拦截的口径一致。
  */
 export async function stubRealtimeSnapshot(
@@ -250,19 +260,48 @@ export async function stubRealtimeSnapshot(
   let served = 0
   await page.route('**/api/v1/patients/*/realtime', async (route) => {
     if (cached === null) {
-      const res = await route.fetch()
+      let res: Awaited<ReturnType<Route['fetch']>>
+      try {
+        res = await route.fetch()
+      } catch (err) {
+        if (isTeardownRace(err)) return // 收尾竞态：这一发请求已经没有读者，不 fulfill 也不抛
+        throw err
+      }
       let body: { data?: Record<string, unknown> }
       try {
         body = await res.json()
       } catch {
-        await route.fulfill({ response: res })
-        return
+        await fulfillOrDrop(route, { response: res })
+        return // 非 JSON 不建缓存，下一发轮询再取（与 T365 版一致）
       }
       if (body?.data) mutate(body.data)
       cached = { status: res.status(), body: JSON.stringify(body) }
     }
-    served++
-    await route.fulfill({ status: cached.status, contentType: 'application/json', body: cached.body })
+    if (await fulfillOrDrop(route, { status: cached.status, contentType: 'application/json', body: cached.body })) {
+      served++
+    }
   })
   return () => served
+}
+
+// isTeardownRace 只认这三类 Playwright 报错原文：route 已被处置（同一请求被别处答过）、
+// 目标页面/上下文/浏览器已关、用例已结束导致的回调中止。三者都只在收尾窗口出现，
+// 不是被测功能的行为。
+// 🔴 别放宽成「任何异常都吞」——那会把真实的拦截器缺陷伪装成绿。
+const teardownRaceMarks = ['Route is already handled', 'Target page, context or browser has been closed', 'Test ended']
+
+function isTeardownRace(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return teardownRaceMarks.some((mark) => msg.includes(mark))
+}
+
+// fulfillOrDrop 填响应；被处置则返回 false（调用方据此不计数），其余异常照抛。
+async function fulfillOrDrop(route: Route, opts: Parameters<Route['fulfill']>[0]): Promise<boolean> {
+  try {
+    await route.fulfill(opts)
+    return true
+  } catch (err) {
+    if (isTeardownRace(err)) return false
+    throw err
+  }
 }

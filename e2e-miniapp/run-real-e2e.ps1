@@ -93,18 +93,20 @@ Write-Host "[4/5] 汇总结果..." -ForegroundColor Cyan
 $enabled = @()
 if (-not $OnlyPatient) { $enabled += @('tech-login','tech-bind','tech-records') }
 if (-not $OnlyTech)    { $enabled += @('patient-login','patient-monitor','patient-history') }
-$passed = 0; $failed = 0
+$passed = 0; $failed = 0; $skipped = 0
 foreach ($n in $enabled) {
     $p = Join-Path $resultsDir "$n.json"
     if (Test-Path $p) {
         $j = Get-Content $p -Raw | ConvertFrom-Json
-        if ($j.pass) { $passed++ } else { $failed++ }
-        Write-Host ("  {0,-20} {1}" -f $n, ($(if ($j.pass) { 'PASS' } else { 'FAIL' })))
+        # T450-③：json.skipped=true 表示该 driver 有步骤被显式跳过（测试资产缺失），
+        # 计入通过不影响退出码，但汇总必须看得见，别读成「这条腿跑过了」。
+        if ($j.pass) { $passed++; if ($j.skipped) { $skipped++ } } else { $failed++ }
+        Write-Host ("  {0,-20} {1}" -f $n, ($(if (-not $j.pass) { 'FAIL' } elseif ($j.skipped) { 'PASS(含跳过腿)' } else { 'PASS' })))
     } else {
         Write-Host ("  {0,-20} NO-RESULT" -f $n); $failed++
     }
 }
-Write-Host "总： 通过 $passed / $($passed + $failed)" -ForegroundColor $(if ($failed -eq 0) { 'Green' } else { 'Red' })
+Write-Host "总： 通过 $passed / $($passed + $failed)（其中含跳过腿 $skipped）" -ForegroundColor $(if ($failed -eq 0) { 'Green' } else { 'Red' })
 
 # ── 5) 上报 staging runbook（供 PM 查看；需已配 scp/ssh 可到 106.52.39.208）──
 Write-Host "[5/5] 上报 staging runbook /opt/bracesync-staging/e2e-miniapp-results/..." -ForegroundColor Cyan

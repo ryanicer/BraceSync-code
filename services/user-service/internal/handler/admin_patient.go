@@ -2,9 +2,10 @@ package handler
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -33,6 +34,14 @@ func (h *Handler) unbindWechat(c *gin.Context) {
 	}
 	op := operatorID(c, "")
 
+	// T450 DEF-A：解绑前的绑定态（只记「有没有绑」，openid 本体不入审计）。
+	// 这一发读只服务审计，失败不回滚、不改响应：未知就记 null，主流程照走 UnbindWechat 的原有判定。
+	boundBefore := (*bool)(nil)
+	if openID, err := h.store.GetPatientWXOpenID(c.Request.Context(), patientID); err == nil {
+		bound := openID != ""
+		boundBefore = &bound
+	}
+
 	if err := h.store.UnbindWechat(c.Request.Context(), patientID); err != nil {
 		if err == repo.ErrPatientNotFound {
 			fail(c, model.ErrNotFound("patient not found"))
@@ -42,6 +51,12 @@ func (h *Handler) unbindWechat(c *gin.Context) {
 		return
 	}
 
+	setAuditTrace(c, fmt.Sprintf("解绑患者 %s 的微信：解绑前绑定态 %s，解绑后未绑定", patientID, auditBoundLabel(boundBefore)), map[string]any{
+		"before":  map[string]any{"wechatBound": auditBool(boundBefore)},
+		"after":   map[string]any{"wechatBound": false},
+		"changed": []string{"wx_openid"},
+	})
+
 	ctxLogger(c).Info().
 		Str("action", "unbind_wechat").
 		Str("operator_id", op).
@@ -49,6 +64,25 @@ func (h *Handler) unbindWechat(c *gin.Context) {
 		Msg("unbind patient wechat")
 
 	ok(c, gin.H{"patientId": patientID})
+}
+
+// auditBoundLabel 绑定态文案；nil = 解绑前那次只读探测没拿到值，明写「未知」而不是编成未绑
+func auditBoundLabel(bound *bool) string {
+	if bound == nil {
+		return "未知（读取绑定态失败）"
+	}
+	if *bound {
+		return "已绑定"
+	}
+	return "未绑定"
+}
+
+// auditBool 结构化侧的同义表达：探测失败写 JSON null（字段存在但无值），与「false=确认未绑」区分
+func auditBool(bound *bool) any {
+	if bound == nil {
+		return nil
+	}
+	return *bound
 }
 
 // updatePhoneRequest PUT /admin/patients/:id/phone 请求体
@@ -118,20 +152,47 @@ func (h *Handler) updatePatientPhone(c *gin.Context) {
 	}
 
 	// 审计日志（before/after 快照）
-	before := ""
-	if patient.PhoneEnc != nil {
-		before = hex.EncodeToString(patient.PhoneEnc)
-	}
+	// 🔴 脱敏口径（T450 DEF-A，回 Alice 13:12 第三条「还原性」）：改前/改后都取脱敏号（138****1111 一类），
+	// 密文本体及其十六进制串既不落审计 detail 也不落运行日志；改前另带 phoneState 说明能否解开。
+	before := h.phoneView(patient.PhoneEnc)
+	afterMasked := phone.Mask(req.Phone)
+
+	setAuditTrace(c, fmt.Sprintf("修改患者 %s 的手机号：原因「%s」，改前 %s，改后 %s",
+		patientID, auditReason(req.Reason), auditPhonePhrase(before), afterMasked), map[string]any{
+		"reason":  req.Reason,
+		"before":  map[string]any{"phone": before.Masked, "phoneState": string(before.State)},
+		"after":   map[string]any{"phone": afterMasked, "phoneState": string(phone.PhoneStateMasked)},
+		"changed": []string{"phone"},
+	})
+
 	ctxLogger(c).Info().
 		Str("action", "update_patient_phone").
 		Str("operator_id", op).
 		Str("patient_id", patientID).
-		Str("before", before).
-		Str("after", req.Phone).
+		Str("before", before.Masked).
+		Str("before_state", string(before.State)).
+		Str("after", afterMasked).
 		Str("reason", req.Reason).
 		Msg("update patient phone")
 
 	ok(c, gin.H{"patientId": patientID})
+}
+
+// auditReason 原因留空时的文案（改号弹窗必填原因，直连 API 可为空 ⇒ 明写「未填写」不伪造）
+func auditReason(reason string) string {
+	if strings.TrimSpace(reason) == "" {
+		return "未填写"
+	}
+	return reason
+}
+
+// auditPhonePhrase 改前手机号的描述文案。absent 时 Masked 是空串，直接拼进句子会读成「改前 （absent）」
+// 这种半截话，故明写「无手机号」；unreadable 保留占位符 + 状态，说明当前值取不出来。
+func auditPhonePhrase(v phone.PhoneView) string {
+	if v.State == phone.PhoneStateAbsent {
+		return "无手机号（absent）"
+	}
+	return fmt.Sprintf("%s（%s）", v.Masked, v.State)
 }
 
 // adminPatientEditRequest PUT /api/v1/admin/patients/:patientId 入参（T248 4.3，指针=nil=不改）。
@@ -178,6 +239,12 @@ func (h *Handler) updatePatientAdmin(c *gin.Context) {
 		fail(c, appErr)
 		return
 	}
+	// T450 DEF-A：改前快照需要写前的行值。这一发读只服务审计 ⇒ 失败不拦主流程，
+	// 拿不到就把 before 记为 null（改后值仍来自下面那次既有读），不改本端点原有的 404/500 判定序。
+	var beforeRow *repo.PatientRow
+	if row, err := h.store.GetPatient(c.Request.Context(), patientID); err == nil {
+		beforeRow = row
+	}
 	if err := h.store.UpdatePatientProfile(c.Request.Context(), patientID, *in); err != nil {
 		if err == repo.ErrPatientNotFound {
 			fail(c, model.ErrNotFound("patient not found: %s", patientID))
@@ -195,7 +262,75 @@ func (h *Handler) updatePatientAdmin(c *gin.Context) {
 		fail(c, model.ErrNotFound("patient not found: %s", patientID))
 		return
 	}
+	before, after, changed := auditProfileDiff(beforeRow, row)
+	summary := fmt.Sprintf("编辑患者档案 %s：%d 个字段变更（%s）", patientID, len(changed), strings.Join(changed, "、"))
+	switch {
+	case beforeRow == nil:
+		// 写前那发只读没成功：不能反推「无变更」（那是把「我看不到」写成「没变化」）
+		summary = fmt.Sprintf("编辑患者档案 %s：改前快照读取失败，本次变更字段无法比对", patientID)
+	case len(changed) == 0:
+		summary = fmt.Sprintf("编辑患者档案 %s：提交字段与库内现值相同，无字段变更", patientID)
+	}
+	setAuditTrace(c, summary, map[string]any{
+		"before":  before,
+		"after":   after,
+		"changed": changed,
+	})
 	ok(c, toPatientDTO(*row))
+}
+
+// auditProfileDiff 只比对本端点可写的五个字段（name/gender/age/diagnosis/cobbAngle），
+// 逐字段给出改前/改后；未提交的字段不进快照（写了会误导成「被改成现值」）。
+// beforeRow 为 nil = 写前那一发读没成功，快照记空并在卡面明说。
+func auditProfileDiff(beforeRow, afterRow *repo.PatientRow) (map[string]any, map[string]any, []string) {
+	before := map[string]any{}
+	after := map[string]any{}
+	changed := make([]string, 0, 5)
+	if beforeRow == nil || afterRow == nil {
+		return nil, nil, changed
+	}
+	pairs := []struct {
+		key           string
+		before, after any
+	}{
+		{"name", beforeRow.Name, afterRow.Name},
+		{"gender", auditStr(beforeRow.Gender), auditStr(afterRow.Gender)},
+		{"age", auditInt(beforeRow.Age), auditInt(afterRow.Age)},
+		{"diagnosis", auditStr(beforeRow.Diagnosis), auditStr(afterRow.Diagnosis)},
+		{"cobbAngle", auditFloat(beforeRow.CobbAngle), auditFloat(afterRow.CobbAngle)},
+	}
+	for _, p := range pairs {
+		if p.before == p.after {
+			continue
+		}
+		before[p.key] = p.before
+		after[p.key] = p.after
+		changed = append(changed, p.key)
+	}
+	return before, after, changed
+}
+
+// auditStr / auditInt / auditFloat 快照取值：库里为 NULL 就记 null（不是空串、不是 0），
+// 与「本端点没提交该字段」区分得开——后者压根不进快照。
+func auditStr(p *string) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func auditInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func auditFloat(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // buildAdminPatientEdit 值域校验 + 装配 repo 入参；一个字段都没给 → 400（空编辑无意义）。
