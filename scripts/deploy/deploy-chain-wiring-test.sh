@@ -11,7 +11,8 @@
 #   正向：现文逐条要求接线在位。
 #   反证：在临时副本上把这行按 Joe 的 M6/M7/M8 三例逐一拆掉（外加两例：改调工作树字节、
 #         把守卫挪到 git pull 之后；T463 起再加三例：删起跑门调用、删其必需项检查、
-#         把门挪到 ⓪ 段基线采集之后 ⇒ 共八例），要求「对应那一格必判红」——
+#         把门挪到 ⓪ 段基线采集之后；T471 起再加两例：prometheus 重载退回在仓库根发出、
+#         重载那行的 stderr 被收回 /dev/null ⇒ 共十例），要求「对应那一格必判红」——
 #         不这么打一遍，就不知道断言是活的还是摆设（T364 那格假绿的教训）。
 set -uo pipefail
 
@@ -63,6 +64,20 @@ scan_file() {
   #   删掉这一行，bash -n 与 e2e-gate-test.sh 全绿（那边测的是门自己，不是「部署链接着门」）。
   req W8a '[ -r "$GATE_SRC" ] || fail'                   '⓪-pre 验起跑门脚本可读（T463 起必需项）'
   req W8b 'bash "$GATE_SRC" || fail'                     '⓪-pre 调起跑门且判红即中止本轮'
+  # T471：prometheus 重载的发出目录。为什么这一格归本守卫而不是只靠新的行为测试：
+  #   prometheus-reload-test.sh 抽的是 T471-RELOAD-BEGIN/END 之间那一段，段内它测得准；
+  #   但「这一整块还在不在部署链里、有没有被搬出 ⑤ 段」属于接线面，与 W4a/W8b 同族（Joe T383 N1 的原始教训）。
+  req W10 '( cd "$STAGING_DIR" && sudo docker compose restart prometheus )' \
+                                                    '⑤ 段 prometheus 重载在 staging 的 compose 目录里发出（T471）'
+  # W13 是「不许出现」判定（T471 的另一半：stderr 不再静默）。判定只看命令行，不看注释行 ——
+  #   本脚本的说明段里就写着「2>/dev/null」三个字（讲的就是改前那个坑），按整文件搜会把自己判红。
+  #   形状取「同一行上 restart prometheus 之后跟着 2>/dev/null」，改前那一行正是这个形状。
+  if grep -nE '^[^#]*restart prometheus[^#]*2>/dev/null' "$f" >/dev/null 2>&1; then
+    echo "  [FAIL][W13] prometheus 重载又把 stderr 收回 /dev/null：T471 修的静默面回来了"
+    n_fail=$((n_fail + 1))
+  else
+    echo "  [PASS][W13] prometheus 重载的 stderr 没被吞（行内没有 2>/dev/null）"
+  fi
 
   # W7 是位置判定，不是字面判定：守卫必须在 ① 步 git pull 之前 —— 排在 pull 之后就已经晚了
   #    （① 步含 git checkout -- . ，那正是可能把被引用文件换掉的动作本身）。
@@ -167,7 +182,7 @@ counter_awk "cron 守卫挪到 ① 步 git pull 之后" W7 '
   { print }
   /^[[:space:]]*git pull github main/ { printf "%s", saved; saved = "" }
 ' W4b
-# T463 例一：删掉 ⓪-pre 的起跑门调用整行。为什么要单列这一格：e2e-gate-test.sh 十九格全测的是
+# T463 例一：删掉 ⓪-pre 的起跑门调用整行。为什么要单列这一格：e2e-gate-test.sh 整张测的是
 #   「门自己判得对不对」，把调用点删了它照样绿 —— 与 ⑦-b 同族（Joe T383 N1 的原始教训）。
 #   注：这一例删掉后 W9 会因取不到调用点行号跟着红（共 2 格），属同一条接线的两面而非归因不纯 ——
 #   判红集合含 W8b 即为预期；W9 单独被拆的那一格是下面的例三（字面在位、位置失效）。
@@ -182,6 +197,14 @@ counter_awk "起跑门挪到 ⓪ 段基线采集之后" W9 '
   { print }
   index($0, "bash \"$SNAP_ROOT/selfcheck-deploy-script.sh\" record") { printf "%s", saved; saved = "" }
 ' W8b
+# T471 例一：把 prometheus 重载的发出目录退回不切目录（改前形态）。W10 抓的就是这个：字面还在，
+#   只是不再从 staging 的 compose 目录发出 —— 改前那行自 aac1fff（2026-09-18）起就是这样，
+#   docs main 留档的 15 份历轮全量部署日志里每份都打了那句假理由。
+counter "prometheus 重载退回在仓库根发出（T471）" W10 \
+  's@( cd "\$STAGING_DIR" \&\& sudo docker compose restart prometheus )@sudo docker compose restart prometheus@'
+# T471 例二：把重载那行的 stderr 收回 /dev/null（静默面回来）。W13 是唯一该红的格 ——
+#   W10 的字面（发出目录那段）不该被这一例碰到，红了就是判读不纯。
+counter "prometheus 重载的 stderr 被吞回 /dev/null（T471）" W13 's@2>"\$PROM_ERR"@2>/dev/null@'
 
 echo "[3/4] N6 期望件与签发件的清单不得各说各话"
 guard_expect=$(grep '^EXPECTED_REF_SCRIPTS=' "$GUARD_SH" | cut -d'"' -f2)
