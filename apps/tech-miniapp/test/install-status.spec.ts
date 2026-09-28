@@ -299,7 +299,7 @@ describe('TI-12 — 跳过入口文案与二次确认（PRD 第 862 行逐字）
   })
 })
 
-describe('TI-9 — 基线提交成功侧有反馈（install.html:596）', () => {
+describe('TI-9 — 基线提交成功侧有反馈（稿面 install.html 校准成功路径的 showToast「基线已提交云端」）', () => {
   it('saveBaseline 成功后 toast「基线已提交云端」，位置在置位之后、catch 之前', () => {
     const body = pageFnBody('install', 'finalizeCalibration')
     const atSaved = body.indexOf('installStore.setBaselineSaved(bs.baselineId)')
@@ -308,5 +308,79 @@ describe('TI-9 — 基线提交成功侧有反馈（install.html:596）', () => 
     expect(atSaved).toBeGreaterThan(-1)
     expect(atToast).toBeGreaterThan(atSaved)
     expect(atCatch).toBeGreaterThan(atToast)
+  })
+})
+
+/**
+ * 裁定⑥（Boss 2026-09-28，经 PM 评论转述）：允许现场重新采集一次。
+ * 稿面 install.html 校准完成屏原无此入口（Peter 在 :245,249,400-404 的注记里把这条挂裁），
+ * 现按裁定落地，但必须与规矩 A（PRD §7C.4：校准是一次性权威动作、无复校通道）不冲突：
+ * 云端已有权威基线（保存成功或 20409）时入口必须收起。
+ */
+describe('T443 裁定⑥ — 重新采集入口只在不破坏规矩 A 的前提下出现', () => {
+  const src = pageSrc('install')
+
+  it('入口在校准完成屏内、按钮文案「重新采集」，且带 baselineLocked 闸门', () => {
+    expectVisibleLine(src, '<text>重新采集</text>')
+    const atBtn = src.indexOf('recollectCalibration"><text>重新采集')
+    expect(atBtn).toBeGreaterThan(-1)
+    const line = src.slice(src.lastIndexOf('\n', atBtn) + 1, src.indexOf('\n', atBtn))
+    expect(line).toContain('v-if="!baselineLocked"')
+    // 反证：闸门被删掉后，上面的行内判据必须判红
+    const mutated = line.replace('v-if="!baselineLocked" ', '')
+    expect(mutated).not.toContain('v-if="!baselineLocked"')
+    expect(mutated).toContain('recollectCalibration')
+  })
+
+  it('闸门真源＝store.baselineSaved 或 20409 冲突，两者任一成立即收起入口', () => {
+    const atLock = src.indexOf('const baselineLocked = computed(')
+    expect(atLock).toBeGreaterThan(-1)
+    const line = src.slice(atLock, src.indexOf('\n', atLock))
+    expect(line).toContain('installStore.baselineSaved')
+    expect(line).toContain('baselineConflict.value')
+    // 「保存成功」这一支由 store 承载，不能只测 409
+    expect(src).toContain('installStore.setBaselineSaved(bs.baselineId)')
+  })
+
+  it('20409 分支置位 baselineConflict（库里已有权威基线 ⇒ 不再给重采入口）', () => {
+    const body = pageFnBody('install', 'finalizeCalibration')
+    const at409 = body.indexOf('bizCode === 20409')
+    const atSet = body.indexOf('baselineConflict.value = true')
+    expect(at409).toBeGreaterThan(-1)
+    expect(atSet).toBeGreaterThan(at409)
+    // 置位在 catch 内、非 409 分支之前：普通保存失败仍要留入口（那才是本裁定要救的场景）
+    const atElse = body.indexOf('} else {', at409)
+    expect(atSet).toBeLessThan(atElse)
+  })
+
+  it('recollectCalibration 复位采集态并重启采集，不落基线', () => {
+    const body = pageFnBody('install', 'recollectCalibration')
+    expect(body).toContain('calibrated.value = false')
+    expect(body).toContain('collectedPointCount.value = 0')
+    expect(body).toContain('offsetValues.value = Array(20).fill(0)')
+    expect(body).toContain('await startCalibration()')
+    // 本函数只做前端状态复位，不碰写通道
+    expect(body).not.toContain('saveBaseline(')
+    expect(body).not.toContain('setBaselineSaved(')
+  })
+
+  it('蓝牙断链时先给提示、不静默起采（重采依赖实时取数）', () => {
+    const body = pageFnBody('install', 'recollectCalibration')
+    const atGuard = body.indexOf('if (!installStore.bleConnected)')
+    const atToast = body.indexOf("uni.showToast({ title: '蓝牙未就绪，请先重新连接'")
+    const atStart = body.indexOf('await startCalibration()')
+    expect(atGuard).toBeGreaterThan(-1)
+    expect(atToast).toBeGreaterThan(atGuard)
+    expect(atStart).toBeGreaterThan(atToast)
+    // 提示分支必须 return，否则守卫等于没加
+    expect(body.slice(atToast, atStart)).toContain('return')
+  })
+
+  it('TW-8「立即返回」实现侧本轮未动（裁定只落在采集态，四步流程不变）', () => {
+    for (const name of PAGE_NAMES) {
+      for (const line of codeLines(pageSrc(name))) {
+        expect(line, `${name} 页出现了未裁的「立即返回」`).not.toContain('立即返回')
+      }
+    }
   })
 })

@@ -28,11 +28,17 @@ export interface AlertListResult {
  */
 function mockAlertSeed(): Alert[] {
   const types = ['pressure_high', 'wear_interrupt', 'sensor_drift'] as const
+  // 裁定⑤（T443）：患者位改读姓名，所以 mock 也要回 patientName，否则本地永远只走回落分支。
+  // 与 api/install.ts 的 mockInstallSeed 同名族（合成显示夹具，不冒充现网患者）。
+  // 第 6 位刻意留 null：后端 alerts 族的空值语义是空串（COALESCE(p.name,'')），
+  // 留一行「无姓名」才能让回落判据在门禁里真被执行。
+  const names = ['张明远', '李欣怡', '王子轩', '刘思雨', '陈俊豪', null]
   return Array.from({ length: 60 }).map((_, i) => {
     const type = i === 0 ? 'wear_duration_short' : types[i % 3]
     return {
       alertId: `ALR-T433-${String(i + 1).padStart(3, '0')}`,
       patientId: `P2026000${(i % 6) + 1}`,
+      patientName: names[i % 6],
       deviceId: `PRS-ML05-RC-19700101${String((i % 9) + 1).padStart(3, '0')}`,
       type,
       // wear_duration_short 两个数值位按后端口径写**分钟**（engine.go need = targetHours*60）；

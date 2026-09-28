@@ -13,6 +13,8 @@
  */
 import type { Alert } from '@bracesync/shared-types'
 import { formatAlertValue, alertTypeLabel } from '@bracesync/shared-utils'
+import { alertAdviceLines } from './alertAdvice'
+import { patientDisplayValue } from './patientDisplay'
 
 /** 0 是合法读数；只有 null / undefined / NaN 才算「这个字段没值」 */
 export function hasAlertNumber(v: unknown): v is number {
@@ -30,7 +32,7 @@ export function buildAlertDetailLines(a: Alert): string[] {
   const actual = alertValueText(a.type, a.actualValue)
   return [
     `类型: ${alertTypeLabel(a.type)}`,
-    `患者: ${a.patientId}`,
+    `患者: ${patientDisplayValue(a.patientName, a.patientId)}`,
     `设备: ${a.deviceId}`,
     a.sensorPoint ? `传感器: ${a.sensorPoint}` : '',
     threshold ? `阈值: ${threshold}` : '',
@@ -39,5 +41,7 @@ export function buildAlertDetailLines(a: Alert): string[] {
     a.processNote ? `处理备注: ${a.processNote}` : '',
     // 三态映射照搬改前页面原句（'processing' 也落「已处理」），本卡不改行为，缺陷已随 T433 登记
     `状态: ${a.processStatus === 'pending' ? '待处理' : '已处理'}`,
+    // 裁定①丙：固定模板，不是后端下发也不是推导；无模板的码值整块不落
+    ...alertAdviceLines(a.type),
   ].filter(Boolean)
 }
