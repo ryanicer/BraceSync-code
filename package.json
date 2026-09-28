@@ -2,7 +2,7 @@
   "name": "bracesync",
   "version": "0.1.0",
   "private": true,
-  "description": "矫治通 · 脊柱侧弯支具压力监测系统",
+  "description": "矫智通 · 脊柱侧弯支具压力监测系统",
   "workspaces": [
     "packages/*",
     "apps/*"

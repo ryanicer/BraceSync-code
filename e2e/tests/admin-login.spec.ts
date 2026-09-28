@@ -9,10 +9,11 @@ import { adminRoutes, adminLogin, adminLogout, adminMessage, menuItems, topBarUs
 test.describe('登录页渲染', () => {
   test('显示标题 / 角色下拉 / 密码输入 / 登录按钮', async ({ page }) => {
     await page.goto(adminRoutes.login)
-    // T419 L-1：品牌名收口为「矫治通」（旧「矫智通」全仓禁回潮，含 document.title）
-    await expect(page.locator('.login-title')).toContainText('矫治通运营平台')
-    await expect(page.locator('.login-title')).not.toContainText('矫智通')
-    await expect(page).toHaveTitle(/矫治通/)
+    // T442 L-1 口径反转：Boss 09-28 06:4x 定名「矫智通」，原 T312 L-1「应写矫治通」作废
+    // ⇒ 旧品牌「矫治通」成全仓禁回潮词（含 document.title）
+    await expect(page.locator('.login-title')).toContainText('矫智通运营平台')
+    await expect(page.locator('.login-title')).not.toContainText('矫治通')
+    await expect(page).toHaveTitle(/矫智通/)
     // T419 G-4：主色覆写「一处全站生效」的取证 —— 稿面 #1a6db5（如 系统配置.html:40）必须真的
     // 落到 EP 组件上。覆写写在 styles/index.css 的 :root（含 EP 派生的 light-*/dark-2），
     // 若哪天 import 顺序被挪到 element-plus 之前，这一格会退回默认蓝 rgb(64, 158, 255)。

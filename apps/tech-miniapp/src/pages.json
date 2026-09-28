@@ -10,7 +10,7 @@
     {
       "path": "pages/home/index",
       "style": {
-        "navigationBarTitleText": "矫治通运维",
+        "navigationBarTitleText": "矫智通运维",
         "navigationStyle": "custom"
       }
     },

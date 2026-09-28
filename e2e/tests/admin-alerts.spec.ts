@@ -58,7 +58,7 @@ test.describe('告警列表', () => {
 
   // T430：原先吃 ALR-003（压力波动）这条已处理行，现该行不渲染 ⇒ 改吃 ALR-006（设备离线·已处理·张建国）
   test('已处理告警显示处理人', async ({ page }) => {
-    const row = tableRows(page).filter({ hasText: '设备离线超过 1 小时' })
+    const row = tableRows(page).filter({ hasText: '设备离线满 60 分钟' })
     await expect(row).toContainText('已处理')
     await expect(row).toContainText('张建国')
   })
@@ -117,12 +117,12 @@ test.describe('处理流程', () => {
 
   test('已处理告警无处理按钮', async ({ page }) => {
     // T430：改吃 ALR-006（原样本 ALR-003 属砍除类型，已不渲染）
-    const row = tableRows(page).filter({ hasText: '设备离线超过 1 小时' })
+    const row = tableRows(page).filter({ hasText: '设备离线满 60 分钟' })
     await expect(row.getByRole('button', { name: '处理' })).toHaveCount(0)
   })
 
   test('处理对话框可取消', async ({ page }) => {
-    const row = tableRows(page).filter({ hasText: 'P12 传感器数据漂移' })
+    const row = tableRows(page).filter({ hasText: 'P12 传感器标定异常' })
     await row.getByRole('button', { name: '处理', exact: true }).click()
     const dialog = page.locator('.el-dialog').filter({ hasText: '处理告警' })
     await dialog.getByRole('button', { name: '取消' }).click()
@@ -186,11 +186,11 @@ test.describe('告警类型术语与三态（T289 2.6 / 2.7）', () => {
   })
 
   test('待处理行有「开始处理」，点击后转「处理中」且入口消失', async ({ page }) => {
-    const row = tableRows(page).filter({ hasText: '设备离线超过 30 分钟' })
+    const row = tableRows(page).filter({ hasText: '设备离线超过 60 分钟' })
     await expect(row.first()).toContainText('待处理')
     await row.first().getByRole('button', { name: '开始处理' }).click()
     await expect(adminMessage(page)).toContainText('已开始处理')
-    const after = tableRows(page).filter({ hasText: '设备离线超过 30 分钟' })
+    const after = tableRows(page).filter({ hasText: '设备离线超过 60 分钟' })
     await expect(after.first()).toContainText('处理中')
     await expect(after.first().getByRole('button', { name: '开始处理' })).toHaveCount(0)
     // 进入处理中后仍可「处理」→ 已处理
