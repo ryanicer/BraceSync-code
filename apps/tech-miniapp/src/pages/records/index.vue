@@ -31,7 +31,7 @@
         <view v-for="rec in filteredRecords" :key="rec.installId" class="record-card">
           <view class="record-header">
             <text class="record-device">{{ rec.deviceId }}</text>
-            <view :class="['wifi-badge', rec.wifiStatus === 'connected' ? 'wifi-ok' : 'wifi-pending']">
+            <view :class="['wifi-badge', wifiBadgeClass(rec.wifiStatus)]">
               <text>{{ wifiStatusLabel(rec.wifiStatus) }}</text>
             </view>
           </view>
@@ -67,7 +67,22 @@ import { ref, computed, onMounted } from 'vue'
 import type { InstallRecord } from '@bracesync/shared-types'
 import { listInstallRecords } from '../../api/install'
 import { fetchAllPages } from '../../utils/paging'
-import { wifiStatusLabel } from '../../utils/installStatus'
+import { wifiStatusLabel, wifiBadgeTone } from '../../utils/installStatus'
+
+/**
+ * 徽章色按稿面 records.html 三色（:95 绿／:127 红／:197 灰）。
+ * 色的判据在展示层（wifiBadgeTone），类名映射留本页——三页的样式类名不同形。
+ * skipped 档稿面记录页未画，暂归 pending（灰），已随 T459 交件登记遗留等补稿。
+ */
+const WIFI_TONE_CLASS = {
+  ok: 'wifi-ok',
+  fail: 'wifi-fail',
+  pending: 'wifi-pending',
+} as const
+
+function wifiBadgeClass(status: string): string {
+  return WIFI_TONE_CLASS[wifiBadgeTone(status)]
+}
 
 /** 与后端 defaultPageSize 对齐（device-service repo/query.go:25） */
 const PAGE_SIZE = 20
@@ -143,6 +158,7 @@ onMounted(loadRecords)
 .record-device { font-size: 30rpx; font-weight: 600; color: #1e293b; }
 .wifi-badge { padding: 6rpx 18rpx; border-radius: 16rpx; font-size: 22rpx; }
 .wifi-ok { background: #dcfce7; color: #15803d; }
+.wifi-fail { background: #fee2e2; color: #b91c1c; }
 .wifi-pending { background: #f1f5f9; color: #64748b; }
 .wifi-badge text { font-weight: 500; }
 .record-info { display: grid; grid-template-columns: 1fr 1fr; gap: 16rpx; }

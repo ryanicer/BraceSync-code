@@ -81,6 +81,13 @@ interface ListInstallParams {
 /** mock 集大小：刻意 > 后端缺省单页 20，让「翻页取满」那条腿在本地 e2e 里真被执行（T433） */
 const MOCK_INSTALL_TOTAL = 26
 
+/**
+ * T459：mock 集按四档循环，让展示面三色在本地 e2e 里各有可断言的行
+ * （26 条 ⇒ connected 7／unconfigured 7／failed 6／skipped 6，首条仍是 connected）。
+ * 改这里的分配要同步 e2e/tests/tech-records.spec.ts 的三处计数与那条四档徽章用例。
+ */
+const WIFI_MOCK_CYCLE = ['connected', 'unconfigured', 'failed', 'skipped'] as const
+
 function mockInstallSeed(): InstallRecord[] {
   const names = ['张明远', '李欣怡', '王子轩', '刘思雨', '陈俊豪', '杨梓涵']
   return Array.from({ length: MOCK_INSTALL_TOTAL }).map((_, i) => ({
@@ -99,7 +106,7 @@ function mockInstallSeed(): InstallRecord[] {
     baselineId: i % 3 === 2 ? null : `BSL-202609${String(i + 1).padStart(2, '0')}-ABC`,
     notes: i === 0 ? '患者初诊安装，支具型号 ML05' : '',
     signatureUrl: '',
-    wifiStatus: i % 2 === 0 ? 'connected' : 'unconfigured',
+    wifiStatus: WIFI_MOCK_CYCLE[i % WIFI_MOCK_CYCLE.length],
   }))
 }
 

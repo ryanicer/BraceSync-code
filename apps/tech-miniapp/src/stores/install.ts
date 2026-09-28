@@ -9,6 +9,7 @@ import type {
   RealtimeFrame,
   CalibrationResult,
 } from '../types/app-extends'
+import type { WifiStatusValue } from '../utils/installStatus'
 
 /**
  * install store — V2.1 §4.2
@@ -53,9 +54,11 @@ export const useInstallStore = defineStore('install', () => {
   const baselineSaved = ref(false)
 
   // ===== 配网 & 可达性（阶段三） =====
-  const wifiStatus = ref<'unconfigured' | 'connected'>('unconfigured')
+  // 四值＝库里 wifi_status 能存的四个值（T447 迁移 000031）；类型取展示层词表的键集，两处不再各写一遍
+  const wifiStatus = ref<WifiStatusValue>('unconfigured')
   const wifiStatusCode = ref<number | null>(null)
-  // 装机过程中「已跳过配网」本地标记（内存态、不落库；resetInstall 自动清零）
+  // 装机过程中「已跳过配网」本地标记：完成页的可达性行靠它显示「已跳过」；
+  // 落库的是上面那个 wifiStatus='skipped'（T459 写侧），两者由同一处跳过入口成对写入
   const networkSkipped = ref(false)
 
   // ===== 配网 seq 计数器（协议 §3：防 CTR 重用；取值须落在固件候选窗内） =====
@@ -125,7 +128,7 @@ export const useInstallStore = defineStore('install', () => {
     baselineSaved.value = true
   }
 
-  function setWifiStatus(status: 'unconfigured' | 'connected') {
+  function setWifiStatus(status: WifiStatusValue) {
     wifiStatus.value = status
   }
 

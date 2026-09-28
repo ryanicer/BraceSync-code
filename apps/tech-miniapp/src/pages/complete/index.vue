@@ -64,6 +64,7 @@ import {
   baselineStatusLabel,
   baselineStatusBadgeClass,
   wifiRowLabel,
+  wifiBadgeTone,
   reachabilityLabel,
   reachabilityBadgeClass,
 } from '../../utils/installStatus'
@@ -93,8 +94,11 @@ const baselineBadgeClass = computed(() => baselineStatusBadgeClass(installStore.
 
 // TC-2：WiFi 行不再与可达性行同屏互斥（跳过态显「已跳过配网」，不冒充「已联网」）
 const wifiLabel = computed(() => wifiRowLabel(summary.value.wifiStatus, installStore.networkSkipped))
-const wifiBadgeClass = computed(() =>
-  !installStore.networkSkipped && summary.value.wifiStatus === 'connected' ? 'status-ok' : 'status-pending')
+// TC-2＋T459：跳过态优先取 pending；色的判据同记录页（wifiBadgeTone，稿面三色）
+const wifiBadgeClass = computed(() => {
+  const tone = wifiBadgeTone(installStore.networkSkipped ? 'skipped' : summary.value.wifiStatus)
+  return tone === 'ok' ? 'status-ok' : tone === 'fail' ? 'status-fail' : 'status-pending'
+})
 
 const networkStatusLabel = computed(() =>
   reachabilityLabel(installStore.networkSkipped, summary.value.wifiStatus === 'connected'))
@@ -140,6 +144,7 @@ function goNextInstall() {
 .status-badge { padding: 6rpx 20rpx; border-radius: 16rpx; font-size: 22rpx; }
 .status-badge text { font-weight: 500; }
 .status-ok { background: #dcfce7; color: #15803d; }
+.status-fail { background: #fee2e2; color: #b91c1c; }
 .status-pending { background: #f1f5f9; color: #64748b; }
 .status-warn { background: #fef3c7; color: #b45309; }
 .action-list { display: flex; flex-direction: column; gap: 24rpx; }

@@ -1,7 +1,8 @@
 /**
- * T443 — 技师端实现侧差异收口判据
+ * T443／T459 — 技师端安装流程展示与写侧判据
  * 依据：docs/tasks/peter/T417-对照清单-技师端.md 的 TC-1／TC-2／TI-9／TI-12／TR-11；
- * PRD 第 876 行（跳过配网按钮＋弹窗文案）、§8.2 第 1786 行（可达性为本地派生展示）。
+ * docs/tasks/winner/T447-WiFi状态唯一词形表.md 第一节（四档词形）；
+ * PRD 第 876 行（跳过配网按钮＋弹窗文案）、§7C.6（-4 提示句）、§8.2 第 1786 行（可达性为本地派生展示）。
  * 以上 PRD／稿面行号由 T452 按 docs main 重取（原写 862／1772，随 #651、#661 并稿位移）；
  * 复核时按引号内文案定位，不要只按行号。
  *
@@ -26,6 +27,8 @@ import {
   SKIP_NETWORK_CONFIRM,
   wifiStatusLabel,
   wifiRowLabel,
+  wifiBadgeTone,
+  provisionFailureWifiStatus,
   baselineStatusLabel,
   baselineStatusBadgeClass,
   reachabilityLabel,
@@ -38,6 +41,14 @@ const PAGE_NAMES = ['install', 'complete', 'records', 'wifi-config'] as const
 function pageSrc(name: (typeof PAGE_NAMES)[number]): string {
   return fs.readFileSync(
     fileURLToPath(new URL(`../src/pages/${name}/index.vue`, import.meta.url)),
+    'utf8',
+  )
+}
+
+/** 展示层真源本体：词表门禁要证明字面量活在这里、不在页面里 */
+function utilSrc(): string {
+  return fs.readFileSync(
+    fileURLToPath(new URL('../src/utils/installStatus.ts', import.meta.url)),
     'utf8',
   )
 }
@@ -75,21 +86,28 @@ function expectVisibleLine(src: string, needle: string): void {
   expect(codeLines(src).some((l) => l.includes(needle)), `codeLines 里应能看到 ${needle}`).toBe(true)
 }
 
-describe('TR-11 — WiFi 词形按稿面收口（records.html:95,127,197）', () => {
-  it('两态标签＝已连接／未配置；未知值不落「已连接」（DB CHECK 只放行两值，第三态归 T446）', () => {
-    expect(WIFI_STATUS_LABEL).toEqual({ connected: '已连接', unconfigured: '未配置' })
+describe('TR-11／T459 — WiFi 四态词形按 T447 唯一词形表收口（records.html:95,127,197＋complete.html:81）', () => {
+  it('四档标签＝已连接／未配置／连接失败／已跳过配网；大小写敏感；未知值仍回落「未配置」', () => {
+    expect(WIFI_STATUS_LABEL).toEqual({
+      connected: '已连接',
+      unconfigured: '未配置',
+      failed: '连接失败',
+      skipped: '已跳过配网',
+    })
     expect(wifiStatusLabel('connected')).toBe('已连接')
     expect(wifiStatusLabel('unconfigured')).toBe('未配置')
-    expect(wifiStatusLabel('failed')).toBe('未配置')
+    // 改前这条把「库里存 failed 时显示未配置」当预期钉住（那时 DB CHECK 只两值）；
+    // T447 迁移 000031 扩四值＋T459 按词形表补齐后，failed 显示连接失败，故本条极性翻转。
+    expect(wifiStatusLabel('failed')).toBe('连接失败')
+    expect(wifiStatusLabel('skipped')).toBe('已跳过配网')
+    expect(wifiStatusLabel('CONNECTED')).toBe('未配置')
+    expect(wifiStatusLabel('bogus')).toBe('未配置')
     expect(wifiStatusLabel(null)).toBe('未配置')
     expect(wifiStatusLabel(undefined)).toBe('未配置')
   })
 
   it('四个页面 + 工具层均无「已联网／待配置」残留在渲染行里', () => {
-    const files = [...PAGE_NAMES.map((n) => pageSrc(n)), fs.readFileSync(
-      fileURLToPath(new URL('../src/utils/installStatus.ts', import.meta.url)),
-      'utf8',
-    )]
+    const files = [...PAGE_NAMES.map((n) => pageSrc(n)), utilSrc()]
     // 正对照：过滤规则没把模板行滤空
     expectVisibleLine(pageSrc('records'), 'wifiStatusLabel(rec.wifiStatus)')
     for (const src of files) {
@@ -102,25 +120,61 @@ describe('TR-11 — WiFi 词形按稿面收口（records.html:95,127,197）', ()
 
   it('记录页徽章改接 wifiStatusLabel，不再页内自写一套三元词', () => {
     const src = pageSrc('records')
-    expect(src).toContain("import { wifiStatusLabel } from '../../utils/installStatus'")
+    expect(src).toContain("import { wifiStatusLabel, wifiBadgeTone } from '../../utils/installStatus'")
     expect(src).not.toMatch(/'已连接' : '未配置'/)
+    expect(src).not.toMatch(/rec\.wifiStatus === 'connected' \? 'wifi-ok'/)
+  })
+
+  it('徽章三色按稿面 records.html：已连接绿／连接失败红／未配置灰；skipped 稿面未画，归灰（遗留已登记）', () => {
+    expect(wifiBadgeTone('connected')).toBe('ok')
+    expect(wifiBadgeTone('failed')).toBe('fail')
+    expect(wifiBadgeTone('unconfigured')).toBe('pending')
+    expect(wifiBadgeTone('skipped')).toBe('pending')
+    expect(wifiBadgeTone(null)).toBe('pending')
+    // 记录页三色的类名映射在本页，且三档都有对应样式，否则红档渲染成无样式
+    const src = pageSrc('records')
+    expect(src).toContain('WIFI_TONE_CLASS[wifiBadgeTone(status)]')
+    for (const cls of ['wifi-ok', 'wifi-fail', 'wifi-pending']) {
+      expect(src, `记录页缺 ${cls} 样式`).toContain(`.${cls} {`)
+    }
+  })
+
+  it('C2 裁定（PM 2026-09-28）：只有 -4 落库 failed，-1／-2／-3 维持不改，失败原因走 toast 文案', () => {
+    expect(provisionFailureWifiStatus(-4)).toBe('failed')
+    expect(provisionFailureWifiStatus(-1)).toBe(null)
+    expect(provisionFailureWifiStatus(-2)).toBe(null)
+    expect(provisionFailureWifiStatus(-3)).toBe(null)
+    // 非失败码不得顺手扳值（成功 9 走 handleSuccess 那条路）
+    expect(provisionFailureWifiStatus(9)).toBe(null)
+    expect(provisionFailureWifiStatus(0)).toBe(null)
   })
 
   it('每页用到的出口都在本页 import 里（漏 import 时模板运行时才炸，构建不报）', () => {
-    const expected: Record<(typeof PAGE_NAMES)[number], { fns: string[]; consts: string[] }> = {
-      install: { fns: ['confirmSkipNetwork'], consts: ['WIFI_SKIPPED_LABEL'] },
+    const expected: Record<
+      (typeof PAGE_NAMES)[number],
+      { fns: string[]; consts: { key: string; usedAs: string }[] }
+    > = {
+      install: {
+        fns: ['confirmSkipNetwork', 'wifiStatusLabel'],
+        consts: [{ key: 'WIFI_FAILED_NOTE', usedAs: '? WIFI_FAILED_NOTE' }],
+      },
       complete: {
         fns: [
           'baselineStatusLabel',
           'baselineStatusBadgeClass',
           'wifiRowLabel',
+          'wifiBadgeTone',
           'reachabilityLabel',
           'reachabilityBadgeClass',
         ],
         consts: [],
       },
-      records: { fns: ['wifiStatusLabel'], consts: [] },
-      'wifi-config': { fns: ['confirmSkipNetwork'], consts: [] },
+      records: { fns: ['wifiStatusLabel', 'wifiBadgeTone'], consts: [] },
+      'wifi-config': {
+        fns: ['confirmSkipNetwork', 'provisionFailureWifiStatus'],
+        // -4 提示句取单一真源：页内查表引常量，不重抄文案
+        consts: [{ key: 'WIFI_FAILED_NOTE', usedAs: '[-4]: WIFI_FAILED_NOTE' }],
+      },
     }
     for (const name of PAGE_NAMES) {
       const src = pageSrc(name)
@@ -132,25 +186,57 @@ describe('TR-11 — WiFi 词形按稿面收口（records.html:95,127,197）', ()
         expect(clause, `${name} 的 import 缺 ${fn}`).toContain(fn)
         expect(src, `${name} 里没用到 ${fn}`).toContain(`${fn}(`)
       }
-      for (const key of expected[name].consts) {
+      for (const { key, usedAs } of expected[name].consts) {
         expect(clause, `${name} 的 import 缺 ${key}`).toContain(key)
-        expect(src, `${name} 里没插值 ${key}`).toContain(`{{ ${key} }}`)
+        expect(src, `${name} 里没用到 ${key}（用法应为 ${usedAs}）`).toContain(usedAs)
+        expectVisibleLine(src, usedAs)
       }
     }
   })
 
-  it('跳过态的显示值只有一处字面量（页面插值走常量，防改一处漏一处）', () => {
-    const literal = '已跳过配网'
-    const util = fs.readFileSync(
-      fileURLToPath(new URL('../src/utils/installStatus.ts', import.meta.url)),
-      'utf8',
-    )
-    expect(codeLines(util).some((l) => l.includes(`${literal}'`)), '常量定义侧应有该字面量').toBe(true)
+  /**
+   * T459 后 skipped 进了查表，同一词形会在常量与表里各出现一次，
+   * 所以门禁口径从「只有一处字面量」改成「字面量只在工具层、页面零字面量」。
+   * 「已连接／未配置」两词有一处豁免：记录页 WiFi 筛选 chip 按 C1 裁定（PM 拍「丙」）本轮保持两档不动，
+   * 那是筛选维度的选项文本、不是记录值的显示词。豁免要正向数出来，不能拿排除式扫成空过滤器假绿。
+   */
+  it('四档词形只活在工具层查表里，页面写死一律判红（记录页 chip 两处豁免除外）', () => {
+    const words = ['已连接', '未配置', '连接失败', '已跳过配网']
+    const strict = ['连接失败', '已跳过配网']
+    const util = utilSrc()
+    for (const w of words) {
+      expect(codeLines(util).some((l) => l.includes(`'${w}'`)), `词表缺 ${w}`).toBe(true)
+    }
+    const mk = (list: string[]) => ({
+      quoted: new RegExp("['\"`](" + list.join('|') + ")['\"`]"),
+      baked: new RegExp('>\\s*(' + list.join('|') + ')\\s*<'),
+    })
+    const hard = mk(strict)
+    const soft = mk(words)
     for (const name of PAGE_NAMES) {
       for (const line of codeLines(pageSrc(name))) {
-        expect(line, `${name} 页内又写了一遍字面量`).not.toContain(literal)
+        expect(line, `${name} 页内又写了一遍档名字面量`).not.toMatch(hard.quoted)
+        expect(line, `${name} 页内把档名画死在模板里`).not.toMatch(hard.baked)
+        // 全词表的命中只允许是筛选 chip；别处写死同样判红
+        if (soft.quoted.test(line) || soft.baked.test(line)) {
+          expect(line, `${name} 有非 chip 的档名写死行`).toContain('seg-btn')
+        }
       }
     }
+    // 正向取证：豁免实打实只有记录页那两行
+    const exempt = PAGE_NAMES.flatMap((n) =>
+      codeLines(pageSrc(n)).filter((l) => soft.quoted.test(l) || soft.baked.test(l)),
+    )
+    expect(exempt).toHaveLength(2)
+    expect(exempt.every((l) => l.includes('seg-btn'))).toBe(true)
+    // 反证：把 install 页的查表插值换回写死文本，硬门禁必须抓到
+    const mutated = pageSrc('install').replace(
+      '<text>{{ wifiStageLabel }}</text>',
+      '<text>连接失败</text>',
+    )
+    expect(codeLines(mutated).some((l) => hard.baked.test(l)), '反证失效：模板形状已变到扫描看不见').toBe(true)
+    // 负对照：稿面错误文案「网络连接失败（DHCP）」不是档名，不许被抓到
+    expect(hard.quoted.test("'网络连接失败（DHCP），请检查路由器'")).toBe(false)
   })
 })
 
@@ -178,19 +264,25 @@ describe('TC-1 — 完成页基线格改读 installStore.baselineSaved', () => {
   })
 })
 
-describe('TC-2 — 跳过配网只打本地标记，不冒充已连接', () => {
-  it('store：跳过态 networkSkipped=true 且 wifiStatus 仍是 unconfigured', () => {
+describe('TC-2 — 跳过配网写第四档 skipped，不冒充已连接', () => {
+  it('store：跳过态两笔成对（wifiStatus=skipped 且 networkSkipped=true），resetInstall 一起清零', () => {
     setActivePinia(createPinia())
     const store = useInstallStore()
+    store.setWifiStatus('skipped')
     store.setNetworkSkipped(true)
 
+    expect(store.wifiStatus).toBe('skipped')
     expect(store.networkSkipped).toBe(true)
+
+    store.resetInstall()
+    expect(store.networkSkipped).toBe(false)
     expect(store.wifiStatus).toBe('unconfigured')
   })
 
-  it('store：真配网成功会撤掉跳过标记（handleSuccess 的两笔写入顺序）', () => {
+  it('store：真配网成功会撤掉跳过标记（两个跳过入口走完后重配的两笔写入顺序）', () => {
     setActivePinia(createPinia())
     const store = useInstallStore()
+    store.setWifiStatus('skipped')
     store.setNetworkSkipped(true)
     store.setWifiStatus('connected')
     store.setNetworkSkipped(false)
@@ -199,19 +291,24 @@ describe('TC-2 — 跳过配网只打本地标记，不冒充已连接', () => {
     expect(store.networkSkipped).toBe(false)
   })
 
-  it('store：resetInstall 把跳过标记清零（跨会话不带过去）', () => {
+  it('store：C2 裁定后可达的失败档只有 failed，写侧由 -4 分支扳值', () => {
     setActivePinia(createPinia())
     const store = useInstallStore()
-    store.setNetworkSkipped(true)
+    store.setWifiStatus(provisionFailureWifiStatus(-4)!)
+    expect(store.wifiStatus).toBe('failed')
+    // -1／-2／-3 不扳值：映射成 null 后写入分支不进，列维持默认
+    expect(provisionFailureWifiStatus(-1)).toBe(null)
+    expect(store.wifiStatus).toBe('failed')
     store.resetInstall()
-
-    expect(store.networkSkipped).toBe(false)
     expect(store.wifiStatus).toBe('unconfigured')
   })
 
   it('显示值：跳过态优先，WiFi 行与可达性行不会同屏互斥', () => {
     expect(wifiRowLabel('unconfigured', true)).toBe(WIFI_SKIPPED_LABEL)
     expect(wifiRowLabel('connected', true)).toBe(WIFI_SKIPPED_LABEL)
+    // T459：skipped 进了查表，未跳过时按库值取词（skipped 行不再靠页内三元词兜）
+    expect(wifiRowLabel('failed', false)).toBe('连接失败')
+    expect(wifiRowLabel('skipped', false)).toBe(WIFI_SKIPPED_LABEL)
     expect(reachabilityLabel(true, false)).toBe('已跳过')
     expect(reachabilityLabel(true, true)).toBe('已跳过')
     expect(reachabilityLabel(false, true)).toBe('已验证')
@@ -221,34 +318,71 @@ describe('TC-2 — 跳过配网只打本地标记，不冒充已连接', () => {
     expect(reachabilityBadgeClass(false, false)).toBe('status-warn')
   })
 
-  it('wifi-config 的跳过入口不再把 wifiStatus 写成 connected', () => {
+  it('wifi-config 的跳过入口：改成写 skipped，但仍不许写 connected', () => {
     const body = pageFnBody('wifi-config', 'skipNetworkSetup')
     expect(body).toContain('confirmSkipNetwork()')
+    expect(body).toContain("installStore.setWifiStatus('skipped')")
     expect(body).toContain('installStore.setNetworkSkipped(true)')
-    expect(body).not.toContain('setWifiStatus(')
-    // 反证：改前那一行就是 setWifiStatus('connected')
-    expect(pageSrc('wifi-config')).toContain("installStore.setWifiStatus('connected')")
+    // 改前极性：那时只打本地标记、断言是 not.toContain('setWifiStatus(')；
+    // T459 写侧补齐后 skipped 必须真的进 wifiStatus（PUT 送的就是它），故本条翻成「要写 skipped」。
+    expect(body).not.toContain("setWifiStatus('connected')")
     const successBody = pageFnBody('wifi-config', 'handleSuccess')
     expect(successBody).toContain("setWifiStatus('connected')")
     expect(successBody).toContain('setNetworkSkipped(false)')
   })
 
-  it('install 页跳过态仍有出口：skipped 分支带「完成安装」，不致流程走死', () => {
-    const src = pageSrc('install')
-    expect(src).toContain("const wifiStage = computed<'before' | 'skipped' | 'done'>")
-    expect(src).toContain("v-else-if=\"wifiStage === 'skipped'\"")
-    const atSkipped = src.indexOf("wifiStage === 'skipped'")
-    const atDone = src.indexOf('v-else>', atSkipped)
-    expect(atDone).toBeGreaterThan(atSkipped)
-    const skippedBlock = src.slice(atSkipped, atDone)
-    expect(skippedBlock).toContain('completeInstall')
-    expect(skippedBlock).toContain('{{ WIFI_SKIPPED_LABEL }}')
-    expectVisibleLine(skippedBlock, 'completeInstall')
+  it('wifi-config 的失败处理：只有 -4 经纯函数扳 failed，-1／-2／-3 不进写侧', () => {
+    const body = pageFnBody('wifi-config', 'handleError')
+    expect(body).toContain('provisionFailureWifiStatus(code)')
+    expect(body).toContain('if (nextStatus) installStore.setWifiStatus(nextStatus)')
+    // 反证：无条件写 failed 会把密码错（-1）也落库，与 C2 裁定相反
+    const mutated = body.replace('if (nextStatus) installStore.setWifiStatus(nextStatus)', "installStore.setWifiStatus('failed')")
+    expect(mutated).not.toContain('if (nextStatus)')
+    expect(mutated).toContain("setWifiStatus('failed')")
+    // 三条非 -4 的稿面文案留在页内 toast/errorMessage，不落库
+    // （-4 那格取单一真源常量，由上面「每页用到的出口」那条门禁点名）
+    const src = pageSrc('wifi-config')
+    for (const copy of ['密码错误，请检查 WiFi 密码', '未找到 WiFi 网络，请检查 SSID', '网络连接失败（DHCP），请检查路由器']) {
+      expectVisibleLine(src, copy)
+    }
   })
 
-  it('complete 页 WiFi 行走 wifiRowLabel，跳过态可读', () => {
+  it('install 页跳过入口与 wifi-config 同源：两笔成对，写完才留在本页阶段三显示', () => {
+    const body = pageFnBody('install', 'onSkipNetwork')
+    expect(body).toContain('confirmSkipNetwork()')
+    expect(body).toContain("installStore.setWifiStatus('skipped')")
+    expect(body).toContain('installStore.setNetworkSkipped(true)')
+    expect(body).not.toContain("setWifiStatus('connected')")
+  })
+
+  it('install 页：跳过／失败两态各有色档，且都留「完成安装」出口，不致流程走死', () => {
+    const src = pageSrc('install')
+    expect(src).toContain("const wifiStage = computed<'before' | 'skipped' | 'failed' | 'done'>")
+    const atUnion = src.indexOf("wifiStage === 'skipped' || wifiStage === 'failed'")
+    expect(atUnion, 'skipped／failed 未并成同一显示块').toBeGreaterThan(-1)
+    const atDone = src.indexOf('v-else>', atUnion)
+    expect(atDone).toBeGreaterThan(atUnion)
+    const block = src.slice(atUnion, atDone)
+    expect(block).toContain('completeInstall')
+    // 词形走查表插值，两态共用一个 label computed；色档按 failed 分叉
+    expect(block).toContain('{{ wifiStageLabel }}')
+    expect(block).toContain("wifiStage === 'failed' ? 'badge-danger' : 'badge-warning'")
+    expect(src).toContain('.badge-danger {')
+    expectVisibleLine(block, 'completeInstall')
+    // 反证：failed 从互斥并集里被摘掉 ⇒ 失败态会掉回 v-else（配网成功块），本页再无完成出口
+    const union = "wifiStage === 'skipped' || wifiStage === 'failed'"
+    expect(src).toContain(union)
+    const mutated = src.replace(union, "wifiStage === 'skipped'")
+    expect(mutated).not.toContain(union)
+    expect(mutated).toContain("<template v-else-if=\"wifiStage === 'skipped'\">")
+  })
+
+  it('complete 页 WiFi 行走 wifiRowLabel＋三色 tone，跳过态优先', () => {
     const src = pageSrc('complete')
     expect(src).toContain('wifiRowLabel(summary.value.wifiStatus, installStore.networkSkipped)')
+    expect(src).toContain("wifiBadgeTone(installStore.networkSkipped ? 'skipped' : summary.value.wifiStatus)")
+    expect(src).toContain("tone === 'fail' ? 'status-fail'")
+    expect(src).toContain('.status-fail {')
   })
 })
 
@@ -315,8 +449,8 @@ describe('TI-9 — 基线提交成功侧有反馈（稿面 install.html 校准�
 
 /**
  * 裁定⑥（Boss 2026-09-28，经 PM 评论转述）：允许现场重新采集一次。
- * 稿面 install.html 校准完成屏原无此入口（Peter 原挂裁注记现位于 docs main install.html :221／:231／
- * :371-380，随 #667 并稿位移；:231 一句已按 Boss 裁定⑥收口为「原待裁已闭」），
+ * 稿面 install.html 校准完成屏原无此入口（Peter 的挂裁注记按 docs main 61edaf98 现位于 install.html
+ * :243-250／:254-262／:271-274／:444-459，随并稿还会继续位移 ⇒ 复核按引号内文案定位，别只按行号）；
  * 现按裁定落地，但必须与规矩 A（PRD §7C.4：校准是一次性权威动作、无复校通道）不冲突：
  * 云端已有权威基线（保存成功或 20409）时入口必须收起。
  */
