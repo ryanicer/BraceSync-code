@@ -40,7 +40,7 @@
             <view class="alert-meta">
               <view class="meta-item">
                 <text class="meta-label">患者</text>
-                <text class="meta-value">{{ alert.patientId }}</text>
+                <text class="meta-value">{{ patientDisplayValue(alert.patientName, alert.patientId) }}</text>
               </view>
               <view v-if="alert.sensorPoint" class="meta-item">
                 <text class="meta-label">传感器</text>
@@ -85,6 +85,7 @@ import { request } from '../../utils/request'
 import { listAlerts } from '../../api/alert'
 import { fetchAllPages } from '../../utils/paging'
 import { hasAlertNumber, alertValueText, buildAlertDetailLines } from '../../utils/alertDisplay'
+import { patientDisplayValue } from '../../utils/patientDisplay'
 
 // 与改前页面写死的单页大小一致（alert-service 缺省 20、上限 100，本卡不动这个数）
 const PAGE_SIZE = 50

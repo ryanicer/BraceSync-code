@@ -21,7 +21,7 @@ test('页面显示安装完成标题', async ({ page }) => {
 test('安装摘要卡片显示', async ({ page }) => {
   await expect(page.getByText('安装摘要')).toBeVisible()
   await expect(page.getByText('设备 ID')).toBeVisible()
-  await expect(page.getByText('患者 ID')).toBeVisible()
+  await expect(page.getByText('患者')).toBeVisible()
   await expect(page.getByText('安装时间')).toBeVisible()
   await expect(page.getByText('基线状态')).toBeVisible()
   await expect(page.getByText('WiFi 状态')).toBeVisible()
@@ -37,6 +37,16 @@ test('状态标签显示', async ({ page }) => {
   await expect(page.locator('.status-badge', { hasText: '未配置' })).toBeVisible()
   // T089: 数据可达性 badge（默认待验证）
   await expect(page.locator('.status-badge', { hasText: '待验证' })).toBeVisible()
+})
+
+test('T443 裁定⑤：患者行标签收口为「患者」，无档案时回落 ID 而非空行', async ({ page }) => {
+  // 直连完成页时 installStore.patient 为 null（未走 bind 页拉档案）⇒ 真值应落 ID 占位 '--'
+  // 反证（E2E 变异第 3 次）：标签回到「患者 ID」时这条必须变红。
+  // 上一版写成 getByText('患者 ID').toHaveCount(0)，变异实测仍绿——该 locator 在本页匹配不到任何节点，判据无牙。
+  const patientRow = page.locator('.summary-row').filter({ has: page.locator('.summary-label', { hasText: /^患者/ }) })
+  await expect(patientRow).toHaveCount(1)
+  await expect(patientRow.locator('.summary-label')).toHaveText('患者')
+  await expect(patientRow.locator('.summary-value')).toHaveText('--')
 })
 
 test('查看安装记录跳转', async ({ page }) => {

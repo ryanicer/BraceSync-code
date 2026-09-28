@@ -48,6 +48,38 @@ test('详情弹窗阈值按小时口径，且 0 值行不消失（缺陷二 + �
   await modal.confirm.click()
 })
 
+test('T443 裁定⑤：患者位显姓名，无姓名的行回落 ID', async ({ page }) => {
+  // mock 第 1 条（i=0）带姓名；第 6 条（i=5）刻意 null ⇒ 门禁里两分支都被执行
+  const first = page.locator('.alert-card').first()
+  await expect(first.locator('.meta-item').filter({ hasText: '患者' })).toContainText('张明远')
+  const nameless = page.locator('.alert-card').nth(5)
+  await expect(nameless.locator('.meta-item').filter({ hasText: '患者' })).toContainText('P20260006')
+  await expect(nameless.locator('.meta-item').filter({ hasText: '患者' })).not.toContainText('undefined')
+})
+
+test('T443 裁定①：详情弹窗末尾有「处置建议」固定模板，编号连续', async ({ page }) => {
+  await page.locator('.alert-card').first().click()
+  const modal = uniModal(page)
+  await expect(modal.root).toBeVisible()
+  const text = await modal.root.innerText()
+  expect(text).toContain('患者: 张明远')
+  expect(text).toContain('处置建议:')
+  expect(text).toContain('1. ')
+  expect(text).toContain('4. ')
+  await modal.confirm.click()
+})
+
+test('T443 裁定⑤：详情弹窗的患者行同样回落 ID（弹窗与列表同源）', async ({ page }) => {
+  await page.locator('.alert-card').nth(5).click()
+  const modal = uniModal(page)
+  await expect(modal.root).toBeVisible()
+  const text = await modal.root.innerText()
+  expect(text).toContain('患者: P20260006')
+  expect(text).not.toContain('患者: null')
+  expect(text).not.toContain('患者: undefined')
+  await modal.confirm.click()
+})
+
 test('筛选分档按全量而非首页（缺陷一的筛选面）', async ({ page }) => {
   await page.locator('.seg-btn', { hasText: '待处理' }).click()
   await expect(page.locator('.alert-card')).toHaveCount(59)

@@ -38,6 +38,9 @@ test.describe('技师端全链路', () => {
     await expect(page.locator('.card-title', { hasText: '设备校准' })).toBeVisible()
     await page.locator('.btn-primary', { hasText: '开始校准' }).click()
     await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
+    // T443 裁定⑥ + 规矩 A：基线已落库 ⇒ 「重新采集」入口必须收起（稿面原无此入口，入口只在没存成时出现）
+    await expect(page.getByText('重新采集')).toHaveCount(0)
+    await expect(page.getByText('基线已保存（单次权威校准）')).toBeVisible()
     await page.locator('.btn-primary', { hasText: '校准完成，下一步' }).click()
 
     // === install 阶段三：WiFi 配网 ===
@@ -62,6 +65,8 @@ test.describe('技师端全链路', () => {
 
     // === complete ===
     await expect(page.locator('.success-title')).toHaveText('安装完成')
+    // T443 裁定⑤：走完流程时档案已拉到本地 ⇒ 完成页患者行显姓名，不再是裸 ID
+    await expect(page.locator('.summary-row', { hasText: '患者' })).toContainText('张明远')
     await expect(page.getByText('数据可达性')).toBeVisible()
     // TC-1：基线在阶段二真落库 ⇒ 完成页与 install 页同源显示「已保存」
     await expect(page.locator('.status-badge', { hasText: '已保存' })).toBeVisible()
