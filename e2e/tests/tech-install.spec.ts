@@ -73,6 +73,8 @@ test.describe('安装流程 3 阶段', () => {
     // T173 D4：零点偏移矩阵主视图（5 帧均值）
     await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('基线已保存')).toBeVisible()
+    // T443 裁定⑥ × 规矩 A：基线已入云端 ⇒ 收起「重新采集」，不给第二次提交权威基线的入口
+    await expect(page.getByText('重新采集')).toHaveCount(0)
     await expect(page.getByText('零点偏移量（将从后续读数中扣除，单位 N）')).toBeVisible()
     // 20 格偏移矩阵
     const cells = page.locator('.pressure-cell')

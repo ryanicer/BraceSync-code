@@ -14,8 +14,8 @@
           <text class="summary-value">{{ summary.deviceId }}</text>
         </view>
         <view class="summary-row">
-          <text class="summary-label">患者 ID</text>
-          <text class="summary-value">{{ summary.patientId }}</text>
+          <text class="summary-label">患者</text>
+          <text class="summary-value">{{ patientValue }}</text>
         </view>
         <view class="summary-row">
           <text class="summary-label">安装时间</text>
@@ -67,6 +67,7 @@ import {
   reachabilityLabel,
   reachabilityBadgeClass,
 } from '../../utils/installStatus'
+import { patientNameWithId } from '../../utils/patientDisplay'
 
 const installStore = useInstallStore()
 
@@ -77,6 +78,13 @@ const summary = ref({
   wifiStatus: 'unconfigured' as string,
   notes: '',
 })
+
+// 裁定⑤（Boss 2026-09-28；来源 T446 §三 C-5 ＋稿面 complete.html:70-71）：
+// 患者行按稿面形态「姓名 (ID)」同行显示，不再只挂裸 ID。
+// 姓名来源是 bind 页拉取后放进 installStore.patient 的档案（getPatient）；拉不到才退化成只剩 ID。
+// 🔴 install 页患者行同屏既有「患者 ID」又有「姓名」两行，本裁定只管完成页这一行。
+const patientValue = computed(() =>
+  patientNameWithId(installStore.patient?.name, summary.value.patientId))
 
 // TC-1：改前这一格硬编码「已保存」，与 install 页 :107 的 baselineSaved 同源判定冲突
 // ⇒ 基线保存失败时 install 报「未保存」、complete 仍报「已保存」。现两页读同一个标志。

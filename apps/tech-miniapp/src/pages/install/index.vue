@@ -137,6 +137,7 @@
               <text>校准完成后，实时压力读数将自动减去上述偏移值</text>
             </view>
           </view>
+          <view v-if="!baselineLocked" class="btn-outline" @click="recollectCalibration"><text>重新采集</text></view>
           <view class="btn-primary" @click="goPhase3"><text>校准完成，下一步</text></view>
         </template>
       </view>
@@ -271,6 +272,12 @@ const calibrationProgress = computed(() => Math.min(100, (collectSec.value / 5) 
 const statAvg = computed(() => average(displayFrame.value))
 const statMax = computed(() => max(displayFrame.value))
 
+// 裁定⑥（Boss 2026-09-28）：允许现场重新采集，但只在云端还没有权威基线时给入口。
+// 规矩 A（PRD §7C.4）：校准是一次性权威动作，二次提交必撞 uk_install_baseline 409，
+// 所以保存成功与 409 同等对待（409 说明库里已有那条权威基线）。
+const baselineConflict = ref(false)
+const baselineLocked = computed(() => installStore.baselineSaved || baselineConflict.value)
+
 function average(arr: number[]): number {
   if (!arr.length) return 0
   return arr.reduce((a, b) => a + b, 0) / arr.length
@@ -313,6 +320,20 @@ async function startCalibration() {
       finalizeCalibration()
     }
   }, 1000)
+}
+
+/** 裁定⑥：采集完但基线没落库时，允许就地重采一轮，不必退回上一步整条流程重走 */
+async function recollectCalibration() {
+  if (!installStore.bleConnected) {
+    uni.showToast({ title: '蓝牙未就绪，请先重新连接', icon: 'none' })
+    return
+  }
+  calibrated.value = false
+  calibrationChecks.value = { pointCount: false, range: false, stability: true }
+  collectedPointCount.value = 0
+  offsetValues.value = Array(20).fill(0)
+  displayFrame.value = Array(20).fill(0)
+  await startCalibration()
 }
 
 async function finalizeCalibration() {
@@ -359,6 +380,7 @@ async function finalizeCalibration() {
     const bizCode = (e as { code?: number } | null)?.code
     if (bizCode === 20409) {
       bleLog.warn('saveBaseline 409：uk_install_baseline 冲突（规矩 A 单次权威校准，有意设计）')
+      baselineConflict.value = true
       uni.showModal({
         title: '基线已存在',
         content: '该校准已存在，如需变更请联系出厂',
