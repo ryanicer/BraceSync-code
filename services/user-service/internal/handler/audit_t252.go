@@ -145,6 +145,8 @@ var auditRoutes = map[string]auditRoute{
 	http.MethodPut + " /api/v1/admin/patients/:patientId/phone":          {auditActionDataModify, "patient", "patientId", "修改患者 %s 的手机号"},
 	// T450 DEF-A：PR #126（T248）合并时欠下的档案编辑埋点，本笔补上（文件头注自述「合并后要补同一埋点」）。
 	http.MethodPut + " /api/v1/admin/patients/:patientId": {auditActionDataModify, "patient", "patientId", "编辑患者档案 %s"},
+	// T467 患者档案删除：收口档案比改手机号更该留痕，同族写端点全在表内，这条不能漏。
+	http.MethodDelete + " /api/v1/admin/patients/:patientId": {auditActionDataModify, "patient", "patientId", "删除患者档案 %s"},
 
 	http.MethodPost + " /api/v1/teams":                             {auditActionDataModify, "team", "", "创建团队"},
 	http.MethodPut + " /api/v1/teams/:teamId":                      {auditActionDataModify, "team", "teamId", "编辑团队 %s"},

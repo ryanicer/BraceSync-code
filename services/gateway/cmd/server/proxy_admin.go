@@ -114,6 +114,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/admin/patients/:patientId/unbind-wechat"}, // 解绑微信
 	{http.MethodPut, "/admin/patients/:patientId/phone"},          // 改手机号
 	{http.MethodPut, "/admin/patients/:patientId"},                // T248 4.3 档案编辑（姓名/性别/年龄/诊断/Cobb）
+	{http.MethodDelete, "/admin/patients/:patientId"},             // T467 档案删除（仅删无关联行的患者，否则 409）
 
 	{http.MethodGet, "/admin/patients"},                     // T030 #1
 	{http.MethodGet, "/admin/patients/:patientId"},          // T030 #2

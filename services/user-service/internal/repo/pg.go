@@ -1308,6 +1308,147 @@ func (s *PGStore) BatchBindPatients(ctx context.Context, patientIDs []string, te
 }
 
 // ─────────────────────────────────────────────────────────────
+// T467 患者档案删除（reject-if-referenced，镜像 T059 DeleteTeam 策略）
+// ─────────────────────────────────────────────────────────────
+
+// patientRefTable 一张「按 patient_id 引用患者」的关联表。
+type patientRefTable struct {
+	name  string // 表名，同时是技术日志（409 那条）里的机读键
+	hasFK bool   // patients(patient_id) 外键是否存在（false 时数据库不会拦删除）
+}
+
+// ErrPatientInUse 患者仍被关联面引用，不可删除（T467）。
+//
+// DeletePatient 逐表计数命中时返回此结构化错误，handler 用 errors.As 认出并映射 409。
+// 逐表计数只进技术日志通道：T464 双通道后 fail() 把响应体 message 换成 model.UserText(code)
+// 的中文短句、data 恒为 null，所以计数既不进 message 也不进 data（要机读结构化计数得再动
+// 信封面，属另立卡）。
+type ErrPatientInUse struct {
+	Refs map[string]int // 表名（并发兜底时为 FK 约束名）→ 命中行数，只收录非零项
+}
+
+// Error 按 patientRefTables 声明序渲染（文案可比对）；兜底路径的约束名排在末尾。
+func (e *ErrPatientInUse) Error() string {
+	pairs := make([]string, 0, len(e.Refs))
+	known := make(map[string]bool, len(e.Refs))
+	for _, t := range patientRefTables {
+		if n, hit := e.Refs[t.name]; hit {
+			pairs = append(pairs, fmt.Sprintf("%s=%d", t.name, n))
+			known[t.name] = true
+		}
+	}
+	for name, n := range e.Refs {
+		if !known[name] {
+			pairs = append(pairs, fmt.Sprintf("%s=%d", name, n))
+		}
+	}
+	return "patient in use: " + strings.Join(pairs, ", ")
+}
+
+// patientRefTables 患者关联面全集（scripts/db/migrations 逐条实测，非推断）：
+//
+//	有外键 12 张：000001:97/123/189/219/229/243/258/272/284、000003:13/48、000009:10
+//	无外键 3 张：pressure_records(000001:147)、daily_wear_stats(000001:173)、device_bindings(000002:14)
+//
+// 🔴 后三张必须一起数：它们只有 patient_id 列、没有 REFERENCES patients，数据库不会拦删除，
+// 少数一张就等于「删患者顺手留下一堆无主体的佩戴明细/日聚合/绑定历史」——
+// 派发单「禁止级联误删业务数据」点名的正是这一面。
+// 前十二张有外键，靠数据库拦会直接 23503 变 500，所以在服务端先判成 409。
+var patientRefTables = []patientRefTable{
+	{name: "devices", hasFK: true},
+	{name: "install_records", hasFK: true},
+	{name: "alerts", hasFK: true},
+	{name: "orthosis_plans", hasFK: true},
+	{name: "feeling_logs", hasFK: true},
+	{name: "feedbacks", hasFK: true},
+	{name: "health_reports", hasFK: true},
+	{name: "patient_preferences", hasFK: true},
+	{name: "consents", hasFK: true},
+	{name: "notification_records", hasFK: true},
+	{name: "quota_grants", hasFK: true},
+	{name: "review_records", hasFK: true},
+	{name: "pressure_records", hasFK: false},
+	{name: "daily_wear_stats", hasFK: false},
+	{name: "device_bindings", hasFK: false},
+}
+
+// patientRefCountSQL 一次往返数出全部关联表行数（逐表一条 COUNT(*)，UNION ALL 汇成 rows）。
+// 表名取自包内常量表 patientRefTables，不含任何入参拼接。
+func patientRefCountSQL() string {
+	var b strings.Builder
+	for i, t := range patientRefTables {
+		if i > 0 {
+			b.WriteString(" UNION ALL ")
+		}
+		fmt.Fprintf(&b, "SELECT '%s', COUNT(*) FROM %s WHERE patient_id = $1", t.name, t.name)
+	}
+	return b.String()
+}
+
+// countPatientRefs 返回 表名 → 命中行数（只收录非零项）。
+func (s *PGStore) countPatientRefs(ctx context.Context, patientID string) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, patientRefCountSQL(), patientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	refs := make(map[string]int)
+	for rows.Next() {
+		var table string
+		var n int
+		if err := rows.Scan(&table, &n); err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			refs[table] = n
+		}
+	}
+	return refs, rows.Err()
+}
+
+// DeletePatient 删除患者档案（T467）。
+//
+// 判定序（与 DeleteTeam 同族）：存在性 → 关联面计数 → 删行。
+//   - 无行 → ErrPatientNotFound（重复删除回 404，不采「已经没了也算成功」的伪幂等）
+//   - 任一关联表非空 → *ErrPatientInUse（409，携带逐表计数）
+//   - 并发下刚被写入关联行：外键 23503 兜底为同一条 *ErrPatientInUse
+//
+// 硬删，不级联、不软删：patients 无软删列，加列属新迁移（超本卡范围，待裁项已落卡）。
+func (s *PGStore) DeletePatient(ctx context.Context, patientID string) error {
+	row, err := s.GetPatient(ctx, patientID)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return ErrPatientNotFound
+	}
+	refs, err := s.countPatientRefs(ctx, patientID)
+	if err != nil {
+		return err
+	}
+	if len(refs) > 0 {
+		return &ErrPatientInUse{Refs: refs}
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM patients WHERE patient_id = $1`, patientID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			// 计数与删除之间刚被并发写入关联行：constraint 名形如 devices_patient_id_fkey
+			name := pgErr.ConstraintName
+			if name == "" {
+				name = "foreign key"
+			}
+			return &ErrPatientInUse{Refs: map[string]int{name: 1}}
+		}
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPatientNotFound
+	}
+	return nil
+}
+
+// ─────────────────────────────────────────────────────────────
 // T059 团队 / 成员写操作（reject-if-referenced 删除策略）
 //
 // 契约：docs/tasks/ella/T059-团队管理测试规格.md
