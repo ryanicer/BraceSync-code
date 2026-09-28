@@ -33,7 +33,7 @@ function mockAlertSeed(): Alert[] {
   // 第 6 位刻意留 null：后端 alerts 族的空值语义是空串（COALESCE(p.name,'')），
   // 留一行「无姓名」才能让回落判据在门禁里真被执行。
   const names = ['张明远', '李欣怡', '王子轩', '刘思雨', '陈俊豪', null]
-  return Array.from({ length: 60 }).map((_, i) => {
+  const rows = Array.from({ length: 60 }).map((_, i) => {
     const type = i === 0 ? 'wear_duration_short' : types[i % 3]
     return {
       alertId: `ALR-T433-${String(i + 1).padStart(3, '0')}`,
@@ -60,6 +60,18 @@ function mockAlertSeed(): Alert[] {
       processNote: null,
     } satisfies Alert
   })
+  // T451：末尾追加一行「压力波动」（admin T430 已拍的隐藏类），让后端 total（61）与页面可见数
+  // （60）刻意不相等 ⇒ 现存的「共 60 条告警」「.alert-card 60」「待处理 59」三条判据
+  // 从「恰好等于种子数」变成「只有过滤生效才成立」，摘掉过滤即判红。
+  // 追加在末尾而不是插进循环：前 60 行的下标与文案位不变，不会把第二页那条判据挪位。
+  rows.push({
+    ...rows[59],
+    alertId: 'ALR-T451-061',
+    type: 'pressure_fluctuation',
+    detail: 'T451 mock 压力波动告警（界面隐藏、数据不删）',
+    processStatus: 'pending',
+  })
+  return rows
 }
 
 export async function listAlerts(params: ListAlertParams = {}): Promise<AlertListResult> {

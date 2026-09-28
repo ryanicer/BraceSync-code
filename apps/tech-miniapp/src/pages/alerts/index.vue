@@ -84,7 +84,7 @@ import { alertTypeLabel } from '@bracesync/shared-utils'
 import { request } from '../../utils/request'
 import { listAlerts } from '../../api/alert'
 import { fetchAllPages } from '../../utils/paging'
-import { hasAlertNumber, alertValueText, buildAlertDetailLines } from '../../utils/alertDisplay'
+import { hasAlertNumber, alertValueText, buildAlertDetailLines, filterVisibleAlertRows } from '../../utils/alertDisplay'
 import { patientDisplayValue } from '../../utils/patientDisplay'
 
 // 与改前页面写死的单页大小一致（alert-service 缺省 20、上限 100，本卡不动这个数）
@@ -98,14 +98,25 @@ const filter = ref<'all' | 'pending' | 'processed'>('all')
 const loading = ref(false)
 const error = ref('')
 
+// T451：「压力波动」界面隐藏（与 admin 同源判据，真源在 shared-utils），页面不写类型字面量。
+// 已加载的隐藏行数用来把页头数从后端 total 里扣出来。
+const visibleAlerts = computed(() => filterVisibleAlertRows(alerts.value))
+const hiddenLoadedCount = computed(() => alerts.value.length - visibleAlerts.value.length)
+
 // 页头数字：改前是 filteredAlerts.length（最多一页），接口 total 被丢掉（T433 缺陷一）
-const countText = computed(() =>
-  truncated.value ? `共 ${total.value} 条告警，已加载 ${alerts.value.length} 条` : `共 ${total.value} 条告警`)
+// total 是后端返回、含隐藏行，所以扣掉已加载的隐藏行数；未取满时未加载页里可能还有隐藏行，
+// 该位数在 truncated 态仍是上界（要精确需后端 exclude-type 参数，与 admin T430 同一缺口）。
+const countText = computed(() => {
+  const visibleTotal = total.value - hiddenLoadedCount.value
+  return truncated.value
+    ? `共 ${visibleTotal} 条告警，已加载 ${visibleAlerts.value.length} 条`
+    : `共 ${visibleTotal} 条告警`
+})
 
 // 过滤
 const filteredAlerts = computed(() => {
-  if (filter.value === 'all') return alerts.value
-  return alerts.value.filter(a => a.processStatus === filter.value)
+  if (filter.value === 'all') return visibleAlerts.value
+  return visibleAlerts.value.filter(a => a.processStatus === filter.value)
 })
 
 // 告警类型标签：T419 G-6 删本地映射，改读 shared-utils 的 ALERT_TYPE_LABELS

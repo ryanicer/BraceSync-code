@@ -5,7 +5,7 @@
  * 不能只在 SFC 里内联（SFC 不在 vitest 的解析范围内）。
  */
 import type { Alert } from '@bracesync/shared-types'
-import { alertTypeLabel, formatAlertValue } from '@bracesync/shared-utils'
+import { alertTypeLabel, formatAlertValue, isHiddenAlertType } from '@bracesync/shared-utils'
 
 export interface PressureAnomalyItem {
   /** 采集点；按日类告警（设备离线 / 佩戴时长不足）无点位，为空串 */
@@ -53,6 +53,9 @@ export function alertsToPressureMap(alerts: Alert[]): Map<string, PressureAnomal
   const byDate = new Map<string, PressureAnomalyItem[]>()
   for (const a of alerts) {
     if (a.type === 'wear_interrupt') continue
+    // T451：与 admin 同源的「压力波动」隐藏（PRD §7D.6 历史数据处置拍 C，判据真源在 shared-utils）。
+    // 放在分组前一处，日列表、条目数与日历圆点三条派生量同时收窄；后端返回值不动，数据不删。
+    if (isHiddenAlertType(a.type)) continue
     const date = a.timestamp ? a.timestamp.slice(0, 10) : new Date().toISOString().slice(0, 10)
     if (!byDate.has(date)) byDate.set(date, [])
     byDate.get(date)!.push(toPressureAnomalyItem(a))

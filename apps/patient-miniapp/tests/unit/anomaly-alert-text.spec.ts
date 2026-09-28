@@ -6,6 +6,8 @@
  * 2. 详情行用后端 Alert.detail 原文，前端不再自己拼数；
  * 3. 数值单位口径未定的类型（佩戴时长不足，分钟 vs 小时）不得显示裸数字 —— 禁硬编假数。
  */
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect } from 'vitest'
 import type { Alert, AlertType } from '@bracesync/shared-types'
 import { toPressureAnomalyItem, alertsToPressureMap } from '../../src/utils/anomaly'
@@ -97,6 +99,33 @@ describe('T298 — 4 类文本化展示', () => {
 
   it('设备离线不进本页列表（PRD §7D.6：归技师端现场知晓）', () => {
     expect(alertsToPressureMap([mk({ type: 'wear_interrupt', sensorPoint: '' })]).size).toBe(0)
+  })
+
+  // T451：与 admin T430 同源的「压力波动」界面隐藏（PRD §7D.6 历史数据处置拍 C，数据不删）。
+  it('T451 压力波动历史行不进本页（单行入参 ⇒ 该日既无列表项也无圆点）', () => {
+    expect(alertsToPressureMap([mk({ type: 'pressure_fluctuation' })]).size).toBe(0)
+  })
+
+  it('T451 同一天混两类时只滤隐藏行，可见行与日期键都不受影响', () => {
+    const map = alertsToPressureMap([
+      mk({ type: 'pressure_high', timestamp: '2026-07-09T08:00:00+08:00' }),
+      mk({ type: 'pressure_fluctuation', timestamp: '2026-07-09T16:00:00+08:00' }),
+      mk({ type: 'sensor_drift', timestamp: '2026-07-10T09:00:00+08:00' }),
+    ])
+    expect([...map.keys()]).toEqual(['2026-07-09', '2026-07-10'])
+    expect(map.get('2026-07-09')!.map((it) => it.type)).toEqual(['压力偏高'])
+  })
+
+  it('T451 隐藏判据一处生效即覆盖三个派生量：本页只经 alertsToPressureMap 取数', () => {
+    // 页尾「N条异常」= pressureDetail.length、圆点 = getAnomalyLevel 读同一张表，
+    // 故映射层滤掉一处即可；这里钉页面不再自行按类型过滤／不写类型字面量。
+    const src = fs.readFileSync(
+      fileURLToPath(new URL('../../src/pages/anomaly/index.vue', import.meta.url)),
+      'utf8',
+    )
+    expect(src).not.toContain('pressure_fluctuation')
+    expect(src).not.toContain('HIDDEN_ALERT_TYPES')
+    expect(src).toContain('alertsToPressureMap(')
   })
 
   it('按 timestamp 日期分组，同一天多类型并存', () => {
