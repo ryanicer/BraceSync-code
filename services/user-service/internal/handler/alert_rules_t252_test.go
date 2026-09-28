@@ -379,7 +379,7 @@ func TestT257_GlobalRules_DeviceOfflineHonoursCollectIntervalLinkage(t *testing.
 	e.store.configs = map[string]string{keyCollectInterval: "30"}
 
 	w, resp := e.do(http.MethodPut, t252GlobalPath, map[string]any{"deviceOfflineMinutes": 50}, t252AdminHdr())
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
 	t464TechLogContains(t, w, "2x collect interval")
 	assert.Nil(t, e.store.savedKVs, "拒绝时不得触达写通道")
 	assert.Empty(t, e.store.auditRows)

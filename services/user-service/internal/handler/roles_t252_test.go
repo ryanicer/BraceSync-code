@@ -185,7 +185,7 @@ func TestT252_UpdateAdminRole_PresetNameLockedOthersEditable(t *testing.T) {
 	// 预置角色改名 → 400，且不改设计稿既有语义
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/roles/ROLE_ADMIN",
 		map[string]any{"name": "万能管理员"}, t252AdminHdr())
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
 	t464TechLogContains(t, w, "preset role name is locked")
 	assert.Nil(t, e.store.roleUpdDesc)
 

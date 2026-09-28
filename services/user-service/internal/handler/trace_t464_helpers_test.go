@@ -17,8 +17,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bracesync/bracesync/services/user-service/internal/model"
 	"github.com/bracesync/bracesync/services/testhelper"
+	"github.com/bracesync/bracesync/services/user-service/internal/model"
 )
 
 var t464Capture = testhelper.NewLogCaptureHook()
