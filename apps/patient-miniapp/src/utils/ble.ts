@@ -10,6 +10,7 @@
 // R5: onWifiStatus() 订阅 B512 Notify + mock 状态机
 
 import { bleLog } from './ble-log'
+import { logErrorText } from '@bracesync/shared-utils'
 import { advertisesB510, createScanDeduper } from './wifi-state'
 
 function _log(level: 'info' | 'warn' | 'error', msg: string, ctx?: unknown) {
@@ -138,7 +139,7 @@ export async function ensureLocationPermission(): Promise<boolean> {
           },
         })
       } catch (e) {
-        _log('error', 'ensureLocationPermission 异常', e instanceof Error ? e.message : String(e))
+        _log('error', 'ensureLocationPermission 异常', logErrorText(e))
         resolve(true)
       }
     }
@@ -737,7 +738,7 @@ function subscribeB512Notify(deviceId: string): void {
         _log('info', `B512 状态原始值=${code} 第${b512FramesReceived}帧 订阅轮次=${b512SubscribeRounds}`)
         wifiStatusCallback?.(code)
       } catch (e) {
-        _log('error', 'B512 状态解析失败', e instanceof Error ? e.message : String(e))
+        _log('error', 'B512 状态解析失败', logErrorText(e))
       }
     })
   }

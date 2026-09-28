@@ -219,6 +219,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { logErrorText, userErrorCopy } from '@bracesync/shared-utils'
 import { DEFAULT_THRESHOLDS } from '@bracesync/constants'
 import { useAuthStore } from '../../stores/auth'
 import { useInstallStore } from '../../stores/install'
@@ -400,7 +401,7 @@ async function finalizeCalibration() {
         showCancel: false,
       })
     } else {
-      bleLog.warn('saveBaseline 失败（不阻断校准）', e instanceof Error ? e.message : String(e))
+      bleLog.warn('saveBaseline 失败（不阻断校准）', logErrorText(e))
       uni.showToast({ title: '基线保存失败，校准仍有效', icon: 'none' })
     }
   }
@@ -483,7 +484,7 @@ async function completeInstall() {
     uni.navigateTo({ url: '/pages/complete/index' })
   } catch (e) {
     uni.hideLoading()
-    uni.showToast({ title: e instanceof Error ? e.message : '提交失败', icon: 'none' })
+    uni.showToast({ title: userErrorCopy(e, { scope: 'tech', fallback: '提交失败' }), icon: 'none' })
   }
 }
 

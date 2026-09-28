@@ -67,6 +67,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import {
@@ -148,7 +149,7 @@ async function uploadTemplateFile(file: File) {
     uploadedFileId.value = result.fileId
     ElMessage.success('文件上传成功')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '文件上传失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '文件上传失败' }))
     selectedFile.value = null
     uploadedFileId.value = ''
   }
@@ -171,7 +172,7 @@ async function submit() {
     }
     await loadTemplates()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '提交失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '提交失败' }))
   } finally {
     submitting.value = false
   }
@@ -200,7 +201,7 @@ async function loadTemplates() {
   try {
     templates.value = await fetchReviewTemplates()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载模板列表失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载模板列表失败' }))
   } finally {
     loading.value = false
   }

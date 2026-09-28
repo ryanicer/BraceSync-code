@@ -109,6 +109,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage } from 'element-plus'
 import type { Device } from '@bracesync/shared-types'
 import { fetchDevices, fetchDeviceDetail, fetchDeviceBindings, registerDeviceApi, patientNameOf, type DeviceBindingRecord } from '../../api'
@@ -155,7 +156,7 @@ async function loadData() {
     const res = await fetchDevices({ keyword: keyword.value || undefined })
     list.value = res.list
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }
@@ -183,7 +184,7 @@ async function submitRegister() {
     registerVisible.value = false
     await loadData()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '注册失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '注册失败' }))
   } finally {
     registering.value = false
   }
@@ -199,7 +200,7 @@ async function openDetail(row: Device) {
     detail.value = { ...dev, patientName: dev.patientName ?? row.patientName }
     bindings.value = hist
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载详情失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载详情失败' }))
   } finally {
     detailLoading.value = false
   }

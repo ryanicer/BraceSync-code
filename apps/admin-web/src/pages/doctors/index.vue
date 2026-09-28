@@ -139,6 +139,7 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PhoneState, Team } from '@bracesync/shared-types'
 import { fetchTeams, teamNameOf } from '../../api'
@@ -220,7 +221,7 @@ async function loadData() {
   try {
     rows.value = await fetchMedicalAccounts()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }
@@ -305,7 +306,7 @@ async function submitForm() {
       await showCredentials(res.account.username, res.initialPassword, '创建成功')
     }
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
   } finally {
     submitting.value = false
   }
@@ -343,7 +344,7 @@ async function askToggle(row: MedicalAccount) {
     await loadData()
     ElMessage.success(disabling ? '已禁用' : '已启用')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
   }
 }
 
@@ -361,7 +362,7 @@ async function askReset(row: MedicalAccount) {
     const pwd = await resetMedicalPasswordApi(row.doctorId)
     await showCredentials(row.username, pwd, '重置成功')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
   }
 }
 

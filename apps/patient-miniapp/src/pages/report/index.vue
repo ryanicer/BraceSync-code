@@ -53,6 +53,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import type { ReviewRecord } from '@bracesync/shared-types'
@@ -77,7 +78,7 @@ async function loadRecords() {
     })
     records.value = Array.isArray(list) ? list : []
   } catch (e: unknown) {
-    errorMsg.value = e instanceof Error ? e.message : '加载复查记录失败'
+    errorMsg.value = userErrorCopy(e, { scope: 'patient', fallback: '加载复查记录失败' })
   } finally {
     loading.value = false
   }
@@ -115,7 +116,7 @@ async function downloadReport(item: ReviewRecord) {
     })
   } catch (e: unknown) {
     uni.showToast({
-      title: e instanceof Error ? e.message : '下载失败',
+      title: userErrorCopy(e, { scope: 'patient', fallback: '下载失败' }),
       icon: 'none',
     })
   } finally {

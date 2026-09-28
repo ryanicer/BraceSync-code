@@ -236,7 +236,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { DEFAULT_THRESHOLDS } from '@bracesync/constants'
 import type { NotifyRule, NotificationRecord, NotifyChannel, NotifyTarget, AlertType } from '@bracesync/shared-types'
-import { alertTypeLabel } from '@bracesync/shared-utils'
+import { alertTypeLabel, userErrorCopy } from '@bracesync/shared-utils'
 import {
   fetchSystemSettings, saveSystemSettingsApi, fetchNotifyRules,
   updateNotifyRuleApi, fetchNotificationLogs, patientNameOf, fetchAuditLogsApi,
@@ -344,7 +344,7 @@ async function loadAuditLogs() {
     auditLogs.value = res.list
     auditTotal.value = res.total
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载操作日志失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载操作日志失败' }))
   } finally {
     loadingAudit.value = false
   }
@@ -361,7 +361,7 @@ async function saveSettings() {
     await saveSystemSettingsApi({ ...form })
     ElMessage.success('配置已保存')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     saving.value = false
   }
@@ -373,7 +373,7 @@ async function updateChannels(row: NotifyRule, channels: string[]) {
     row.channels = channels as NotifyChannel[]
     ElMessage.success('通知渠道已更新')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '更新失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '更新失败' }))
   }
 }
 
@@ -383,7 +383,7 @@ async function updateTargets(row: NotifyRule, targets: string[]) {
     row.notifyTargets = targets as NotifyTarget[]
     ElMessage.success('通知对象已更新')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '更新失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '更新失败' }))
   }
 }
 
@@ -393,7 +393,7 @@ onMounted(async () => {
     const settings = await fetchSystemSettings()
     Object.assign(form, settings)
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载配置失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载配置失败' }))
   } finally {
     loading.value = false
   }

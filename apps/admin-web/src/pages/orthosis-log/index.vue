@@ -301,7 +301,7 @@ import {
   Tooltip, Legend, Filler, type ChartData, type ChartOptions,
 } from 'chart.js'
 import { Line, Bar } from 'vue-chartjs'
-import { alertTypeLabel } from '@bracesync/shared-utils'
+import { alertTypeLabel, userErrorCopy } from '@bracesync/shared-utils'
 import type { Alert, FeelingLog, HealthReport, OrthosisPlan, Patient } from '@bracesync/shared-types'
 import {
   fetchPatients, fetchPatientDetail, fetchTeams, fetchAlerts, fetchSystemSettings,
@@ -391,7 +391,7 @@ async function loadLogs() {
     logs.value = res.list
     total.value = res.total
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     logsLoading.value = false
   }
@@ -443,7 +443,7 @@ async function loadPatientData() {
     feelings.value = feelingsRes
     reports.value = reportsRes
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   }
   loadProfile()
   // 内层 Tab 停在数据视图时切患者：该页内容当场就要有数
@@ -455,7 +455,7 @@ async function loadProfile() {
   try {
     profile.value = await fetchPatientDetail(patientId.value) as PatientRow | null
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载患者档案失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载患者档案失败' }))
   }
 }
 
@@ -487,7 +487,7 @@ async function loadWearSeries() {
     wearRows.value = rows
   } catch (e: unknown) {
     dataLoaded.value = false
-    ElMessage.error(e instanceof Error ? e.message : '加载日佩戴统计失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载日佩戴统计失败' }))
   } finally {
     wearLoading.value = false
   }
@@ -506,7 +506,7 @@ async function loadWsAlerts() {
     alertTotal.value = res.total
   } catch (e: unknown) {
     dataLoaded.value = false
-    ElMessage.error(e instanceof Error ? e.message : '加载告警记录失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载告警记录失败' }))
   } finally {
     alertsLoading.value = false
   }
@@ -628,7 +628,7 @@ async function savePlan() {
     newPlanContent.value = ''
     ElMessage.success('方案已保存')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     savingPlan.value = false
   }
@@ -646,7 +646,7 @@ async function submitReply(row: FeelingLog) {
     delete replyDrafts.value[row.logId]
     ElMessage.success('回复成功')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '回复失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '回复失败' }))
   } finally {
     replyingId.value = null
   }
@@ -663,7 +663,7 @@ onMounted(async () => {
     const res = await fetchPatients({ page: 1, pageSize: 50 })
     patients.value = res.list
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载患者列表失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载患者列表失败' }))
   }
 })
 </script>

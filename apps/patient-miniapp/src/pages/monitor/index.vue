@@ -65,6 +65,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { logErrorText, userErrorCopy } from '@bracesync/shared-utils'
 import { onPullDownRefresh } from '@dcloudio/uni-app'
 import PressureHeatmap from '../../components/PressureHeatmap.vue'
 import PressureCurve from '../../components/PressureCurve.vue'
@@ -243,7 +244,7 @@ async function loadTrend(baseVal: number) {
     trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
     logger.warn('[T178] loadTrend: records 为空或聚合后无点, fallback', { baseVal, pointId })
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
+    const msg = logErrorText(e)
     logger.error('[T178] loadTrend catch', { msg, pointId })
     trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
   }
@@ -292,7 +293,7 @@ async function loadData() {
     })
     void loadTrend(base)
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : '加载实时数据失败'
+    const msg = userErrorCopy(e, { scope: 'patient', fallback: '加载实时数据失败' })
     uni.showToast({ title: msg, icon: 'none' })
     sensorPoints.value = []
     trendData.value = []

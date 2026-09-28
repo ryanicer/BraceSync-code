@@ -26,6 +26,14 @@ export interface AuthStateResult {
 }
 
 /**
+ * 未识别码兜底句里的码位：信封没带数字 code 时（NaN）退化成 NET，
+ * 与 shared-utils 的 userErrorCodeToken 同形，本文件保持零依赖所以就地实现。
+ */
+function errorCodeToken(code: number): number | string {
+  return Number.isFinite(code) ? code : 'NET'
+}
+
+/**
  * 解析 wx-login 接口 code → 状态 + 去向页面。
  * PRD §7A.1.1：0→SUCCESS，10601→NEED_BIND，10001/401→FAIL，10502/502→ERROR。
  * T434 补：10401 → FAIL。后端 wxLogin 在 jscode2session 回业务错误时统一产出
@@ -62,7 +70,9 @@ export function resolveWxLoginResult(code: number): AuthStateResult {
       return {
         state: 'ERROR',
         targetPage: '',
-        message: '服务异常，请稍后重试',
+        // T465：未识别码必须带错误码（「操作失败（错误码 X），请截图反馈」口径在本页是
+        // 「服务异常…（错误码 X）」）。env.code 缺省时为 NaN，码位退化成 NET。
+        message: `服务异常，请稍后重试（错误码 ${errorCodeToken(code)}）`,
       }
   }
 }
@@ -100,7 +110,8 @@ export function resolveBindPhoneResult(code: number): AuthStateResult {
       return {
         state: 'RETRY',
         targetPage: '',
-        message: '绑定失败，请稍后重试',
+        // T465：未识别码必须带错误码（同 resolveWxLoginResult 的 default 口径）
+        message: `绑定失败，请稍后重试（错误码 ${errorCodeToken(code)}）`,
       }
   }
 }

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouterHistory, type RouteRecordRaw
 import { useAuthStore } from '../stores/auth'
 import { canAccess, landingPathFor } from './permissions'
 import { isChunkLoadError, shouldRecoverTo, clearRecoverFlag } from './navRecovery'
+import { logErrorText } from '@bracesync/shared-utils'
 
 // 业务页路由（对齐架构 §5.4 / PRD §7D，meta.title 用于顶栏与菜单，菜单顺序即此数组顺序）
 export const pageRoutes: RouteRecordRaw[] = [
@@ -82,7 +83,7 @@ export function registerNavigationRecovery(router: ReturnType<typeof createRoute
   router.onError((error, to) => {
     // 可观测性：控制台留一手现场（本包无远程日志通道）。串里的 T355-nav-recovery 同时是
     // e2e-real 部署守卫在「已部署 bundle」里做的存在性标记，删了就变成永远 skip 的假门禁。
-    console.error('[router] 导航失败 [T355-nav-recovery]:', error?.message ?? error, '目标:', to?.fullPath ?? to)
+    console.error('[router] 导航失败 [T355-nav-recovery]:', logErrorText(error), '目标:', to?.fullPath ?? to)
     if (isChunkLoadError(error) && shouldRecoverTo(sessionStorage, to?.fullPath || '')) {
       // resolve().href 已含构建 base（/admin/…），整页重载重新拉取入口与 chunk
       const href = to ? router.resolve(to).href : window.location.href

@@ -85,6 +85,24 @@ describe('登录绑定状态机 — wx-login（PRD §7A.1.1）', () => {
     const error = resolveWxLoginResult(10502)
     expect(fail.state).not.toBe(error.state)
   })
+
+  // T465 卡面 ②：未知码必须带错误码，方便患者截图反馈（统一口径「…（错误码 X）」）
+  it('未知码的提示必须带错误码（T465 ②）', () => {
+    expect(resolveWxLoginResult(10999).message).toBe('服务异常，请稍后重试（错误码 10999）')
+    expect(resolveWxLoginResult(42424).message).toContain('（错误码 42424）')
+  })
+
+  it('信封缺码（NaN，即传输层失败）时码位退化为 NET 而不是 NaN', () => {
+    // 患者端 wxLogin 走 api/patient.ts 自己解析信封，信封缺 code 时传 Number.NaN
+    expect(resolveWxLoginResult(Number.NaN).message).toBe('服务异常，请稍后重试（错误码 NET）')
+    expect(resolveWxLoginResult(Number.NaN).message).not.toContain('NaN')
+  })
+
+  it('已识别码不掺码位后缀（带码是未知码的专属判据，别把 PRD 逐码文案改味）', () => {
+    for (const code of [10001, 10401, 10502, 502]) {
+      expect(resolveWxLoginResult(code).message, `code=${code}`).not.toContain('错误码')
+    }
+  })
 })
 
 describe('登录绑定状态机 — bind-phone（PRD §7A.1.1）', () => {
@@ -133,8 +151,21 @@ describe('登录绑定状态机 — bind-phone（PRD §7A.1.1）', () => {
     }
   })
 
-  it('防回潮：NO_MATCH 只由 10602 产出、REBIND 只由 10605 产出', () => {
-    const codes = [0, 10400, 10401, 10403, 10502, 10601, 10602, 10603, 10604, 10605, 40301, 90001]
+  // T465 卡面 ②：绑定页未知码同样必须带码；10604/10605 是 PRD 明令「仅开发对接、禁止展示」
+  // 的补充码，其患者可见句刻意不带码位。
+  it('bind-phone 未知码提示必须带错误码（T465 ②）', () => {
+    expect(resolveBindPhoneResult(59999).message).toContain('（错误码 59999）')
+    expect(resolveBindPhoneResult(Number.NaN).message).toBe('绑定失败，请稍后重试（错误码 NET）')
+  })
+
+  it('bind-phone 已识别码（10604/10605）句子里不出现码位（PRD_V3.md:270 禁止展示）', () => {
+    for (const code of [0, 10602, 10603, 10604, 10605]) {
+      const msg = resolveBindPhoneResult(code).message ?? ''
+      expect(msg, `code=${code}`).not.toContain('错误码')
+    }
+  })
+
+  it('防回潮：NO_MATCH 只由 10602 产出、REBIND 只由 10605 产出', () => {    const codes = [0, 10400, 10401, 10403, 10502, 10601, 10602, 10603, 10604, 10605, 40301, 90001]
     const statesOf = (want: BindPhoneState) =>
       codes.filter((c) => resolveBindPhoneResult(c).state === want)
     expect(statesOf('NO_MATCH')).toEqual([10602])

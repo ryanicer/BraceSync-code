@@ -182,6 +182,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import type { Team, TeamMember, TeamStats, Doctor } from '@bracesync/shared-types'
@@ -247,7 +248,7 @@ async function loadTeams() {
   try {
     teams.value = await fetchTeams()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }
@@ -326,7 +327,7 @@ async function confirmSaveTeam() {
     teamDialogVisible.value = false
     loadStats() // 团队总数/成员总数随增删改变化，统计卡重新拉取
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     teamSaving.value = false
   }
@@ -350,7 +351,7 @@ async function confirmDelete(row: Team) {
     ElMessage.success('删除成功')
     loadStats()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '删除失败' }))
   }
 }
 
@@ -369,7 +370,7 @@ async function loadMembers(teamId: string) {
     const res = await fetchTeamMembersApi(teamId)
     memberList.value = [...res.doctors, ...res.technicians]
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载成员失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载成员失败' }))
   } finally {
     memberLoading.value = false
   }
@@ -401,7 +402,7 @@ async function confirmAddMember() {
     addMemberVisible.value = false
     loadStats()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '添加失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '添加失败' }))
   } finally {
     addMemberSaving.value = false
   }
@@ -433,7 +434,7 @@ async function confirmEditMember() {
     ElMessage.success('更新成功')
     editMemberVisible.value = false
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '更新失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '更新失败' }))
   } finally {
     editMemberSaving.value = false
   }
@@ -458,7 +459,7 @@ async function confirmRemoveMember(row: TeamMember) {
     ElMessage.success('移除成功')
     loadStats()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '移除失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '移除失败' }))
   }
 }
 

@@ -84,6 +84,7 @@ import LogicFlow from '@logicflow/core'
 import '@logicflow/core/dist/index.css'
 import { DndPanel, MiniMap } from '@logicflow/extension'
 import '@logicflow/extension/dist/index.css'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import {
   createFlowTemplateApi, deleteFlowTemplateApi, fetchFlowTemplate, fetchFlowTemplates, updateFlowTemplateApi,
   type FlowTemplate,
@@ -327,11 +328,12 @@ async function reloadTemplates() {
   templates.value = await fetchFlowTemplates(tplKeyword.value)
 }
 
-/** 后端 message 全英文（契约 10400 的 duplicate node id 之类），前端只兜中文标题 + 附原文（§6.4 E4） */
+/**
+ * T465：后端 message 全英文（契约 10400 的 duplicate node id 之类）。原口径「兜中文标题 + 附原文」
+ * 会让运营看到英文残留，现改为按码出中文；未知码走「标题（错误码 X）」，原文只进日志面。
+ */
 function backendErrorText(e: unknown, fallback: string): string {
-  const raw = (e as Error)?.message?.trim()
-  if (!raw) return fallback
-  return /[一-龥]/.test(raw) ? raw : `${fallback}，后端返回：${raw}`
+  return userErrorCopy(e, { scope: 'admin', fallback })
 }
 
 function applyTemplateMeta(tpl: FlowTemplate) {

@@ -1,5 +1,6 @@
 import { getToken, removeToken } from './token'
 import { logger } from './logger'
+import { attachErrorMeta } from '@bracesync/shared-utils'
 
 // 环境变量通过 vite.config.ts 的 define 静态注入（绕开 uni 插件对 import.meta.env 的破坏）
 declare const __API_BASE_URL__: string
@@ -174,7 +175,12 @@ export async function request<T>(options: RequestOptions): Promise<T> {
             error: truncate(message),
             elapsedMs,
           })
-          reject(new Error(message || DEFAULT_ERROR_MESSAGE))
+          // T465：把信封码与 HTTP 状态挂到错误对象上——展示层靠它出中文，
+          // message 仍是技术原文（只进日志面），刻意不改写。
+          reject(attachErrorMeta(new Error(message || DEFAULT_ERROR_MESSAGE), {
+            code: Number.isFinite(code) ? code : undefined,
+            httpStatus: statusCode,
+          }))
           return
         }
 
@@ -215,7 +221,10 @@ export async function request<T>(options: RequestOptions): Promise<T> {
           error: truncate(message),
           elapsedMs,
         })
-        reject(new Error(message || DEFAULT_ERROR_MESSAGE))
+        reject(attachErrorMeta(new Error(message || DEFAULT_ERROR_MESSAGE), {
+          code: Number.isFinite(code) ? code : undefined,
+          httpStatus: statusCode,
+        }))
       },
       fail: (err) => {
         const errMsg = (err && typeof err === 'object' && 'errMsg' in err && typeof (err as { errMsg?: unknown }).errMsg === 'string')

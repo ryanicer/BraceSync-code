@@ -228,7 +228,7 @@ import {
   type ChartData,
 } from 'chart.js'
 import type { Patient } from '@bracesync/shared-types'
-import { alertTypeLabel, isHiddenAlertType } from '@bracesync/shared-utils'
+import { alertTypeLabel, isHiddenAlertType, userErrorCopy } from '@bracesync/shared-utils'
 import { fetchPatients, fetchPatientRealtime } from '../../api'
 import type { RealtimeSnapshot, PressureHeatmapPoint } from '../../mock/patients'
 import {
@@ -550,7 +550,7 @@ async function loadPatients() {
     const firstWithDevice = patients.value.find((p) => p.deviceId)
     selectedPatientId.value = firstWithDevice?.patientId ?? patients.value[0]?.patientId ?? ''
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载患者列表失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载患者列表失败' }))
   }
 }
 
@@ -604,7 +604,7 @@ async function refreshTick() {
     if (isNewFrame && frame.value.state === 'fresh') pushHistory(curV, frame.value.collectedAt)
   } catch (e: unknown) {
     if (currentPatientId.value === pid) {
-      ElMessage.error(e instanceof Error ? e.message : '实时数据刷新失败')
+      ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '实时数据刷新失败' }))
     }
   }
 }

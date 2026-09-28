@@ -134,7 +134,7 @@ import { ElMessage } from 'element-plus'
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend } from 'chart.js'
 import { Bar, Doughnut } from 'vue-chartjs'
 import type { Patient } from '@bracesync/shared-types'
-import { alertTypeLabel } from '@bracesync/shared-utils'
+import { alertTypeLabel, userErrorCopy } from '@bracesync/shared-utils'
 import { doctorNameOf, fetchAbnormalReport, exportAbnormalReportApi, fetchPatients, teamNameOf } from '../../api'
 import type { AbnormalReport } from '../../mock/alerts'
 import { kpiFromReport, lastNDays, monthToDate, rangeDays, stampText, summaryLines, visibleByType, type ReportKpi, type ReportRange } from '../../utils/abnormal-report'
@@ -173,7 +173,7 @@ async function searchPatients(keyword = '') {
     const res = await fetchPatients({ keyword: keyword || undefined, page: 1, pageSize: 20 })
     patients.value = res.list
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '患者列表加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '患者列表加载失败' }))
   } finally {
     patientLoading.value = false
   }
@@ -277,7 +277,7 @@ async function loadReport() {
     generatedAt.value = stampText()
   } catch (e: unknown) {
     report.value = null
-    ElMessage.error(e instanceof Error ? e.message : '汇总加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '汇总加载失败' }))
   } finally {
     loading.value = false
   }
@@ -290,7 +290,7 @@ async function handleExport() {
   try {
     await exportAbnormalReportApi({ patientId: patientId.value, ...q })
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '导出失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '导出失败' }))
   } finally {
     exporting.value = false
   }

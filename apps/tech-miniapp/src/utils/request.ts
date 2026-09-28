@@ -1,6 +1,7 @@
 import { getToken, removeToken } from './token'
 import { AUTH_EXPIRED_MESSAGE, forceRelogin, isAuthFailure } from './authError'
 import { logger } from './logger'
+import { markUserCopy } from '@bracesync/shared-utils'
 
 // 环境变量通过 vite.config.ts 的 define 静态注入（绕开 uni 插件对 import.meta.env 的破坏）
 declare const __API_BASE_URL__: string
@@ -70,7 +71,9 @@ export async function request<T>(options: RequestOptions): Promise<T> {
             toast: (msg) => uni.showToast({ title: msg, icon: 'none' }),
             reLaunch: (url) => uni.reLaunch({ url }),
           })
-          reject(new Error(AUTH_EXPIRED_MESSAGE))
+          // T465：这句是代码自撰中文（会话失效专用措辞），打 userCopy 标记让展示层原样用它——
+          // 10401 在技师端登录页是「手机号或密码错误」，若不标记会被码表覆盖成另一句。
+          reject(markUserCopy(new Error(AUTH_EXPIRED_MESSAGE), AUTH_EXPIRED_MESSAGE))
           return
         }
         // T208: 响应日志
