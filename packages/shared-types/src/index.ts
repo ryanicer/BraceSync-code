@@ -204,7 +204,13 @@ export interface InstallRecord {
   baselineId: string | null;     // 引用 Baseline（单一数据源）
   notes: string;
   signatureUrl: string;
-  wifiStatus: 'connected' | 'unconfigured';  // 对齐 DB install_records.wifi_status
+  /**
+   * 对齐 DB install_records.wifi_status（迁移 000031 起为四值，Boss 2026-09-28 裁定②甲）。
+   * 值集与后端 model.WifiStatus* / ValidWifiStatus 同一集合，由
+   * services/device-service/internal/model/wifi_status_t447_test.go 比对字面值钉住。
+   * 本类型只是「库里能存什么」；页面上显示哪个词由展示层决定，不归本类型（技师端 installStatus.ts）。
+   */
+  wifiStatus: 'connected' | 'unconfigured' | 'failed' | 'skipped';
 }
 
 /**

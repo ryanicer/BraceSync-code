@@ -384,9 +384,15 @@ func (s *DeviceService) DeviceBaseline(ctx context.Context, deviceID string) (*m
 	return bl, nil
 }
 
-// UpdateInstallMeta 回填安装记录的 notes / signature_url（saveBaseline 携带元数据时使用）
-func (s *DeviceService) UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string) *model.AppError {
-	if err := s.store.UpdateInstallMeta(ctx, installID, notes, signatureURL); err != nil {
+// UpdateInstallMeta 回填安装记录的 notes / signature_url / wifi_status（saveBaseline 携带元数据时使用）。
+// wifiStatus 为 nil = 不改该列；非 nil 时先校验四值再落库（T447）：未知取值必须回 400，
+// 不能让它穿到 SQL 由 install_records_wifi_status_check 报 23514 —— 那条错经 mapRepoErr 会变成 500，
+// 把一个「请求写错了」的客户端问题伪装成服务端故障。校验与库约束同一集合（model.ValidWifiStatus）。
+func (s *DeviceService) UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string, wifiStatus *string) *model.AppError {
+	if wifiStatus != nil && !model.ValidWifiStatus(*wifiStatus) {
+		return model.ErrInvalidParam("wifiStatus must be one of connected/unconfigured/failed/skipped, got %q", *wifiStatus)
+	}
+	if err := s.store.UpdateInstallMeta(ctx, installID, notes, signatureURL, wifiStatus); err != nil {
 		return mapRepoErr(err, model.ErrNotFound("install record %d not found", installID))
 	}
 	return nil

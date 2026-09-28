@@ -183,9 +183,9 @@ func (s *t387Store) CreateInstall(ctx context.Context, rec *model.InstallRecord)
 	return s.FakeStore.CreateInstall(ctx, rec)
 }
 
-func (s *t387Store) UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string) error {
+func (s *t387Store) UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL, wifiStatus *string) error {
 	s.writes["UpdateInstallMeta"]++
-	return s.FakeStore.UpdateInstallMeta(ctx, installID, notes, signatureURL)
+	return s.FakeStore.UpdateInstallMeta(ctx, installID, notes, signatureURL, wifiStatus)
 }
 
 func (s *t387Store) SaveBaseline(ctx context.Context, installID int64, offsets []float32, calibratorID string) (int64, error) {

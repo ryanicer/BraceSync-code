@@ -38,15 +38,21 @@ export async function createInstall(
   })
 }
 
+/**
+ * PUT 的实际请求体类型（T447）：wifiStatus 已随库侧 CHECK 扩到四值。
+ * 后端 installMetaRequest 的语义是「空字符串 = 该列不改」，所以这里别传 ''；
+ * 键整体省略同样是不改。
+ */
 interface UpdateInstallMetaParams {
-  wifiStatus?: 'connected' | 'unconfigured'
+  wifiStatus?: 'connected' | 'unconfigured' | 'failed' | 'skipped'
   baselineId?: string | null
   notes?: string
   calibrateTime?: string
 }
 
 /**
- * 完成安装时补字段（PATCH /install-records/:id，后端 T084 未实现）
+ * 完成安装时补字段（PUT /api/v1/install-records/:id，后端 T122 已实现；
+ * 旧注记里的 PATCH／「T084 未实现」是沿革措辞，实际方法与路径以上面 request 为准）
  */
 export async function updateInstallMeta(
   installId: string,
@@ -67,7 +73,9 @@ export async function updateInstallMeta(
 interface ListInstallParams {
   page?: number
   pageSize?: number
-  wifiStatus?: 'connected' | 'unconfigured'
+  // 四值同 UpdateInstallMetaParams（T447 扩值）。服务端不按该键过滤，
+  // 真正生效的是记录页的本地过滤；这里放开类型是为了让筛选 chips 能列出四档。
+  wifiStatus?: 'connected' | 'unconfigured' | 'failed' | 'skipped'
 }
 
 /** mock 集大小：刻意 > 后端缺省单页 20，让「翻页取满」那条腿在本地 e2e 里真被执行（T433） */
