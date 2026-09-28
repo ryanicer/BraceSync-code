@@ -113,7 +113,11 @@ import {
 } from '../../utils/ble'
 import { pickReconnectTarget, RECONNECT_SCAN_MS } from '../../utils/ble-link'
 import { bleLog } from '../../utils/ble-log'
-import { confirmSkipNetwork } from '../../utils/installStatus'
+import {
+  confirmSkipNetwork,
+  provisionFailureWifiStatus,
+  WIFI_FAILED_NOTE,
+} from '../../utils/installStatus'
 
 const installStore = useInstallStore()
 
@@ -187,7 +191,7 @@ const errorMessage = computed(() => {
     [-1]: '密码错误，请检查 WiFi 密码',
     [-2]: '未找到 WiFi 网络，请检查 SSID',
     [-3]: '网络连接失败（DHCP），请检查路由器',
-    [-4]: '云端暂不可达，设备将在后台持续重试（约每 5 分钟一次），请保持设备通电与 WiFi 环境',
+    [-4]: WIFI_FAILED_NOTE,
   }
   return map[errorCode.value!] || '配网失败，请重试'
 })
@@ -474,6 +478,11 @@ function handleError(code: number) {
   stopMockWifiStatusSequence()
   provisioning.value = false
   errorCode.value = code
+  // T459·C2（PM 2026-09-28 15:1x 裁定）：只有 -4（云端不可达）落库 failed。
+  // -1 密码错／-2 未找到网络／-3 DHCP 失败都是 WiFi 本身没连上，语义不是「连上了但打不到云端」，
+  // 维持列默认 unconfigured，失败原因由 errorMessage 那四条稿面文案承载，不落库。
+  const nextStatus = provisionFailureWifiStatus(code)
+  if (nextStatus) installStore.setWifiStatus(nextStatus)
 }
 
 function handleTimeout() {
@@ -490,10 +499,12 @@ function retryWifi() {
 }
 
 async function skipNetworkSetup() {
-  // TI-12／TC-2：跳过要先二次确认（文案逐字取 PRD 第 862 行），
-  // 且只打本地「已跳过」标记——绝不把 wifiStatus 写成 connected，
-  // 否则完成页同屏出「已联网」＋「已跳过」两行互斥，且 updateInstallMeta 会把跳过当已联网上送云端。
+  // TI-12／TC-2：跳过要先二次确认（文案逐字取 PRD §7C.4）。
+  // T459 写侧补齐后，跳过除了本地标记还要把 wifiStatus 扳成 skipped —— 完成安装时 PUT 送的就是它，
+  // 库里才存得下第四档。刻意不写成 connected：那会让完成页同屏出「已连接」＋「已跳过」两行互斥，
+  // 也把跳过当已联网上送云端。
   if (!(await confirmSkipNetwork())) return
+  installStore.setWifiStatus('skipped')
   installStore.setNetworkSkipped(true)
   uni.navigateBack()
 }

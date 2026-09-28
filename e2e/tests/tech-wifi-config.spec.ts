@@ -55,3 +55,20 @@ test('配网全流程到成功', async ({ page }) => {
   // T240 回归：成功态下 5 个步骤全部显示 ✓（不应被 clear 的 notify 0 打回数字）
   await expect(page.locator('.step-check')).toHaveCount(5)
 })
+
+/**
+ * T459·C2（PM 2026-09-28 裁定）：四条失败文案里只有 -4 给「跳过配网」入口，
+ * 也只有 -4 会落库 failed（写侧判据在 apps/tech-miniapp/test/install-status.spec.ts）。
+ * 这条钉的是"别把 -1 也当成云端不可达"——文案与入口都不同形。
+ */
+test('-1 密码错：出 PRD §7C.6 那条文案，且不给跳过入口（T459·C2）', async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.evaluate(() => {
+    ;(window as unknown as { __mockWifiSeq: number[] }).__mockWifiSeq = [0, -1]
+  })
+  await fillTechInput(page.locator('.manual-wifi .form-input').first(), 'My_Custom_WiFi')
+  await fillTechInput(page.locator('.password-input').first(), 'test1234')
+  await page.locator('.btn-primary', { hasText: '开始配网' }).click()
+  await expect(page.locator('.error-title')).toHaveText('密码错误，请检查 WiFi 密码', { timeout: 20_000 })
+  await expect(page.locator('.skip-hint')).toHaveCount(0)
+})

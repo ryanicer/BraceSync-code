@@ -4,6 +4,7 @@ import {
   MOCK_DEVICE_ID, SEED_PATIENT_ID,
   forceTechLoginMock, mockTechBLE,
 } from '../tech-helpers'
+import { WIFI_FAILED_NOTE } from '../../apps/tech-miniapp/src/utils/installStatus'
 
 /**
  * tech-install 页：安装流程 3 阶段（患者确认 → 空载校准 → WiFi 配网）
@@ -136,5 +137,38 @@ test.describe('安装流程 3 阶段', () => {
     // 完成页两行不打架：WiFi 显示跳过，可达性不会是「已验证」
     await expect(page.locator('.status-badge', { hasText: '已跳过配网' })).toBeVisible()
     await expect(page.locator('.status-badge', { hasText: '已验证' })).toHaveCount(0)
+  })
+
+  /**
+   * T459·C2（PM 2026-09-28 裁定：只有 -4 落库 failed）：失败态回到本页要出红档「连接失败」，
+   * 并和跳过态一样留着「完成安装」出口——云端不通不能让装机走死。
+   * 词形与提示句都从实现侧常量取，e2e 不再抄一遍稿面文案（文案改了这条不会假绿）。
+   */
+  test('阶段三：-4 失败态回本页出红档，且留着完成安装出口（T459·C2）', async ({ page }) => {
+    test.setTimeout(90_000)
+    await goToPhase2(page)
+    await calibrateAndGoToPhase3(page)
+    await page.locator('.btn-primary', { hasText: '配置 WiFi' }).click()
+    await expect(page.locator('.page-title', { hasText: 'WiFi 配置' })).toBeVisible({ timeout: 10_000 })
+    // 同文档内换页（H5 hash 路由不重跑 initScript）⇒ 注入开关用 evaluate 现置
+    await page.evaluate(() => {
+      ;(window as unknown as { __mockWifiSeq: number[] }).__mockWifiSeq = [0, -4]
+    })
+    await fillTechInput(page.locator('.manual-wifi .form-input').first(), 'My_Custom_WiFi')
+    await fillTechInput(page.locator('.password-input').first(), 'test1234')
+    await page.locator('.btn-primary', { hasText: '开始配网' }).click()
+    await expect(page.locator('.error-title')).toHaveText(WIFI_FAILED_NOTE, { timeout: 20_000 })
+    // 四条失败文案里只有 -4 给跳过入口（PRD §7C.6）
+    await expect(page.locator('.skip-hint .btn-outline-sm', { hasText: '跳过配网' })).toBeVisible()
+
+    await page.locator('.back-link').click()
+    await expect(page.locator('.status-badge', { hasText: '连接失败' })).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.status-badge.badge-danger')).toHaveCount(1)
+    await expect(page.locator('.skip-note')).toHaveText(WIFI_FAILED_NOTE)
+    await page.locator('.btn-primary', { hasText: '完成安装' }).click()
+    await page.waitForURL('**/pages/complete/**', { timeout: 15_000 })
+    // 完成页同源：仍显示连接失败＋红档，不冒充「已连接」也不退回「未配置」
+    await expect(page.locator('.status-badge', { hasText: '连接失败' })).toBeVisible()
+    await expect(page.locator('.status-badge.status-fail')).toHaveCount(1)
   })
 })

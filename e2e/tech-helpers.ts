@@ -205,7 +205,10 @@ export async function writeWifiConfigV2(deviceId, encryptedHex) { return true }
 export function onWifiStatus(cb) { wifiStatusCallback = cb }
 
 export function startMockWifiStatusSequence() {
-  const seq = [0, 1, 2, 3, 9]
+  // 默认仍是成功链路 0→1→2→3→9；用例需要失败态时用 window.__mockWifiSeq 覆盖
+  // （T459：-4 才落库 failed，-1/-2/-3 不落，见 apps/tech-miniapp/test/install-status.spec.ts 的 C2 判据）
+  const override = typeof globalThis !== 'undefined' && globalThis.__mockWifiSeq
+  const seq = (override && override.length) ? override : [0, 1, 2, 3, 9]
   let idx = 0
   if (wifiStatusTimer) clearInterval(wifiStatusTimer)
   wifiStatusTimer = setInterval(() => {

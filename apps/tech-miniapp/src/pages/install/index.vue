@@ -153,23 +153,26 @@
           <view class="data-source-chip ds-ble"><text class="chip-dot"></text><text>BLE</text></view>
         </view>
 
-        <!-- 配网前（TI-12：跳过入口按 PRD 第 862 行落在本页，且要二次确认） -->
+        <!-- 配网前（TI-12：跳过入口按 PRD §7C.4 落在本页，且要二次确认） -->
         <template v-if="wifiStage === 'before'">
           <view class="status-block">
             <text class="status-label">配网状态</text>
-            <view class="status-badge badge-warning"><text>未配置</text></view>
+            <view class="status-badge badge-warning"><text>{{ wifiStageLabel }}</text></view>
           </view>
           <view class="btn-primary" @click="goWifiConfig"><text>配置 WiFi</text></view>
           <view class="btn-outline" @click="onSkipNetwork"><text>跳过配网</text></view>
         </template>
 
-        <!-- 已跳过配网（TC-2：wifiStatus 仍是未配置，本页不得冒充「已连接」） -->
-        <template v-else-if="wifiStage === 'skipped'">
+        <!-- 跳过／失败两态（TC-2＋T459）：词形取 T447 唯一词形表，两态都留「完成安装」出口 -->
+        <template v-else-if="wifiStage === 'skipped' || wifiStage === 'failed'">
           <view class="status-block">
             <text class="status-label">配网状态</text>
-            <view class="status-badge badge-warning"><text>{{ WIFI_SKIPPED_LABEL }}</text></view>
+            <view
+              class="status-badge"
+              :class="wifiStage === 'failed' ? 'badge-danger' : 'badge-warning'"
+            ><text>{{ wifiStageLabel }}</text></view>
           </view>
-          <text class="skip-note">跳过配网后设备将无法自动上传数据。可点「重新配网」补配。</text>
+          <text class="skip-note">{{ wifiStageNote }}</text>
           <view class="form-group">
             <text class="form-label">安装备注（可选）</text>
             <textarea
@@ -222,7 +225,7 @@ import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
 import { saveBaseline } from '../../api/baseline'
 import { bleLog } from '../../utils/ble-log'
-import { confirmSkipNetwork, WIFI_SKIPPED_LABEL } from '../../utils/installStatus'
+import { confirmSkipNetwork, wifiStatusLabel, WIFI_FAILED_NOTE } from '../../utils/installStatus'
 import { updateInstallMeta } from '../../api/install'
 import {
   startRealtimePressure,
@@ -431,22 +434,34 @@ function goPhase3() {
 const installNote = ref('')
 
 /**
- * 三态互斥（TC-2）：connected＝配网真的成功；skipped＝装机时点了跳过（wifiStatus 仍 unconfigured）；
- * 其余为还没配网。跳过态必须给出「完成安装」出口，否则跳过等于流程走死。
+ * 四态互斥（TC-2＋T459）：connected＝配网真的成功；failed＝-4 云端不可达（C2 裁定后唯一落库的失败档）；
+ * skipped＝装机时点了跳过；其余为还没配网。跳过态与失败态都必须给出「完成安装」出口，否则流程走死。
+ * 判据取 store 的 wifiStatus 本身（写侧两个跳过入口现在会同时扳 skipped），不再看本地跳过标记。
  */
-const wifiStage = computed<'before' | 'skipped' | 'done'>(() => {
+const wifiStage = computed<'before' | 'skipped' | 'failed' | 'done'>(() => {
   if (installStore.wifiStatus === 'connected') return 'done'
-  if (installStore.networkSkipped) return 'skipped'
+  if (installStore.wifiStatus === 'failed') return 'failed'
+  if (installStore.wifiStatus === 'skipped') return 'skipped'
   return 'before'
 })
+
+/** 词形一律取展示层词表，页内不写字面量（门禁见 test/install-status.spec.ts 的「单一真源」那条） */
+const wifiStageLabel = computed(() => wifiStatusLabel(installStore.wifiStatus))
+
+/** 提示句：failed 档取 PRD §7C.6 的 -4 原句（常量单一真源，与配网页同一句），skipped 档取稿面 install.html 补画的常驻提示行 */
+const wifiStageNote = computed(() =>
+  installStore.wifiStatus === 'failed'
+    ? WIFI_FAILED_NOTE
+    : '跳过配网后设备将无法自动上传数据。可点「重新配网」补配。')
 
 function goWifiConfig() {
   uni.navigateTo({ url: '/pages/wifi-config/index' })
 }
 
-/** TI-12：install 页的跳过入口，与 wifi-config -4 分支走同一套确认文案（PRD 第 862 行） */
+/** TI-12：install 页的跳过入口，与 wifi-config -4 分支走同一套确认文案（PRD §7C.4） */
 async function onSkipNetwork() {
   if (!(await confirmSkipNetwork())) return
+  installStore.setWifiStatus('skipped')
   installStore.setNetworkSkipped(true)
 }
 
@@ -595,6 +610,7 @@ onUnmounted(() => {
 .status-label { font-size: 28rpx; color: #64748b; }
 .status-badge { display: inline-flex; align-items: center; gap: 4rpx; padding: 6rpx 18rpx; border-radius: 18rpx; font-size: 22rpx; font-weight: 500; }
 .badge-warning { background: #fef3c7; color: #b45309; }
+.badge-danger { background: #fee2e2; color: #b91c1c; }
 .skip-note { display: block; font-size: 24rpx; color: #b45309; line-height: 1.5; margin-bottom: 20rpx; }
 .badge-success { background: #dcfce7; color: #15803d; }
 
