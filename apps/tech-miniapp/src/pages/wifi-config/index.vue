@@ -96,6 +96,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
+import { logErrorText, userErrorCopy } from '@bracesync/shared-utils'
 import { useInstallStore } from '../../stores/install'
 import { getProvisionKey } from '../../api/provision'
 import { setDeviceWifi, reportWifiCleared } from '../../api/device'
@@ -317,7 +318,7 @@ async function startWifiConfig() {
     // T218 A-5: 写入完成后起表——60s 无任何推送才超时（收到帧即续期，见 statusListener）
     armProvisionTimeout()
   } catch (e) {
-    uni.showToast({ title: e instanceof Error ? e.message : '配网失败', icon: 'none' })
+    uni.showToast({ title: userErrorCopy(e, { scope: 'tech', fallback: '配网失败' }), icon: 'none' })
     provisioning.value = false
   }
 }
@@ -341,7 +342,7 @@ async function tryLink(mac: string): Promise<boolean> {
     bleLog.info(`原地重连结果 deviceId=${mac} ok=${ok}`)
     return ok
   } catch (e) {
-    bleLog.warn(`原地重连异常 deviceId=${mac}`, e instanceof Error ? e.message : String(e))
+    bleLog.warn(`原地重连异常 deviceId=${mac}`, logErrorText(e))
     return false
   }
 }
@@ -390,7 +391,7 @@ async function doWifiClear(): Promise<boolean> {
       await sendWifiClear(bleMac)
       return await waitForWifiClear(10000)
     } catch (e) {
-      bleLog.error('sendWifiClear 异常', e instanceof Error ? e.message : String(e))
+      bleLog.error('sendWifiClear 异常', logErrorText(e))
       return false
     }
   }
@@ -409,7 +410,7 @@ async function doWifiClear(): Promise<boolean> {
 function reportWifiClearAudit() {
   const deviceId = installStore.deviceId
   reportWifiCleared(deviceId).catch((e: unknown) => {
-    bleLog.warn(`T448 清除留痕上报失败 deviceId=${deviceId}: ${e instanceof Error ? e.message : String(e)}`)
+    bleLog.warn(`T448 清除留痕上报失败 deviceId=${deviceId}: ${logErrorText(e)}`)
   })
 }
 

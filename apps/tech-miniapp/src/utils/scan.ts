@@ -9,6 +9,7 @@
  * 该链路必须落到 `failed`，**不允许**回落到"已填入"的假成功 —— 这正是本卡要删掉的
  * mock 硬编码行为的形状。
  */
+import { logErrorText } from '@bracesync/shared-utils'
 
 export interface ScanResponseLike {
   result?: string
@@ -28,7 +29,7 @@ function errMsgOf(err: unknown): string {
     const raw = (err as { errMsg?: unknown }).errMsg
     if (typeof raw === 'string' && raw) return raw
   }
-  if (err instanceof Error) return err.message
+  if (err instanceof Error) return logErrorText(err)
   return typeof err === 'string' ? err : ''
 }
 

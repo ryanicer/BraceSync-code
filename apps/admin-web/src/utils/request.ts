@@ -1,4 +1,5 @@
 import type { ApiResponse } from '@bracesync/shared-types'
+import { attachErrorMeta, markUserCopy } from '@bracesync/shared-utils'
 import { getToken } from './token'
 import { AUTH_EXPIRED_MESSAGE, handleAuthExpired, isAuthExpired } from './sessionExpiry'
 
@@ -7,10 +8,12 @@ import { AUTH_EXPIRED_MESSAGE, handleAuthExpired, isAuthExpired } from './sessio
  * 让调用方把「登录已过期」提示给用户，而不是把网关英文原样渲染（同 T326 技师端口径）。
  * T384：导出 CSV 那类自带 Authorization 的裸 fetch 通道也必须从这里出去，
  * 否则「唯一出口」名不副实（那条通道原先只 throw，死令牌既不清也不跳登录）。
+ * T465：这句是代码自撰中文，打 userCopy 标记——网关对 401 回的是英文 message，
+ * 收口点若按码查表会把「登录已过期」覆盖成通用句，标记位优先级最高。
  */
 export function expiredSession(): never {
   handleAuthExpired()
-  throw new Error(AUTH_EXPIRED_MESSAGE)
+  throw markUserCopy(new Error(AUTH_EXPIRED_MESSAGE), AUTH_EXPIRED_MESSAGE)
 }
 
 // MOCK 开关：构建时通过 VITE_USE_MOCK 环境变量控制（默认 true=mock，部署构建注入 false 走真实 API）
@@ -58,12 +61,16 @@ export async function request<T>(options: RequestOptions): Promise<T> {
     body: !isGet && options.data ? JSON.stringify(options.data) : undefined,
   })
   if (!res.ok) {
-    // 后端校验失败以 HTTP 4xx + 信封返回，文案（如「collectIntervalSeconds must be...」）要透出给用户
+    // 后端校验失败以 HTTP 4xx + 信封返回。T465：英文原文（如「collectIntervalSeconds must be...」）
+    // 不再直接给用户看——只把它留在 message 上供日志面读，展示层按码查中文（见 shared-utils/errorCopy）。
     const errBody = (await res.json().catch(() => null)) as ApiResponse<unknown> | null
     // T357：401 必须先于「透出后端文案」处置掉——旧写法在这里无条件 throw，
     // 把下面那段清凭据回登录页变成了死代码。
     if (isAuthExpired(res.status, errBody?.code)) expiredSession()
-    throw new Error(errBody?.message || `HTTP ${res.status}`)
+    throw attachErrorMeta(new Error(errBody?.message || `HTTP ${res.status}`), {
+      code: errBody?.code,
+      httpStatus: res.status,
+    })
   }
   const body = (await res.json()) as ApiResponse<T>
   if (body.code === 0) {
@@ -71,5 +78,8 @@ export async function request<T>(options: RequestOptions): Promise<T> {
   }
   // 200 + 业务鉴权码（服务层可能这样回）走同一个出口；401 的判定在上面 !res.ok 分支已完成
   if (isAuthExpired(res.status, body.code)) expiredSession()
-  throw new Error(body.message || 'Request failed')
+  throw attachErrorMeta(new Error(body.message || 'Request failed'), {
+    code: body.code,
+    httpStatus: res.status,
+  })
 }

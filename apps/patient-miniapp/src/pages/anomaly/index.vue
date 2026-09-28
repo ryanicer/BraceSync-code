@@ -87,6 +87,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
@@ -260,7 +261,7 @@ async function loadPressure() {
     })
     pressureByDate.value = alertsToPressureMap(res?.list ?? [])
   } catch (e: unknown) {
-    pressureError.value = e instanceof Error ? e.message : '加载失败'
+    pressureError.value = userErrorCopy(e, { scope: 'patient', fallback: '加载失败' })
     pressureByDate.value = new Map()
   }
 }

@@ -111,6 +111,7 @@ import {
   BarElement, ArcElement, Tooltip, Legend, Filler,
 } from 'chart.js'
 import type { DashboardKPI, TeamRanking, DoctorRanking } from '@bracesync/shared-types'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import {
   fetchDashboardKPI, fetchWearTrend, fetchAlertTrend, fetchTeamRanking,
   fetchDoctorRanking, fetchWearDistribution,
@@ -221,7 +222,7 @@ function applySettled<T>(res: PromiseSettledResult<T>, set: (value: T) => void, 
     set(res.value)
     return
   }
-  errors.push(res.reason instanceof Error ? res.reason.message : String(res.reason))
+  errors.push(userErrorCopy(res.reason, { scope: 'admin', fallback: '部分数据加载失败' }))
 }
 
 async function loadData() {

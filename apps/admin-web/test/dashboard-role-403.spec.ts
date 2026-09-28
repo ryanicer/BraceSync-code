@@ -108,7 +108,9 @@ describe('Dashboard 数据概览 · 局部请求失败（T348）', () => {
     expect(wrapper.findAll('.kpi-card')).toHaveLength(6)
     expect(wrapper.findAll('canvas')).toHaveLength(3) // 仅佩戴时长分布一张缺数据
     expect(errorSpy).toHaveBeenCalledTimes(1)
-    expect(errorSpy).toHaveBeenCalledWith('query wear distribution failed')
+    // T465 判据翻面：这一格原先断言「把后端英文原文透给用户」（toHaveBeenCalledWith('query wear
+    // distribution failed')）。现在展示层按码出中文、英文原文只进日志，进程内错误无码位 ⇒ NET。
+    expect(errorSpy).toHaveBeenCalledWith('部分数据加载失败（错误码 NET）')
     errorSpy.mockRestore()
   })
 

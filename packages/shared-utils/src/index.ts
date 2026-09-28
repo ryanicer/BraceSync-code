@@ -2,6 +2,8 @@
  * BraceSync shared utility functions.
  */
 
+export * from './errorCopy'
+
 /** Format pressure value with unit (default: N) */
 export function formatPressure(value: number, decimals = 1): string {
   return `${value.toFixed(decimals)} N`

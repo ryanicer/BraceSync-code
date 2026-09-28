@@ -66,6 +66,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { useDeviceStore } from '../../stores/device'
 import { useAuthStore } from '../../stores/auth'
 import { request } from '../../utils/request'
@@ -125,7 +126,7 @@ async function refreshDevice() {
       }
     }
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : '加载设备信息失败'
+    const msg = userErrorCopy(e, { scope: 'patient', fallback: '加载设备信息失败' })
     uni.showToast({ title: msg, icon: 'none' })
   } finally {
     loading.value = false
@@ -149,7 +150,7 @@ async function doUnbind() {
     device.value = null
     uni.showToast({ title: '设备已解绑', icon: 'success' })
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : '解绑失败，请重试'
+    const msg = userErrorCopy(e, { scope: 'patient', fallback: '解绑失败，请重试' })
     uni.showToast({ title: msg, icon: 'none' })
   }
 }

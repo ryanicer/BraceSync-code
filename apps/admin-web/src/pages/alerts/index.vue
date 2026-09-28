@@ -235,7 +235,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Alert } from '@bracesync/shared-types'
-import { formatAlertValue, alertTypeLabel, isHiddenAlertType } from '@bracesync/shared-utils'
+import { alertTypeLabel, formatAlertValue, isHiddenAlertType, userErrorCopy } from '@bracesync/shared-utils'
 import {
   fetchAlerts, processAlertApi, startProcessingAlertApi, patientNameOf,
   fetchAlertRules, saveAlertPointRulesApi, resetAlertPointRulesApi, saveAlertGlobalRulesApi,
@@ -299,7 +299,7 @@ async function loadData() {
     list.value = res.list.filter((row) => !isHiddenAlertType(row.type))
     total.value = res.total
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }
@@ -324,7 +324,7 @@ async function startProcessing(alert: Alert) {
     ElMessage.success('已开始处理')
     loadData()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '开始处理失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '开始处理失败' }))
   } finally {
     startingId.value = ''
   }
@@ -349,7 +349,7 @@ async function confirmProcess() {
     processVisible.value = false
     loadData()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '处理失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '处理失败' }))
   } finally {
     processing.value = false
   }
@@ -386,7 +386,7 @@ async function loadRules() {
     const res = await fetchAlertRules()
     applyRules(res)
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载告警规则失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载告警规则失败' }))
   } finally {
     rulesLoading.value = false
   }
@@ -483,7 +483,7 @@ async function saveRules() {
     applyRules(res)
     ElMessage.success('保存成功')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     savingRules.value = false
   }
@@ -496,7 +496,7 @@ async function resetRules() {
     applyRules(res)
     ElMessage.success('已恢复默认')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '恢复默认失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '恢复默认失败' }))
   } finally {
     savingRules.value = false
   }
@@ -509,7 +509,7 @@ async function saveGlobalRules() {
     applyRules(res)
     ElMessage.success('全局规则保存成功')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     savingGlobal.value = false
   }

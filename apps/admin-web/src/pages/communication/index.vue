@@ -90,6 +90,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage } from 'element-plus'
 import type { Feedback } from '@bracesync/shared-types'
 import { fetchFeedbacks, processFeedbackApi, patientNameOf } from '../../api'
@@ -130,7 +131,7 @@ async function loadData() {
       current.value = list.value[0]
     }
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }
@@ -157,7 +158,7 @@ async function saveNote() {
     current.value.handler = auth.user?.name ?? null
     ElMessage.success('处理备注已保存')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     replying.value = false
   }
@@ -170,7 +171,7 @@ async function markResolved(row: Feedback) {
     row.handler = row.handler || auth.user?.name || null
     ElMessage.success('已标记为已处理')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
   }
 }
 

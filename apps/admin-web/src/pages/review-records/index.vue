@@ -84,6 +84,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import {
@@ -167,7 +168,7 @@ async function uploadReport(file: File) {
     uploadedFileId.value = result.fileId
     ElMessage.success('文件上传成功')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '文件上传失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '文件上传失败' }))
     selectedFile.value = null
     uploadedFileId.value = ''
   } finally {
@@ -195,7 +196,7 @@ async function submitReview() {
     uploadedFileId.value = ''
     await loadRecords()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '提交失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '提交失败' }))
   } finally {
     submitting.value = false
   }
@@ -216,7 +217,7 @@ async function loadRecords() {
   try {
     records.value = await fetchReviewRecords(patientId.value)
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载复查记录失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载复查记录失败' }))
   } finally {
     loading.value = false
   }
@@ -228,7 +229,7 @@ async function loadPatients() {
     const res = await fetchPatients({ page: 1, pageSize: 100 })
     patients.value = res.list
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载患者列表失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载患者列表失败' }))
   }
 }
 

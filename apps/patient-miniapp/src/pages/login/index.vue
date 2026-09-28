@@ -39,6 +39,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { useAuthStore } from '../../stores/auth'
 import { wxLogin, type WxLoginData, type WxLoginNeedBindData } from '../../api/patient'
 import { resolveWxLoginResult } from '../../utils/auth-state'
@@ -126,7 +127,7 @@ async function wechatLoginInner() {
         break
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : '登录失败，请重试'
+    const msg = userErrorCopy(e, { scope: 'patient', fallback: '登录失败，请重试' })
     uni.showToast({ title: msg, icon: 'none' })
   } finally {
     pending = null

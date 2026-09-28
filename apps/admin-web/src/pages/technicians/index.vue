@@ -101,6 +101,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage } from 'element-plus'
 import type { PhoneState, Technician, Team } from '@bracesync/shared-types'
 import { PHONE_PLACEHOLDER, PHONE_RE, phoneDisplay } from '../../utils/phoneField'
@@ -145,7 +146,7 @@ async function loadData() {
     list.value = rows
     total.value = res.total
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }
@@ -166,7 +167,7 @@ async function toggle(row: Technician) {
     row.status = action === 'enable' ? 'enabled' : 'disabled'
     ElMessage.success(action === 'enable' ? '已启用' : '已禁用')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
   }
 }
 
@@ -214,7 +215,7 @@ async function submitForm() {
     formVisible.value = false
     loadData()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
   } finally {
     submitting.value = false
   }

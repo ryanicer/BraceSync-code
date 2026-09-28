@@ -150,6 +150,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { onShow } from '@dcloudio/uni-app'
 import { getPatientProfile, updatePatientProfile, type PatientProfile, type PatientProfileUpdate } from '../../api/profile'
 import { useAuthStore } from '../../stores/auth'
@@ -254,7 +255,7 @@ async function saveProfile() {
     await loadProfile()
     logger.info('[T226] profile saved', { patientId })
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : '保存失败，请稍后重试'
+    const msg = userErrorCopy(e, { scope: 'patient', fallback: '保存失败，请稍后重试' })
     uni.showToast({ title: msg, icon: 'none' })
     logger.warn('[T226] profile save failed', { error: msg })
   } finally {
@@ -289,7 +290,7 @@ async function loadProfile() {
       hasDevice: !!profile.value.deviceId,
     })
   } catch (e: unknown) {
-    errorMsg.value = e instanceof Error ? e.message : '加载个人信息失败'
+    errorMsg.value = userErrorCopy(e, { scope: 'patient', fallback: '加载个人信息失败' })
     logger.warn('[T187] profile load failed', { error: errorMsg.value })
   } finally {
     loading.value = false

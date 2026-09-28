@@ -64,6 +64,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import type { InstallRecord } from '@bracesync/shared-types'
 import { listInstallRecords } from '../../api/install'
 import { fetchAllPages } from '../../utils/paging'
@@ -106,7 +107,7 @@ async function loadRecords() {
     total.value = agg.total
     truncated.value = agg.truncated
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载失败'
+    error.value = userErrorCopy(e, { scope: 'tech', fallback: '加载失败' })
   } finally {
     loading.value = false
   }

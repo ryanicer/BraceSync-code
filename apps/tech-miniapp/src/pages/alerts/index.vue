@@ -80,7 +80,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import type { Alert } from '@bracesync/shared-types'
-import { alertTypeLabel } from '@bracesync/shared-utils'
+import { alertTypeLabel, userErrorCopy } from '@bracesync/shared-utils'
 import { request } from '../../utils/request'
 import { listAlerts } from '../../api/alert'
 import { fetchAllPages } from '../../utils/paging'
@@ -152,7 +152,7 @@ async function loadAlerts() {
     total.value = agg.total
     truncated.value = agg.truncated
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '加载失败'
+    error.value = userErrorCopy(e, { scope: 'tech', fallback: '加载失败' })
   } finally {
     loading.value = false
   }
@@ -184,7 +184,7 @@ async function handleProcess(alert: Alert) {
         alert.processedAt = new Date().toISOString()
         uni.showToast({ title: '处理成功', icon: 'success' })
       } catch (e: unknown) {
-        uni.showToast({ title: e instanceof Error ? e.message : '处理失败', icon: 'none' })
+        uni.showToast({ title: userErrorCopy(e, { scope: 'tech', fallback: '处理失败' }), icon: 'none' })
       }
     },
   })

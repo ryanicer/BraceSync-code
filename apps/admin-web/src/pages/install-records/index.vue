@@ -110,6 +110,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage } from 'element-plus'
 import type { CalibStatus, InstallRecordRow, InstallRecordDetail } from '@bracesync/shared-types'
 import { fetchInstallRecords, fetchInstallRecordDetail, patientNameOf, techNameOf } from '../../api'
@@ -164,7 +165,7 @@ async function loadData() {
     list.value = res.list
     total.value = res.total
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }
@@ -188,7 +189,7 @@ async function openDetail(row: InstallRecordRow) {
       techName: d.techName || row.techName,
     }
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '详情加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '详情加载失败' }))
     drawerVisible.value = false
   }
 }

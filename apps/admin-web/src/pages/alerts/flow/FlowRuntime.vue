@@ -150,7 +150,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Alert, Doctor } from '@bracesync/shared-types'
-import { alertTypeLabel } from '@bracesync/shared-utils'
+import { alertTypeLabel, userErrorCopy } from '@bracesync/shared-utils'
 import LogicFlow from '@logicflow/core'
 import '@logicflow/core/dist/index.css'
 import {
@@ -266,7 +266,7 @@ async function load() {
     template.value = await fetchFlowTemplate(instance.value.templateId)
     await refresh()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载流程失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载流程失败' }))
   } finally {
     loading.value = false
   }
@@ -336,7 +336,7 @@ async function startInstance() {
     await refresh()
     ElMessage.success('流程已启动')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '启动流程失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '启动流程失败' }))
   } finally {
     starting.value = false
   }
@@ -377,7 +377,7 @@ async function submit() {
     }
     ElMessage.success('处理已提交')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '提交失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '提交失败' }))
   } finally {
     submitting.value = false
   }
@@ -404,7 +404,7 @@ async function handleUpload(ev: Event) {
     await completeUpload(presign.fileId)
     attachments.value.push({ fileId: presign.fileId, name: file.name })
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? `附件上传失败：${e.message}` : '附件上传失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '附件上传失败' }))
   } finally {
     uploading.value = false
   }

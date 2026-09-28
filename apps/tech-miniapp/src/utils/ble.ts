@@ -5,6 +5,7 @@
 // 实时推送 & 配网状态机在 H5 下使用模拟数据（mock），真机联调以硬件为准。
 
 import { bleLog } from './ble-log'
+import { logErrorText } from '@bracesync/shared-utils'
 import { MN_PER_N } from '@bracesync/constants'
 
 // 检查是否在 H5 环境（BLE 不可用）
@@ -165,7 +166,7 @@ export async function ensureLocationPermission(): Promise<boolean> {
           },
         })
       } catch (e) {
-        bleLog.error('ensureLocationPermission checkAndRequest 异常', e instanceof Error ? e.message : String(e))
+        bleLog.error('ensureLocationPermission checkAndRequest 异常', logErrorText(e))
         resolve(true)
       }
     }
@@ -205,7 +206,7 @@ export async function ensureLocationPermission(): Promise<boolean> {
       })
     } catch (e) {
       finishSystemCheck()
-      bleLog.error('ensureLocationPermission getSystemSetting 异常，回退正常授权流程', e instanceof Error ? e.message : String(e))
+      bleLog.error('ensureLocationPermission getSystemSetting 异常，回退正常授权流程', logErrorText(e))
       checkAndRequest()
     }
     // T101: 超时兜底——若 wx.getSystemSetting 500ms 内未回调，直接进入正常授权流程，避免卡死（部分 Android 机型此 API 不回调）
@@ -449,7 +450,7 @@ export async function connectDevice(deviceId: string): Promise<boolean> {
   try {
     await closeBLEConnection(deviceId)
   } catch (e) {
-    bleLog.warn(`connectDevice 前置 closeBLEConnection 异常（忽略）`, e instanceof Error ? e.message : String(e))
+    bleLog.warn(`connectDevice 前置 closeBLEConnection 异常（忽略）`, logErrorText(e))
   }
   try {
     await createBLEConnection(deviceId)
@@ -516,7 +517,7 @@ export async function connectDevice(deviceId: string): Promise<boolean> {
         })
       })
     } catch (e) {
-      bleLog.warn(`setBLEMTU 异常（忽略）`, e instanceof Error ? e.message : String(e))
+      bleLog.warn(`setBLEMTU 异常（忽略）`, logErrorText(e))
     }
   } catch (e) {
     // T109: 连接已建立但服务/特征发现失败 → 必须 closeBLEConnection 释放连接，
@@ -673,7 +674,7 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
           realtimeCallback?.(frame)
         }
       } catch (e) {
-        bleLog.error('B513 数据解析失败', e instanceof Error ? e.message : String(e))
+        bleLog.error('B513 数据解析失败', logErrorText(e))
       }
     })
   }
@@ -856,7 +857,7 @@ export async function writeWifiConfigV2(
       })
       bleLog.info(`B511 分片 ${idx + 1}/${totalChunks} 写入成功 len=${chunk.length}`)
     } catch (e) {
-      bleLog.error(`B511 分片 ${idx + 1}/${totalChunks} 写入失败`, e instanceof Error ? e.message : String(e))
+      bleLog.error(`B511 分片 ${idx + 1}/${totalChunks} 写入失败`, logErrorText(e))
       throw e
     }
   }
@@ -932,7 +933,7 @@ function subscribeB512Notify(deviceId: string): void {
         // T240: clear 完成信号分发（一次性回调，与配网状态机解耦）
         wifiClearCallback?.(code)
       } catch (e) {
-        bleLog.error('B512 状态解析失败', e instanceof Error ? e.message : String(e))
+        bleLog.error('B512 状态解析失败', logErrorText(e))
       }
     })
   }
@@ -1030,7 +1031,7 @@ export async function readDeviceInfo(deviceId: string): Promise<{
         bleLog.info(`B514 解析成功`, { firmware: result.firmware, battery: result.battery })
         finish(result)
       } catch (e) {
-        bleLog.error('B514 解析失败', e instanceof Error ? e.message : String(e))
+        bleLog.error('B514 解析失败', logErrorText(e))
         finish(null)
       }
     }

@@ -271,6 +271,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
@@ -376,7 +377,7 @@ async function loadUnassigned() {
     }
     unassignedList.value = acc.filter((x) => !x.teamId)
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '未分配患者加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '未分配患者加载失败' }))
   } finally {
     batchLoading.value = false
   }
@@ -404,7 +405,7 @@ async function loadData() {
     list.value = res.list
     total.value = res.total
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }
@@ -495,7 +496,7 @@ async function confirmCreate() {
     loadData()
     loadUnassigned()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '创建失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '创建失败' }))
   } finally {
     creating.value = false
   }
@@ -518,7 +519,7 @@ async function confirmAssign() {
     loadData()
     loadUnassigned()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '分配失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '分配失败' }))
   } finally {
     assigning.value = false
   }
@@ -615,7 +616,7 @@ async function confirmEditProfile() {
     editVisible.value = false
     loadData()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     savingProfile.value = false
   }
@@ -646,7 +647,7 @@ async function confirmPhone() {
     phoneVisible.value = false
     loadData()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '修改失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '修改失败' }))
   } finally {
     savingPhone.value = false
   }
@@ -675,7 +676,7 @@ async function confirmUnbindWechat() {
     ElMessage.success('已解绑微信')
     loadData()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '解绑失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '解绑失败' }))
   } finally {
     unbinding.value = false
   }
@@ -711,7 +712,7 @@ async function confirmBatch() {
     batchTargetTeam.value = {}
     await Promise.all([loadData(), loadUnassigned()])
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '批量分配失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '批量分配失败' }))
   } finally {
     batching.value = false
   }

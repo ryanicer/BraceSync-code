@@ -124,6 +124,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage } from 'element-plus'
 import type { RolePermissions } from '@bracesync/shared-types'
 import {
@@ -187,7 +188,7 @@ async function selectRole(row: AdminRoleRow) {
     current.value = await fetchRolePermissionsApi(row.roleId)
   } catch (e: unknown) {
     current.value = { scope: 'team', modules: [] }
-    ElMessage.error(e instanceof Error ? e.message : '加载权限失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载权限失败' }))
   } finally {
     permLoading.value = false
   }
@@ -232,7 +233,7 @@ async function savePermissions() {
     dirty.value = false
     ElMessage.success('权限配置已保存')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     saving.value = false
   }
@@ -305,7 +306,7 @@ async function saveRole() {
     dialogVisible.value = false
     await loadRoles()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
   } finally {
     dialogSaving.value = false
   }
@@ -321,7 +322,7 @@ async function removeRole(row: AdminRoleRow) {
     }
     await loadRoles()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '删除失败' }))
   }
 }
 
@@ -334,7 +335,7 @@ async function loadRoles() {
       selectedRole.value = fresh ?? null
     }
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
     loading.value = false
   }

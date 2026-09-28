@@ -61,6 +61,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
@@ -115,7 +116,7 @@ async function handleLogin() {
     ElMessage.success(`欢迎，${auth.user?.name}`)
     redirectAfterLogin()
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '登录失败')
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '登录失败' }))
   } finally {
     loading.value = false
   }

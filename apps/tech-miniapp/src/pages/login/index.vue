@@ -62,6 +62,7 @@ import { ref } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { USE_MOCK } from '../../utils/request'
 import { logger } from '../../utils/logger'
+import { logErrorText } from '@bracesync/shared-utils'
 
 const authStore = useAuthStore()
 const phone = ref('')
@@ -136,7 +137,7 @@ async function doLogin() {
   } catch (error: any) {
     // T208: 记录错误详情便于排查
     logger.error('[T208]', 'doLogin catch', {
-      message: error?.message,
+      message: logErrorText(error),
       code: error?.code,
       httpStatus: error?.httpStatus,
     })

@@ -68,6 +68,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { logErrorText, userErrorCopy } from '@bracesync/shared-utils'
 import { useAuthStore } from '../../stores/auth'
 import { useDeviceStore } from '../../stores/device'
 import { useInstallStore } from '../../stores/install'
@@ -221,7 +222,7 @@ async function bindManual() {
       uni.navigateTo({ url: '/pages/install/index' })
     }, 1200)
   } catch (e) {
-    uni.showToast({ title: e instanceof Error ? e.message : '绑定失败', icon: 'none' })
+    uni.showToast({ title: userErrorCopy(e, { scope: 'tech', fallback: '绑定失败' }), icon: 'none' })
   } finally {
     binding.value = false
   }
@@ -236,8 +237,8 @@ async function scanBLE() {
     scanResults.value = await discoverDevices()
     bleLog.info(`scanBLE 完成，扫描到 ${scanResults.value.length} 个设备`)
   } catch (e) {
-    bleLog.error(`scanBLE 异常`, e instanceof Error ? e.message : String(e))
-    uni.showToast({ title: e instanceof Error ? e.message : '扫描失败，请开启蓝牙', icon: 'none' })
+    bleLog.error(`scanBLE 异常`, logErrorText(e))
+    uni.showToast({ title: userErrorCopy(e, { scope: 'tech', fallback: '扫描失败，请开启蓝牙' }), icon: 'none' })
   } finally {
     scanning.value = false
   }

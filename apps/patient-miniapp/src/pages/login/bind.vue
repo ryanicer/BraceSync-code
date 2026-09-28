@@ -65,6 +65,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { userErrorCopy } from '@bracesync/shared-utils'
 import { useAuthStore } from '../../stores/auth'
 import { bindPhone, type BindPhoneData, type BindPhoneFailData } from '../../api/patient'
 import { resolveBindPhoneResult } from '../../utils/auth-state'
@@ -148,7 +149,7 @@ async function doBind(phoneCode?: string) {
         break
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : '绑定失败，请重试'
+    const msg = userErrorCopy(e, { scope: 'patient', fallback: '绑定失败，请重试' })
     uni.showToast({ title: msg, icon: 'none' })
   } finally {
     binding.value = false

@@ -8,6 +8,7 @@ import type {
   RolePermissions,
 } from '@bracesync/shared-types'
 import { USE_MOCK, request, expiredSession } from '../utils/request'
+import { attachErrorMeta, markUserCopy } from '@bracesync/shared-utils'
 import { isAuthExpired } from '../utils/sessionExpiry'
 import { getToken } from '../utils/token'
 import { reactive } from 'vue'
@@ -48,10 +49,15 @@ export async function adminLogin(username: string, password: string): Promise<Ad
     return body.data
   }
   // 10401 = 凭据错误/账号禁用（user-service CodeUnauthorized），文案对齐后端防账号枚举
+  // T465：这句刻意自撰（防枚举口径），打 userCopy 标记，页面传任何 fallback 都不会被覆盖成通用句
   if (body?.code === 10401) {
-    throw new Error('用户名或密码错误')
+    throw markUserCopy(new Error('用户名或密码错误'), '用户名或密码错误')
   }
-  throw new Error(body?.message || `登录失败（HTTP ${res.status}）`)
+  // T465：码与 HTTP 状态挂到错误对象上；message 仍留后端原文给日志
+  throw attachErrorMeta(new Error(body?.message || `登录失败（HTTP ${res.status}）`), {
+    code: body?.code,
+    httpStatus: res.status,
+  })
 }
 
 // ========== Dashboard（T021 聚合接口，契约已定） ==========
@@ -250,7 +256,10 @@ export async function exportAbnormalReportApi(q: alertMock.AbnormalReportQuery):
     // 失败时后端回 JSON 信封而非 CSV，不能把错误体当文件存盘
     const body = (await res.json().catch(() => null)) as ApiResponse<unknown> | null
     if (isAuthExpired(res.status, body?.code)) expiredSession()
-    throw new Error(body?.message || `导出失败（HTTP ${res.status}）`)
+    throw attachErrorMeta(new Error(body?.message || `导出失败（HTTP ${res.status}）`), {
+      code: body?.code,
+      httpStatus: res.status,
+    })
   }
   saveCsvBlob(dispositionFilename(res.headers.get('Content-Disposition')), await res.blob())
 }
