@@ -22,6 +22,10 @@
 #  13. 起跑门（T463）：⓪-pre 用 scripts/deploy/e2e-gate-check.sh 只读查 GitHub Actions，
 #      有打 staging 的 e2e-real run 在跑或排队即非零退出；排在 ⓪ 段基线采集之前 ⇒ 拒绝路径零副作用。
 #      行为三向（放行 / 判红 / 读不到不判绿）与过滤链反证由 e2e-gate-test.sh 守，见 ci-deploy-scripts.yml
+#  14. prometheus 重载的发出目录（T471）：⑤ 段那条 `docker compose restart prometheus` 必须在
+#      $STAGING_DIR 发出（staging 的 compose 文件在那一层），「已执行 / 未执行」两种结局都要落可判读日志，
+#      失败原因取 stderr 原文、不再 2>/dev/null 吞掉。该段由 scripts/deploy/prometheus-reload-test.sh
+#      按标记抽段后用假 docker 真跑，见 ci-deploy-scripts.yml
 set -euo pipefail
 
 PROJECT_ROOT="/home/ubuntu/bracesync"
@@ -241,12 +245,42 @@ if [ -f "$PROJECT_ROOT/scripts/deploy/nginx.conf" ]; then
   sudo cp "$PROJECT_ROOT/scripts/deploy/nginx.conf" "$STAGING_DIR/nginx.conf"
 fi
 
+# >>> T471-RELOAD-BEGIN  从这行到 T471-RELOAD-END 之间的整段（含外层「仓里有没有 prometheus.yml」判定）
+#       由 scripts/deploy/prometheus-reload-test.sh 逐字节抽出、在沙箱里用假 docker 真跑。
+#       改这一段（尤其 compose 命令的发出目录与两种结局的日志）必须连那个测试一起改，否则测试判红。
 # 同步 prometheus.yml
 if [ -f "$PROJECT_ROOT/scripts/deploy/prometheus.yml" ]; then
   sudo cp "$PROJECT_ROOT/scripts/deploy/prometheus.yml" "$STAGING_DIR/prometheus.yml"
-  # restart prometheus 容器使新配置生效
-  sudo docker compose restart prometheus 2>/dev/null || log "   prometheus 容器未运行或不存在，跳过 restart"
+  # restart prometheus 容器使新配置生效。T471 修的是「从哪个目录发出」这半件事：
+  #   staging 的 compose 文件在 $STAGING_DIR（就是上面 ⑤ 刚同步过去的那份），而改前那一行在
+  #   $PROJECT_ROOT 的 cwd 下发出 `docker compose restart` —— 仓库根那一层没有 compose 文件，
+  #   compose 报「no configuration file provided: not found」并以 rc=1 退出，那份 stderr 又被
+  #   2>/dev/null 吞掉，于是第 2 至 20 轮每轮都打「容器未运行或不存在，跳过 restart」：
+  #   重载从没发生过，而日志给的理由还是假的（现网 prometheus 一直在跑，只是命令没送到项目里）。
+  #   这里用子 shell 切目录，不改本脚本其余部分的 cwd —— ⑤ 段末尾才正式 cd 到 $STAGING_DIR。
+  if [ ! -f "$STAGING_DIR/docker-compose.yml" ]; then
+    log "   prometheus reload 跳过（未发起）：$STAGING_DIR/docker-compose.yml 不存在 —— 配置已同步但未重载，prometheus 仍跑旧配置"
+  else
+    PROM_ERR=$(mktemp)
+    PROM_OUT=$(mktemp)
+    # 不用 2>/dev/null：两种结局都要能读出「为什么」，失败原因一律取 stderr 原文
+    ( cd "$STAGING_DIR" && sudo docker compose restart prometheus ) >"$PROM_OUT" 2>"$PROM_ERR" && PROM_RC=0 || PROM_RC=$?
+    if [ "$PROM_RC" -eq 0 ]; then
+      log "   prometheus reload 已执行（cwd=$STAGING_DIR rc=$PROM_RC）"
+    else
+      log "   prometheus reload 未执行（cwd=$STAGING_DIR rc=$PROM_RC）—— 原因见下方 stderr 原文，不是默认跳过"
+    fi
+    while IFS= read -r prom_line; do
+      log "      reload stderr | $prom_line"
+    done < "$PROM_ERR"
+    [ -s "$PROM_ERR" ] || log "      reload stderr | (无输出)"
+    while IFS= read -r prom_line; do
+      log "      reload stdout | $prom_line"
+    done < "$PROM_OUT"
+    rm -f "$PROM_ERR" "$PROM_OUT"
+  fi
 fi
+# <<< T471-RELOAD-END
 
 # 确保 .env 存在
 if [ ! -f "$STAGING_DIR/.env" ]; then
