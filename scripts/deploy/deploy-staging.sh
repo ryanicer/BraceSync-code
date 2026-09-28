@@ -255,8 +255,8 @@ if [ -f "$PROJECT_ROOT/scripts/deploy/prometheus.yml" ]; then
   #   staging 的 compose 文件在 $STAGING_DIR（就是上面 ⑤ 刚同步过去的那份），而改前那一行在
   #   $PROJECT_ROOT 的 cwd 下发出 `docker compose restart` —— 仓库根那一层没有 compose 文件，
   #   compose 报「no configuration file provided: not found」并以 rc=1 退出，那份 stderr 又被
-  #   2>/dev/null 吞掉，于是第 2 至 20 轮每轮都打「容器未运行或不存在，跳过 restart」：
-  #   重载从没发生过，而日志给的理由还是假的（现网 prometheus 一直在跑，只是命令没送到项目里）。
+  #   2>/dev/null 吞掉，于是每轮日志里都是「容器未运行或不存在，跳过 restart」：重载从没发生过，
+  #   而日志给的理由还是假的（现网 prometheus 一直在跑，只是命令没送到项目里）。
   #   这里用子 shell 切目录，不改本脚本其余部分的 cwd —— ⑤ 段末尾才正式 cd 到 $STAGING_DIR。
   if [ ! -f "$STAGING_DIR/docker-compose.yml" ]; then
     log "   prometheus reload 跳过（未发起）：$STAGING_DIR/docker-compose.yml 不存在 —— 配置已同步但未重载，prometheus 仍跑旧配置"

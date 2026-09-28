@@ -198,7 +198,8 @@ counter_awk "起跑门挪到 ⓪ 段基线采集之后" W9 '
   index($0, "bash \"$SNAP_ROOT/selfcheck-deploy-script.sh\" record") { printf "%s", saved; saved = "" }
 ' W8b
 # T471 例一：把 prometheus 重载的发出目录退回不切目录（改前形态）。W10 抓的就是这个：字面还在，
-#   只是不再从 staging 的 compose 目录发出 —— 第 2 至 20 轮每轮都栽在这半件事上。
+#   只是不再从 staging 的 compose 目录发出 —— 改前那行自 aac1fff（2026-09-18）起就是这样，
+#   docs main 留档的 15 份历轮全量部署日志里每份都打了那句假理由。
 counter "prometheus 重载退回在仓库根发出（T471）" W10 \
   's@( cd "\$STAGING_DIR" \&\& sudo docker compose restart prometheus )@sudo docker compose restart prometheus@'
 # T471 例二：把重载那行的 stderr 收回 /dev/null（静默面回来）。W13 是唯一该红的格 ——

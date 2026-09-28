@@ -6,7 +6,9 @@
 #   「修正发出 cwd」「两种结局都要落可判读日志」「stderr 不再静默」三条，全是行为判据。
 #   字面 grep 只能证明那行代码还在，证明不了它跑起来真按说的做 —— T364 那格假绿的教训就是这个
 #   （守卫的放行分支从没被执行过，断言却一路绿）。这里用假 docker 把这一段在沙箱里跑起来，
-#   并把它「实际从哪个目录被调用」记下来对平 $STAGING_DIR —— 这正是第 2 至 20 轮没人看见的那件事。
+#   并把它「实际从哪个目录被调用」记下来对平 $STAGING_DIR —— 这正是历轮部署日志没人看见的那件事
+#   （改前那行自 aac1fff 2026-09-18「T238 restart prometheus」起就在脚本里；docs main 的历轮部署留档里
+#    逐轮都能读到这句 —— 命中文件清单与取数命令见交付证据包，不是按轮次推算出来的）。
 #
 # 被测对象：deploy-staging.sh 里 T471-RELOAD-BEGIN / T471-RELOAD-END 这对标记之间的整段
 #   （含外层「仓里有没有 prometheus.yml」判定）。标记被删或配对坏了 ⇒ 本测试响亮判红，不许「没断言所以全绿」。
@@ -250,7 +252,7 @@ expect_red() { # $1=标签 $2=腿 $3=期望必红的编号
     ok "$label：$leg 的 $want 如期判红（红格清单 $(grep -o '\[FAIL\]\[[A-Za-z0-9_.]*\]' "$WORK/mut.out" | sed 's/\[FAIL\]//' | tr -d '\n')，共 $rc 格）"
   fi
 }
-# M1：去掉子 shell 里的 cd —— 这正是第 2 至 20 轮的真实形态（命令在仓库根发出）。
+# M1：去掉子 shell 里的 cd —— 这正是改前那行的真实形态（命令在仓库根发出）。
 if mutate_seg 's@( cd "\$STAGING_DIR" \&\& sudo docker compose restart prometheus )@sudo docker compose restart prometheus@'; then
   expect_red "M1 发出目录退回不切目录" L1 L1.5
   expect_red "M1 发出目录退回不切目录" L2 L2.5
