@@ -35,18 +35,17 @@ const t447Constraint = "install_records_wifi_status_check"
 // t447Devices 本文件专用设备号（每个用例一台，避免用例行互相污染 wifi_status 现值）
 func t447Device(i int) string { return fmt.Sprintf("DEV-T447-IT-%d", i) }
 
-// t447Install 造一条安装记录现场：注册设备 → 绑定 → 建记录，返回 install_id。
-// 绑定走既有 repo 通路，确保 device_id/patient_id/tech_id 三个 FK 都满足。
+// t447Install 造一条安装记录现场：注册设备 → 建记录，返回 install_id。
+//
+// 故意不做设备绑定：Bind 的判据是「一名患者同时只能绑一台设备」（repo.go:37 alreadyBoundError），
+// 而 itPatient 在本包里已被别的用例绑走（首版在这里 require.NoError 判红 3 例，CI 实测）。
+// install_records 只要 device_id / patient_id / tech_id 三个 FK 有行即可写入，
+// 患者与技师行由 seedITData 提供，设备行由下面 itRegister 提供 —— 绑定与本卡判据无关。
 func t447Install(t *testing.T, store Store, i int) int64 {
 	t.Helper()
 	ctx := context.Background()
 	dev := t447Device(i)
 	itRegister(ctx, t, store, dev)
-
-	_, err := store.Bind(ctx, BindParams{
-		DeviceID: dev, PatientID: itPatient, OperatorID: itTech,
-	})
-	require.NoError(t, err)
 
 	id, err := store.CreateInstall(ctx, &model.InstallRecord{
 		DeviceID: dev, PatientID: itPatient, TechID: itTech,
