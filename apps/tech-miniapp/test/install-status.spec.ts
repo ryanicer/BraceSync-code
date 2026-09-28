@@ -105,28 +105,48 @@ describe('TR-11 — WiFi 词形按稿面收口（records.html:102,134,204）', (
   })
 
   it('每页用到的出口都在本页 import 里（漏 import 时模板运行时才炸，构建不报）', () => {
-    const expected: Record<(typeof PAGE_NAMES)[number], string[]> = {
-      install: ['confirmSkipNetwork'],
-      complete: [
-        'baselineStatusLabel',
-        'baselineStatusBadgeClass',
-        'wifiRowLabel',
-        'reachabilityLabel',
-        'reachabilityBadgeClass',
-      ],
-      records: ['wifiStatusLabel'],
-      'wifi-config': ['confirmSkipNetwork'],
+    const expected: Record<(typeof PAGE_NAMES)[number], { fns: string[]; consts: string[] }> = {
+      install: { fns: ['confirmSkipNetwork'], consts: ['WIFI_SKIPPED_LABEL'] },
+      complete: {
+        fns: [
+          'baselineStatusLabel',
+          'baselineStatusBadgeClass',
+          'wifiRowLabel',
+          'reachabilityLabel',
+          'reachabilityBadgeClass',
+        ],
+        consts: [],
+      },
+      records: { fns: ['wifiStatusLabel'], consts: [] },
+      'wifi-config': { fns: ['confirmSkipNetwork'], consts: [] },
     }
     for (const name of PAGE_NAMES) {
       const src = pageSrc(name)
       const atImport = src.indexOf("from '../../utils/installStatus'")
       expect(atImport, `${name} 未 import installStatus`).toBeGreaterThan(-1)
-      const start = src.lastIndexOf('import', atImport)
-      const clause = src.slice(start, atImport)
-      for (const symbol of expected[name]) {
-        // 用到的符号必须同时在函数体／模板里出现，否则是在测一条没人用的 import
-        expect(clause, `${name} 的 import 缺 ${symbol}`).toContain(symbol)
-        expect(src, `${name} 里没用到 ${symbol}`).toContain(`${symbol}(`)
+      const clause = src.slice(src.lastIndexOf('import', atImport), atImport)
+      for (const fn of expected[name].fns) {
+        // 用到的符号必须同时在函数体／模板里被调用，否则是在测一条没人用的 import
+        expect(clause, `${name} 的 import 缺 ${fn}`).toContain(fn)
+        expect(src, `${name} 里没用到 ${fn}`).toContain(`${fn}(`)
+      }
+      for (const key of expected[name].consts) {
+        expect(clause, `${name} 的 import 缺 ${key}`).toContain(key)
+        expect(src, `${name} 里没插值 ${key}`).toContain(`{{ ${key} }}`)
+      }
+    }
+  })
+
+  it('跳过态的显示值只有一处字面量（页面插值走常量，防改一处漏一处）', () => {
+    const literal = '已跳过配网'
+    const util = fs.readFileSync(
+      fileURLToPath(new URL('../src/utils/installStatus.ts', import.meta.url)),
+      'utf8',
+    )
+    expect(codeLines(util).some((l) => l.includes(`${literal}'`)), '常量定义侧应有该字面量').toBe(true)
+    for (const name of PAGE_NAMES) {
+      for (const line of codeLines(pageSrc(name))) {
+        expect(line, `${name} 页内又写了一遍字面量`).not.toContain(literal)
       }
     }
   })
@@ -220,7 +240,7 @@ describe('TC-2 — 跳过配网只打本地标记，不冒充已连接', () => {
     expect(atDone).toBeGreaterThan(atSkipped)
     const skippedBlock = src.slice(atSkipped, atDone)
     expect(skippedBlock).toContain('completeInstall')
-    expect(skippedBlock).toContain('已跳过配网')
+    expect(skippedBlock).toContain('{{ WIFI_SKIPPED_LABEL }}')
     expectVisibleLine(skippedBlock, 'completeInstall')
   })
 

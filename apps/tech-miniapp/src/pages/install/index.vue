@@ -164,7 +164,7 @@
         <template v-else-if="wifiStage === 'skipped'">
           <view class="status-block">
             <text class="status-label">配网状态</text>
-            <view class="status-badge badge-warning"><text>已跳过配网</text></view>
+            <view class="status-badge badge-warning"><text>{{ WIFI_SKIPPED_LABEL }}</text></view>
           </view>
           <text class="skip-note">跳过配网后设备将无法自动上传数据。可点「重新配网」补配。</text>
           <view class="form-group">
@@ -219,7 +219,7 @@ import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
 import { saveBaseline } from '../../api/baseline'
 import { bleLog } from '../../utils/ble-log'
-import { confirmSkipNetwork } from '../../utils/installStatus'
+import { confirmSkipNetwork, WIFI_SKIPPED_LABEL } from '../../utils/installStatus'
 import { updateInstallMeta } from '../../api/install'
 import {
   startRealtimePressure,
