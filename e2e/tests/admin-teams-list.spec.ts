@@ -135,7 +135,9 @@ test.describe('团队成员搜索与角色筛选（T289 5.3）', () => {
 
   test('工具条含搜索框与角色下拉', async ({ page }) => {
     await expect(page.locator('.member-toolbar .member-search input')).toBeVisible()
-    await expect(page.locator('.member-toolbar .member-role-filter')).toContainText('全部角色')
+    // T456（T442 T-1 裁 A）：该下拉的取值是 doctors.title ⇒ 占位文案按内容语义叫「职称」。
+    // 本行是钉住旧词的门禁，随标签一并翻面，不留守旧值。
+    await expect(page.locator('.member-toolbar .member-role-filter')).toContainText('全部职称')
   })
 
   test('按姓名搜索只留命中行', async ({ page }) => {
