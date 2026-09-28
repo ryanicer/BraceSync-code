@@ -122,3 +122,26 @@ test('分段切换后详情随选中日期联动', async ({ page }) => {
   await expect(page.locator('.detail-date-header')).toContainText('2026-07-08')
   await expect(page.locator('.ap-item')).toHaveCount(2)
 })
+
+// T451：与 admin T430 同源的「压力波动」界面隐藏（PRD §7D.6 历史数据处置拍 C，数据不删）。
+// 夹具 07-09 那组刻意含 2 条（压力偏高 + 压力波动）⇒「1条异常」这一判据只在过滤生效时成立。
+test('T451 压力波动历史行不呈现、不计入条数，同页其余日期不受牵连', async ({ page }) => {
+  await gotoJuly2026(page)
+  await page.locator('.segmented .seg-btn', { hasText: '压力异常' }).click()
+  const card = page.locator('.detail-card')
+  await page.locator('.cal-cell', { has: page.locator('.cal-num', { hasText: /^9$/ }) }).click()
+  await expect(card.locator('.detail-date-header')).toContainText('2026-07-09')
+  await expect(card.locator('.detail-date-header')).toContainText('1条异常')
+  await expect(card.locator('.ap-item')).toHaveCount(1)
+  await expect(card.locator('.ap-item-type')).toHaveText(['压力偏高'])
+  await expect(card.locator('.ap-item-detail').first()).toContainText('P04')
+  // 数据不删：GET /api/v1/alerts 的返回体里那一行原样在场（本卡不改后端、不改契约）
+  const resp = await page.evaluate(async () => {
+    const r = await fetch('/api/v1/alerts?patientId=pat-e2e-001&page=1&pageSize=100')
+    return await r.text()
+  })
+  expect(resp).toContain('pressure_fluctuation')
+  // 隐藏的是这一类而不是这一天：另一日期（07-12 三条）照常渲染
+  await page.locator('.cal-cell', { has: page.locator('.cal-num', { hasText: /^12$/ }) }).click()
+  await expect(card.locator('.ap-item')).toHaveCount(3)
+})

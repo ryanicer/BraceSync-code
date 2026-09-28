@@ -88,3 +88,21 @@ test('筛选分档按全量而非首页（缺陷一的筛选面）', async ({ pa
   await page.locator('.seg-btn', { hasText: '全部' }).click()
   await expect(page.locator('.alert-card')).toHaveCount(60)
 })
+
+/**
+ * T451：与 admin T430 同源的「压力波动」界面隐藏（PRD §7D.6 历史数据处置拍 C）。
+ *
+ * 种子刻意 61 条（末位 ALR-T451-061 是 pressure_fluctuation）：
+ * 上面「共 60 条」「卡片 60」「待处理 59」三条既有判据因此从
+ * 「恰好等于种子数」变成「只有过滤生效才成立」—— 摘掉 filterVisibleAlertRows 即三条同时判红。
+ */
+test('T451 压力波动历史行不呈现，也不计入页头数与待处理分档', async ({ page }) => {
+  await expect(page.getByText('共 60 条告警')).toBeVisible()
+  await expect(page.locator('.alert-card')).toHaveCount(60)
+  // 反向证据：整页既不出现该行文案，也不出现裸码值（隐藏 ≠ 换成技术术语显示）
+  await expect(page.locator('.alert-detail', { hasText: 'T451 mock 压力波动告警' })).toHaveCount(0)
+  await expect(page.locator('.page')).not.toContainText('pressure_fluctuation')
+  // 不计入未处理数：待处理分档仍是种子里的 59 条可见行
+  await page.locator('.seg-btn', { hasText: '待处理' }).click()
+  await expect(page.locator('.alert-card')).toHaveCount(59)
+})
