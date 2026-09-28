@@ -10,6 +10,9 @@
 //
 //	需 PM 先定归属与写入通道，本卡不自行跨服务改；PR #126（T248）的
 //	PUT /admin/patients/:patientId 合并后要补同一埋点。
+//	订正（T448，2026-09-28）：device 域已有一条不在本通道内的埋点先例——清除设备 WiFi 的留痕
+//	由 device-service 同库直写 audit_logs（services/device-service/internal/repo/audit_t448.go），
+//	动词沿用本文件词表的 data_modify。归属仍待 PM 认，认之前别把本段读成「device 域全无留痕」。
 package handler
 
 import (

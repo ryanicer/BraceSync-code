@@ -117,6 +117,9 @@ type Store interface {
 	UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string, wifiStatus *string) error
 	// SetWifiSSID 维护 devices.wifi_ssid（架构 §2.3 配网状态）
 	SetWifiSSID(ctx context.Context, deviceID, ssid string) error
+	// WriteWifiClearAudit T448：清除设备 WiFi（纯 BLE）的留痕，只写 audit_logs 一行，
+	// 不动 devices / install_records 任何列。实现见 repo/audit_t448.go。
+	WriteWifiClearAudit(ctx context.Context, in WifiClearAuditInput) error
 }
 
 // PGStore Store 的 pgxpool 实现

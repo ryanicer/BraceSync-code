@@ -408,3 +408,22 @@ func (s *DeviceService) SetWifiSSID(ctx context.Context, deviceID, ssid string) 
 	}
 	return nil
 }
+
+// ReportWifiCleared T448：「设备 WiFi 已清除」的留痕上报。
+//
+// 清除动作走 BLE（技师端向 B513 写 0x02、等 B512 notify=0），没有也不该有专用端点（T446 §二），
+// 技师端在清除成功后复用 POST /devices/:deviceId/wifi 带 cleared=true 上报这一次。
+// 本方法只落一行审计事件：不写 devices.wifi_ssid、不改 install_records.wifi_status
+// ——「清除后云端状态不更新」是同一条缺口里的另一半，卡面明列范围外（同步状态要新增写侧）。
+func (s *DeviceService) ReportWifiCleared(ctx context.Context, deviceID, operatorID, operatorRole, ip string) *model.AppError {
+	if _, err := s.store.GetDevice(ctx, deviceID); err != nil {
+		return mapRepoErr(err, model.ErrNotFound("device %q not registered", deviceID))
+	}
+	if err := s.store.WriteWifiClearAudit(ctx, repo.WifiClearAuditInput{
+		DeviceID: deviceID, OperatorID: operatorID, OperatorRole: operatorRole, IP: ip,
+	}); err != nil {
+		// 留痕是这条通路唯一的产出，失败必须回给调用方，不照抄 h.audit 的「只 WARN」
+		return model.ErrInternal("record wifi clear audit: %v", err)
+	}
+	return nil
+}

@@ -147,6 +147,8 @@ type unbindRequest struct {
 
 type wifiRequest struct {
 	Ssid string `json:"ssid"`
+	// Cleared T448：true 表示「BLE 清除已完成」的留痕上报，与 ssid 回写互斥（此时 ssid 必须为空）
+	Cleared bool `json:"cleared"`
 }
 
 type installRequest struct {
@@ -376,7 +378,8 @@ func (h *Handler) unbind(c *gin.Context) {
 	ok(c, nil)
 }
 
-// setWifi 配网状态：devices.wifi_ssid 维护（架构 §2.3）
+// setWifi 配网状态：devices.wifi_ssid 维护（架构 §2.3）；
+// T448 起同一路由还接「清除已完成」的留痕上报（body 只带 cleared=true，只写审计）。
 func (h *Handler) setWifi(c *gin.Context) {
 	// T387：配网回写与绑定同类（技师安装流程内动作），患者端调用方见卡内登记 ——
 	// 该路由自 T260 起就在 staffOnlyPatterns 里，患者令牌在网关已 403，服务层口径与之相符。
@@ -386,6 +389,20 @@ func (h *Handler) setWifi(c *gin.Context) {
 	var req wifiRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	// T448：cleared=true 走留痕支 —— 只写 audit_logs， ssid 回写的那两列一律不碰。
+	if req.Cleared {
+		if req.Ssid != "" {
+			fail(c, model.ErrInvalidParam("ssid and cleared are mutually exclusive"))
+			return
+		}
+		if appErr := h.svc.ReportWifiCleared(c.Request.Context(), c.Param("deviceId"),
+			operatorID(c), c.GetHeader(headerRole), c.ClientIP()); appErr != nil {
+			fail(c, appErr)
+			return
+		}
+		ok(c, nil)
 		return
 	}
 	if appErr := h.svc.SetWifiSSID(c.Request.Context(), c.Param("deviceId"), req.Ssid); appErr != nil {

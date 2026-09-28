@@ -26,6 +26,7 @@ type FakeStore struct {
 	nextBaseID int64
 	patients   map[string]bool
 	techs      map[string]bool
+	audits     []repo.WifiClearAuditInput // T448 清除留痕（audit_logs 的内存替身）
 }
 
 // NewFakeStore 创建空 FakeStore
@@ -419,6 +420,25 @@ func (f *FakeStore) SetWifiSSID(_ context.Context, deviceID, ssid string) error 
 		latest.WifiStatus = "connected"
 	}
 	return nil
+}
+
+func (f *FakeStore) WriteWifiClearAudit(_ context.Context, in repo.WifiClearAuditInput) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.devices[in.DeviceID]; !ok {
+		return repo.ErrNotFound
+	}
+	f.audits = append(f.audits, in)
+	return nil
+}
+
+// WifiClearAudits 读取已落的清除留痕（T448 用例判据）
+func (f *FakeStore) WifiClearAudits() []repo.WifiClearAuditInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]repo.WifiClearAuditInput, len(f.audits))
+	copy(out, f.audits)
+	return out
 }
 
 func strPtr(s string) *string { return &s }

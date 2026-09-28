@@ -98,7 +98,7 @@
 import { ref, computed, onUnmounted } from 'vue'
 import { useInstallStore } from '../../stores/install'
 import { getProvisionKey } from '../../api/provision'
-import { setDeviceWifi } from '../../api/device'
+import { setDeviceWifi, reportWifiCleared } from '../../api/device'
 import { encryptWifiPayload } from '../../utils/aes-ctr'
 import {
   connectDevice,
@@ -399,6 +399,16 @@ async function doWifiClear(): Promise<boolean> {
   return await attemptOnce()
 }
 
+// T448：清除成功后向云端报一次留痕（谁 / 何时 / 哪台设备）。
+// 🔴 不 await 且失败只记日志：留痕是旁路，不能推迟「清完 3s 自动返回」，
+// 也不能因为后端不可达就把已经成功的清除报成失败。
+function reportWifiClearAudit() {
+  const deviceId = installStore.deviceId
+  reportWifiCleared(deviceId).catch((e: unknown) => {
+    bleLog.warn(`T448 清除留痕上报失败 deviceId=${deviceId}: ${e instanceof Error ? e.message : String(e)}`)
+  })
+}
+
 // T240: clear 失败后技师手动重试
 async function retryClear() {
   clearState.value = 'pending'
@@ -406,6 +416,7 @@ async function retryClear() {
   if (!pageAlive) return
   if (clearOk) {
     clearState.value = 'success'
+    reportWifiClearAudit()
     // 不主动 closeBLEConnection：设备清完 WiFi 会自行重启掉链，
     // 主动断开会让 install 页校准的 B513 订阅链路代次错乱、零收帧。
     autoReturnTimer.value = setTimeout(() => {
@@ -446,6 +457,7 @@ async function handleSuccess(ssid: string) {
 
   if (clearOk) {
     clearState.value = 'success'
+    reportWifiClearAudit()
     // 不主动 closeBLEConnection：设备清完 WiFi 会自行重启掉链，
     // 主动断开会让 install 页校准的 B513 订阅链路代次错乱、零收帧。
     autoReturnTimer.value = setTimeout(() => {
