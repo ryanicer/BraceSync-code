@@ -10,8 +10,8 @@
     <view class="nomatch-icon">
       <text class="icon-warn">⚠️</text>
     </view>
-    <view class="page-title">未找到匹配的就诊档案</view>
-    <view class="desc">系统未能根据您的手机号匹配到就诊档案。请确认以下信息后重试：</view>
+    <view class="page-title">未找到您的就诊档案</view>
+    <view class="desc">我们无法通过您的微信手机号匹配到就诊档案。</view>
 
     <view class="reason-card">
       <view class="reason-title">可能的原因</view>

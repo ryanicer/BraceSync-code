@@ -1,7 +1,9 @@
 /**
  * T443 — 技师端实现侧差异收口判据
  * 依据：docs/tasks/peter/T417-对照清单-技师端.md 的 TC-1／TC-2／TI-9／TI-12／TR-11；
- * PRD 第 862 行（跳过配网按钮＋弹窗文案）、§8.2 第 1772 行（可达性为本地派生展示）。
+ * PRD 第 876 行（跳过配网按钮＋弹窗文案）、§8.2 第 1786 行（可达性为本地派生展示）。
+ * 以上 PRD／稿面行号由 T452 按 docs main 重取（原写 862／1772，随 #651、#661 并稿位移）；
+ * 复核时按引号内文案定位，不要只按行号。
  *
  * 页面模板在本包测不到（vitest.config.ts 是 environment: 'node'，无 VTU），
  * 故判定与文案全下沉到 utils/installStatus.ts（可直接测），页面接线按源码断言
@@ -73,7 +75,7 @@ function expectVisibleLine(src: string, needle: string): void {
   expect(codeLines(src).some((l) => l.includes(needle)), `codeLines 里应能看到 ${needle}`).toBe(true)
 }
 
-describe('TR-11 — WiFi 词形按稿面收口（records.html:102,134,204）', () => {
+describe('TR-11 — WiFi 词形按稿面收口（records.html:95,127,197）', () => {
   it('两态标签＝已连接／未配置；未知值不落「已连接」（DB CHECK 只放行两值，第三态归 T446）', () => {
     expect(WIFI_STATUS_LABEL).toEqual({ connected: '已连接', unconfigured: '未配置' })
     expect(wifiStatusLabel('connected')).toBe('已连接')
@@ -250,7 +252,7 @@ describe('TC-2 — 跳过配网只打本地标记，不冒充已连接', () => {
   })
 })
 
-describe('TI-12 — 跳过入口文案与二次确认（PRD 第 862 行逐字）', () => {
+describe('TI-12 — 跳过入口文案与二次确认（PRD 第 876 行逐字）', () => {
   const uniBackup = (globalThis as { uni?: unknown }).uni
 
   afterEach(() => {
@@ -313,7 +315,8 @@ describe('TI-9 — 基线提交成功侧有反馈（稿面 install.html 校准�
 
 /**
  * 裁定⑥（Boss 2026-09-28，经 PM 评论转述）：允许现场重新采集一次。
- * 稿面 install.html 校准完成屏原无此入口（Peter 在 :245,249,400-404 的注记里把这条挂裁），
+ * 稿面 install.html 校准完成屏原无此入口（Peter 原挂裁注记现位于 docs main install.html :221／:231／
+ * :371-380，随 #667 并稿位移；:231 一句已按 Boss 裁定⑥收口为「原待裁已闭」），
  * 现按裁定落地，但必须与规矩 A（PRD §7C.4：校准是一次性权威动作、无复校通道）不冲突：
  * 云端已有权威基线（保存成功或 20409）时入口必须收起。
  */

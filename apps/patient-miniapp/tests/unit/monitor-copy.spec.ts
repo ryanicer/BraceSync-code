@@ -1,7 +1,8 @@
 /**
  * T444 患者端实现侧差异收口 —— 纯层判据 + 源码级接线门禁。
  *
- * 来源清单 docs/tasks/peter/T417-对照清单-患者端.md 的 M-1 / M-2 / P-2 / L-7。
+ * 来源清单 docs/tasks/peter/T417-对照清单-患者端.md 的 M-1 / M-2 / P-2 / L-7；
+ * L-2（no-match 页内文案）由 T452 追加，稿面为 docs/design/patient/login/04-no-match.html :64/:65。
  * 抽成纯层（monitor-copy.ts / profile-format.ts）的用理由同 T443：patient-miniapp 的
  * vitest 是 environment:'node' 且不挂 VTU，模板里的三元拼接在本包测不到，判据只能落在这里；
  * 再用源码级门禁（读 .vue/.json 原文）证明页面确实引了这些函数/常量，不是「纯层绿、页面没接」。
@@ -124,6 +125,29 @@ describe('L-7 绑定冲突形态：实现侧只核导航标题与页内标题一
       expect(inner, `${file} 应有页内 nav-title`).not.toBeNull()
       expect(inner![1]).toBe(navTitle)
     }
+  })
+})
+
+describe('L-2 no-match 页内标题与说明句逐字取稿面（04-no-match.html :64/:65）', () => {
+  const page = readSrc('src/pages/login/no-match.vue')
+
+  it('page-title 与 desc 为稿面原文，实现侧自拟的两种旧句式必须消失', () => {
+    const title = page.match(/class="page-title">([^<]+)</)
+    const desc = page.match(/class="desc">([^<]+)</)
+    expect(title, 'no-match.vue 应有页内 page-title').not.toBeNull()
+    expect(desc, 'no-match.vue 应有页内 desc').not.toBeNull()
+    expect(title![1]).toBe('未找到您的就诊档案')
+    expect(desc![1]).toBe('我们无法通过您的微信手机号匹配到就诊档案。')
+    expect(page).not.toContain('未找到匹配的就诊档案')
+    expect(page).not.toContain('系统未能根据您的手机号匹配到就诊档案')
+    expect(page).not.toContain('请确认以下信息后重试')
+  })
+
+  it('本项只改页内文案：导航标题仍由 pages.json 与 nav-title 同源（归 L-7）', () => {
+    const pages = JSON.parse(readSrc('src/pages.json'))
+    const nav = pages.pages.find((p: { path: string }) => p.path === 'pages/login/no-match')
+    expect(nav?.style?.navigationBarTitleText).toBe('未找到就诊档案')
+    expect(page.match(/class="nav-title">([^<]+)</)![1]).toBe('未找到就诊档案')
   })
 })
 
