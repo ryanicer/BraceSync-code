@@ -11,6 +11,8 @@
 #   cron 引用零漂移守卫（N6，实际 crontab 与仓内期望落点做只读比对）。两类步骤各管一面：
 #   前两个管「被签出去 / 被落盘的脚本自己行为对不对」，后两个管「收口还接不接在部署链上、
 #   cron 有没有指回被部署工作树」。
+#   T463 再加一步：部署起跑门行为测试（T460 撞车事故的机器化）—— 本步测「门判得对不对」，
+#   门「接没接在部署链上、排在基线采集之前」由 N1 那一格的 W8/W9 管，两边合起来才算收口。
 # 未在分支保护里设为 required check ⇒ 不阻塞合并。
 name: Deploy Scripts Static Check
 
@@ -77,6 +79,14 @@ jobs:
           # 这里喂夹具表跑三向：现网真实形态判绿、指回工作树/少引用/副本不见各判一红、
           # 读不到与空表走 rc=3（「读不到」绝不许当「一致」），见 scripts/deploy/cron-reference-guard-test.sh。
           bash scripts/deploy/cron-reference-guard-test.sh
+
+      - name: 部署起跑门行为测试（T463 e2e-real 撞车窗口机器门 / 放行-判红-读不到三态）
+        run: |
+          # T460 第十八轮实测撞车（最后一次读门 15:04:21、Iris 的 run 创建于 15:04:32、起跑 15:07:32）
+          # ⇒ 起跑门从「人读的纪律」改成脚本查一次就拒。本步跑满三向：夹具四态、真 curl 腿（本地假 API
+          # 服务，不发真实外网请求）、外加把过滤链逐格拆掉要求对应结论翻转 —— 见 scripts/deploy/e2e-gate-test.sh。
+          # 接线（deploy-staging.sh 真调了这个门、且排在基线采集之前）不在本步，在「部署链接线守卫」那一格的 W8/W9。
+          bash scripts/deploy/e2e-gate-test.sh
 
       - name: shellcheck（informational，结论作 PR 注释）
         run: |
