@@ -56,3 +56,26 @@ export async function setDeviceWifi(
     data: { ssid },
   })
 }
+
+/**
+ * 「设备 WiFi 已清除」的留痕上报（T448，Boss 裁定甲案：只加审计，不扩枚举）
+ *
+ * 清除动作本身是纯 BLE（utils/ble.ts 向 B513 写 0x02、等 B512 notify=0），
+ * 按 T446 §二 的定性它不该有专用端点，所以这里复用配网回写的同一条路由：
+ * body 只带 cleared=true（后端与 ssid 互斥），后端据此写一行 audit_logs，
+ * 不改 devices.wifi_ssid、不改 install_records.wifi_status。
+ *
+ * 🔴 调用方不要 await 它来卡住交付流程：留痕失败只记日志（见 pages/wifi-config/index.vue）。
+ */
+export async function reportWifiCleared(deviceId: string): Promise<void> {
+  if (USE_MOCK) {
+    // T089-MOCK: 与 setDeviceWifi 同形，mock 下不发请求
+    await new Promise((r) => setTimeout(r, 200))
+    return
+  }
+  await request<null>({
+    url: `/api/v1/devices/${deviceId}/wifi`,
+    method: 'POST',
+    data: { cleared: true },
+  })
+}
