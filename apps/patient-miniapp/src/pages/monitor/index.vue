@@ -40,6 +40,7 @@
           v-if="sensorPoints.length > 0"
           :points="sensorPoints"
           :active-index="activeIndex"
+          :selected-by-user="userTappedPoint"
           @select="onSelectPoint"
         />
       </view>
@@ -54,7 +55,7 @@
     </view>
 
     <view class="section trend-section">
-      <text class="section-title">{{ activePoint ? activePoint.pointId : '' }} · {{ segLabel }}压力趋势</text>
+      <text class="section-title">{{ trendTitle }}</text>
       <view class="card curve-card">
         <PressureCurve :data="trendData" :labels="trendLabels" :max-value="trendMaxValue" :time-range="trendTimeRange" :height="180" />
       </view>
@@ -72,6 +73,7 @@ import { TREND_CURVE_MAX_N } from '@bracesync/constants'
 import { request } from '../../utils/request'
 import { logger } from '../../utils/logger'
 import { formatPressureValue } from '../../utils/format'
+import { trendSectionTitle } from '../../utils/monitor-copy'
 import { useAuthStore } from '../../stores/auth'
 
 // 后端 data-service RealtimeSnapshot（返回结构）简化接口描述
@@ -104,6 +106,8 @@ const calibratedFlag = ref<boolean | null>(null)
 const segment = ref<'day' | 'week' | 'month'>('day')
 const loading = ref(false)
 const battery = ref(0)
+// T444 M-1：热力图详情行只在患者真正点选后显示数值，否则显示稿面默认句
+const userTappedPoint = ref(false)
 
 const activePoint = computed(() =>
   activeIndex.value >= 0 ? sensorPoints.value[activeIndex.value] : undefined
@@ -115,6 +119,8 @@ const segLabel = computed(() => {
   const map = { day: '今日', week: '本周', month: '本月' }
   return map[segment.value]
 })
+// T444 M-2：无点位时不渲染前置分隔符（修前实测渲染成「· 今日压力趋势」）
+const trendTitle = computed(() => trendSectionTitle(activePoint.value?.pointId, segLabel.value))
 
 const trendData = ref<{ timestamp: string; value: number }[]>([])
 const trendLabels = computed(() => {
@@ -271,6 +277,8 @@ async function loadData() {
       }
     }
     activeIndex.value = maxIdx >= 0 ? maxIdx : -1
+    // 每次重载（含手动/下拉刷新）都回到「未点选」态：详情行重新显示稿面默认句
+    userTappedPoint.value = false
     const base = maxIdx >= 0 ? points[maxIdx].pressureValue : snap?.maxPressure ?? 0
     // T206：realtime snapshot 关键日志，便于 SSH frontend 远程反查数值口径
     logger.info('[T206] realtime snapshot received', {
@@ -300,6 +308,7 @@ function onRefresh() {
 
 function onSelectPoint(index: number) {
   activeIndex.value = index
+  userTappedPoint.value = true
   const base = sensorPoints.value[index]?.pressureValue ?? 0
   void loadTrend(base)
 }

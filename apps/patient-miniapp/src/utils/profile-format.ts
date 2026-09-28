@@ -9,6 +9,9 @@
 /** 后端未给值（null / undefined / 空串）时的占位 */
 export const DASH = '—'
 
+/** T444 P-2：编辑弹层组标题逐字取稿面 profile.html:133，不在实现里另拟 */
+export const CONTACT_GROUP_LABEL = '联系方式'
+
 export function textOrDash(value: string | null | undefined): string {
   return value ? value : DASH
 }
