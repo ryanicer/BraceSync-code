@@ -38,7 +38,7 @@ test.describe('技师端全链路', () => {
     await expect(page.locator('.card-title', { hasText: '设备校准' })).toBeVisible()
     await page.locator('.btn-primary', { hasText: '开始校准' }).click()
     await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
-    // T443 裁定⑥ + 规矩 A：基线已落库 ⇒ 「重新采集」入口必须收起（稿面原无此入口，入口只在没存成时出现）
+    // T443 裁定⑥ × 稿面 T449·TI-6：「重新采集」只挂在采集中态，基线落库后的校准完成态不留入口
     await expect(page.getByText('重新采集')).toHaveCount(0)
     await expect(page.getByText('基线已保存（单次权威校准）')).toBeVisible()
     await page.locator('.btn-primary', { hasText: '校准完成，下一步' }).click()

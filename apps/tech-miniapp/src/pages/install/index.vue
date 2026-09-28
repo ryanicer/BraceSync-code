@@ -96,6 +96,9 @@
             <text class="stat-item">均值: {{ statAvg.toFixed(2) }}N</text>
             <text class="stat-item">最大: {{ statMax.toFixed(2) }}N</text>
           </view>
+          <!-- 裁定⑥（Boss 2026-09-28）＋稿面 T449·TI-6：重新采集只挂在采集中态，
+               校准完成态与阶段三不留入口（见下方 baselineLocked 注释） -->
+          <view v-if="!baselineLocked" class="btn-outline" @click="recollectCalibration"><text>重新采集</text></view>
         </template>
 
         <!-- 校准完成：零点偏移矩阵（T173 D4：真实采集值，非「全 0 归零」placebo） -->
@@ -137,7 +140,6 @@
               <text>校准完成后，实时压力读数将自动减去上述偏移值</text>
             </view>
           </view>
-          <view v-if="!baselineLocked" class="btn-outline" @click="recollectCalibration"><text>重新采集</text></view>
           <view class="btn-primary" @click="goPhase3"><text>校准完成，下一步</text></view>
         </template>
       </view>
@@ -272,9 +274,10 @@ const calibrationProgress = computed(() => Math.min(100, (collectSec.value / 5) 
 const statAvg = computed(() => average(displayFrame.value))
 const statMax = computed(() => max(displayFrame.value))
 
-// 裁定⑥（Boss 2026-09-28）：允许现场重新采集，但只在云端还没有权威基线时给入口。
-// 规矩 A（PRD §7C.4）：校准是一次性权威动作，二次提交必撞 uk_install_baseline 409，
-// 所以保存成功与 409 同等对待（409 说明库里已有那条权威基线）。
+// 裁定⑥（Boss 2026-09-28）＋稿面 T449·TI-6：「重新采集」只挂在采集中态，
+// 校准完成态与阶段三不留入口（本页只有 goPhase2/goPhase3 两个前进键，无回退 ⇒ 基线一落库就再也走不到采集中态）。
+// 这里再叠 baselineLocked 是规矩 A 的兜底（PRD §7C.4：校准一次性、二次提交必撞 uk_install_baseline 409）：
+// 若 store 里已存着权威基线（复进本页），采集中也不给这个必撞 409 的出口。
 const baselineConflict = ref(false)
 const baselineLocked = computed(() => installStore.baselineSaved || baselineConflict.value)
 
@@ -322,12 +325,19 @@ async function startCalibration() {
   }, 1000)
 }
 
-/** 裁定⑥：采集完但基线没落库时，允许就地重采一轮，不必退回上一步整条流程重走 */
+/**
+ * 裁定⑥（稿面 T449·TI-6：该键只挂在采集中态）＝中止本轮 5 秒采集并重新起采。
+ * 计时器与实时流必须先收：startCalibration 会再挂一个 interval，
+ * 不收就两个计时器并存，finalizeCalibration 会被触发两次。
+ */
 async function recollectCalibration() {
   if (!installStore.bleConnected) {
     uni.showToast({ title: '蓝牙未就绪，请先重新连接', icon: 'none' })
     return
   }
+  if (collectTimer) { clearInterval(collectTimer); collectTimer = null }
+  await stopRealtimePressure(installStore.bleDeviceId || installStore.deviceId)
+  installStore.stopRealtimeStream()
   calibrated.value = false
   calibrationChecks.value = { pointCount: false, range: false, stability: true }
   collectedPointCount.value = 0

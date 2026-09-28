@@ -70,10 +70,21 @@ test.describe('安装流程 3 阶段', () => {
 
     await page.locator('.btn-primary', { hasText: '开始校准' }).click()
 
+    // T443 裁定⑥ × 稿面 T449·TI-6：采集中态必须有「重新采集」出口。
+    // 这一格同时是下面「完成态 count 0」的正对照——同一个 locator 两向对照，防止判据无牙。
+    const recollect = page.locator('.btn-outline', { hasText: '重新采集' })
+    await expect(recollect).toBeVisible()
+    // 下面完成态那格用的是 getByText 形态，先给它一次正对照（否则 count 0 可能是 locator 根本没匹配）
+    await expect(page.getByText('重新采集')).toHaveCount(1)
+    await expect(page.getByText('采集中... 第 3 / 5 秒')).toBeVisible({ timeout: 10_000 })
+    await recollect.click()
+    // 中止本轮的标志＝秒数回到 0/1（不中止会继续走 4/5）
+    await expect(page.getByText(/采集中\.\.\. 第 [01] \/ 5 秒/)).toBeVisible({ timeout: 3_000 })
+
     // T173 D4：零点偏移矩阵主视图（5 帧均值）
     await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('基线已保存')).toBeVisible()
-    // T443 裁定⑥ × 规矩 A：基线已入云端 ⇒ 收起「重新采集」，不给第二次提交权威基线的入口
+    // T443 裁定⑥ × 稿面 T449·TI-6：完成态不留「重新采集」入口（基线已落库，规矩 A 不给第二次权威提交）
     await expect(page.getByText('重新采集')).toHaveCount(0)
     await expect(page.getByText('零点偏移量（将从后续读数中扣除，单位 N）')).toBeVisible()
     // 20 格偏移矩阵
