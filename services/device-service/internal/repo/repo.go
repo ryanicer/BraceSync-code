@@ -110,8 +110,11 @@ type Store interface {
 	// GetLatestBaselineByDevice 设备当前生效基线（规矩 A：baseline_id 最新一条，与 data-service
 	// calibration.Store 同源）；该设备从未存过基线返回 ErrNotFound
 	GetLatestBaselineByDevice(ctx context.Context, deviceID string) (*model.Baseline, error)
-	// UpdateInstallMeta 更新安装记录备注与签名（基线之外的一次性回填）
-	UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string) error
+	// UpdateInstallMeta 更新安装记录备注、签名与配网状态（基线之外的一次性回填）。
+	// 三者都是「nil = 不改本列」：一条 UPDATE 原子写完，别拆成两次落库（拆开后第二次失败
+	// 会留下半更新行）。wifiStatus 取值由 service 层校验到 model.ValidWifiStatus 四值之内，
+	// 这里不重复校验，但库侧 install_records_wifi_status_check 是最后一道门（T447）。
+	UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string, wifiStatus *string) error
 	// SetWifiSSID 维护 devices.wifi_ssid（架构 §2.3 配网状态）
 	SetWifiSSID(ctx context.Context, deviceID, ssid string) error
 }
@@ -575,12 +578,13 @@ func (r *PGStore) GetLatestBaselineByDevice(ctx context.Context, deviceID string
 	return bl, nil
 }
 
-// UpdateInstallMeta 回填 notes / signature_url
-func (r *PGStore) UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string) error {
+// UpdateInstallMeta 回填 notes / signature_url / wifi_status（nil 表示该列不改）
+func (r *PGStore) UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string, wifiStatus *string) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE install_records
-		 SET notes = COALESCE($2, notes), signature_url = COALESCE($3, signature_url)
-		 WHERE install_id = $1`, installID, notes, signatureURL)
+		 SET notes = COALESCE($2, notes), signature_url = COALESCE($3, signature_url),
+		     wifi_status = COALESCE($4, wifi_status)
+		 WHERE install_id = $1`, installID, notes, signatureURL, wifiStatus)
 	if err != nil {
 		return fmt.Errorf("update install meta: %w", err)
 	}
@@ -600,7 +604,9 @@ func (r *PGStore) SetWifiSSID(ctx context.Context, deviceID, ssid string) error 
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	// 最近一次安装记录置 connected（无安装记录时不报错：配网可先于安装）
+	// 最近一次安装记录置 connected（无安装记录时不报错：配网可先于安装）。
+	// 这是本列写 connected 的唯一通路；failed / skipped 走 UpdateInstallMeta（PUT /install-records/:id）。
+	// 两条通路都是整值覆盖、无读改写，因此同一条记录若先配网成功后点跳过，按后写生效。
 	if _, err = r.pool.Exec(ctx,
 		`UPDATE install_records SET wifi_status = 'connected'
 		 WHERE install_id = (SELECT install_id FROM install_records WHERE device_id = $1 ORDER BY install_id DESC LIMIT 1)`,

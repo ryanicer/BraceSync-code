@@ -378,7 +378,7 @@ func (f *FakeStore) GetLatestBaselineByDevice(_ context.Context, deviceID string
 	return latest, nil
 }
 
-func (f *FakeStore) UpdateInstallMeta(_ context.Context, installID int64, notes, signatureURL *string) error {
+func (f *FakeStore) UpdateInstallMeta(_ context.Context, installID int64, notes, signatureURL *string, wifiStatus *string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, ok := f.installs[installID]
@@ -390,6 +390,11 @@ func (f *FakeStore) UpdateInstallMeta(_ context.Context, installID int64, notes,
 	}
 	if signatureURL != nil {
 		rec.SignatureURL = signatureURL
+	}
+	// T447：与 PGStore 的 COALESCE 同语义 —— nil 不改该列。这里刻意**不**校验四值：
+	// 校验在 service 层（用例要覆盖的就是「脏值到不到得了 store」）。
+	if wifiStatus != nil {
+		rec.WifiStatus = *wifiStatus
 	}
 	return nil
 }

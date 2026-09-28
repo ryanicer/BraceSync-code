@@ -172,6 +172,28 @@ const (
 	ReasonUnbind  = "unbind"  // 解绑
 )
 
+// install_records.wifi_status 全量取值（T447，Boss 2026-09-28 裁定②甲：2 值扩 4 值）。
+// 与迁移 scripts/db/migrations/000031_t447_wifi_status_four_values_winner.up.sql 的 CHECK 是同一集合，
+// 两侧由 wifi_status_t447_test.go 比对字面值钉住（改一侧不改另一侧 = 用例判红）；
+// packages/shared-types 的 wifiStatus 联合类型是第三侧，同由该用例的正向集合覆盖。
+const (
+	WifiStatusConnected    = "connected"    // 配网成功。唯一写侧 = repo.SetWifiSSID（BLE 配网回写）
+	WifiStatusUnconfigured = "unconfigured" // 从未配网。列默认值（000001:129）
+	WifiStatusFailed       = "failed"       // 已配上 WiFi 但云端不可达（T447 新增）
+	WifiStatusSkipped      = "skipped"      // 技师主动跳过配网（T447 新增）
+)
+
+// ValidWifiStatus wifi_status 合法性校验（T447）。
+// 大小写敏感：'CONNECTED' 之类不在集合内 —— 与库侧 CHECK 同一口径，
+// 目的是让脏值在 service 层回 400，而不是穿过校验后由 CHECK 报 23514、被 handler 兜成 500。
+func ValidWifiStatus(v string) bool {
+	switch v {
+	case WifiStatusConnected, WifiStatusUnconfigured, WifiStatusFailed, WifiStatusSkipped:
+		return true
+	}
+	return false
+}
+
 // InstallRecord install_records 表行
 type InstallRecord struct {
 	InstallID     int64
@@ -185,7 +207,7 @@ type InstallRecord struct {
 	OffsetValues []float32
 	Notes        *string
 	SignatureURL *string
-	WifiStatus   string // connected / unconfigured
+	WifiStatus   string // 四值见上方常量块（T447）
 	CreatedAt    time.Time
 	// T418 详情展示列：仅 GetInstall 的 LEFT JOIN patients/technicians/devices 填充
 	// （列表投影走 InstallListItem，不经这些字段；写侧不填 ⇒ nil）。

@@ -385,15 +385,15 @@ func TestUpdateInstallMeta(t *testing.T) {
 	require.Nil(t, appErr)
 
 	notes := "备注"
-	appErr = svc.UpdateInstallMeta(ctx, rec.InstallID, &notes, nil)
+	appErr = svc.UpdateInstallMeta(ctx, rec.InstallID, &notes, nil, nil)
 	require.Nil(t, appErr)
 
 	// nil 参数无副作用成功
-	appErr = svc.UpdateInstallMeta(ctx, rec.InstallID, nil, nil)
+	appErr = svc.UpdateInstallMeta(ctx, rec.InstallID, nil, nil, nil)
 	require.Nil(t, appErr)
 
 	// install 不存在 → 20404
-	appErr = svc.UpdateInstallMeta(ctx, 999999, &notes, nil)
+	appErr = svc.UpdateInstallMeta(ctx, 999999, &notes, nil, nil)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeNotFound, appErr.Code)
 }

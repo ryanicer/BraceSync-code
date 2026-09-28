@@ -345,9 +345,10 @@ func TestIT_Install_Baseline(t *testing.T) {
 	_, err = store.SaveBaseline(ctx, installID, offsets, itTech)
 	assert.ErrorIs(t, err, ErrConflict)
 
-	// notes/signature_url 回填
+	// notes/signature_url 回填。第 5 参 wifiStatus 传 nil = 不改配网状态列；
+	// T447 的四值写入/脏值回滚在 wifi_status_t447_integration_test.go 单独覆盖（本用例只被签名变更牵连）。
 	notes, sig := "matrix 完成", "cos://sig/x.png"
-	require.NoError(t, store.UpdateInstallMeta(ctx, installID, &notes, &sig))
+	require.NoError(t, store.UpdateInstallMeta(ctx, installID, &notes, &sig, nil))
 	rec, _ = store.GetInstall(ctx, installID)
 	require.NotNil(t, rec.Notes)
 	assert.Equal(t, notes, *rec.Notes)

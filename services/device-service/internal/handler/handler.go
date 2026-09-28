@@ -159,9 +159,13 @@ type installRequest struct {
 
 // installMetaRequest PUT /api/v1/install-records/:id 入参（T122）。
 // notes / signatureUrl 均可选：空字符串不覆盖该列（对齐 repo.UpdateInstallMeta COALESCE 语义）。
+// wifiStatus（T447 接通）：同样「空字符串 = 不送该列」。此前该键根本不在结构体里，
+// 技师端 PUT 一直带着它却被 ShouldBindJSON 静默丢弃 —— 所以「已跳过/失败」两态从未落库。
+// 非空时由 service 校验四值，未知取值回 400。
 type installMetaRequest struct {
 	Notes        string `json:"notes"`
 	SignatureURL string `json:"signatureUrl"`
+	WifiStatus   string `json:"wifiStatus"`
 }
 
 // installDetailDTO 单条安装记录响应体（T122 GET /:id）
@@ -489,7 +493,7 @@ func (h *Handler) getInstall(c *gin.Context) {
 	ok(c, toInstallDetailDTO(rec))
 }
 
-// updateInstallMeta PUT /api/v1/install-records/:id —— 回填 notes / signatureUrl（T122）。
+// updateInstallMeta PUT /api/v1/install-records/:id —— 回填 notes / signatureUrl（T122）/ wifiStatus（T447）。
 // 空字符串字段不覆盖（repo COALESCE 语义），与 saveBaseline 回填行为一致。
 func (h *Handler) updateInstallMeta(c *gin.Context) {
 	// T387：网关在 T190 已把本路由收口为技师+管理员，服务层此前零判定（直连即绕过网关），
@@ -507,14 +511,17 @@ func (h *Handler) updateInstallMeta(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	var notes, sigURL *string
+	var notes, sigURL, wifiStatus *string
 	if req.Notes != "" {
 		notes = &req.Notes
 	}
 	if req.SignatureURL != "" {
 		sigURL = &req.SignatureURL
 	}
-	if appErr := h.svc.UpdateInstallMeta(c.Request.Context(), id, notes, sigURL); appErr != nil {
+	if req.WifiStatus != "" {
+		wifiStatus = &req.WifiStatus
+	}
+	if appErr := h.svc.UpdateInstallMeta(c.Request.Context(), id, notes, sigURL, wifiStatus); appErr != nil {
 		fail(c, appErr)
 		return
 	}
@@ -597,7 +604,8 @@ func (h *Handler) saveBaseline(c *gin.Context) {
 		sigURL = &req.SignatureURL
 	}
 	if notes != nil || sigURL != nil {
-		if err := h.svc.UpdateInstallMeta(c.Request.Context(), installID, notes, sigURL); err != nil {
+		// wifiStatus 传 nil：baselineRequest 根本没有该键，saveBaseline 不参与配网状态（T447 只放开 PUT 通路）
+		if err := h.svc.UpdateInstallMeta(c.Request.Context(), installID, notes, sigURL, nil); err != nil {
 			fail(c, err)
 			return
 		}
