@@ -109,7 +109,9 @@ test.describe('详情抽屉（T289 9.1/9.2）', () => {
  * 🔴 与 T301 原稿的两处口径差（不是删用例，是随设计稿改版）：
  *  - 原「校准时间」列已按 PM 裁定 ④ 换成「校准状态」（设计稿 :108 无校准时间列）；
  *    同列位改成断言「安装时间」（:108/:181，值暂由 calibrate_time 承载）。
- *  - WiFi 标签文案按设计稿 :132-133「已连接 / 未连接」，非原稿的「已配网 / 未配网」。
+ *  - WiFi 词形原按设计稿 :132-133「已连接 / 未连接」，T447 四值落地后改按
+ *    docs/tasks/winner/T447-WiFi状态唯一词形表.md §一：connected=已连接、unconfigured=未配置
+ *    （稿面 wifiStatusMap 只有 connected/skipped 两键，skipped 那一键的词形已与词形表不符）。
  */
 test.describe('列表列内容与搜索（T301 G1）', () => {
   const cellTag = (page: Page, installId: string, col: number): Locator =>
@@ -135,11 +137,26 @@ test.describe('列表列内容与搜索（T301 G1）', () => {
     await expect(cellTag(page, 'INS-005', 5)).toHaveText('待保存')
   })
 
-  test('WiFi 列：未连接的两条标 info，其余标 success（设计稿 :132-133）', async ({ page }) => {
-    await expect(cellTag(page, 'INS-003', 6)).toHaveText('未连接')
+  test('WiFi 列：connected 标「已连接」/success，unconfigured 标「未配置」/info（T447 词形表）', async ({ page }) => {
+    await expect(cellTag(page, 'INS-003', 6)).toHaveText('未配置')
     await expect(cellTag(page, 'INS-003', 6)).toHaveClass(/el-tag--info/)
     await expect(cellTag(page, 'INS-002', 6)).toHaveText('已连接')
     await expect(cellTag(page, 'INS-002', 6)).toHaveClass(/el-tag--success/)
+  })
+
+  // 第二处显示面（index.vue 详情抽屉的 WiFi 行）：改前两处各写一份三元表达式，
+  // 只测列表那一处时，抽屉退回塌两词不会有任何用例判红。两档各起一条用例，
+  // beforeEach 重新进页，避免在同一条里连开两次抽屉去关它。
+  test('详情抽屉 WiFi 行同词形：unconfigured 显示「未配置」', async ({ page }) => {
+    await openDetail(page, 'INS-003')
+    await expect(drawerBody(page)).toContainText('未配置')
+    await expect(drawerBody(page)).not.toContainText('未连接')
+  })
+
+  test('详情抽屉 WiFi 行同词形：connected 显示「已连接」', async ({ page }) => {
+    await openDetail(page, 'INS-001')
+    await expect(drawerBody(page)).toContainText('已连接')
+    await expect(drawerBody(page)).not.toContainText('未连接')
   })
 
   test('关键词搜索设备 ID → 只剩 1 条', async ({ page }) => {
