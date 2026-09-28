@@ -69,10 +69,12 @@
         <span class="member-panel-title">团队: {{ currentTeam?.name }} - 成员管理</span>
         <el-button size="small" @click="mode = 'list'">返回</el-button>
       </div>
-      <!-- T289 5.3：设计稿 团队管理.html:154-158 成员工具条 = 搜索成员 + 全部角色筛选 + 添加成员 -->
+      <!-- T289 5.3：设计稿 团队管理.html:154-158 成员工具条 = 搜索成员 + 职称筛选 + 添加成员
+           T456（T442 T-1 裁 A）：该下拉的选项与行内值都是 doctors.title ⇒ 标签按内容语义叫「职称」，
+           稿面侧同一处由 T457（Peter）订正。 -->
       <div class="member-toolbar">
         <el-input v-model="memberKeyword" placeholder="搜索成员" clearable class="member-search" />
-        <el-select v-model="memberRoleFilter" placeholder="全部角色" clearable class="member-role-filter">
+        <el-select v-model="memberRoleFilter" placeholder="全部职称" clearable class="member-role-filter">
           <el-option v-for="r in ROLE_OPTIONS" :key="r" :label="r" :value="r" />
         </el-select>
         <el-button type="success" size="small" @click="openAddMember">添加成员</el-button>
@@ -80,10 +82,12 @@
       <div class="page-card">
         <el-table :data="filteredMembers" size="small" v-loading="memberLoading">
           <el-table-column prop="name" label="姓名" width="110" />
-          <el-table-column label="角色" width="110">
+          <!-- T456：契约把 doctors.title 放在 role、把 department 放在 title
+               （pg.go:1582-1583 / mock-org.ts 同源），列头按内容语义命名，绑定不动。 -->
+          <el-table-column label="职称" width="110">
             <template #default="{ row }">{{ row.role ?? '-' }}</template>
           </el-table-column>
-          <el-table-column label="职称" width="110">
+          <el-table-column label="科室" width="110">
             <template #default="{ row }">{{ row.title ?? '-' }}</template>
           </el-table-column>
           <el-table-column label="手机号" width="130">
@@ -144,7 +148,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="角色">
+        <el-form-item label="职称">
           <el-select v-model="addMemberForm.role" placeholder="请选择角色" clearable>
             <el-option v-for="r in ROLE_OPTIONS" :key="r" :label="r" :value="r" />
           </el-select>
@@ -162,7 +166,7 @@
         <el-form-item label="成员">
           <el-input :model-value="editMemberForm.name" disabled />
         </el-form-item>
-        <el-form-item label="角色">
+        <el-form-item label="职称">
           <el-select v-model="editMemberForm.role" placeholder="请选择角色" clearable>
             <el-option v-for="r in ROLE_OPTIONS" :key="r" :label="r" :value="r" />
           </el-select>
