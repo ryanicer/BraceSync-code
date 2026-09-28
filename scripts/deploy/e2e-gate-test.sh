@@ -12,9 +12,10 @@
 #   B pr-running   E2E / pull_request / in_progress                    → 期望 rc=1 并打印 run 号与 run_started_at
 #   C sched-queued E2E / schedule / queued                            → 期望 rc=1（定时 STRICT 轮）
 #   D push-only    E2E / push / in_progress                           → 期望 rc=0，且必须有排除行（口径是活的）
-#   E bad-shape    响应体里没有 workflow_runs                          → 期望 rc=3（读不到不判绿）
-#   F missing      夹具路径指向不存在的文件                            → 期望 rc=3
-#   G disabled     E2E_GATE_DISABLE=1 打在 B 上                        → 期望 rc=0 且有 SKIP 声明行
+#   E wf-dispatch  E2E / workflow_dispatch / waiting                  → 期望 rc=1（手工触发/等待中也算在跑）
+#   F bad-shape    响应体里没有 workflow_runs                          → 期望 rc=3（读不到不判绿）
+#   G unreadable   夹具路径指向不存在的文件                            → 期望 rc=3
+#   H disabled     E2E_GATE_DISABLE=1 打在 B 上                        → 期望 rc=0 且有 SKIP 声明行
 #   网络腿：本地 127.0.0.1 假 API 服务走真 curl 腿 → hit=1 / clean=0 / 拒接=3
 #   变异 M1..M4：逐格拆过滤链，要求对应夹具的结论按预期翻转
 set -uo pipefail
@@ -237,7 +238,7 @@ mutate "M3 事件集合（bash 常量里加进 push）" "$F_PUSH" 0 1 \
   's|^STAGING_EVENTS="pull_request schedule workflow_dispatch"|STAGING_EVENTS="pull_request schedule workflow_dispatch push"|'
 # M4 打的是「判红退出链」：BLOCK 行照打，但计数被抹 ⇒ 结论必须从判红翻成放行。
 #   这一格为什么重要：只看「打印了 BLOCK 行」会让人以为门在拦，实际 rc 仍是 0，部署照跑。
-#   形状守卫那一格（夹具 E）这里不做变异反证：它由 bash 的显式 die 与 python 的解析崩溃两道
+#   形状守卫那一格（夹具 F：响应体里没有 workflow_runs）这里不做变异反证：它由 bash 的显式 die 与 python 的解析崩溃两道
 #   同指一个结果，拆掉任一道另一道照样兜住 ⇒ 变异看不到翻转，属双保险而非无牙（本卡交件已披露）。
 mutate "M4 判红计数链（blocked 自增抹掉，BLOCK 行照打）" "$F_PR" 1 0 \
   's/blocked=\$((blocked + 1))/blocked=0/'
