@@ -33,10 +33,12 @@
             <el-tag v-else type="warning" size="small">待保存</el-tag>
           </template>
         </el-table-column>
+        <!-- WiFi 列与详情抽屉同读 utils/wifiStatus 的四值词表；稿面 安装记录.html 的 wifiStatusMap
+             只有 connected/skipped 两键，后一键的词形与 T447 四档标准词不符（已随 T447 §五-5 向 Peter 登记） -->
         <el-table-column label="WiFi" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.wifiStatus === 'connected' ? 'success' : 'info'" size="small" effect="plain">
-              {{ row.wifiStatus === 'connected' ? '已连接' : '未连接' }}
+            <el-tag :type="wifiStatusTagType(row.wifiStatus)" size="small" effect="plain">
+              {{ wifiStatusLabel(row.wifiStatus) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -82,7 +84,7 @@
           <el-descriptions-item label="设备型号">{{ detail.model || '—' }}</el-descriptions-item>
           <el-descriptions-item label="技师">{{ detail.techName || techNameOf(detail.techId) }}</el-descriptions-item>
           <el-descriptions-item label="安装时间">{{ formatTime(detail.createdAt) }}</el-descriptions-item>
-          <el-descriptions-item label="WiFi">{{ detail.wifiStatus === 'connected' ? '已连接' : '未连接' }}</el-descriptions-item>
+          <el-descriptions-item label="WiFi">{{ wifiStatusLabel(detail.wifiStatus) }}</el-descriptions-item>
         </el-descriptions>
 
         <!-- 量纲按 T203 收口后的 N；设计稿 :185 的 kg/cm² 与越界点高亮（前端硬编 threshold=5）不照搬——
@@ -111,6 +113,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { CalibStatus, InstallRecordRow, InstallRecordDetail } from '@bracesync/shared-types'
 import { fetchInstallRecords, fetchInstallRecordDetail, patientNameOf, techNameOf } from '../../api'
+import { wifiStatusLabel, wifiStatusTagType } from '../../utils/wifiStatus'
 
 const list = ref<InstallRecordRow[]>([])
 const total = ref(0)
