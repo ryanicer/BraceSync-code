@@ -25,7 +25,8 @@ func TestT257_UpdateSettings_RejectsUpperNotAboveStoredLower(t *testing.T) {
 		w, resp := e.do(http.MethodPut, "/api/v1/admin/settings",
 			mergeBody(validSettingsBody(), "pressureHighThresholdN", upper), nil)
 		assert.Equal(t, http.StatusBadRequest, w.Code, "pressureHighThresholdN=%g", upper)
-		assert.Contains(t, resp.Message, "threshold_pressure_low")
+		assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+		t464TechLogContains(t, w, "threshold_pressure_low")
 		assert.Nil(t, e.store.lastUpsert, "拒绝时不得触达写通道")
 	}
 }
@@ -109,7 +110,8 @@ func TestT257_UpdateSettings_RejectsLowNotBelowHigh(t *testing.T) {
 
 			w, resp := e.do(http.MethodPut, "/api/v1/admin/settings", body, nil)
 			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, resp.Message, tc.msg)
+			assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+			t464TechLogContains(t, w, tc.msg)
 			assert.Nil(t, e.store.lastUpsert, "拒绝时不得触达写通道")
 		})
 	}

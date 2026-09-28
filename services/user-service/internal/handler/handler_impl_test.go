@@ -1021,7 +1021,8 @@ func TestPatientLoginWithoutSigner(t *testing.T) {
 // TestLoginAntiEnumeration 防枚举：所有 401 文案一致，不泄漏失败原因
 func TestLoginAntiEnumeration(t *testing.T) {
 	e := newEnv(t, true, true)
-	const expectMsg = "invalid phone or password"
+	// T464：响应体一律是该码的中文短句，「不存在/密码错/禁用」三种原因只出现在各自的日志行里
+	expectMsg := model.UserText(model.CodeUnauthorized)
 
 	// 技师不存在
 	w, resp := e.do(http.MethodPost, "/api/v1/tech/login", map[string]string{
@@ -2232,7 +2233,7 @@ func TestWXLogin_WechatError(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/patient/wx-login", map[string]string{"code": "bad-code"}, nil)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	assert.Equal(t, model.CodeUnauthorized, resp.Code)
-	assert.Contains(t, resp.Message, "invalid code")
+	t464TechLogContains(t, w, "invalid code")
 }
 
 // Case 4: 微信下游网络错误 / HTTP 非 200 → 502 + CodeWXUnavail
@@ -2299,7 +2300,8 @@ func TestWXLogin_ExistingInactivePatient(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	// T085：inactive 统一返回 10001（invalid_credentials）防枚举
 	assert.Equal(t, model.CodeInvalidCredentials, resp.Code)
-	assert.Equal(t, "invalid_credentials", resp.Message)
+	assert.Equal(t, model.UserText(resp.Code), resp.Message, "T464：响应体给中文短句")
+	t464TechLogContains(t, w, "invalid_credentials")
 }
 
 // Case 7: openid 未命中 → T085 不创建患者，返回 10601 + bindToken（引导绑定手机号）

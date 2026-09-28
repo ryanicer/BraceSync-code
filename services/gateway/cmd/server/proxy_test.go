@@ -85,13 +85,16 @@ func TestProxy_ProcessAlert_ForwardsPath(t *testing.T) {
 
 func TestProxy_BackendDown_502Envelope(t *testing.T) {
 	// 指向已关闭的端口 → 连接失败走 ErrorHandler
+	logs := t464CaptureLogs(t)
 	gw := startGateway(t, "http://127.0.0.1:1")
 
 	code, body := httpDo(t, http.MethodGet, gw.URL+"/api/v1/alerts")
 
 	assert.Equal(t, http.StatusBadGateway, code)
-	assert.Contains(t, body, `"code":502`)
-	assert.Contains(t, body, "alert-service unavailable")
+	// T464：message 是中文短句，服务名进 data.upstream，底层失败文本进日志
+	requestID := t464TraceOf(t, http.StatusBadGateway, code, body, nil)
+	assert.Contains(t, body, `"upstream":"alert-service"`)
+	t464TechLogContains(t, logs, requestID, "alert-service")
 }
 
 func TestProxy_InvalidTarget_RoutesNotRegistered(t *testing.T) {

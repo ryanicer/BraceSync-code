@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bracesync/bracesync/services/user-service/internal/model"
 )
 
 // 迁移落库后的库里现值：000019 ⇒ high=5，000021 ⇒ low=1
@@ -54,6 +56,8 @@ func TestT281_UpdateSettings_InvertedPairStillRejected(t *testing.T) {
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/settings",
 		mergeBody(validSettingsBody(), "pressureHighThresholdN", 5), nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, resp.Message, "threshold_pressure_low")
+	assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+	// T464：被挡的具体配置键是技术文本，改由日志通道反查
+	t464TechLogContains(t, w, "threshold_pressure_low")
 	assert.Nil(t, e.store.lastUpsert, "拒绝时不得触达写通道")
 }

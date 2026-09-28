@@ -114,6 +114,7 @@ func (h *Handler) assertPatientExists(c *gin.Context, patientID string) bool {
 // Router 组装路由（可测试）
 func (h *Handler) Router() *gin.Engine {
 	r := gin.New()
+	r.Use(requestIDMiddleware()) // T464：关联号须先于任何会返回错误的环节
 	r.Use(gin.Recovery())
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -135,10 +136,12 @@ func (h *Handler) Router() *gin.Engine {
 }
 
 // apiResponse 统一响应体
+// T464：错误响应的 Message 为用户面中文（技术文本只进日志），Trace 回传错误码 + 请求关联号。
 type apiResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    any         `json:"data"`
+	Trace   *errorTrace `json:"trace,omitempty"`
 }
 
 func ok(c *gin.Context, data any) {
@@ -149,7 +152,14 @@ func fail(c *gin.Context, appErr *model.AppError) {
 	if appErr.RetryAfterSec > 0 {
 		c.Header("Retry-After", strconv.Itoa(appErr.RetryAfterSec))
 	}
-	c.JSON(appErr.HTTPStatus, apiResponse{Code: appErr.Code, Message: appErr.Message, Data: nil})
+	requestID := requestIDOf(c)
+	logTechnical(c, appErr.Code, appErr.HTTPStatus, appErr.Message, requestID)
+	c.JSON(appErr.HTTPStatus, apiResponse{
+		Code:    appErr.Code,
+		Message: model.UserText(appErr.Code),
+		Data:    nil,
+		Trace:   &errorTrace{ErrorCode: appErr.Code, RequestID: requestID},
+	})
 }
 
 // uploadSingle 单帧实时上报

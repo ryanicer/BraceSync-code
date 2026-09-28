@@ -430,7 +430,10 @@ func TestT387_WriteDeniedForNonWriterRolesWithZeroWrite(t *testing.T) {
 
 				assert.Equal(t, http.StatusForbidden, status, "message=%s", msg)
 				assert.Equal(t, model.CodeForbidden, code)
-				assert.Contains(t, msg, "may not", "拒绝文案要点明是身份不允许，不是资源问题")
+				// T464 后「身份不允许 vs 资源问题」由两句不同的中文短句承载（码 20403 vs 20404 同向）：
+				// 越权文案必须是越权那一句，不得与「未找到」混用，也不得是英文技术文本。
+				assert.Equal(t, model.UserText(model.CodeForbidden), msg, "拒绝文案要点明是身份不允许，不是资源问题")
+				assert.NotEqual(t, model.UserText(model.CodeNotFound), msg, "越权与不存在必须可辨")
 				assert.NotContains(t, msg, ep.write, "文案不得泄露将命中的仓储方法名")
 				for k, v := range before.writeDelta(st.snapshot()) {
 					assert.Zero(t, v, "拒绝路径不得触碰写方法 %s", k)

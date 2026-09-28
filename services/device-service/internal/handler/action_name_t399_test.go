@@ -69,6 +69,9 @@ func t399EndpointByName(t *testing.T, epName string) t387Ep {
 
 // TestT399_DenyMessageNamesTheEndpointItWasHitOn 用 ROLE_DOCTOR 逐条打收口的八条写端点，
 // 按整串相等判定（不是 Contains）：换成别端点的动作名、改措辞、加后缀，都判红。
+//
+// T464 改道：这句带动作名的英文是技术文本，现只写服务端日志；响应体给中文短句。
+// 动作名的可辨性因此按同一条日志行判定（E2 反证仍成立：换成别端点的动作名 ⇒ 日志行不匹配 ⇒ 判红）。
 func TestT399_DenyMessageNamesTheEndpointItWasHitOn(t *testing.T) {
 	want := fmt.Sprintf("role %q may not %%s", roleDoctor)
 	for _, act := range t399ExpectedActions() {
@@ -76,14 +79,16 @@ func TestT399_DenyMessageNamesTheEndpointItWasHitOn(t *testing.T) {
 			r, st, _ := t387Env(t)
 			ep := t399EndpointByName(t, act.epName)
 			path, body := ep.prepare(t, st, false)
+			logs := t464CaptureLogs(t)
 
 			status, msg, code := t387Req(t, r, ep.method, path, roleDoctor, t387DoctorUID, body)
 
 			require.Equal(t, http.StatusForbidden, status, "message=%s", msg)
 			assert.Equal(t, model.CodeForbidden, code)
-			assert.Equal(t, fmt.Sprintf(want, act.action), msg,
+			assert.Equal(t, fmt.Sprintf(want, act.action), t464TechnicalLog(t, logs),
 				"越权文案的动作名契约值（E2 反证：把调用点动作名换成别端点的，此前全绿）")
-			assert.NotContains(t, msg, act.method, "文案不得泄露将命中的仓储方法名")
+			assert.Equal(t, model.UserText(model.CodeForbidden), msg, "响应体给用户的是中文短句")
+			assert.NotContains(t, msg, act.method, "响应体不得泄露将命中的仓储方法名")
 		})
 	}
 }

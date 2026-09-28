@@ -46,9 +46,18 @@ func newGatewayAuth(jwtSecret string, secrets SecretProvider) *gatewayAuth {
 	}
 }
 
-// abortJSON 统一响应体中止（架构 §3.5 code/message）
+// abortJSON 统一响应体中止（架构 §3.5 code/message）。
+// T464：message 入参是技术文本（如 "missing X-Device-Id header"），一律只进服务端日志；
+// 响应体给用户的是按码映射的中文短句 + trace（错误码 + 请求关联号）。
 func abortJSON(c *gin.Context, status, code int, message string) {
-	c.AbortWithStatusJSON(status, gin.H{"code": code, "message": message, "data": nil})
+	requestID := requestIDOf(c)
+	logTechnical(c, code, status, message, requestID)
+	c.AbortWithStatusJSON(status, gin.H{
+		"code":    code,
+		"message": userText(code),
+		"data":    nil,
+		"trace":   errorTrace{ErrorCode: code, RequestID: requestID},
+	})
 }
 
 // authWhitelisted JWT 免鉴权白名单（方法 + 完整路径）

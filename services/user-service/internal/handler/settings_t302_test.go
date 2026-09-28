@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bracesync/bracesync/services/user-service/internal/model"
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -140,7 +141,8 @@ func TestT302_UpdateSettings_RejectsOutOfRange(t *testing.T) {
 				mergeBody(validSettingsBody(), tc.key, tc.val),
 				map[string]string{"X-User-Id": "A0001"})
 			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, resp.Message, tc.wants)
+			assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+			t464TechLogContains(t, w, tc.wants)
 			assert.Nil(t, e.store.lastUpsert, "拒绝时不得触达写通道")
 		})
 	}

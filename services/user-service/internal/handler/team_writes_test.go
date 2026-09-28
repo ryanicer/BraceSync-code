@@ -330,9 +330,9 @@ func TestDeleteTeam_KNOWN_RED(t *testing.T) {
 		w, resp := e.do(http.MethodDelete, "/api/v1/teams/TEAM26001", nil, nil)
 		assert.Equal(t, http.StatusConflict, w.Code)
 		assert.Equal(t, model.CodeConflict, resp.Code)
-		// 文案应含引用计数（"5 patients" 与 "3 members"）
-		assert.Contains(t, resp.Message, "5 patients", "409 文案应含患者引用计数")
-		assert.Contains(t, resp.Message, "3 members", "409 文案应含成员引用计数")
+		// 引用计数是技术文本，T464 后只进日志（响应体给中文短句 + trace）
+		t464TechLogContains(t, w, "5 patients")
+		t464TechLogContains(t, w, "3 members")
 	})
 }
 

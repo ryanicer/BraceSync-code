@@ -149,13 +149,16 @@ func TestT448_WifiClearReport_RoleGateMessageAndZeroWritesUnchanged(t *testing.T
 			r, st, _ := t387Env(t)
 			_ = t387Install(t, st, t387Device)
 			before := st.snapshot()
+			logs := t464CaptureLogs(t)
 
 			status, msg, code := t387Req(t, r, http.MethodPost, t448WifiPath(t387Device), tc.role, t387Tech, t448ClearedBody())
 
 			assert.Equal(t, http.StatusForbidden, status)
 			assert.Equal(t, model.CodeForbidden, code)
-			// T399 钉的是整句相等：cleared 支不得改动作名，也不得多出一句可辨文案
-			assert.Equal(t, `role "`+tc.role+`" may not configure device wifi`, msg)
+			// T399 钉的是整句相等：cleared 支不得改动作名，也不得多出一句可辨文案。
+			// T464 后这句英文在日志行里比对，响应体给中文（新支与老支同句 ⇒ 用户面不可辨）。
+			assert.Equal(t, `role "`+tc.role+`" may not configure device wifi`, t464TechnicalLog(t, logs))
+			assert.Equal(t, model.UserText(model.CodeForbidden), msg)
 			delta := before.writeDelta(st.snapshot())
 			assert.Zero(t, delta["WriteWifiClearAudit"])
 			assert.Zero(t, delta["SetWifiSSID"])

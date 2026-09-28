@@ -44,7 +44,9 @@ func TestT396_Presign_OwnerTypeOutsideEnum_400WithZeroWrites(t *testing.T) {
 		code, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/presign", "ADM-ROOT", "ROLE_ADMIN", t396PresignBody(ot))
 		require.Equal(t, http.StatusBadRequest, code, "owner_type=%q 竟被放行", ot)
 		assert.Equal(t, float64(ErrorCodeInvalidRequest), body["code"])
-		assert.Equal(t, "unsupported owner_type", body["message"], "owner_type=%q", ot)
+		// T464：字段名与脏值是技术文本，改走日志；响应体给中文短句（判定本身仍由码 60400 承载）
+		assert.Equal(t, UserText(ErrorCodeInvalidRequest), body["message"], "owner_type=%q", ot)
+		t464TraceMatchesBody(t, body, ErrorCodeInvalidRequest)
 	}
 	assert.Zero(t, s.writes, "400 必须排在签发之前：签发即落 files pending 行")
 	assert.Zero(t, s.scopeCalls, "枚举不合格的请求不该再触达团队判定")
@@ -96,6 +98,7 @@ func TestT396_Presign_NonStaffOwnerTypeStillForced(t *testing.T) {
 }
 
 func TestT396_Presign_DoctorUnknownOwnerType_400BeforeScopeProbe(t *testing.T) {
+	logs := t464CaptureLogs(t)
 	s := t378Store()
 	srv := t378Srv(t, s)
 	defer srv.Close()
@@ -105,7 +108,11 @@ func TestT396_Presign_DoctorUnknownOwnerType_400BeforeScopeProbe(t *testing.T) {
 	code, body := doJSON(t, http.MethodPost, srv.URL+"/api/v1/files/presign", t378Doc, "ROLE_DOCTOR",
 		t396PresignBody("Patient"))
 	require.Equal(t, http.StatusBadRequest, code, "不该是 403（越权）而该是 400（参数非法）：%v", body["message"])
-	assert.Equal(t, "unsupported owner_type", body["message"])
+	// T464：字段名是技术文本，改走日志（本用例的判定由码 60400 + 零写 + 零探测承载）
+	assert.Equal(t, UserText(ErrorCodeInvalidRequest), body["message"])
+	t464TraceMatchesBody(t, body, ErrorCodeInvalidRequest)
+	_, traceRequestID := t464TraceOfBody(t, body)
+	assert.Contains(t, t464EntryByRequestID(t, logs, traceRequestID)["message"], "unsupported owner_type")
 	assert.Zero(t, s.writes)
 	assert.Zero(t, s.scopeCalls)
 

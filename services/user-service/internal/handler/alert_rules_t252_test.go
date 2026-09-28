@@ -225,7 +225,7 @@ func TestT252_UpdateAlertPointRules_RejectsBadInputBeforeWriting(t *testing.T) {
 			w, resp := e.do(http.MethodPut, t252PointsPath, tc.body, t252AdminHdr())
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 			assert.Equal(t, model.CodeInvalidParam, resp.Code)
-			assert.Contains(t, resp.Message, tc.msg)
+			t464TechLogContains(t, w, tc.msg)
 			assert.Nil(t, e.store.savedKVs, "拒绝时不得触达写通道")
 			assert.Nil(t, e.store.savedRules)
 			assert.Empty(t, e.store.auditRows, "失败请求不留配置变更审计")
@@ -342,7 +342,8 @@ func TestT252_UpdateAlertGlobalRules_RejectsOutOfRangeAndEmpty(t *testing.T) {
 			e := newEnv(t, true, true)
 			w, resp := e.do(http.MethodPut, t252GlobalPath, tc.body, t252AdminHdr())
 			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, resp.Message, tc.msg)
+			assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+			t464TechLogContains(t, w, tc.msg)
 			assert.Nil(t, e.store.savedKVs)
 		})
 	}
@@ -379,7 +380,7 @@ func TestT257_GlobalRules_DeviceOfflineHonoursCollectIntervalLinkage(t *testing.
 
 	w, resp := e.do(http.MethodPut, t252GlobalPath, map[string]any{"deviceOfflineMinutes": 50}, t252AdminHdr())
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, resp.Message, "2x collect interval")
+	t464TechLogContains(t, w, "2x collect interval")
 	assert.Nil(t, e.store.savedKVs, "拒绝时不得触达写通道")
 	assert.Empty(t, e.store.auditRows)
 
@@ -394,7 +395,8 @@ func TestT257_GlobalRules_DeviceOfflineRangeMatchesSettingsPage(t *testing.T) {
 		e := newEnv(t, true, true)
 		w, resp := e.do(http.MethodPut, t252GlobalPath, map[string]any{"deviceOfflineMinutes": v}, t252AdminHdr())
 		assert.Equal(t, http.StatusBadRequest, w.Code, "deviceOfflineMinutes=%d", v)
-		assert.Contains(t, resp.Message, "deviceOfflineMinutes")
+		assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+		t464TechLogContains(t, w, "deviceOfflineMinutes")
 		assert.Nil(t, e.store.savedKVs)
 	}
 }

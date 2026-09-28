@@ -155,10 +155,14 @@ func TestWxLoginBoundInactive_Return401(t *testing.T) {
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code, "status 异常应返回 401")
 		assert.Equal(t, 10001, resp.Code, "错误码应为 10001 (invalid_credentials)")
-		assert.Equal(t, "invalid_credentials", resp.Message)
+		// T464：响应体只给该码的中文短句；invalid_credentials 这类原因文本进日志
+		assert.Equal(t, model.UserText(10001), resp.Message)
+		t464TechLogContains(t, w, "invalid_credentials")
 
-		// 无 token 返回
-		assert.Nil(t, resp.Data, "失败不应返回 token")
+		// 无 token 返回：统一错误出口把 data 写成 JSON null，故按「解析后不含 token 键」判
+		var dataKeys map[string]any
+		require.NoError(t, json.Unmarshal(resp.Data, &dataKeys), "data=%s", resp.Data)
+		assert.NotContains(t, dataKeys, "token", "失败不应返回 token")
 	})
 }
 

@@ -47,6 +47,7 @@ func TestT185_RBAC_GrantAdminOnly_OthersPass(t *testing.T) {
 // TestT185_PatientRoutesProxied 经真实网关 JWT 组打 5 条端点：
 // 4 条患者自查端点转发到 msg-service 并带上网关注入的身份头；grant 低角色 403 不触达后端。
 func TestT185_PatientRoutesProxied(t *testing.T) {
+	t464Logs := t464CaptureLogs(t)
 	backend, received := captureBackend(t)
 	gw := startFullGateway(t, "http://127.0.0.1:1", "http://127.0.0.1:1",
 		"http://127.0.0.1:1", backend.URL, "http://127.0.0.1:1", testJWTSecretMain)
@@ -81,11 +82,13 @@ func TestT185_PatientRoutesProxied(t *testing.T) {
 	}
 
 	// grant：患者 → 网关 RBAC 403，且不得触达后端
+	// T464：响应体只剩中文短句，"forbidden: ..." 这类原因文本改由同一关联号的日志行反查
 	before := len(*received)
 	code, body := httpDoFull(t, http.MethodPost,
 		gw.URL+"/api/v1/patients/"+t185Patient+"/subscription-quota/grant", `{}`, patientHdr)
 	assert.Equal(t, http.StatusForbidden, code, "患者不得自行授予订阅额度")
-	assert.Contains(t, body, "forbidden")
+	requestID := t464TraceOf(t, http.StatusForbidden, code, body, nil)
+	t464TechLogContains(t, t464Logs, requestID, "forbidden")
 	assert.Len(t, *received, before, "403 必须在网关拦下，不转发后端")
 
 	// grant：ROLE_ADMIN → 放行到后端

@@ -210,6 +210,8 @@ type fileSvcClientI interface {
 // Router 组装路由（可测试）
 func (h *Handler) Router() *gin.Engine {
 	r := gin.New()
+	// T464：关联号最先挂，后续任何中间件/鉴权阶段的错误响应都带得上 requestId。
+	r.Use(requestIDMiddleware())
 	r.Use(gin.Recovery())
 	// captureLogger 将当前全局 log.Logger 注入 request context，使 handler 在请求生命周期内
 	// 使用同一 logger（避免并行测试覆写全局 log.Logger 导致审计日志串台）。
@@ -337,14 +339,26 @@ type jsonResp struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data"`
+	// Trace T464 错误定位通道：成功响应为 nil（omitempty 后不出现），错误响应必带。
+	Trace *errorTrace `json:"trace,omitempty"`
 }
 
 func ok(c *gin.Context, data any) {
 	c.JSON(http.StatusOK, jsonResp{Code: model.CodeOK, Message: "success", Data: data})
 }
 
+// fail T464 错误响应双通道出口：
+// message 走 model.UserText 的中文用户面文案，原始技术文本（appErr.Message）只写日志；
+// trace 回传错误码 + request_id，供用户反馈时反查同一条日志。
 func fail(c *gin.Context, appErr *model.AppError) {
-	c.JSON(appErr.HTTPStatus, jsonResp{Code: appErr.Code, Message: appErr.Message, Data: nil})
+	requestID := requestIDOf(c)
+	logTechnical(c, appErr.Code, appErr.HTTPStatus, appErr.Message, requestID)
+	c.JSON(appErr.HTTPStatus, jsonResp{
+		Code:    appErr.Code,
+		Message: model.UserText(appErr.Code),
+		Data:    nil,
+		Trace:   &errorTrace{ErrorCode: appErr.Code, RequestID: requestID},
+	})
 }
 
 // captureLogger 将调用时刻的全局 log.Logger 注入 request context。
@@ -685,17 +699,15 @@ func (h *Handler) wxLogin(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, jsonResp{
 			Code:    model.CodePatientNotBound,
-			Message: "wechat openid not bound; bind phone required",
+			Message: model.UserText(model.CodePatientNotBound),
 			Data:    gin.H{"token": bindTok},
+			Trace:   &errorTrace{ErrorCode: model.CodePatientNotBound, RequestID: requestIDOf(c)},
 		})
 		return
 	}
 	if row.Status != "active" {
 		// 不区分"禁用/不存在"统一 401 文案，防账号枚举；不返回 data（不泄露 token）
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    model.CodeInvalidCredentials,
-			"message": "invalid_credentials",
-		})
+		writeErrorJSON(c, http.StatusUnauthorized, model.CodeInvalidCredentials, "invalid_credentials", nil)
 		return
 	}
 	if h.signer == nil {

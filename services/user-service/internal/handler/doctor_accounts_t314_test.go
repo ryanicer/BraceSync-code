@@ -193,7 +193,7 @@ func TestT314_CreateDoctorAccount_RequiredFields(t *testing.T) {
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors", t314Body(nil, tc.key), t314AdminHdr())
 		assert.Equal(t, http.StatusBadRequest, w.Code, tc.name)
 		assert.Equal(t, model.CodeInvalidParam, resp.Code, tc.name)
-		assert.Contains(t, resp.Message, tc.key, tc.name)
+		t464TechLogContains(t, w, tc.key, tc.name)
 	}
 	// 全空白同样按未填处理，不得把 "   " 落进库
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors",
@@ -212,7 +212,7 @@ func TestT314_CreateDoctorAccount_BadStatus(t *testing.T) {
 		t314Body(map[string]any{"status": "停用"}), t314AdminHdr())
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
-	assert.Contains(t, resp.Message, "status")
+	t464TechLogContains(t, w, "status")
 }
 
 func TestT314_CreateDoctorAccount_BadPhone(t *testing.T) {
@@ -243,7 +243,8 @@ func TestT314_CreateDoctorAccount_FieldTooLong(t *testing.T) {
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors",
 			t314Body(map[string]any{tc.key: tc.val}), t314AdminHdr())
 		assert.Equal(t, http.StatusBadRequest, w.Code, "%s 超长应 400", tc.label)
-		assert.Contains(t, resp.Message, tc.label)
+		assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+		t464TechLogContains(t, w, tc.label)
 	}
 }
 
@@ -254,7 +255,7 @@ func TestT314_CreateDoctorAccount_TeamNotFound(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors", t314Body(nil), t314AdminHdr())
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
-	assert.Contains(t, resp.Message, t314Team)
+	t464TechLogContains(t, w, t314Team)
 }
 
 // TestT314_CreateDoctorAccount_NoEncryptionKey 手机号加密密钥缺失 → 500 配置错误，不静默落明文
@@ -274,7 +275,8 @@ func TestT314_CreateDoctorAccount_UsernameExhausted(t *testing.T) {
 	e.store.docAcct.createErr = repo.ErrUsernameExhausted
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors", t314Body(nil), t314AdminHdr())
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, resp.Message, "sequence")
+	assert.Equal(t, model.UserText(resp.Code), resp.Message, "500 也只给中文短句")
+	t464TechLogContains(t, w, "sequence")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -348,7 +350,7 @@ func TestT314_UpdateDoctorAccount_NotFound(t *testing.T) {
 		t314AdminHdr())
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Equal(t, model.CodeNotFound, resp.Code)
-	assert.Contains(t, resp.Message, "DOCNOPE")
+	t464TechLogContains(t, w, "DOCNOPE")
 }
 
 // TestT314_UpdateDoctorAccount_PartialBody 给了任一项档案字段即按整组必填（模态框本来就带全 4 项）
@@ -357,7 +359,8 @@ func TestT314_UpdateDoctorAccount_PartialBody(t *testing.T) {
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/doctors/"+t314Doctor,
 		map[string]any{"name": "只有姓名"}, t314AdminHdr())
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, resp.Message, "title")
+	assert.Equal(t, model.UserText(resp.Code), resp.Message, "响应体只给中文短句")
+	t464TechLogContains(t, w, "title")
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -400,8 +403,8 @@ func TestT314_ResetDoctorAccountPassword_ProfileWithoutAccount(t *testing.T) {
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors/D0002/reset-password", nil, t314AdminHdr())
 	assert.Equal(t, http.StatusConflict, w.Code)
 	assert.Equal(t, model.CodeConflict, resp.Code)
-	assert.Contains(t, resp.Message, "D0002")
-	assert.Contains(t, resp.Message, "no login account")
+	t464TechLogContains(t, w, "D0002")
+	t464TechLogContains(t, w, "no login account")
 }
 
 // ─────────────────────────────────────────────────────────────
