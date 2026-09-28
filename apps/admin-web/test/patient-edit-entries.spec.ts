@@ -185,6 +185,30 @@ describe('T432 编辑档案弹窗', () => {
     expect(api.m.updatePatientProfileApi.mock.calls[0]).toEqual(['PT-001', { diagnosis: '先天性侧弯' }])
   })
 
+  // T450-②b 乙案：Alice 第 70 轮登记的缺陷是「基线 null，还原后空串」——指针表达不出「改回 NULL」，
+  // 所以清空诊断必须走显式 clearFields，而不是把 '' 当一个值写进去。
+  it('清空诊断 ⇒ 下发 clearFields:[diagnosis]，绝不带 diagnosis 空串键', async () => {
+    await openDrawer(0)
+    await clickButton(document.querySelector('.drawer-actions') as HTMLElement, '编辑档案')
+    const dlg = dialogOf('编辑档案')
+    await setInput(dlg, '请输入诊断', '')
+    expect(buttonOf(dlg, '保存').disabled).toBe(false)
+    await clickButton(dlg, '保存')
+    expect(api.m.updatePatientProfileApi).toHaveBeenCalledTimes(1)
+    expect(api.m.updatePatientProfileApi.mock.calls[0]).toEqual(['PT-001', { clearFields: ['diagnosis'] }])
+  })
+
+  it('改诊断同时又清空 ⇒ 只有清空那条通道生效（同列既给值又列为清空，后端判 400）', async () => {
+    await openDrawer(0)
+    await clickButton(document.querySelector('.drawer-actions') as HTMLElement, '编辑档案')
+    const dlg = dialogOf('编辑档案')
+    await setInput(dlg, '请输入诊断', '   ')
+    await clickButton(dlg, '保存')
+    const patch = api.m.updatePatientProfileApi.mock.calls[0]?.[1] as Record<string, unknown>
+    expect(patch).toEqual({ clearFields: ['diagnosis'] })
+    expect(patch.diagnosis).toBeUndefined()
+  })
+
   it('清空姓名会被当场拦住：出说明文案且保存回到置灰', async () => {
     await openDrawer(0)
     await clickButton(document.querySelector('.drawer-actions') as HTMLElement, '编辑档案')

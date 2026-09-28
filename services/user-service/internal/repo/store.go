@@ -166,6 +166,22 @@ type PatientProfileUpdate struct {
 	// 患者自助 PUT（T226）白名单请求体不含这两个键 ⇒ DisallowUnknownFields 直接 400。
 	Diagnosis *string
 	CobbAngle *float64
+	// ClearColumns 显式置 NULL 的**列名**（不是请求体字段名），取值只能来自 PatientProfileClearColumns 的值集。
+	// nil / 空 = 本次不置空任何列。仅 admin「编辑患者」通道装配（T450-②b 乙案，PM 2026-09-28 17:41 拍）；
+	// 患者自助通道的请求体没有 clearFields 键 ⇒ DisallowUnknownFields 先拒，本字段在该通道恒为 nil。
+	ClearColumns []string
+}
+
+// PatientProfileClearColumns T450-②b：admin「编辑患者」可显式置 NULL 的请求体字段名 → patients 列名。
+// 四列可空（000001_init_schema 里 patients 只有 name 是 NOT NULL），所以白名单恰是
+// gender / age / diagnosis / cobbAngle；name 不在表内 ⇒ 「把姓名置空」结构上就走不通，不是靠文案拦。
+// 之所以不拿零值当清空的暗号：age 与 cobb_angle 的 0 都是合法业务值（CHECK 0-150 / 0-180）。
+// handler 的入参校验与 pg.go 的 SET 构造共用这一张表 ⇒ 增删一列会同时判红两侧用例。
+var PatientProfileClearColumns = map[string]string{
+	"gender":    "gender",
+	"age":       "age",
+	"diagnosis": "diagnosis",
+	"cobbAngle": "cobb_angle",
 }
 
 // TeamRow teams 表投影（member_count / patient_count 两列不取自 teams 表，见 pg.go 的两条实时表达式）

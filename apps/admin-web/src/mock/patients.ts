@@ -275,12 +275,22 @@ const PHONE_RE_MOCK = /^1[0-9]{10}$/
 /** 后端 editableSet 之外的键一律拒收（admin_patient.go:164-175 DisallowUnknownFields） */
 const PATIENT_EDIT_UNKNOWN_KEYS = ['phone', 'teamId', 'primaryDoctorId', 'doctorId', 'status']
 
+/**
+ * T450-②b 乙案：可显式置 NULL 的请求体字段名（= 后端 repo.PatientProfileClearColumns 的键集合）。
+ * patients 里只有 name 是 NOT NULL，所以「恢复为空」天然只覆盖 gender / age / diagnosis / cobbAngle 四列；
+ * 不给值（键缺席）与「置空」是两件事，指针表达不出第三态，才要这一个显式键。
+ */
+export const PATIENT_CLEARABLE_FIELDS = ['gender', 'age', 'diagnosis', 'cobbAngle'] as const
+export type PatientClearableField = (typeof PATIENT_CLEARABLE_FIELDS)[number]
+
 export interface PatientProfilePatch {
   name?: string
   gender?: 'male' | 'female'
   age?: number
   diagnosis?: string
   cobbAngle?: number
+  /** 显式声明「这些列改回 NULL」。同名字段既给值又被列进来，后端判 400（admin_patient.go resolveClearFields）。 */
+  clearFields?: PatientClearableField[]
 }
 
 /** 改手机号：格式 → 撞号（排除自身）→ 落号 + 刷 updated_at。reason 后端只进审计日志、不校验。 */
@@ -305,7 +315,26 @@ export function mockUpdatePatientProfile(patientId: string, patch: PatientProfil
   for (const bad of PATIENT_EDIT_UNKNOWN_KEYS) {
     if (keys.includes(bad)) throw new Error(`请求含档案编辑白名单之外的字段：${bad}`)
   }
-  if (keys.length === 0) throw new Error('没有需要保存的修改')
+  // 「一个字段都没给」的判据按值键 + clearFields 一起算（后端 buildAdminPatientEdit 的 anyField 同形）
+  const valueKeys = (['name', 'gender', 'age', 'diagnosis', 'cobbAngle'] as const).filter(
+    (k) => patch[k] !== undefined,
+  )
+  const clears = (patch.clearFields ?? []) as string[]
+  if (valueKeys.length === 0 && clears.length === 0) throw new Error('没有需要保存的修改')
+  // T450-②b 乙案（后端 resolveClearFields 同形）：表外字段 / 重复 / 与值键撞同一列一律拒。
+  // 先整体校验再落值（后端也是「校验通过才交给 repo 写」）：反过来写会漏出
+  // 「撞列被拒了，但 age 已经被改过」这种库里半写状态，mock 就测不出这条判据。
+  const seen = new Set<string>()
+  for (const f of clears) {
+    if (!PATIENT_CLEARABLE_FIELDS.includes(f as PatientClearableField)) {
+      throw new Error(`clearFields 只接受 ${PATIENT_CLEARABLE_FIELDS.join('、')}`)
+    }
+    if (seen.has(f)) throw new Error(`clearFields 含重复字段：${f}`)
+    seen.add(f)
+    if (valueKeys.includes(f as (typeof valueKeys)[number])) {
+      throw new Error(`${f} 既给了值又被列为清空，请二选一`)
+    }
+  }
   if (patch.name !== undefined) {
     const name = patch.name.trim()
     if (!name || name.length > 64) throw new Error('姓名需为 1-64 个字符')
@@ -326,6 +355,13 @@ export function mockUpdatePatientProfile(patientId: string, patch: PatientProfil
   if (patch.cobbAngle !== undefined) {
     if (patch.cobbAngle < 0 || patch.cobbAngle > 180) throw new Error('Cobb 角需在 0-180 之间')
     p.cobbAngle = patch.cobbAngle
+  }
+  // 过关的才落 NULL。注意 age=0、cobbAngle=0 是合法值，不是一路的「清空」。
+  for (const f of clears) {
+    if (f === 'gender') p.gender = null
+    else if (f === 'age') p.age = null
+    else if (f === 'diagnosis') p.diagnosis = null
+    else p.cobbAngle = null
   }
   p.updatedAt = new Date().toISOString()
   return p
