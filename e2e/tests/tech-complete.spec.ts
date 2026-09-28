@@ -30,8 +30,11 @@ test('安装摘要卡片显示', async ({ page }) => {
 })
 
 test('状态标签显示', async ({ page }) => {
-  // 基线状态始终显示已保存
-  await expect(page.locator('.status-badge', { hasText: '已保存' })).toBeVisible()
+  // TC-1：改前这一格锁的是「基线状态始终显示已保存」——那正是缺陷本身（完成页硬编码，与 install 页不同源）。
+  // 直连完成页时 store 里 baselineSaved=false，真值应为「未保存」；走完流程的「已保存」侧在 tech-full-flow 里断。
+  await expect(page.locator('.status-badge', { hasText: '未保存' })).toBeVisible()
+  // TR-11：WiFi 行按稿面词显示「未配置」
+  await expect(page.locator('.status-badge', { hasText: '未配置' })).toBeVisible()
   // T089: 数据可达性 badge（默认待验证）
   await expect(page.locator('.status-badge', { hasText: '待验证' })).toBeVisible()
 })

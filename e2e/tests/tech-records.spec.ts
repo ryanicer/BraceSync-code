@@ -23,25 +23,25 @@ test('页面标题与记录总数（页头取接口 total，不是本页条数�
 test('默认显示全部记录（跨页取满：第 21 条起在第二页）', async ({ page }) => {
   await expect(page.locator('.record-card')).toHaveCount(26)
   await expect(page.locator('.record-device').first()).toHaveText('PRS-ML05-RC-19700101001')
-  await expect(page.locator('.wifi-badge').first()).toContainText('已联网')
+  await expect(page.locator('.wifi-badge').first()).toContainText('已连接')
   // 只有真翻页才拿得到：序号 21..26 落在 pageSize=20 的第二页
   await expect(page.locator('.record-device', { hasText: '19700101026' })).toHaveCount(1)
 })
 
-test('WiFi 筛选：已联网', async ({ page }) => {
-  await page.locator('.seg-btn', { hasText: '已联网' }).click()
-  await expect(page.locator('.seg-btn', { hasText: '已联网' })).toHaveClass(/seg-active/)
+test('WiFi 筛选：已连接', async ({ page }) => {
+  await page.locator('.seg-btn', { hasText: '已连接' }).click()
+  await expect(page.locator('.seg-btn', { hasText: '已连接' })).toHaveClass(/seg-active/)
   await expect(page.locator('.record-card')).toHaveCount(13)
 })
 
-test('WiFi 筛选：待配置', async ({ page }) => {
-  await page.locator('.seg-btn', { hasText: '待配置' }).click()
-  await expect(page.locator('.seg-btn', { hasText: '待配置' })).toHaveClass(/seg-active/)
+test('WiFi 筛选：未配置', async ({ page }) => {
+  await page.locator('.seg-btn', { hasText: '未配置' }).click()
+  await expect(page.locator('.seg-btn', { hasText: '未配置' })).toHaveClass(/seg-active/)
   await expect(page.locator('.record-card')).toHaveCount(13)
 })
 
 test('WiFi 切回全部', async ({ page }) => {
-  await page.locator('.seg-btn', { hasText: '已联网' }).click()
+  await page.locator('.seg-btn', { hasText: '已连接' }).click()
   await expect(page.locator('.record-card')).toHaveCount(13)
   await page.locator('.seg-btn', { hasText: '全部 WiFi' }).click()
   await expect(page.locator('.record-card')).toHaveCount(26)

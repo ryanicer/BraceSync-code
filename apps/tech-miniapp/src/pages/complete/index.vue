@@ -23,13 +23,11 @@
         </view>
         <view class="summary-row">
           <text class="summary-label">基线状态</text>
-          <view class="status-badge status-ok"><text>已保存</text></view>
+          <view :class="['status-badge', baselineBadgeClass]"><text>{{ baselineLabel }}</text></view>
         </view>
         <view class="summary-row">
           <text class="summary-label">WiFi 状态</text>
-          <view :class="['status-badge', summary.wifiStatus === 'connected' ? 'status-ok' : 'status-pending']">
-            <text>{{ summary.wifiStatus === 'connected' ? '已联网' : '待配置' }}</text>
-          </view>
+          <view :class="['status-badge', wifiBadgeClass]"><text>{{ wifiLabel }}</text></view>
         </view>
         <view class="summary-row">
           <text class="summary-label">数据可达性</text>
@@ -62,6 +60,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useInstallStore } from '../../stores/install'
+import {
+  baselineStatusLabel,
+  baselineStatusBadgeClass,
+  wifiRowLabel,
+  reachabilityLabel,
+  reachabilityBadgeClass,
+} from '../../utils/installStatus'
 
 const installStore = useInstallStore()
 
@@ -73,16 +78,20 @@ const summary = ref({
   notes: '',
 })
 
-const networkStatusLabel = computed(() => {
-  if (installStore.networkSkipped) return '已跳过'
-  if (installStore.wifiStatus === 'connected') return '已验证'
-  return '待验证'
-})
-const networkStatusBadgeClass = computed(() => {
-  if (installStore.networkSkipped) return 'status-pending'
-  if (installStore.wifiStatus === 'connected') return 'status-ok'
-  return 'status-warn'
-})
+// TC-1：改前这一格硬编码「已保存」，与 install 页 :107 的 baselineSaved 同源判定冲突
+// ⇒ 基线保存失败时 install 报「未保存」、complete 仍报「已保存」。现两页读同一个标志。
+const baselineLabel = computed(() => baselineStatusLabel(installStore.baselineSaved))
+const baselineBadgeClass = computed(() => baselineStatusBadgeClass(installStore.baselineSaved))
+
+// TC-2：WiFi 行不再与可达性行同屏互斥（跳过态显「已跳过配网」，不冒充「已联网」）
+const wifiLabel = computed(() => wifiRowLabel(summary.value.wifiStatus, installStore.networkSkipped))
+const wifiBadgeClass = computed(() =>
+  !installStore.networkSkipped && summary.value.wifiStatus === 'connected' ? 'status-ok' : 'status-pending')
+
+const networkStatusLabel = computed(() =>
+  reachabilityLabel(installStore.networkSkipped, summary.value.wifiStatus === 'connected'))
+const networkStatusBadgeClass = computed(() =>
+  reachabilityBadgeClass(installStore.networkSkipped, summary.value.wifiStatus === 'connected'))
 
 onMounted(() => {
   const inst = installStore
