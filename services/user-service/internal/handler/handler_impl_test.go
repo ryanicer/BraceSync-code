@@ -56,6 +56,11 @@ type fakeStore struct {
 	getPatientCalls    int
 	profileApplies     bool   // T450：UpdatePatientProfile 是否把入参落回 f.patient（模拟写前/写后两次 GETPatient 读到不同快照）
 	lastPatientQuery   string // 记录 GetPatient 入参，用于验证 self-scope 的查询键来源
+	// T467 患者删除：deletePatientErr 注入错误；未注入时真的从 f.patients 摘行，
+	// 好让「删成后再删一次」走完整 handler 路径（第二发应撞存在性判定那格 404）。
+	deletePatientErr   error
+	deletePatientCalls int
+	lastDeletePatient  string
 	teams              []repo.TeamRow
 	teamsErr           error
 	teamExists         bool
@@ -578,6 +583,28 @@ func (f *fakeStore) BatchBindPatients(_ context.Context, patientIDs []string, te
 	f.lastBatchIDs = patientIDs
 	f.lastBatchTeam = teamID
 	return f.batchBindResult, f.batchBindErr
+}
+
+// DeletePatient T467：内存删除。未注入错误时真的把该行从夹具里摘掉，
+// 好让「删成之后再删一次」这条用例走完整 handler 路径（第二次应被存在性判定拦成 404），
+// 而不是只断言替身的返回值。夹具里没这行 → 与 PGStore 同口径返回 ErrPatientNotFound。
+func (f *fakeStore) DeletePatient(_ context.Context, patientID string) error {
+	f.lastDeletePatient = patientID
+	f.deletePatientCalls++
+	if f.deletePatientErr != nil {
+		return f.deletePatientErr
+	}
+	for i := range f.patients {
+		if f.patients[i].PatientID == patientID {
+			f.patients = append(f.patients[:i], f.patients[i+1:]...)
+			return nil
+		}
+	}
+	if f.patient != nil && f.patient.PatientID == patientID {
+		f.patient = nil
+		return nil
+	}
+	return repo.ErrPatientNotFound
 }
 
 // T059 团队/成员写操作 stub 实现（仅满足扩展后的 Store 接口编译；

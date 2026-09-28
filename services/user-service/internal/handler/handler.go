@@ -242,6 +242,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/admin/patients/:patientId/unbind-wechat", h.unbindWechat) // 解绑微信
 		v1.PUT("/admin/patients/:patientId/phone", h.updatePatientPhone)    // 改手机号
 		v1.PUT("/admin/patients/:patientId", h.updatePatientAdmin)          // T248 4.3 档案编辑
+		v1.DELETE("/admin/patients/:patientId", h.deletePatientAdmin)       // T467 档案删除（reject-if-referenced）
 
 		v1.GET("/teams", h.listTeams)
 		v1.GET("/teams/:teamId", h.getTeam) // T333 单条读（此前契约已声明 leader/leaderName 却无读路由，实测 404）

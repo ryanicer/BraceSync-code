@@ -514,6 +514,9 @@ type Store interface {
 	CreatePatient(ctx context.Context, in PatientInput) (*PatientRow, error)
 	AssignPatientTeam(ctx context.Context, patientID, teamID string) (*PatientRow, error)
 	BatchBindPatients(ctx context.Context, patientIDs []string, teamID string) (*BatchBindResult, error)
+	// DeletePatient T467：硬删患者档案。sentinel：ErrPatientNotFound（无行，重复删同码）/
+	// *ErrPatientInUse（任一关联表非空，逐表计数）。不级联、不软删。
+	DeletePatient(ctx context.Context, patientID string) error
 
 	// 团队 / 医生
 	ListTeams(ctx context.Context) ([]TeamRow, error)

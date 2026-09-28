@@ -180,6 +180,12 @@ var doctorAdminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/admin/review-templates/:groupId/replace"), // 版本替换
 	rbacOf(http.MethodGet, "/api/v1/admin/review-templates"),                   // 模板列表
 	rbacOf(http.MethodGet, "/api/v1/admin/review-templates/:groupId/download"), // 模板下载
+	// T467 患者档案删除。落这张矩阵而不是 adminOnlyPatterns，是为了让派发单第 2 项打得开：
+	// 「沿用 T350 团队范围判定、跨团队 403 与现有一族对齐」——现有一族就是上面 T373 的两条写端点，
+	// 收口成 admin-only 的话医生在入口就被截断，根本走不到 handler 的团队谓词那一步。
+	// 也不放客服/技师：T350 里客服不受团队隔离，放行等于「任意客服删任意患者」。
+	// 水平范围（仅本团队可删）在 user-service handler 层 assertPatientInScope 收口。
+	rbacOf(http.MethodDelete, "/api/v1/admin/patients/:patientId"),
 }
 
 // staffOnlyPatterns T190 表 B 剩余行：后台管理域「读」端点——仅限内部 staff 角色，

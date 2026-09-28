@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -286,6 +287,42 @@ func (h *Handler) updatePatientAdmin(c *gin.Context) {
 		"changed": changed,
 	})
 	ok(c, toPatientDTO(*row))
+}
+
+// deletePatientAdmin DELETE /api/v1/admin/patients/:patientId —— T467 患者档案删除。
+//
+// 权限两层（口径同本域五条写端点：gateway 矩阵在前，handler 判定在后兜底「绕过网关直连服务」）：
+//  1. 角色 allow-list：仅 ROLE_ADMIN / ROLE_DOCTOR，X-Role 缺失即 403（fail-closed）。
+//     不放客服与技师：T350 里客服本就不受团队隔离，放行等于「任意客服删任意患者」。
+//  2. 团队范围：assertPatientInScope（与 T373 的两条写端点同一条判定）。医护只碰得到本团队患者，
+//     「不存在 / 他团队 / 患者未分配团队 / 本人无团队」四格合一 403，患者号存在性不可辨；
+//     运营走存在性判定，查无此人照旧 404。判定发生在删之前，跨团队时库写次数为 0。
+//
+// 状态码：200 删成（data 为 null）/ 404 无行（重复删除同码，刻意不采「已经没了也算成功」的伪幂等）
+// / 409 关联面非空 / 500 库错。逐表计数只在技术日志通道里（T464：响应体 message 恒为该码的中文短句）。
+// 级联处置见 repo.DeletePatient：硬删 patients 单行，不级联、不软删。
+func (h *Handler) deletePatientAdmin(c *gin.Context) {
+	patientID := c.Param("patientId")
+	if role := c.GetHeader(headerRole); role != roleAdmin && role != roleDoctor {
+		fail(c, model.ErrForbidden("only admin or doctor can delete a patient"))
+		return
+	}
+	if !h.assertPatientInScope(c, patientID) {
+		return
+	}
+	if err := h.store.DeletePatient(c.Request.Context(), patientID); err != nil {
+		var inUse *repo.ErrPatientInUse
+		switch {
+		case errors.As(err, &inUse):
+			fail(c, model.ErrConflict("%s", inUse.Error()))
+		case errors.Is(err, repo.ErrPatientNotFound):
+			fail(c, model.ErrNotFound("patient not found: %s", patientID))
+		default:
+			fail(c, model.ErrInternal("delete patient failed"))
+		}
+		return
+	}
+	ok(c, nil)
 }
 
 // auditProfileDiff 只比对本端点可写的五个字段（name/gender/age/diagnosis/cobbAngle），
