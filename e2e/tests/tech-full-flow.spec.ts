@@ -63,6 +63,12 @@ test.describe('技师端全链路', () => {
     // === complete ===
     await expect(page.locator('.success-title')).toHaveText('安装完成')
     await expect(page.getByText('数据可达性')).toBeVisible()
+    // TC-1：基线在阶段二真落库 ⇒ 完成页与 install 页同源显示「已保存」
+    await expect(page.locator('.status-badge', { hasText: '已保存' })).toBeVisible()
+    // TR-11 + TC-2：配网真成功 ⇒ WiFi「已连接」、可达性「已验证」，跳过标记不残留
+    await expect(page.locator('.status-badge', { hasText: '已连接' })).toBeVisible()
+    await expect(page.locator('.status-badge', { hasText: '已验证' })).toBeVisible()
+    await expect(page.locator('.status-badge', { hasText: '已跳过配网' })).toHaveCount(0)
 
     // === records ===
     await page.locator('.action-btn', { hasText: '查看安装记录' }).click()

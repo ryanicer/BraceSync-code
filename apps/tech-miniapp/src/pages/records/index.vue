@@ -11,8 +11,8 @@
       <view class="filter-row">
         <view class="segmented">
           <view :class="['seg-btn', { 'seg-active': wifiFilter === 'all' }]" @click="wifiFilter = 'all'"><text>全部 WiFi</text></view>
-          <view :class="['seg-btn', { 'seg-active': wifiFilter === 'connected' }]" @click="wifiFilter = 'connected'"><text>已联网</text></view>
-          <view :class="['seg-btn', { 'seg-active': wifiFilter === 'unconfigured' }]" @click="wifiFilter = 'unconfigured'"><text>待配置</text></view>
+          <view :class="['seg-btn', { 'seg-active': wifiFilter === 'connected' }]" @click="wifiFilter = 'connected'"><text>已连接</text></view>
+          <view :class="['seg-btn', { 'seg-active': wifiFilter === 'unconfigured' }]" @click="wifiFilter = 'unconfigured'"><text>未配置</text></view>
         </view>
       </view>
     </view>
@@ -32,7 +32,7 @@
           <view class="record-header">
             <text class="record-device">{{ rec.deviceId }}</text>
             <view :class="['wifi-badge', rec.wifiStatus === 'connected' ? 'wifi-ok' : 'wifi-pending']">
-              <text>{{ rec.wifiStatus === 'connected' ? '已联网' : '待配置' }}</text>
+              <text>{{ wifiStatusLabel(rec.wifiStatus) }}</text>
             </view>
           </view>
           <view class="record-info">
@@ -67,6 +67,7 @@ import { ref, computed, onMounted } from 'vue'
 import type { InstallRecord } from '@bracesync/shared-types'
 import { listInstallRecords } from '../../api/install'
 import { fetchAllPages } from '../../utils/paging'
+import { wifiStatusLabel } from '../../utils/installStatus'
 
 /** 与后端 defaultPageSize 对齐（device-service repo/query.go:25） */
 const PAGE_SIZE = 20

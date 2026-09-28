@@ -150,13 +150,34 @@
           <view class="data-source-chip ds-ble"><text class="chip-dot"></text><text>BLE</text></view>
         </view>
 
-        <!-- 配网前 -->
-        <template v-if="installStore.wifiStatus !== 'connected'">
+        <!-- 配网前（TI-12：跳过入口按 PRD 第 862 行落在本页，且要二次确认） -->
+        <template v-if="wifiStage === 'before'">
           <view class="status-block">
             <text class="status-label">配网状态</text>
             <view class="status-badge badge-warning"><text>未配置</text></view>
           </view>
           <view class="btn-primary" @click="goWifiConfig"><text>配置 WiFi</text></view>
+          <view class="btn-outline" @click="onSkipNetwork"><text>跳过配网</text></view>
+        </template>
+
+        <!-- 已跳过配网（TC-2：wifiStatus 仍是未配置，本页不得冒充「已连接」） -->
+        <template v-else-if="wifiStage === 'skipped'">
+          <view class="status-block">
+            <text class="status-label">配网状态</text>
+            <view class="status-badge badge-warning"><text>已跳过配网</text></view>
+          </view>
+          <text class="skip-note">跳过配网后设备将无法自动上传数据。可点「重新配网」补配。</text>
+          <view class="form-group">
+            <text class="form-label">安装备注（可选）</text>
+            <textarea
+              class="form-textarea"
+              placeholder="最多 200 字"
+              maxlength="200"
+              v-model="installNote"
+            />
+          </view>
+          <view class="btn-primary" @click="goWifiConfig"><text>重新配网</text></view>
+          <view class="btn-primary btn-success" @click="completeInstall"><text>完成安装</text></view>
         </template>
 
         <!-- 配网成功：可达性验证通过 -->
@@ -170,7 +191,7 @@
               <text class="status-ok-icon">✓</text>
               <view>
                 <text class="status-ok-title">数据可达性验证通过</text>
-                <text class="status-ok-sub">{{ networkStatusLabel }}</text>
+                <text class="status-ok-sub">设备云端通信链路已通</text>
               </view>
             </view>
           </view>
@@ -198,6 +219,7 @@ import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
 import { saveBaseline } from '../../api/baseline'
 import { bleLog } from '../../utils/ble-log'
+import { confirmSkipNetwork } from '../../utils/installStatus'
 import { updateInstallMeta } from '../../api/install'
 import {
   startRealtimePressure,
@@ -331,6 +353,8 @@ async function finalizeCalibration() {
       installStore.deviceId
     )
     installStore.setBaselineSaved(bs.baselineId)
+    // TI-9：改前提交成功侧零反馈（只有失败分支出提示），技师无从判断基线是否真落库
+    uni.showToast({ title: '基线已提交云端', icon: 'success' })
   } catch (e) {
     const bizCode = (e as { code?: number } | null)?.code
     if (bizCode === 20409) {
@@ -374,14 +398,24 @@ function goPhase3() {
 // ===== 阶段三 配网 =====
 const installNote = ref('')
 
-const networkStatusLabel = computed(() => {
-  if (installStore.networkSkipped) return '已标记跳过'
-  if (installStore.wifiStatus === 'connected') return '设备云端通信链路已通'
-  return '待验证'
+/**
+ * 三态互斥（TC-2）：connected＝配网真的成功；skipped＝装机时点了跳过（wifiStatus 仍 unconfigured）；
+ * 其余为还没配网。跳过态必须给出「完成安装」出口，否则跳过等于流程走死。
+ */
+const wifiStage = computed<'before' | 'skipped' | 'done'>(() => {
+  if (installStore.wifiStatus === 'connected') return 'done'
+  if (installStore.networkSkipped) return 'skipped'
+  return 'before'
 })
 
 function goWifiConfig() {
   uni.navigateTo({ url: '/pages/wifi-config/index' })
+}
+
+/** TI-12：install 页的跳过入口，与 wifi-config -4 分支走同一套确认文案（PRD 第 862 行） */
+async function onSkipNetwork() {
+  if (!(await confirmSkipNetwork())) return
+  installStore.setNetworkSkipped(true)
 }
 
 async function completeInstall() {
@@ -529,6 +563,7 @@ onUnmounted(() => {
 .status-label { font-size: 28rpx; color: #64748b; }
 .status-badge { display: inline-flex; align-items: center; gap: 4rpx; padding: 6rpx 18rpx; border-radius: 18rpx; font-size: 22rpx; font-weight: 500; }
 .badge-warning { background: #fef3c7; color: #b45309; }
+.skip-note { display: block; font-size: 24rpx; color: #b45309; line-height: 1.5; margin-bottom: 20rpx; }
 .badge-success { background: #dcfce7; color: #15803d; }
 
 .status-row-pair { display: flex; flex-direction: column; gap: 20rpx; margin-bottom: 24rpx; }

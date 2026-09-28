@@ -43,7 +43,7 @@
         <view class="btn-outline" @click="retryWifi"><text>重新配网</text></view>
         <view v-if="errorCode === -4" class="skip-hint">
           <text class="skip-text">WiFi 已连接，但暂时无法连接云端。</text>
-          <view class="btn-outline-sm" @click="skipNetworkSetup"><text>先完成安装</text></view>
+          <view class="btn-outline-sm" @click="skipNetworkSetup"><text>跳过配网</text></view>
         </view>
       </view>
     </view>
@@ -113,6 +113,7 @@ import {
 } from '../../utils/ble'
 import { pickReconnectTarget, RECONNECT_SCAN_MS } from '../../utils/ble-link'
 import { bleLog } from '../../utils/ble-log'
+import { confirmSkipNetwork } from '../../utils/installStatus'
 
 const installStore = useInstallStore()
 
@@ -434,6 +435,8 @@ async function handleSuccess(ssid: string) {
   }
 
   installStore.setWifiStatus('connected')
+  // 配网真的成功了，先前的「已跳过」标记要撤掉，否则完成页仍按跳过态显示 WiFi 行
+  installStore.setNetworkSkipped(false)
   installStore.updateWifiStatusCode(9)
 
   // T240: 配网成功后必须清掉刚配的 WiFi，设备出厂态交付患者。
@@ -474,9 +477,11 @@ function retryWifi() {
   password.value = ''
 }
 
-function skipNetworkSetup() {
-  // -4 状态：本地标记「已跳过」，返回 install（不落库）
-  installStore.setWifiStatus('connected')
+async function skipNetworkSetup() {
+  // TI-12／TC-2：跳过要先二次确认（文案逐字取 PRD 第 862 行），
+  // 且只打本地「已跳过」标记——绝不把 wifiStatus 写成 connected，
+  // 否则完成页同屏出「已联网」＋「已跳过」两行互斥，且 updateInstallMeta 会把跳过当已联网上送云端。
+  if (!(await confirmSkipNetwork())) return
   installStore.setNetworkSkipped(true)
   uni.navigateBack()
 }

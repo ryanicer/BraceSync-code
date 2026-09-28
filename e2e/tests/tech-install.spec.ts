@@ -91,4 +91,37 @@ test.describe('安装流程 3 阶段', () => {
     await expect(page.locator('.status-badge', { hasText: '未配置' })).toBeVisible()
     await expect(page.locator('.btn-primary', { hasText: '配置 WiFi' })).toBeVisible()
   })
+
+  test('阶段三：跳过配网要先确认，确认后仍有完成安装出口（TI-12／TC-2）', async ({ page }) => {
+    await goToPhase2(page)
+    await calibrateAndGoToPhase3(page)
+
+    const modal = page.locator('uni-modal')
+    const skipBtn = page.locator('.btn-outline', { hasText: '跳过配网' })
+    await skipBtn.click()
+    await expect(modal).toBeVisible()
+    // 文案逐字取 PRD 第 862 行
+    await expect(modal.locator('.uni-modal__title')).toHaveText('跳过配网')
+    await expect(modal.locator('.uni-modal__bd')).toHaveText('跳过配网后设备将无法自动上传数据，确定跳过？')
+
+    // 取消：状态不动，仍停在配网前
+    await modal.locator('.uni-modal__btn_default').click()
+    await expect(modal).toBeHidden()
+    await expect(page.locator('.status-badge', { hasText: '未配置' })).toBeVisible()
+
+    // 确定：进入跳过态，WiFi 行不得冒充「已连接」，且必须留着完成安装出口
+    await skipBtn.click()
+    await expect(modal).toBeVisible()
+    await modal.locator('.uni-modal__btn_primary').click()
+    await expect(page.locator('.status-badge', { hasText: '已跳过配网' })).toBeVisible()
+    await expect(page.locator('.status-badge', { hasText: '已连接' })).toHaveCount(0)
+    await expect(page.locator('.skip-note')).toHaveText('跳过配网后设备将无法自动上传数据。可点「重新配网」补配。')
+    await expect(page.getByText('重新配网', { exact: true })).toBeVisible()
+    await page.locator('.btn-primary', { hasText: '完成安装' }).click()
+    await page.waitForURL('**/pages/complete/**', { timeout: 15_000 })
+
+    // 完成页两行不打架：WiFi 显示跳过，可达性不会是「已验证」
+    await expect(page.locator('.status-badge', { hasText: '已跳过配网' })).toBeVisible()
+    await expect(page.locator('.status-badge', { hasText: '已验证' })).toHaveCount(0)
+  })
 })
