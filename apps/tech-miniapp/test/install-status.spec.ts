@@ -320,10 +320,14 @@ describe('TI-9 — 基线提交成功侧有反馈（稿面 install.html 校准�
 describe('T443 裁定⑥ — 重新采集入口只在不破坏规矩 A 的前提下出现', () => {
   const src = pageSrc('install')
 
-  it('入口在校准完成屏内、按钮文案「重新采集」，且带 baselineLocked 闸门', () => {
-    expectVisibleLine(src, '<text>重新采集</text>')
+  it('入口只挂在采集中态（稿面 T449·TI-6），校准完成态不留入口', () => {
+    const atCollecting = src.indexOf('v-else-if="calibrating && !calibrated"')
+    const atDone = src.indexOf('<!-- 校准完成：零点偏移矩阵')
     const atBtn = src.indexOf('recollectCalibration"><text>重新采集')
-    expect(atBtn).toBeGreaterThan(-1)
+    expect(atCollecting).toBeGreaterThan(-1)
+    expect(atDone).toBeGreaterThan(atCollecting)
+    expect(atBtn, '「重新采集」不在采集中态块内').toBeGreaterThan(atCollecting)
+    expect(atBtn, '「重新采集」漏进校准完成态，与稿面 T449·TI-6 相反').toBeLessThan(atDone)
     const line = src.slice(src.lastIndexOf('\n', atBtn) + 1, src.indexOf('\n', atBtn))
     expect(line).toContain('v-if="!baselineLocked"')
     // 反证：闸门被删掉后，上面的行内判据必须判红
@@ -362,6 +366,16 @@ describe('T443 裁定⑥ — 重新采集入口只在不破坏规矩 A 的前提
     // 本函数只做前端状态复位，不碰写通道
     expect(body).not.toContain('saveBaseline(')
     expect(body).not.toContain('setBaselineSaved(')
+  })
+
+  it('采集中止重采要先收计时器与实时流（不收会叠第二个 interval，finalize 触发两次）', () => {
+    const body = pageFnBody('install', 'recollectCalibration')
+    const atClear = body.indexOf('clearInterval(collectTimer)')
+    const atStop = body.indexOf('await stopRealtimePressure(')
+    const atStart = body.indexOf('await startCalibration()')
+    expect(atClear).toBeGreaterThan(-1)
+    expect(atStop).toBeGreaterThan(atClear)
+    expect(atStart).toBeGreaterThan(atStop)
   })
 
   it('蓝牙断链时先给提示、不静默起采（重采依赖实时取数）', () => {
