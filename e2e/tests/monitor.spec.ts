@@ -56,6 +56,39 @@ test('热力图点选联动 hero 数值', async ({ page }) => {
 })
 
 /**
+ * T444 M-1：热力图详情行在「患者点选前」显示稿面 monitor.html:102 默认句，
+ * 点选后才显示「点位 · 数值N · 阈值上限 N」数值行。
+ */
+test('热力图详情行：点选前出默认句，点选后出数值行', async ({ page }) => {
+  const detail = page.locator('.heatmap-detail')
+  // 首屏（页面预选最大点位供 hero/趋势联动，但用户未点选）→ 默认句，非数值行
+  await expect(detail).toHaveText('点击网格查看详情')
+  // 点选 P01 → 数值行，含点位与「阈值上限」
+  await page.locator('.grid-cell', { has: page.locator('.cell-id', { hasText: 'P01' }) }).click()
+  await expect(detail).toContainText('P01')
+  await expect(detail).toContainText('阈值上限')
+  await expect(detail).not.toHaveText('点击网格查看详情')
+})
+
+/**
+ * T444 M-2：实时快照无帧（pressureRecords 空、点位不渲染）时，
+ * 趋势区标题不得留前置分隔符「 · 今日压力趋势」，应为「今日压力趋势」。
+ */
+test('趋势标题：无点位时丢掉前置分隔符', async ({ page }) => {
+  // setupPatientE2E 已注册通用 realtime mock；后注册先咨询（LIFO），覆盖成空帧快照
+  await page.route(/\/api\/v1\/patients\/[^/]+\/realtime$/, (route) =>
+    route.fulfill({
+      json: { code: 0, message: 'ok', data: { deviceId: 'e2e', status: 'online', battery: 80, pressureRecords: [] } },
+    }),
+  )
+  await page.goto(routes.monitor)
+  await expect(page.locator('.hero-number')).toHaveText('--')
+  const title = page.locator('.trend-section .section-title')
+  await expect(title).toHaveText('今日压力趋势')
+  await expect(title).not.toContainText('·')
+})
+
+/**
  * 下拉刷新：uni-app H5 的 onPullDownRefresh 需要真实（trusted）触摸事件，
  * 合成 TouchEvent 不被接受，改用 CDP Input.dispatchTouchEvent 模拟手指下拉。
  */

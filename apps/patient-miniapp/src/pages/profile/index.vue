@@ -108,7 +108,8 @@
           <input v-model="editWeight" class="form-input" type="digit" placeholder="请输入体重" />
         </view>
         <!-- Cobb角：影像学测量值，由临床端写入，患者不可自助编辑（T230 / Boss 2026-09-17 裁定 B） -->
-        <text class="form-section-label">紧急联系人</text>
+        <!-- T444 P-2：组标题跟稿面 profile.html:133「联系方式」；修前此处写的是「紧急联系人」，与紧随其后的字段标签重字 -->
+        <text class="form-section-label">{{ CONTACT_GROUP_LABEL }}</text>
         <view class="form-row">
           <text class="form-label">紧急联系人</text>
           <input v-model="editEmergencyName" class="form-input" type="text" placeholder="请输入姓名" />
@@ -121,7 +122,6 @@
           <text class="form-label">与本人关系</text>
           <input v-model="editEmergencyRelation" class="form-input" type="text" placeholder="如：父亲、母亲" />
         </view>
-        <text class="form-section-label">手机号由微信授权提供，如需变更请联系客服</text>
       </view>
     </view>
 
@@ -154,7 +154,7 @@ import { onShow } from '@dcloudio/uni-app'
 import { getPatientProfile, updatePatientProfile, type PatientProfile, type PatientProfileUpdate } from '../../api/profile'
 import { useAuthStore } from '../../stores/auth'
 import { logger } from '../../utils/logger'
-import { avatarCharOf, cobbText as fmtCobb, textOrDash } from '../../utils/profile-format'
+import { avatarCharOf, cobbText as fmtCobb, textOrDash, CONTACT_GROUP_LABEL } from '../../utils/profile-format'
 
 const auth = useAuthStore()
 

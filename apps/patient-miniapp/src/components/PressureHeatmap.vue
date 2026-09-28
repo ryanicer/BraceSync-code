@@ -19,7 +19,7 @@
       <view class="legend-item"><view class="legend-swatch" style="background:#ef4444;"></view><text>高压</text></view>
     </view>
     <view v-if="showDetail" class="heatmap-detail">
-      <text>{{ activePoint?.pointId }} · {{ formatPressureValue(activePoint?.pressureValue) }}N · 阈值上限 {{ thresholds.elevatedMax }}N</text>
+      <text>{{ detailLine }}</text>
     </view>
   </view>
 </template>
@@ -29,17 +29,20 @@ import { computed } from 'vue'
 import SensorGrid from './SensorGrid.vue'
 import type { SensorPoint } from '@bracesync/shared-types'
 import { HEATMAP_TIERS } from '@bracesync/constants'
-import { formatPressureValue } from '../utils/format'
+import { heatmapDetailLine } from '../utils/monitor-copy'
 
 const props = withDefaults(defineProps<{
   points: SensorPoint[]
   thresholds?: { lowMax: number; normalMax: number; elevatedMax: number }
   activeIndex?: number
+  /** T444 M-1：本页是否由患者点选过点位（未点选则显示稿面默认句，不显示预选点位的数值行） */
+  selectedByUser?: boolean
   showLegend?: boolean
   showDetail?: boolean
 }>(), {
   thresholds: () => ({ lowMax: HEATMAP_TIERS.LOW_MAX, normalMax: HEATMAP_TIERS.NORMAL_MAX, elevatedMax: HEATMAP_TIERS.ELEVATED_MAX }),
   activeIndex: -1,
+  selectedByUser: false,
   showLegend: true,
   showDetail: true,
 })
@@ -82,6 +85,13 @@ const resolvedActiveIndex = computed(() => {
 })
 
 const activePoint = computed(() => props.points[resolvedActiveIndex.value])
+
+// T444 M-1：稿面 monitor.html:102 的默认句只在「患者还没点选」时呈现；
+// 页面为 hero/趋势联动而预选的最大点位，不该冒充患者主动查看的结果。
+const detailLine = computed(() => {
+  if (!props.selectedByUser) return heatmapDetailLine(null, null, props.thresholds.elevatedMax)
+  return heatmapDetailLine(activePoint.value?.pointId, activePoint.value?.pressureValue, props.thresholds.elevatedMax)
+})
 
 function onSelect(index: number) {
   emit('select', index)
