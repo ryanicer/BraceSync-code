@@ -10,7 +10,8 @@
 # 本测试的姿势与既有两个行为测试同口径：正向 + 反证。
 #   正向：现文逐条要求接线在位。
 #   反证：在临时副本上把这行按 Joe 的 M6/M7/M8 三例逐一拆掉（外加两例：改调工作树字节、
-#         把守卫挪到 git pull 之后），要求「对应那一格必判红」——
+#         把守卫挪到 git pull 之后；T463 起再加三例：删起跑门调用、删其必需项检查、
+#         把门挪到 ⓪ 段基线采集之后 ⇒ 共八例），要求「对应那一格必判红」——
 #         不这么打一遍，就不知道断言是活的还是摆设（T364 那格假绿的教训）。
 set -uo pipefail
 
@@ -18,9 +19,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_STAGING="${1:-$HERE/deploy-staging.sh}"
 PUBLISH_SH="$HERE/publish-cron-scripts.sh"
 GUARD_SH="$HERE/cron-reference-guard.sh"
+GATE_SH="$HERE/e2e-gate-check.sh"
 [ -r "$DEPLOY_STAGING" ] || { echo "[FAIL] 找不到被测部署脚本：$DEPLOY_STAGING"; exit 1; }
 [ -r "$PUBLISH_SH" ] || { echo "[FAIL] 找不到 publish-cron-scripts.sh"; exit 1; }
 [ -r "$GUARD_SH" ] || { echo "[FAIL] 找不到 cron-reference-guard.sh（N6 的期望件）"; exit 1; }
+[ -r "$GATE_SH" ] || { echo "[FAIL] 找不到 e2e-gate-check.sh（T463 起跑门本体，接线对象缺失即本守卫无从判定）"; exit 1; }
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/t393-wiring.XXXXXX") || { echo "[FAIL] mktemp 失败"; exit 1; }
 chmod 700 "$WORK"
@@ -56,6 +59,10 @@ scan_file() {
   req W4b 'bash "$SNAP_ROOT/cron-reference-guard.sh" || fail' '⓪-b 调 cron 引用守卫且判红即中止本轮'
   req W5  'bash "$SELFCHK" verify'                       '⑧ 段自检 verify 在位'
   req W6  'fail "快照环境缺失'                             '绕开 ⓪ 直接执行快照外入口时拒绝跑'
+  # T463：起跑门（e2e-real 打 staging 的 run 在跑就不起部署）—— 与 ⑦-b 同族：
+  #   删掉这一行，bash -n 与 e2e-gate-test.sh 全绿（那边测的是门自己，不是「部署链接着门」）。
+  req W8a '[ -r "$GATE_SRC" ] || fail'                   '⓪-pre 验起跑门脚本可读（T463 起必需项）'
+  req W8b 'bash "$GATE_SRC" || fail'                     '⓪-pre 调起跑门且判红即中止本轮'
 
   # W7 是位置判定，不是字面判定：守卫必须在 ① 步 git pull 之前 —— 排在 pull 之后就已经晚了
   #    （① 步含 git checkout -- . ，那正是可能把被引用文件换掉的动作本身）。
@@ -73,6 +80,24 @@ scan_file() {
     echo "  [PASS][W7] cron 守卫跑在 ① 步 git pull 之前（第 $guard_call_ln 行 < 第 $pull_ln 行）：拒绝路径零变更"
   else
     echo "  [FAIL][W7] cron 守卫排在 git pull 之后（第 $guard_call_ln 行 >= 第 $pull_ln 行）：那时工作树已被换过，判红也留不下干净基线"
+    n_fail=$((n_fail + 1))
+  fi
+
+  # W9 同样是位置判定（T463 判据 1「基线采集之前即退出」）：起跑门必须排在 ⓪ 段那条
+  #   selfcheck record 之前 —— 过了 record，本轮就已经采集了工作树基线（并随后 exec 快照），
+  #   「拒绝路径零副作用」这条判据的字面要求就不再成立。
+  #   锚点取整串 `bash "$SNAP_ROOT/selfcheck-deploy-script.sh" record`：注释里也出现 "record"
+  #   这个词（⓪ 段说明段），只按单词取行号会取到注释。
+  local gate_ln record_ln
+  gate_ln=$(grep -nF 'bash "$GATE_SRC" || fail' "$f" | head -1 | cut -d: -f1)
+  record_ln=$(grep -nF 'bash "$SNAP_ROOT/selfcheck-deploy-script.sh" record' "$f" | head -1 | cut -d: -f1)
+  if [ -z "$gate_ln" ] || [ -z "$record_ln" ]; then
+    echo "  [FAIL][W9] 位置判定取不到行号（gate=$gate_ln record=$record_ln）"
+    n_fail=$((n_fail + 1))
+  elif [ "$gate_ln" -lt "$record_ln" ]; then
+    echo "  [PASS][W9] 起跑门跑在 ⓪ 段基线采集之前（第 $gate_ln 行 < 第 $record_ln 行）：判红即中止时未采基线、未装快照"
+  else
+    echo "  [FAIL][W9] 起跑门排在基线采集之后（第 $gate_ln 行 >= 第 $record_ln 行）：判据 1 的「不产生任何部署副作用」已不成立"
     n_fail=$((n_fail + 1))
   fi
   return "$n_fail"
@@ -142,6 +167,21 @@ counter_awk "cron 守卫挪到 ① 步 git pull 之后" W7 '
   { print }
   /^[[:space:]]*git pull github main/ { printf "%s", saved; saved = "" }
 ' W4b
+# T463 例一：删掉 ⓪-pre 的起跑门调用整行。为什么要单列这一格：e2e-gate-test.sh 十九格全测的是
+#   「门自己判得对不对」，把调用点删了它照样绿 —— 与 ⑦-b 同族（Joe T383 N1 的原始教训）。
+#   注：这一例删掉后 W9 会因取不到调用点行号跟着红（共 2 格），属同一条接线的两面而非归因不纯 ——
+#   判红集合含 W8b 即为预期；W9 单独被拆的那一格是下面的例三（字面在位、位置失效）。
+counter "删掉 ⓪-pre 起跑门调用（T463 接线反面）" W8b '/^bash "\$GATE_SRC" || fail/d'
+# T463 例二：删掉 ⓪-pre 的必需项可读性检查（只拆这一格，W8b 必须仍绿，否则判红归因不纯）
+counter "删掉 ⓪-pre 起跑门必需项检查" W8a '/\[ -r "\$GATE_SRC" \] || fail/d'
+# T463 例三：把调用点搬到 ⓪ 段基线采集之后（字面仍在位、位置已失效，只有 W9 抓得住）。
+#   这一格正是派发单判据 1 的括号那句「基线采集之前即退出」：只按字面判的话，
+#   把两行调换顺序照样全绿，而部署副作用已经发生了一次。
+counter_awk "起跑门挪到 ⓪ 段基线采集之后" W9 '
+  index($0, "bash \"$GATE_SRC\" || fail") { saved = saved $0 "\n"; next }
+  { print }
+  index($0, "bash \"$SNAP_ROOT/selfcheck-deploy-script.sh\" record") { printf "%s", saved; saved = "" }
+' W8b
 
 echo "[3/4] N6 期望件与签发件的清单不得各说各话"
 guard_expect=$(grep '^EXPECTED_REF_SCRIPTS=' "$GUARD_SH" | cut -d'"' -f2)
@@ -159,8 +199,8 @@ done
 [ "$missing" = "0" ] && ok "守卫期望集合 ⊇ 签发必需集合（漏一条就是无声覆盖缺口）" \
   || bad "守卫期望集合少 $missing 条 —— 往 REQUIRED 加脚本时必须同步加这里"
 
-echo "[4/4] 语法：三份脚本 bash -n"
-for f in "$DEPLOY_STAGING" "$GUARD_SH" "$PUBLISH_SH"; do
+echo "[4/4] 语法：四份脚本 bash -n"
+for f in "$DEPLOY_STAGING" "$GUARD_SH" "$PUBLISH_SH" "$GATE_SH"; do
   if bash -n "$f" 2>"$WORK/syn.err"; then
     ok "bash -n $(basename "$f")"
   else

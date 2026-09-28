@@ -19,6 +19,9 @@
 #  12. 小程序 H5 走查站（T427）：③-b 构建 patient/tech 两包的 h5 产物并 rsync 到
 #      $STAGING_DIR/apps/{patient,tech}-h5/dist（只上 staging，不进生产镜像），⑥ 段实测两处入口
 #      带各自挂载前缀；「manifest 的 h5.router.base == nginx location」由 apps/*/…h5-mount-contract.spec.ts 守
+#  13. 起跑门（T463）：⓪-pre 用 scripts/deploy/e2e-gate-check.sh 只读查 GitHub Actions，
+#      有打 staging 的 e2e-real run 在跑或排队即非零退出；排在 ⓪ 段基线采集之前 ⇒ 拒绝路径零副作用。
+#      行为三向（放行 / 判红 / 读不到不判绿）与过滤链反证由 e2e-gate-test.sh 守，见 ci-deploy-scripts.yml
 set -euo pipefail
 
 PROJECT_ROOT="/home/ubuntu/bracesync"
@@ -51,6 +54,18 @@ export PATH=/usr/local/go/bin:/usr/bin:/usr/sbin:$PATH
 log()  { echo "\033[1;32m[deploy]\033[0m $*"; }
 err()  { echo "\033[1;31m[ERROR]\033[0m $*" >&2; }
 fail() { err "$*"; exit 1; }
+
+# ⓪-pre T463 起跑门：有 e2e-real 打 staging 的 run 在跑或排队 ⇒ 本轮不起跑（全程只读）
+#   为什么要有这道机器门（T460 交件自曝 → PM 裁定立卡）：起跑门「现查无在跑的 E2E 打 staging」原先
+#   是人读的纪律。第十八轮我 15:04:21 读了最后一次就没再复读，Iris 那条 PR 的 run 创建于 15:04:32，
+#   我 15:07:32 起跑 ⇒ 部署窗口撞进她的 04-monitor 4.3 用例，attempt 1 判红、重跑一次才绿。
+#   位置本身就是判据（判据 1「基线采集之前即退出」）：走到这里退出时，mktemp、快照 install、
+#   自改基线 record 都还没发生，对现网与工作树零变更。deploy-chain-wiring-test.sh 的 W9 逐行钉住这个先后。
+#   门脚本读的是工作树真本而不是快照副本：它在本段就跑完并退出，不参与「① 步之后还在被解释」那条隐患。
+GATE_SRC="$PROJECT_ROOT/scripts/deploy/e2e-gate-check.sh"
+[ -r "$GATE_SRC" ] || fail "起跑门脚本缺失：$GATE_SRC（T463 起本轮必需，宁可中止也不放行没守门的部署）"
+log "⓪-pre 起跑门：e2e-real 打 staging 的 run 检查（只读，排在基线采集之前）..."
+bash "$GATE_SRC" || fail "起跑门判红（run 号与 run_started_at 见上方 [e2e-gate] 行）；本轮未做任何变更即中止"
 
 # ⓪ T364 自改隐患隔离（必须在 ① 之前）
 #   本脚本就住在 ① 步会被 checkout/pull 替换的那个工作树里，而 bash 是边读边解释：
