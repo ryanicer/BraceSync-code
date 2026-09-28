@@ -2,15 +2,18 @@
 //
 // 埋点位置（本卡实际覆盖，均在 user-service 写通道内）：
 //
-//	登录成功 / 患者档案新增与编辑 / 患者团队绑定与批量绑定 / 患者详情查看（§9.2a 读审计）
+//	登录成功 / 患者档案新增 / 患者团队绑定与批量绑定 / 患者详情查看（§9.2a 读审计）
 //	团队与成员增删改 / 技师增删改启停 / 医护账号增改·重置密码·启停（T314）/ 角色增删改（11.2）/ 权限矩阵写入（11.3）
 //	系统参数写入（§7D.12）/ 告警规则写入（2.2）
 //
+// 订正一（T450 DEF-A，2026-09-28）：上面这句原写「患者档案新增与编辑」，但 PUT /admin/patients/:patientId
+// 一直不在 auditRoutes 表内（本文件头注原来自述「PR #126（T248）合并后要补同一埋点」，未补）⇒
+// 档案编辑通道此前零留痕，本笔补进表内，并把「原因 / 改前改后快照」经 setAuditTrace 汇进同一条 detail。
+//
 // 🔴 跨服务埋点（device 安装与校准、alert 告警处理、data 归档删除、msg 通知规则）
 //
-//	需 PM 先定归属与写入通道，本卡不自行跨服务改；PR #126（T248）的
-//	PUT /admin/patients/:patientId 合并后要补同一埋点。
-//	订正（T448，2026-09-28）：device 域已有一条不在本通道内的埋点先例——清除设备 WiFi 的留痕
+//	需 PM 先定归属与写入通道，本卡不自行跨服务改。
+//	订正二（T448，2026-09-28）：device 域已有一条不在本通道内的埋点先例——清除设备 WiFi 的留痕
 //	由 device-service 同库直写 audit_logs（services/device-service/internal/repo/audit_t448.go），
 //	动词沿用本文件词表的 data_modify。归属仍待 PM 认，认之前别把本段读成「device 域全无留痕」。
 package handler
@@ -60,6 +63,16 @@ func (h *Handler) audit(c *gin.Context, in repo.AuditInput) {
 	if in.IP == "" {
 		in.IP = c.ClientIP()
 	}
+	// T450 DEF-A：audit_logs 无设备列，「操作发起设备」只有 User-Agent 可取（ip 列已在行内）。
+	// 中间件与 handler 两条埋点通道都经本函数，故在此统一补，调用方不必各自记一遍。
+	if ua := strings.TrimSpace(c.Request.UserAgent()); ua != "" {
+		if in.Detail == nil {
+			in.Detail = map[string]any{}
+		}
+		if _, set := in.Detail["userAgent"]; !set {
+			in.Detail["userAgent"] = ua
+		}
+	}
 	if err := h.store.WriteAuditLog(c.Request.Context(), in); err != nil {
 		ctxLogger(c).Warn().Err(err).Str("action", in.Action).
 			Str("target_type", in.TargetType).Str("target_id", in.TargetID).
@@ -73,6 +86,45 @@ type auditRoute struct {
 	targetType string
 	param      string // 取 c.Param(param) 作 target_id；空 = 无目标 ID（如批量/创建）
 	desc       string // 含 %s 时用 target_id 填充
+}
+
+// handler 侧回填审计内容的两个 gin 键（T450 DEF-A）。
+//
+// 中间件在 handler 之后跑，只拿得到路由与路径参数；「变更原因 / 改前改后快照」这些
+// 只有 handler 自己知道的字段由 setAuditTrace 汇进同一条 detail，一次请求仍只写一行
+// audit_logs（不再像 T252 那样为结构化内容把整条埋点移到 handler 内，避免两条通道各写一份）。
+const (
+	auditDetailKey  = "auditDetail"  // map[string]any → AuditInput.Detail
+	auditSummaryKey = "auditSummary" // string → 覆盖表内 desc（前端审计页只有「操作描述」一列，不渲染 detail）
+)
+
+// setAuditTrace handler 在写成功后调用：kv 落 detail，summary 作为「操作描述」文案。
+// summary 传空串表示沿用表内 desc。多次调用按后写覆盖同键。
+func setAuditTrace(c *gin.Context, summary string, kv map[string]any) {
+	if summary != "" {
+		c.Set(auditSummaryKey, summary)
+	}
+	if len(kv) == 0 {
+		return
+	}
+	if prev, ok := c.Get(auditDetailKey); ok {
+		if m, ok := prev.(map[string]any); ok {
+			for k, v := range kv {
+				m[k] = v
+			}
+			return // gin 存的是同一份 map，就地合并即可
+		}
+	}
+	c.Set(auditDetailKey, kv)
+}
+
+func auditTraceDetail(c *gin.Context) map[string]any {
+	if v, ok := c.Get(auditDetailKey); ok {
+		if m, ok := v.(map[string]any); ok {
+			return m
+		}
+	}
+	return nil
 }
 
 // auditRoutes 既有端点的审计埋点表（key = "METHOD /gin 全路径"，直接精确匹配 c.FullPath()）。
@@ -91,6 +143,8 @@ var auditRoutes = map[string]auditRoute{
 	http.MethodPost + " /api/v1/admin/patients/batch-bind":               {auditActionDataModify, "patient", "", "批量绑定患者到团队"},
 	http.MethodPost + " /api/v1/admin/patients/:patientId/unbind-wechat": {auditActionDataModify, "patient", "patientId", "解绑患者 %s 的微信"},
 	http.MethodPut + " /api/v1/admin/patients/:patientId/phone":          {auditActionDataModify, "patient", "patientId", "修改患者 %s 的手机号"},
+	// T450 DEF-A：PR #126（T248）合并时欠下的档案编辑埋点，本笔补上（文件头注自述「合并后要补同一埋点」）。
+	http.MethodPut + " /api/v1/admin/patients/:patientId": {auditActionDataModify, "patient", "patientId", "编辑患者档案 %s"},
 
 	http.MethodPost + " /api/v1/teams":                             {auditActionDataModify, "team", "", "创建团队"},
 	http.MethodPut + " /api/v1/teams/:teamId":                      {auditActionDataModify, "team", "teamId", "编辑团队 %s"},
@@ -141,7 +195,16 @@ func (h *Handler) auditTrail() gin.HandlerFunc {
 		if strings.Contains(desc, "%s") {
 			desc = fmt.Sprintf(desc, targetID)
 		}
-		h.audit(c, repo.AuditInput{Action: route.action, TargetType: route.targetType, TargetID: targetID, Description: desc})
+		if summary := c.GetString(auditSummaryKey); summary != "" {
+			desc = summary
+		}
+		h.audit(c, repo.AuditInput{
+			Action:      route.action,
+			TargetType:  route.targetType,
+			TargetID:    targetID,
+			Description: desc,
+			Detail:      auditTraceDetail(c),
+		})
 	}
 }
 

@@ -4,20 +4,21 @@
 //   1) ensurePatientToken
 //   2) Node 侧 GET /api/v1/alerts?patientId= → 断言 200 + 列表结构（容忍空 list = 正常空态）
 //      GET /patients/:id/daily-wear 后端当前可能 404 → 明确容忍空态（记录 tolerated 而非 FAIL）
-//   3) 小程序 UI：switchTab 到 history(异常监测) → 断言路由正确（页面 data 字段级断言需 devtools
-//      侧核对编译后键名后再补，不伪造；已落 alerts 条数供人工比对）
+//   3) 小程序 UI 切页腿：T450-③ 起为显式跳过（目标页已不在产物页表内，详见 [3] 处）
 //
 // 用法：node e2e-miniapp/patient-history.spec.js
 const cfg = require('./real-miniapp.config')
-/* global getCurrentPages */
 const helpers = require('./real-mp-helpers')
+
+// 历史页路由。页表里没有这一条时 UI 腿走 skipStep，不许 switchTab 硬撞。
+const HISTORY_PAGE = '/pages/history/index'
 
 helpers.runSpec(cfg, {
   name: 'patient-history',
   app: 'patient',
   role: 'patient',
   body: async (ctx) => {
-    const { mp, apiCall, logStep, result } = ctx
+    const { apiCall, logStep, result } = ctx
 
     // [1] 鉴权
     let auth
@@ -53,18 +54,19 @@ helpers.runSpec(cfg, {
     }
     void wearNote
 
-    // [3] UI switchTab history(异常监测) 渲染
-    await helpers.withTimeout(mp.switchTab('/pages/history/index'), 20_000, 'switchTab history')
-    await new Promise((r) => setTimeout(r, 5000))
-    const route = await helpers.pageRoute(mp)
-    const uiRouteOk = await helpers.withTimeout(mp.evaluate(function () {
-      const ps = getCurrentPages()
-      const page = ps[ps.length - 1]
-      return !!page && page.route === 'pages/history/index'
-    }), 10_000, 'history route')
-    const f3 = route === 'pages/history/index' && !!uiRouteOk
-    logStep(result, 'ui-history-route', f3, { route, alertsFromApi })
+    // [3] UI 切页腿：显式跳过（T450-③，口径 = driver 资产陈旧，不是被测功能缺陷）
+    //     pages/history/index 已退出货表：患者端 src/pages.json 的 pages 无此条、src/pages/history/ 不存在，
+    //     改名前后两代 staging 产物 app.json 各 12 页亦无此路由（Alice T441 docs PR 662 证据包 10/11 号，
+    //     与 Peter T417 对照清单 A-1「历史页已删」一致）。旧写法是 mp.switchTab 硬撞 → 20s 超时抛错 →
+    //     runSpec 的 fail-closed 外壳判负 → process.exitCode=1，官方六支编排必出一条与产品无关的红。
+    //     恢复条件：患者端重新有「历史」页时，把 HISTORY_PAGE 改成真实路由，并把 skipStep 换回
+    //     logStep（照旧断言栈顶 route 与页面渲染）。
+    helpers.skipStep(
+      result,
+      'ui-history-route',
+      `目标页 ${HISTORY_PAGE} 不在患者端页表内（历史页已删）；API 侧 alerts 条数已落上一条台账：${alertsFromApi}`
+    )
 
-    return alertsOk && f3
+    return alertsOk
   },
 })

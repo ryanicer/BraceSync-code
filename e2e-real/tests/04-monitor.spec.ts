@@ -6,8 +6,9 @@ import { requireDeployedBuild } from '../deploy-guard'
  * T053 - 04 实时监控（真实模式）
  * 覆盖：页面默认渲染 / 热力图 20 格 / 患者切换
  * ⚠️ staging 设备模拟器可能未运行 ⇒ 帧会过期甚至无帧。T322 起这类状态下页面明确显示
- *    「数据已过期 / 无实时数据」且不再画兜底示例数据，所以下面按状态分支的用例要么用 page.route
- *    把帧时刻钉死（4.1b / 4.1c / 4.2c / 4.2e / 4.4），要么只断「落在三态之一」（4.1）。
+ *    「数据已过期 / 无实时数据」且不再画兜底示例数据，所以下面按状态分支的用例要么用
+ *    real-helpers.ts 的 stubRealtimeSnapshot 把帧时刻钉死（4.1b / 4.1c / 4.2c / 4.2d / 4.2e / 4.4），
+ *    要么只断「落在三态之一」（4.1）。T450-① 起本文件不再有裸写的 page.route + route.fetch。
  */
 test.describe('04-实时监控', () => {
   test.beforeEach(async ({ page }) => {
@@ -15,10 +16,13 @@ test.describe('04-实时监控', () => {
     await gotoMenu(page, '实时监控')
   })
 
-  // 4.2c / 4.4 用 page.route 改写 realtime 响应，而监控页每 2s 轮询同一接口：用例结束时
-  // 可能还有一个 handler 卡在 await route.fetch()。它抛的 "route.fetch: Test ended" 会被
+  // 4.1b / 4.1c / 4.2c / 4.2d / 4.2e / 4.4 都改写 realtime 响应，而监控页每 2s 轮询同一接口：用例结束时
+  // 可能还有一个 handler 卡在冷缓存首包那次 await route.fetch()。它抛的 "route.fetch: Test ended" 会被
   // 判给同 worker 的下一条用例（2026-09-22 CI 实测：5.6 以 0ms 判红，05 文件另 3 条只读
   // 用例 did not run），所以这里在用例收尾时先 remove + 等在飞的 handler 跑完。
+  // T450-①：拦截已全部收口到 real-helpers.ts 的 stubRealtimeSnapshot（首包那次 await 外面套了
+  // 「收尾竞态 ⇒ 吞掉这一次出口」的守卫），本条 unrouteAll 因此从「唯一防线」降级为「第二道」——
+  // 留着不判负也不掩盖：它等的仍是 handler 返回，而守卫等的正是那条抛出来的错。
   test.afterEach(async ({ page }) => {
     await page.unrouteAll({ behavior: 'wait' })
   })
@@ -113,23 +117,16 @@ test.describe('04-实时监控', () => {
      * （帧 TTL 2 小时、有无上报取决于模拟器是否在跑），下一轮跑可能就成了另一态。
      * 把帧时刻钉死成 3 小时前 / 把帧清空，才能让这两态成为可复跑的断言。
      * 4.1 只验「标签落在三态之一 + 双时刻分列」，具体某一态的表现全在这两条里。
+     *
+     * T450-①（与 T401 已登记的同名残余并卡）：这里不再自己写 page.route + await route.fetch()，
+     * 改走 4.4 那支带收尾守卫的 stubRealtimeSnapshot —— 本文件的冷缓存首包同样跨一次公网往返，
+     * 用例收尾时它照样会把 "route.fetch: Test ended." 抛给同 worker 的下一条用例。
      */
     async function injectFrame(
       page: import('@playwright/test').Page,
       mutate: (data: { pressureRecords?: unknown }) => void,
     ): Promise<void> {
-      await page.route('**/api/v1/patients/*/realtime', async (route) => {
-        const res = await route.fetch()
-        let body: { data?: Record<string, unknown> }
-        try {
-          body = await res.json()
-        } catch {
-          await route.fulfill({ response: res })
-          return
-        }
-        if (body?.data) mutate(body.data as { pressureRecords?: unknown })
-        await route.fulfill({ response: res, body: JSON.stringify(body) })
-      })
+      await stubRealtimeSnapshot(page, (data) => mutate(data))
       await page.locator('.page-toolbar').getByRole('button', { name: '立即刷新' }).click()
     }
 
@@ -243,34 +240,33 @@ test.describe('04-实时监控', () => {
       }
     })
 
+    /**
+     * @returns 读「夹具帧时刻（epoch ms）」的取值器；0 表示拦截还没填过缓存。
+     *   帧时刻只能在 mutate（填缓存那一次）里取，故返回闭包而不是调用时刻。
+     */
     async function injectT296Grid(
       page: import('@playwright/test').Page,
       grid: typeof T296_GRID = T296_GRID,
-    ): Promise<void> {
-      await page.route('**/api/v1/patients/*/realtime', async (route) => {
-        const res = await route.fetch()
-        let body: { data?: Record<string, unknown> }
-        try {
-          body = await res.json()
-        } catch {
-          await route.fulfill({ response: res })
-          return
+    ): Promise<() => number> {
+      // T450-①：与 injectFrame 同一迁移 —— 走带收尾守卫的 stubRealtimeSnapshot，
+      // 不再留一发不跨收尾保护的 await route.fetch()。mutate 只在填缓存那一次执行，
+      // 故夹具里的 timestamp 被钉死在「首个被拦截的轮询」那一刻。
+      let frameAt = 0
+      await stubRealtimeSnapshot(page, (data) => {
+        const d = data as {
+          pressureHeatmap?: unknown
+          heatmapMaxN?: number
+          pressureHighN?: number
+          pressureRecords?: Array<Record<string, unknown>>
         }
-        if (body?.data) {
-          const data = body.data as {
-            pressureHeatmap?: unknown
-            heatmapMaxN?: number
-            pressureHighN?: number
-            pressureRecords?: Array<Record<string, unknown>>
-          }
-          data.pressureHeatmap = grid
-          data.heatmapMaxN = 6
-          data.pressureHighN = 5
-          data.pressureRecords = [{ ...(data.pressureRecords?.[0] ?? {}), timestamp: new Date().toISOString() }]
-        }
-        await route.fulfill({ response: res, body: JSON.stringify(body) })
+        d.pressureHeatmap = grid
+        d.heatmapMaxN = 6
+        d.pressureHighN = 5
+        frameAt = Date.now()
+        d.pressureRecords = [{ ...(d.pressureRecords?.[0] ?? {}), timestamp: new Date(frameAt).toISOString() }]
       })
       await page.locator('.page-toolbar').getByRole('button', { name: '立即刷新' }).click()
+      return () => frameAt
     }
 
     // T322 问题二夹具：把 staging 末次帧实测到的那 5 个负读数原样塞进响应
@@ -359,13 +355,27 @@ test.describe('04-实时监控', () => {
 
     test('4.2d 热力图卡片显示本帧采集时刻，可与设备逐帧日志对账', async ({ page }) => {
       await waitForSnapshotLoaded(page)
-      await injectT296Grid(page)
+      const readFrameAt = await injectT296Grid(page)
 
       const stamp = page.locator('.heatmap-card .card-title .hm-frame-stamp')
       await expect(stamp).toHaveCount(1)
       await expect(stamp).toContainText(/\d{2}:\d{2}:\d{2} 采集 · 距今 \d+s/)
-      const age = Number((await stamp.textContent())!.match(/距今 (\d+)s/)![1])
-      expect(age, '夹具用当前时刻，距今应远小于一个轮询周期').toBeLessThan(30)
+      const frameAt = readFrameAt()
+      expect(frameAt, '拦截一发都没命中 ⇒ 本条在读 staging 真帧，判据已失效').toBeGreaterThan(0)
+      // 先确认读到的是夹具那一帧（而不是注入前那发未改写的帧），否则下面的秒数对不上是错觉。
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const f = new Date(frameAt)
+      const hhmmss = `${pad(f.getHours())}:${pad(f.getMinutes())}:${pad(f.getSeconds())}`
+      const text = (await stamp.textContent())!
+      expect(text, `卡片应显示夹具钉下的帧时刻 ${hhmmss}`).toContain(`${hhmmss} 采集`)
+      // 断言改成「与夹具帧时刻同源」而不是「距今 < 某常数」：T450-① 收口后响应体在填缓存那一次
+      // 就定形（旧写法每发轮询重新 fetch 并重新打时间戳，距今被反复刷新，常数上界只是侥幸）。
+      const age = Number(text.match(/距今 (\d+)s/)![1])
+      const elapsed = Math.round((Date.now() - frameAt) / 1000)
+      expect(
+        Math.abs(age - elapsed),
+        `页面距今 ${age}s 应与帧注入至今 ${elapsed}s 同量级（页面按轮询节拍重算，容差 5s）`,
+      ).toBeLessThanOrEqual(5)
     })
   })
 

@@ -45,6 +45,28 @@ func (f *fakeStore) UpdatePatientProfile(_ context.Context, patientID string, in
 	if f.patient == nil {
 		return repo.ErrPatientNotFound
 	}
+	// T450：默认不改动 f.patient（既有 T226 用例只看入参）；置 profileApplies 才把入参落到**新行对象**上，
+	// 使「写前读 → 写 → 写后读」读到两份不同快照（DB 每次 SELECT 给新行，handler 留在旧指针上的
+	// 改前快照才不会被同一次写就地覆盖，审计 before/after 判据才不是空转）。
+	if f.profileApplies {
+		cp := *f.patient
+		if in.Name != nil {
+			cp.Name = *in.Name
+		}
+		if in.Gender != nil {
+			cp.Gender = in.Gender
+		}
+		if in.Age != nil {
+			cp.Age = in.Age
+		}
+		if in.Diagnosis != nil {
+			cp.Diagnosis = in.Diagnosis
+		}
+		if in.CobbAngle != nil {
+			cp.CobbAngle = in.CobbAngle
+		}
+		f.patient = &cp
+	}
 	return nil
 }
 

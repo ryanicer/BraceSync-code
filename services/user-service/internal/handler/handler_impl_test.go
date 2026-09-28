@@ -50,33 +50,38 @@ type fakeStore struct {
 	patientsErr      error
 	patient          *repo.PatientRow
 	patientErr       error
-	lastPatientQuery string // 记录 GetPatient 入参，用于验证 self-scope 的查询键来源
-	teams            []repo.TeamRow
-	teamsErr         error
-	teamExists       bool
-	teamErr          error
-	doctors          []repo.DoctorRow
-	doctorsErr       error
-	techs            []repo.TechnicianRow
-	techTotal        int64
-	techsErr         error
-	teamTechs        []repo.TechnicianRow
-	teamTechsErr     error
-	tech             *repo.TechnicianRow
-	techErr          error
-	createdTech      *repo.TechnicianRow
-	createErr        error
-	updatedTech      *repo.TechnicianRow
-	updateErr        error
-	toggleExists     bool
-	toggleErr        error
-	phoneTaken       bool
-	takenErr         error
-	feedbacks        []repo.FeedbackRow
-	feedbacksErr     error
-	feedbackIn       repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
-	feedbackID       int64                    // T311：CreateFeedback 返回的自增 id
-	feedbackErr      error                    // T311：CreateFeedback 注入错误
+	// getPatientFirstErr T450：只让「首次」GetPatient 失败（模拟审计用的写前读挂了、写与写后读照常）。
+	// 不复用 patientErr —— 那会让 handler 的写后读一起失败，测不到「改前快照缺失但主流程仍成功」这一格。
+	getPatientFirstErr error
+	getPatientCalls    int
+	profileApplies     bool   // T450：UpdatePatientProfile 是否把入参落回 f.patient（模拟写前/写后两次 GETPatient 读到不同快照）
+	lastPatientQuery   string // 记录 GetPatient 入参，用于验证 self-scope 的查询键来源
+	teams              []repo.TeamRow
+	teamsErr           error
+	teamExists         bool
+	teamErr            error
+	doctors            []repo.DoctorRow
+	doctorsErr         error
+	techs              []repo.TechnicianRow
+	techTotal          int64
+	techsErr           error
+	teamTechs          []repo.TechnicianRow
+	teamTechsErr       error
+	tech               *repo.TechnicianRow
+	techErr            error
+	createdTech        *repo.TechnicianRow
+	createErr          error
+	updatedTech        *repo.TechnicianRow
+	updateErr          error
+	toggleExists       bool
+	toggleErr          error
+	phoneTaken         bool
+	takenErr           error
+	feedbacks          []repo.FeedbackRow
+	feedbacksErr       error
+	feedbackIn         repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
+	feedbackID         int64                    // T311：CreateFeedback 返回的自增 id
+	feedbackErr        error                    // T311：CreateFeedback 注入错误
 	// T378 反馈域读写归属：列表/统计条收到的团队范围、写前的只读探测计数、写调用计数
 	lastFeedbackListScope  repo.FeedbackScope
 	lastFeedbackStatsScope repo.FeedbackScope
@@ -274,6 +279,10 @@ func (f *fakeStore) ListPatients(_ context.Context, flt repo.PatientFilter) ([]r
 }
 func (f *fakeStore) GetPatient(_ context.Context, pid string) (*repo.PatientRow, error) {
 	f.lastPatientQuery = pid
+	f.getPatientCalls++
+	if f.getPatientFirstErr != nil && f.getPatientCalls == 1 {
+		return nil, f.getPatientFirstErr
+	}
 	if f.patientErr != nil {
 		return nil, f.patientErr
 	}
