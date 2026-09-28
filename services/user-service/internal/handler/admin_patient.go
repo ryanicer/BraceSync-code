@@ -198,13 +198,22 @@ func auditPhonePhrase(v phone.PhoneView) string {
 // adminPatientEditRequest PUT /api/v1/admin/patients/:patientId 入参（T248 4.3，指针=nil=不改）。
 // 只覆盖 PRD §7D.3「编辑患者弹窗」五项；phone / teamId / primaryDoctorId / status 各有专属端点，
 // 由 DisallowUnknownFields 拒掉，避免调用方以为改了其实被静默丢弃。
+//
+// ClearFields（T450-②b 乙案，PM 2026-09-28 17:41 拍）= 显式声明「这些列改回 NULL」。
+// 五个指针键只能表达「不给 / 给个值」两态：JSON null 解码后与键缺席同形 ⇒ 接口此前
+// 根本没有「恢复为空」的入参形态，管理端唯一置空通道只能写空串（Alice 第 70 轮登记的那条差异）。
+// 同一列既给值又被列进 clearFields 判 400，不留「最后一个赢」的隐式优先级。
 type adminPatientEditRequest struct {
-	Name      *string  `json:"name"`
-	Gender    *string  `json:"gender"`
-	Age       *int     `json:"age"`
-	Diagnosis *string  `json:"diagnosis"`
-	CobbAngle *float64 `json:"cobbAngle"`
+	Name        *string  `json:"name"`
+	Gender      *string  `json:"gender"`
+	Age         *int     `json:"age"`
+	Diagnosis   *string  `json:"diagnosis"`
+	CobbAngle   *float64 `json:"cobbAngle"`
+	ClearFields []string `json:"clearFields"`
 }
+
+// clearFieldOrder 白名单枚举序（错误文案按它拼，map 序随机，不进文案会写成「看得到却复现不出」的串）。
+var clearFieldOrder = []string{"gender", "age", "diagnosis", "cobbAngle"}
 
 // maxDiagnosisLen patients.diagnosis VARCHAR(255)
 const maxDiagnosisLen = 255
@@ -334,9 +343,11 @@ func auditFloat(p *float64) any {
 }
 
 // buildAdminPatientEdit 值域校验 + 装配 repo 入参；一个字段都没给 → 400（空编辑无意义）。
+// clearFields 单独出现也算「有字段」：只置空不写值，本身就是一次有效编辑。
 func buildAdminPatientEdit(req *adminPatientEditRequest) (*repo.PatientProfileUpdate, *model.AppError) {
 	in := &repo.PatientProfileUpdate{}
 	anyField := false
+	given := map[string]bool{} // 本次已给值的字段名，用于与 clearFields 撞列判定
 	if req.Name != nil {
 		name := trimStr(*req.Name)
 		if name == "" || runeLen(name) > maxPatientNameLen {
@@ -344,6 +355,7 @@ func buildAdminPatientEdit(req *adminPatientEditRequest) (*repo.PatientProfileUp
 		}
 		in.Name = &name
 		anyField = true
+		given["name"] = true
 	}
 	if req.Gender != nil {
 		if *req.Gender != "male" && *req.Gender != "female" {
@@ -351,6 +363,7 @@ func buildAdminPatientEdit(req *adminPatientEditRequest) (*repo.PatientProfileUp
 		}
 		in.Gender = req.Gender
 		anyField = true
+		given["gender"] = true
 	}
 	if req.Age != nil {
 		if *req.Age < 0 || *req.Age > 150 { // patients.age CHECK (BETWEEN 0 AND 150)
@@ -358,6 +371,7 @@ func buildAdminPatientEdit(req *adminPatientEditRequest) (*repo.PatientProfileUp
 		}
 		in.Age = req.Age
 		anyField = true
+		given["age"] = true
 	}
 	if req.Diagnosis != nil {
 		v := trimStr(*req.Diagnosis)
@@ -366,6 +380,7 @@ func buildAdminPatientEdit(req *adminPatientEditRequest) (*repo.PatientProfileUp
 		}
 		in.Diagnosis = &v
 		anyField = true
+		given["diagnosis"] = true
 	}
 	if req.CobbAngle != nil {
 		// patients.cobb_angle NUMERIC(5,2)；值域与建档端点 createPatient 一致
@@ -374,9 +389,45 @@ func buildAdminPatientEdit(req *adminPatientEditRequest) (*repo.PatientProfileUp
 		}
 		in.CobbAngle = req.CobbAngle
 		anyField = true
+		given["cobbAngle"] = true
+	}
+	if len(req.ClearFields) > 0 {
+		cols, appErr := resolveClearFields(req.ClearFields, given)
+		if appErr != nil {
+			return nil, appErr
+		}
+		in.ClearColumns = cols
+		anyField = true
 	}
 	if !anyField {
 		return nil, model.ErrInvalidParam("no updatable fields in request body")
 	}
 	return in, nil
+}
+
+// resolveClearFields 校验 clearFields 并映射成列名（顺序随请求，去重由重复项判定负责）。
+// 三道判定各自独立成用例：表外字段名 / 重复项 / 与值键撞同一列。
+// 表外名单按 clearFieldOrder 整份拼进文案 —— 只报「不接受」而不报可接受集合，
+// 调用方只能靠猜，而猜出来的请求体形不成契约。
+func resolveClearFields(fields []string, given map[string]bool) ([]string, *model.AppError) {
+	accepted := strings.Join(clearFieldOrder, "、")
+	seen := make(map[string]bool, len(fields))
+	cols := make([]string, 0, len(fields))
+	for _, raw := range fields {
+		key := trimStr(raw)
+		col, ok := repo.PatientProfileClearColumns[key]
+		if !ok {
+			// name 走不通置空也落在这里：patients.name 是 NOT NULL，压根不在可空列集合内
+			return nil, model.ErrInvalidParam("clearFields accepts only %s", accepted)
+		}
+		if seen[key] {
+			return nil, model.ErrInvalidParam("clearFields contains duplicated field: %s", key)
+		}
+		seen[key] = true
+		if given[key] {
+			return nil, model.ErrInvalidParam("field %s is both assigned and listed in clearFields", key)
+		}
+		cols = append(cols, col)
+	}
+	return cols, nil
 }

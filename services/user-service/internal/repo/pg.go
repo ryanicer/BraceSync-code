@@ -196,7 +196,30 @@ func (s *PGStore) UpdatePatientPhone(ctx context.Context, patientID string, phon
 
 // UpdatePatientProfile T226 患者自助改本人档案：白名单字段动态 SET（nil=不改），
 // updated_at 应用层刷新；不命中返回 ErrPatientNotFound。phone 不在白名单（微信授权写入）。
+// T450-②b 起同一函数还承接 admin 通道的显式置空（in.ClearColumns ⇒ SET col = NULL）。
 func (s *PGStore) UpdatePatientProfile(ctx context.Context, patientID string, in PatientProfileUpdate) error {
+	sqlText, args, err := buildPatientProfileUpdateSQL(patientID, in)
+	if err != nil {
+		return err
+	}
+	if sqlText == "" { // 无白名单字段也无置空列：handler 已先判 400，此处兜底不空跑 UPDATE
+		return nil
+	}
+	tag, err := s.pool.Exec(ctx, sqlText, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPatientNotFound
+	}
+	return nil
+}
+
+// buildPatientProfileUpdateSQL 动态 SET 的纯函数（无库依赖 ⇒ 单测能逐字看 SQL 与占位符编号）。
+// 置空列走字面 NULL、不占参数位 ⇒ 参数序号只由 add 推进，这正是「写死占位符」类失真唯一能被抓住的形状。
+// 列名一律取自 PatientProfileClearColumns 的值集：请求体里的字符串永不进 SQL 文本，
+// 表外列名（含注入串）在此报错返回，不静默丢弃。
+func buildPatientProfileUpdateSQL(patientID string, in PatientProfileUpdate) (string, []any, error) {
 	sets := []string{"updated_at = NOW()"}
 	args := []any{}
 	add := func(col string, v any) {
@@ -233,20 +256,27 @@ func (s *PGStore) UpdatePatientProfile(ctx context.Context, patientID string, in
 	if in.CobbAngle != nil {
 		add("cobb_angle", *in.CobbAngle)
 	}
+	for _, col := range in.ClearColumns {
+		if !isPatientProfileClearColumn(col) {
+			return "", nil, fmt.Errorf("column is not clearable: %s", col)
+		}
+		sets = append(sets, col+" = NULL")
+	}
 	if len(sets) == 1 { // 仅 updated_at：无白名单字段可写（handler 已先拒 400，此处兜底防空 SET）
-		return nil
+		return "", nil, nil
 	}
 	args = append(args, patientID)
-	tag, err := s.pool.Exec(ctx,
-		fmt.Sprintf(`UPDATE patients SET %s WHERE patient_id = $%d`, strings.Join(sets, ", "), len(args)),
-		args...)
-	if err != nil {
-		return err
+	return fmt.Sprintf(`UPDATE patients SET %s WHERE patient_id = $%d`, strings.Join(sets, ", "), len(args)), args, nil
+}
+
+// isPatientProfileClearColumn 列名是否落在 PatientProfileClearColumns 的值集内。
+func isPatientProfileClearColumn(col string) bool {
+	for _, v := range PatientProfileClearColumns {
+		if v == col {
+			return true
+		}
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrPatientNotFound
-	}
-	return nil
+	return false
 }
 
 // PatientPhoneHashTaken T085：phone_hash 是否已被其他患者占用（排除自身）。

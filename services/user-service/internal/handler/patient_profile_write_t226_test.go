@@ -65,6 +65,20 @@ func (f *fakeStore) UpdatePatientProfile(_ context.Context, patientID string, in
 		if in.CobbAngle != nil {
 			cp.CobbAngle = in.CobbAngle
 		}
+		// T450-②b：置空列在假库里表现为「指针置 nil」，与 pg.go 的 SET col = NULL 同义
+		// （写后回读才与改前行不同，审计 before/after 判据才不是空转）
+		for _, col := range in.ClearColumns {
+			switch col {
+			case "gender":
+				cp.Gender = nil
+			case "age":
+				cp.Age = nil
+			case "diagnosis":
+				cp.Diagnosis = nil
+			case "cobb_angle":
+				cp.CobbAngle = nil
+			}
+		}
 		f.patient = &cp
 	}
 	return nil

@@ -525,10 +525,12 @@ async function confirmAssign() {
 }
 
 /**
- * 值域逐条对齐 buildAdminPatientEdit（admin_patient.go:201-247）：姓名 1-64 字符、
- * 年龄 0-150 整数、Cobb 角 0-180、诊断 ≤255 字符（且允许清空——它是唯一的置空通道，类型 *string）。
- * 姓名/年龄/Cobb 在后端无「置为空」通道，页面把原值预填进了输入框 ⇒ 用户清空它既不是「不改」也存不进去，
- * 必须在点保存前就讲清楚，不能让运营以为改了、实际服务端收到的是缺键。
+ * 值域逐条对齐 buildAdminPatientEdit（admin_patient.go）：姓名 1-64 字符、年龄 0-150 整数、
+ * Cobb 角 0-180、诊断 ≤255 字符。
+ * 「留空」在姓名/年龄/Cobb 三个输入框里既不等于「不改」也存不进去：姓名库里是 NOT NULL，后端压根没有
+ * 置空通道；年龄/Cobb 后端有显式置空通道（T450-②b 乙案的 clearFields），但弹窗没给这两档入口。
+ * 页面又把原值预填进了输入框 ⇒ 用户清空它必须在点保存前就讲清楚，
+ * 不能让运营以为改了、实际服务端收到的是缺键。
  */
 const editErrors = computed<string[]>(() => {
   const base = editBase.value
@@ -559,7 +561,11 @@ const editErrors = computed<string[]>(() => {
 /**
  * 只发改过的键 —— 后端 adminPatientEditRequest 用指针区分「字段缺席(nil)=不改」与
  * 「显式传值=改」，且 gender/age 的空值形态会被值域校验判 400，所以全量下发既写坏没动的字段也存不进去。
- * 无改动时返回 null ⇒ 保存按钮置灰（空编辑后端判 400「no updatable fields」，admin_patient.go:243-245）。
+ * 无改动时返回 null ⇒ 保存按钮置灰（空编辑后端判 400「no updatable fields」，buildAdminPatientEdit）。
+ *
+ * 清空诊断走 clearFields 而不是 diagnosis:''（T450-②b 乙案，PM 2026-09-28 17:41 拍）——
+ * Alice 第 70 轮登记的缺陷正是「基线是 null，还原后是空串」：指针表达不出「改回 NULL」这一态，
+ * 写空串会把库里原本的 NULL 漂成 ''，读侧两态就此塌成一态。
  */
 const editPatch = computed<PatientProfilePatch | null>(() => {
   const base = editBase.value
@@ -571,7 +577,10 @@ const editPatch = computed<PatientProfilePatch | null>(() => {
   if (f.gender !== base.gender && f.gender) patch.gender = f.gender
   const age = f.age.trim()
   if (age !== base.age && age !== '') patch.age = Number(age)
-  if (f.diagnosis !== base.diagnosis) patch.diagnosis = f.diagnosis
+  if (f.diagnosis !== base.diagnosis) {
+    if (f.diagnosis.trim() === '') patch.clearFields = ['diagnosis']
+    else patch.diagnosis = f.diagnosis
+  }
   const cobb = f.cobbAngle.trim()
   if (cobb !== base.cobbAngle && cobb !== '') patch.cobbAngle = Number(cobb)
   return Object.keys(patch).length > 0 ? patch : null
