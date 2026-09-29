@@ -17,9 +17,10 @@ export interface Patient {
    * T337 契约补账：以下 6 项后端 PatientDTO 一直在回（GET /admin/patients 列表与详情同口径），
    * 此前只有前端摸样用、契约没写。声明为可选只为不打破既有 mock，实际读到的行都带这些键。
    * phone 是脱敏串（138****8000），库里无手机号时为空串，永不是明文。
-   * T361 登记：患者域没有三态字段，也没有「编辑手机号」入口 —— 读侧 repo/pg.go 的 patientSelect
-   * 根本不投影 phone_enc，所以列表与详情的 phone 恒为空串（只有 POST /admin/patients 与
-   * PUT /admin/patients/:id/team 两个写响应用当场生成的密文回填）。声明保留为可选，别按它有值来写页面。
+   * T361/T491 登记：患者域没有三态字段，也没有「编辑手机号」入口，列表与详情的 phone 恒为空串。
+   * T491 订正旧理由：读侧 repo/pg.go 的 patientSelect 现已带回 phone_enc（只供服务内脱敏取数，如改号审计的改前快照），
+   * 但 toPatientDTO 不映射这一列，所以两个只读响应仍不回手机号，密文与脱敏号都不出接口。
+   * 只有 POST /admin/patients 与 PUT /admin/patients/:id/team 两个写响应用当场生成的密文回填。声明保留为可选，别按它有值来写页面。
    */
   phone?: string;                     // 脱敏手机号
   heightCm?: number | null;           // T226 患者自助资料

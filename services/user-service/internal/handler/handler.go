@@ -2372,7 +2372,7 @@ func (h *Handler) createPatient(c *gin.Context) {
 		fail(c, model.ErrInternal("create patient failed"))
 		return
 	}
-	// 用 preparePhone 生成的 enc 脱敏（store 返回行可能未回填 PhoneEnc）
+	// 用 preparePhone 生成的 enc 脱敏：就是刚写进去的那份，不依赖读侧投影
 	dto := toPatientDTO(*row)
 	if h.phone != nil {
 		dto.Phone = h.phoneView(enc).Masked
@@ -2408,7 +2408,8 @@ func (h *Handler) assignPatientTeam(c *gin.Context) {
 	dto := toPatientDTO(*row)
 	if h.phone != nil {
 		// T361：AdminPatientDTO 只有单列 phone、无三态字段 —— 患者域无「编辑手机号」入口（admin-web
-		// 患者页只有新建），且读侧 pg.go patientSelect 根本不投影 phone_enc，加 state 也只会恒报 absent。
+		// 患者页只有新建）。本端点是写通道，契约 shared-types Patient.phone 要求写响应回填脱敏号；
+		// T491 前 patientSelect 没投影 phone_enc，这一行只能恒回空串。
 		dto.Phone = phone.View(h.phone, row.PhoneEnc).Masked
 	}
 	ok(c, dto)
