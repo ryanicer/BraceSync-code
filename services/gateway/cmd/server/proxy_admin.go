@@ -143,6 +143,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPut, "/admin/technicians/:techId"},                 // T030 #4 编辑
 	{http.MethodPost, "/admin/technicians/:techId/reset-password"}, // T480 重置登录口令（一次性返回新密码）
 	{http.MethodPost, "/technicians/:techId/toggle"},
+	{http.MethodPost, "/tech/change-password"}, // T486 技师自助改密（tech JWT，RBAC 收口 tech+admin）
 	{http.MethodGet, "/feedbacks"},
 	{http.MethodPost, "/feedbacks"},                     // T311 患者端配网失败自动存档
 	{http.MethodGet, "/feedbacks/stats"},                // T248 7.1 统计栏三项

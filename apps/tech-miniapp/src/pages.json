@@ -37,6 +37,10 @@
     {
       "path": "pages/alerts/index",
       "style": { "navigationBarTitleText": "告警列表" }
+    },
+    {
+      "path": "pages/password/index",
+      "style": { "navigationBarTitleText": "修改密码" }
     }
   ]
 }

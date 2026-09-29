@@ -267,6 +267,17 @@ type fakeStore struct {
 	lastResetTechID   string
 	lastResetTechHash string
 	lastTechQuery     string
+
+	// T486 技师自助改密：按 JWT 身份取登录行。lastSelfServiceTechID 记录 handler 传下来的技师号，
+	// 供「身份只来自 X-User-Id、body 里的 techId 不起作用」那一格取证。
+	techByID              *repo.TechLoginRow
+	techByIDErr           error
+	lastSelfServiceTechID string
+}
+
+func (f *fakeStore) GetTechByTechID(_ context.Context, techID string) (*repo.TechLoginRow, error) {
+	f.lastSelfServiceTechID = techID
+	return f.techByID, f.techByIDErr
 }
 
 func (f *fakeStore) SetTechnicianPassword(_ context.Context, techID, passwordHash string) error {

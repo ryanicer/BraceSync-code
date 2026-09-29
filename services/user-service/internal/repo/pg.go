@@ -85,6 +85,31 @@ func (s *PGStore) GetTechByPhoneHash(ctx context.Context, phoneHash string) (*Te
 	return &t, nil
 }
 
+// GetTechByTechID 按技师号取登录行（T486 自助改密：身份来自 JWT 注入的 X-User-Id，不是手机号）；
+// 不存在返回 (nil, nil)。password_hash 可空（000005），同 GetTechByPhoneHash 走指针抹平为空串。
+func (s *PGStore) GetTechByTechID(ctx context.Context, techID string) (*TechLoginRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT tech_id, name, password_hash, team_id, status, auth_status
+		 FROM technicians WHERE tech_id = $1`, techID)
+	var t TechLoginRow
+	var teamID *string
+	var pwdHash *string
+	err := row.Scan(&t.TechID, &t.Name, &pwdHash, &teamID, &t.Status, &t.AuthStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if pwdHash != nil {
+		t.PasswordHash = *pwdHash
+	}
+	if teamID != nil {
+		t.TeamID = *teamID
+	}
+	return &t, nil
+}
+
 // GetPatientByPhoneHash 按手机号哈希查患者登录信息；不存在返回 (nil, nil)（T037）
 func (s *PGStore) GetPatientByPhoneHash(ctx context.Context, phoneHash string) (*PatientLoginRow, error) {
 	row := s.pool.QueryRow(ctx,

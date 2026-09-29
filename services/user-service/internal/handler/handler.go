@@ -271,6 +271,9 @@ func (h *Handler) Router() *gin.Engine {
 		// T480：口令遗失的唯一出口（同族 doctor reset-password），收口 admin-only
 		v1.POST("/admin/technicians/:techId/reset-password", h.resetTechnicianPassword)
 		v1.POST("/technicians/:techId/toggle", h.toggleTechnician)
+		// T486 技师自助改密（tech JWT，身份只取 X-User-Id）。与上面 admin 重置通道并存：
+		// 重置=管理员、自助=本人，两条通道各写同一列 password_hash。
+		v1.POST("/tech/change-password", h.techChangePassword)
 
 		v1.GET("/feedbacks", h.listFeedbacks)
 		v1.POST("/feedbacks", h.createFeedback)     // T311 患者端配网失败自动存档

@@ -46,6 +46,15 @@
       </view>
     </view>
 
+    <!-- 账号区：T486 自助改密入口（此前 password_hash 只有「新建」与「管理员重置」两个写点，
+         技师想改自己的口令只能找管理员重置）。不放进「开始工作」卡片区：这条不是作业操作。 -->
+    <view class="account-area">
+      <view class="account-row" @click="goPassword">
+        <text class="account-text">修改密码</text>
+        <text class="account-arrow">›</text>
+      </view>
+    </view>
+
     <!-- T433 缺陷四：登录态此前在全端无退出通道（Alice T428 走查附带观察，PM 21:22 裁定并入本卡） -->
     <view class="logout-area">
       <view class="logout-btn" @click="handleLogout">
@@ -72,6 +81,10 @@ function goBind() {
 
 function goRecords() {
   uni.navigateTo({ url: '/pages/records/index' })
+}
+
+function goPassword() {
+  uni.navigateTo({ url: '/pages/password/index' })
 }
 
 function handleLogout() {
@@ -123,6 +136,10 @@ onMounted(() => {
 .action-card.secondary .action-desc { color: #9ca3af; opacity: 1; }
 .action-arrow { font-size: 48rpx; opacity: 0.7; }
 .action-card.secondary .action-arrow { color: #9ca3af; }
+.account-area { padding: 48rpx 48rpx 0; }
+.account-row { display: flex; justify-content: space-between; align-items: center; background: #fff; border: 3rpx solid #e5e7eb; border-radius: 24rpx; padding: 28rpx 32rpx; }
+.account-text { font-size: 30rpx; color: #1f2937; }
+.account-arrow { font-size: 40rpx; color: #9ca3af; }
 .logout-area { padding: 64rpx 48rpx 0; display: flex; justify-content: center; }
 .logout-btn { padding: 20rpx 64rpx; border: 3rpx solid #e5e7eb; border-radius: 999rpx; background: #fff; }
 .logout-text { font-size: 28rpx; color: #6b7280; }
