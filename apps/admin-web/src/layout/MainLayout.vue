@@ -78,6 +78,7 @@
             <span class="user-avatar">{{ avatarChar }}</span>
             <span class="user-name">{{ auth.user?.name }}</span>
           </div>
+          <el-button size="small" @click="openPwdDialog">修改密码</el-button>
           <el-button size="small" @click="handleLogout">退出</el-button>
         </div>
       </el-header>
@@ -85,14 +86,63 @@
         <router-view />
       </el-main>
     </el-container>
+
+    <!-- T487 自助改密弹窗：改的是「你本人」这条后台账号的登录口令，身份由令牌决定，表单里没有账号字段 -->
+    <el-dialog
+      v-model="pwdVisible"
+      title="修改密码"
+      width="420px"
+      :close-on-click-modal="false"
+      @closed="resetPwdForm"
+    >
+      <el-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-position="top" @submit.prevent>
+        <el-form-item label="当前密码" prop="oldPassword">
+          <el-input
+            v-model="pwdForm.oldPassword"
+            type="password"
+            placeholder="请输入当前登录密码"
+            autocomplete="current-password"
+            show-password
+          />
+        </el-form-item>
+        <el-form-item label="新密码" prop="newPassword">
+          <el-input
+            v-model="pwdForm.newPassword"
+            type="password"
+            :placeholder="`请输入新密码（${ADMIN_PWD_RULE}）`"
+            autocomplete="new-password"
+            show-password
+          />
+        </el-form-item>
+        <el-form-item label="确认新密码" prop="confirmPassword">
+          <el-input
+            v-model="pwdForm.confirmPassword"
+            type="password"
+            placeholder="请再次输入新密码"
+            autocomplete="new-password"
+            show-password
+            @keyup.enter="submitPwdChange"
+          />
+        </el-form-item>
+        <p class="pwd-note">
+          修改成功后当前登录态继续有效，下次登录请使用新密码；如忘记密码，仍可由运营管理员在「医护账号」页重置。
+        </p>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdVisible = false">取消</el-button>
+        <el-button type="primary" :loading="pwdSubmitting" @click="submitPwdChange">确认修改</el-button>
+      </template>
+    </el-dialog>
   </el-container>
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Menu, Fold } from '@element-plus/icons-vue'
+import { changeOwnPasswordApi } from '../api'
+import { ADMIN_PWD_RULE, changePasswordErrorCopy, pwdFieldIssue, pwdFormIssue } from '../utils/password'
 import { useAuthStore } from '../stores/auth'
 import { pageRoutes } from '../router'
 import { canAccess, roleName } from '../router/permissions'
@@ -172,6 +222,66 @@ async function handleLogout() {
   }
   auth.logout()
   router.push('/login')
+}
+
+// ===== T487 自助改密 =====
+const pwdVisible = ref(false)
+const pwdSubmitting = ref(false)
+const pwdFormRef = ref<FormInstance>()
+const pwdForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+
+// 三格都在前端先判一遍：弱密码与「新密码＝当前密码」后端也拒（10400），但那句是三种原因共用的码，
+// 让用户先看到「哪一格不合格」再提交，比让他吃一句含糊的「信息有误」有用。
+// 判定本体在 utils/password.ts 的 pwdFieldIssue —— 规则与下面的提交前自证共用同一份，不在此重复。
+function fieldRule(field: keyof typeof pwdForm) {
+  return {
+    validator: (_rule: unknown, _value: unknown, callback: (e?: Error) => void) => {
+      const issue = pwdFieldIssue(pwdForm, field)
+      if (issue) callback(new Error(issue))
+      else callback()
+    },
+    trigger: 'blur',
+  }
+}
+
+const pwdRules: FormRules = {
+  oldPassword: [fieldRule('oldPassword')],
+  newPassword: [fieldRule('newPassword')],
+  confirmPassword: [fieldRule('confirmPassword')],
+}
+
+function openPwdDialog() {
+  pwdVisible.value = true
+}
+
+/** 关闭后清空三格：口令不许留在组件状态里，下次打开也不该带出上一次填的 */
+function resetPwdForm() {
+  pwdForm.oldPassword = ''
+  pwdForm.newPassword = ''
+  pwdForm.confirmPassword = ''
+  pwdFormRef.value?.clearValidate()
+}
+
+async function submitPwdChange() {
+  // 提交前自证：el-form 的校验是异步的，实测在单测环境里 await validate() 会直接放行，
+  // 而「不合格就不该发这一枪」是卡上判据（少一道就是一次必然 10400 的往返）。
+  const issue = pwdFormIssue(pwdForm)
+  if (issue) {
+    ElMessage.warning(issue)
+    return
+  }
+  const valid = await pwdFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+  pwdSubmitting.value = true
+  try {
+    await changeOwnPasswordApi(pwdForm.oldPassword, pwdForm.newPassword)
+    pwdVisible.value = false
+    ElMessage.success('密码已修改，下次登录请使用新密码')
+  } catch (e: unknown) {
+    ElMessage.error(changePasswordErrorCopy(e))
+  } finally {
+    pwdSubmitting.value = false
+  }
 }
 </script>
 
@@ -270,6 +380,14 @@ async function handleLogout() {
 }
 .page-content {
   background: #f5f7fa;
+}
+
+/* T487 改密弹窗里的说明行：比表单字段弱一级，不抢输入焦点 */
+.pwd-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
 }
 
 /* 移动端 drawer 样式 */

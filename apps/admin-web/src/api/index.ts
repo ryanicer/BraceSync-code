@@ -60,6 +60,17 @@ export async function adminLogin(username: string, password: string): Promise<Ad
   })
 }
 
+/**
+ * T487 自助改密：POST /api/v1/auth/change-password（后台 JWT 鉴权）。
+ * 请求体只有 old_password / new_password 两个键 —— 身份取网关注入的 X-User-Id（由 JWT 重签），
+ * 从体里收账号标识就等于「谁能替别人设密码」，故这条端点不收 adminId。
+ * mock 分支只走通交互（本地开发没有口令存储），真实校验在 USE_MOCK=false 下由后端判定。
+ */
+export async function changeOwnPasswordApi(oldPassword: string, newPassword: string): Promise<void> {
+  if (USE_MOCK) { await delay(); return }
+  await request<null>({ url: '/api/v1/auth/change-password', method: 'POST', data: { old_password: oldPassword, new_password: newPassword } })
+}
+
 // ========== Dashboard（T021 聚合接口，契约已定） ==========
 
 export async function fetchDashboardKPI(period: 'today' | 'week' | 'month'): Promise<DashboardKPI> {

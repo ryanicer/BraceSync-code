@@ -158,6 +158,10 @@ func failDoctorAccountErr(c *gin.Context, err error, action string) {
 	case errors.Is(err, repo.ErrUsernameExhausted):
 		// 发号器连续撞上已占用序号：数据异常，回 500 让运维查，不伪装成入参错误
 		fail(c, model.ErrInternal("login account sequence unavailable, %s: %v", action, err))
+	case errors.Is(err, repo.ErrAdminPhoneTaken):
+		// T487：手机号作为「登录凭据」已被别的后台账号占用（撞 uk_admins_phone_hash）。
+		// 与用户名同口径走写接口自身的 409 + 友好提示，不回 500、不复用登录侧 10401。
+		fail(c, model.ErrConflict("phone already used as login credential by another account"))
 	default:
 		fail(c, model.ErrInternal("%s failed: %v", action, err))
 	}

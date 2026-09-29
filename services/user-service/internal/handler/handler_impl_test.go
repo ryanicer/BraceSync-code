@@ -37,19 +37,31 @@ type fakeStore struct {
 	admin            *repo.AdminRow
 	adminErr         error
 	adminUpdatedHash string // T040: 用于验证更新逻辑
-	scope            string
-	scopeErr         error
-	doctorID         string
-	doctorFound      bool
-	doctorErr        error
-	doctorTeam       string // T350：DoctorTeamByAdmin 返回值
-	doctorTeamFound  bool
-	doctorTeamErr    error
-	patients         []repo.PatientRow
-	patientTotal     int64
-	patientsErr      error
-	patient          *repo.PatientRow
-	patientErr       error
+	// T487 双凭证与自助改密的可控替身字段：
+	//   admin            → GetAdminByUsername（用户名支）
+	//   adminByPhone     → GetAdminByPhoneHash（手机号支）；默认 nil ⇒ 手机号那一支恒查无此人，
+	//                      既有用例全部只走用户名支，行为零变化
+	//   lastAdminPhoneHash / lastAdminReadID → 记录入参，供「哈希算对了没」「身份取的是不是
+	//                      网关注入的 X-User-Id」两类断言
+	adminByPhone       *repo.AdminRow
+	adminByPhoneErr    error
+	lastAdminPhoneHash string
+	adminByID          *repo.AdminRow
+	adminByIDErr       error
+	lastAdminReadID    string
+	scope              string
+	scopeErr           error
+	doctorID           string
+	doctorFound        bool
+	doctorErr          error
+	doctorTeam         string // T350：DoctorTeamByAdmin 返回值
+	doctorTeamFound    bool
+	doctorTeamErr      error
+	patients           []repo.PatientRow
+	patientTotal       int64
+	patientsErr        error
+	patient            *repo.PatientRow
+	patientErr         error
 	// getPatientFirstErr T450：只让「首次」GetPatient 失败（模拟审计用的写前读挂了、写与写后读照常）。
 	// 不复用 patientErr —— 那会让 handler 的写后读一起失败，测不到「改前快照缺失但主流程仍成功」这一格。
 	getPatientFirstErr error
@@ -287,13 +299,33 @@ func (f *fakeStore) SetTechnicianPassword(_ context.Context, techID, passwordHas
 	return f.resetTechPwdErr
 }
 
-func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {
+// GetAdminByUsername 按用户名精确匹配（T487 起）：双凭证改造后，「用户名那一支命中没命中」
+// 本身就是被测性质（命中则不得再查手机号）。旧版无视入参恒返回 f.admin，会让
+// 「输入其实是手机号」这类用例假绿，故改为比对 Username；Username 留空仍视为通配，
+// 以便只关心状态/哈希分支、不关心身份解析的用例不必补名字。
+func (f *fakeStore) GetAdminByUsername(_ context.Context, username string) (*repo.AdminRow, error) {
+	if f.admin != nil && f.admin.Username != "" && f.admin.Username != username {
+		return nil, f.adminErr
+	}
 	return f.admin, f.adminErr
 }
 
-// UpdateAdminPasswordHash T040: 渐进式重哈希落库模拟
+// GetAdminByPhoneHash T487：双凭证手机号支的替身（默认 nil = 该支查无此人）
+func (f *fakeStore) GetAdminByPhoneHash(_ context.Context, phoneHash string) (*repo.AdminRow, error) {
+	f.lastAdminPhoneHash = phoneHash
+	return f.adminByPhone, f.adminByPhoneErr
+}
+
+// GetAdminByID T487：自助改密读当前哈希的替身（返回独立字段，避免与登录用的 admin 互相干扰）
+func (f *fakeStore) GetAdminByID(_ context.Context, adminID string) (*repo.AdminRow, error) {
+	f.lastAdminReadID = adminID
+	return f.adminByID, f.adminByIDErr
+}
+
+// UpdateAdminPasswordHash T040: 渐进式重哈希落库模拟；T487 自助改密同用这一条，
+// 故同时认 admin（登录行）与 adminByID（改密行）两个替身的主键。
 func (f *fakeStore) UpdateAdminPasswordHash(_ context.Context, adminID string, newHash string) error {
-	if f.admin != nil && f.admin.AdminID == adminID {
+	if (f.admin != nil && f.admin.AdminID == adminID) || (f.adminByID != nil && f.adminByID.AdminID == adminID) {
 		f.adminUpdatedHash = newHash
 		return nil
 	}

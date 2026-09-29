@@ -47,7 +47,44 @@ func (s *PGStore) GetAdminByUsername(ctx context.Context, username string) (*Adm
 	return &a, nil
 }
 
-// UpdateAdminPasswordHash 更新 admins 密码哈希（渐进式重哈希：T040）
+// GetAdminByPhoneHash T487：/auth/login 双凭证的第二支——按 SHA-256(明文手机号) hex 命中 admins。
+// 不存在返回 (nil, nil)（与同族 GetAdminByUsername / GetTechByPhoneHash 一致，handler 靠它统一 401 防枚举）。
+// 投影列与 GetAdminByUsername 逐字相同 ⇒ 两支拿到的是同一个行结构，后续 bcrypt/status/重哈希链路不分叉。
+// phone_hash 走 000032 的部分唯一索引 uk_admins_phone_hash；NULL（管理员与未录号的存量账号）不在索引内，
+// 因此传 64 位 hex 永远命中不到它们——空手机号不可能被当成凭据。
+func (s *PGStore) GetAdminByPhoneHash(ctx context.Context, phoneHash string) (*AdminRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT admin_id, username, name, password_hash, role_id, status FROM admins WHERE phone_hash = $1`, phoneHash)
+	var a AdminRow
+	err := row.Scan(&a.AdminID, &a.Username, &a.Name, &a.PasswordHash, &a.RoleID, &a.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// GetAdminByID T487 自助改密用：按主键取当前哈希与状态（改密要先验旧密码，必须读回 password_hash）。
+// 不存在返回 (nil, nil)（与同族一致，handler 据此统一回「账号不存在」而不是 500）。
+// 投影列与 GetAdminByUsername / GetAdminByPhoneHash 逐字相同 ⇒ 三条登录/改密读法拿到同一个行结构。
+// 🔴 只按 admin_id 查：该值来自网关注入的 X-User-Id（jwtAuth 从 JWT claims 重签，外部同名头已被删除）。
+func (s *PGStore) GetAdminByID(ctx context.Context, adminID string) (*AdminRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT admin_id, username, name, password_hash, role_id, status FROM admins WHERE admin_id = $1`, adminID)
+	var a AdminRow
+	err := row.Scan(&a.AdminID, &a.Username, &a.Name, &a.PasswordHash, &a.RoleID, &a.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// UpdateAdminPasswordHash 更新 admins 密码哈希（渐进式重哈希：T040；T487 自助改密同用这一条）
 func (s *PGStore) UpdateAdminPasswordHash(ctx context.Context, adminID string, newHash string) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE admins SET password_hash = $1 WHERE admin_id = $2`, newHash, adminID)
 	if err != nil {

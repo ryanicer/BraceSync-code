@@ -143,7 +143,10 @@ test.describe('01-登录模块', () => {
         .locator('.login-form .el-form-item')
         .filter({ hasText: '用户名' })
         .first()
-      await expect(usernameItem.locator('.el-form-item__error')).toHaveText('请输入用户名')
+      // T487 双凭证后这句改成「请输入用户名或手机号」；本用例打的是 staging 现网包，
+      // 换构建前仍是旧文案，故这里两种都收（逐字锁在 apps/admin-web/test/login-copy-t487.spec.ts，
+      // 那条读的是源码，不受部署代次影响）。
+      await expect(usernameItem.locator('.el-form-item__error')).toHaveText(/^请输入用户名(或手机号)?$/)
 
       // 2) 零请求：给可能的异步发送留出观察窗口后再判定
       await page.waitForTimeout(2_000)
