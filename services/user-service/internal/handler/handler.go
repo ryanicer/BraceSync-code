@@ -574,7 +574,9 @@ func (h *Handler) techLogin(c *gin.Context) {
 		return
 	}
 	// 统一 401 文案：不区分"用户不存在/密码错误/禁用"，防账号枚举
-	if tech == nil || bcrypt.CompareHashAndPassword([]byte(tech.PasswordHash), []byte(req.Password)) != nil {
+	// 无口令技师（password_hash 为 NULL，读侧抹平为空串）按凭据无效走同一 401（T483）
+	if tech == nil || tech.PasswordHash == "" ||
+		bcrypt.CompareHashAndPassword([]byte(tech.PasswordHash), []byte(req.Password)) != nil {
 		fail(c, model.ErrUnauthorized("invalid phone or password"))
 		return
 	}
