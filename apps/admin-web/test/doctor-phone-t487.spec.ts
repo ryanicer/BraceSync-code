@@ -147,4 +147,18 @@ describe('T487 医护账号页：手机号撞号提示', () => {
     expect(toast).not.toContain('该手机号已被其他后台账号')
     wrapper.unmount()
   })
+
+  it('帮助语口径：填了号就能用它登录，旧句「不承担登录职责」不得残留', async () => {
+    // 🔴 这条锁的是文案而非交互：派发单第 3 条让手机号重新成为登录凭据，
+    // 而本页帮助语在 T487 前写的是「手机号不承担登录职责」——运营看完这句就不会
+    // 理解「为什么填了号保存会被拒（号已被别人占作凭据）」。DOM 直接读，不用读源码，
+    // 因为这句是给用户看的，渲染路径坏了同样算没交付。
+    const wrapper = mount(DoctorsPage, { global: { plugins: [ElementPlus] } })
+    await flushAll()
+    const dlg = await openEdit(wrapper)
+    const help = formItem(dlg, '手机号').querySelector('.form-help')?.textContent ?? ''
+    expect(help).toContain('也能用来登录后台')
+    expect(help).not.toContain('不承担登录职责')
+    wrapper.unmount()
+  })
 })

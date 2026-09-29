@@ -94,7 +94,7 @@
         <el-form-item label="手机号">
           <el-input v-model="form.phone" :placeholder="phoneHint" maxlength="11" />
           <span class="form-help">
-            选填：登录账号由系统生成，手机号不承担登录职责；列表按 §9.2 脱敏展示。
+            选填：填了之后这个号也能用来登录后台（登录页同一个框里填用户名或手机号）；列表按 §9.2 脱敏展示。
             编辑时此处不回显原号 —— 留空即保持库内号码不变，要换号请填 11 位新号。
           </span>
         </el-form-item>
