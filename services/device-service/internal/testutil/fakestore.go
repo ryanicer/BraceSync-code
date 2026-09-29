@@ -27,6 +27,7 @@ type FakeStore struct {
 	patients   map[string]bool
 	techs      map[string]bool
 	audits     []repo.WifiClearAuditInput // T448 清除留痕（audit_logs 的内存替身）
+	instAudits []repo.InstallAuditInput   // T485 安装记录写留痕（同一张表的另一类对象）
 }
 
 // NewFakeStore 创建空 FakeStore
@@ -438,6 +439,26 @@ func (f *FakeStore) WifiClearAudits() []repo.WifiClearAuditInput {
 	defer f.mu.Unlock()
 	out := make([]repo.WifiClearAuditInput, len(f.audits))
 	copy(out, f.audits)
+	return out
+}
+
+// WriteInstallRecordAudit T485：安装记录写留痕的内存替身。
+// 与真库实现同口径：audit_logs 没有任何外键指向 install_records，
+// 所以桩同样不校验 install_id 是否存在 —— 「脏号不得编造审计行」那条判据
+// 落在调用方（写通路本身先 404），别在这里替库编约束。
+func (f *FakeStore) WriteInstallRecordAudit(_ context.Context, in repo.InstallAuditInput) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.instAudits = append(f.instAudits, in)
+	return nil
+}
+
+// InstallRecordAudits 读取已落的安装记录留痕（T485 用例判据）
+func (f *FakeStore) InstallRecordAudits() []repo.InstallAuditInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]repo.InstallAuditInput, len(f.instAudits))
+	copy(out, f.instAudits)
 	return out
 }
 

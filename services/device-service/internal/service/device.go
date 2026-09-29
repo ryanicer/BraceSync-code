@@ -398,6 +398,14 @@ func (s *DeviceService) UpdateInstallMeta(ctx context.Context, installID int64, 
 	return nil
 }
 
+// AuditInstallRecord T485：安装记录写通路的留痕，落 target_type=install_record。
+// 只往 audit_logs 插一行，不回写 install_records 任何列。返回 error 供调用方记日志：
+// 主写已经落库，留痕失败不许把它反转成 5xx（与 user-service h.audit 的「只 WARN」同口径，
+// 也与 T448 相反 —— 那条通路留痕是唯一产出，失败必须回错）。
+func (s *DeviceService) AuditInstallRecord(ctx context.Context, in repo.InstallAuditInput) error {
+	return s.store.WriteInstallRecordAudit(ctx, in)
+}
+
 // SetWifiSSID 配网成功后维护 devices.wifi_ssid（架构 §2.3）
 func (s *DeviceService) SetWifiSSID(ctx context.Context, deviceID, ssid string) *model.AppError {
 	if ssid == "" || len(ssid) > 128 {
