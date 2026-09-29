@@ -7,7 +7,8 @@
 //
 // KPI 缓存语义（架构 §4.7）：kpi:dashboard:{period} 查询回填，TTL 60s；
 // Redis 故障降级直查 DB（Dashboard 可用性优先，不阻塞主流程）。
-// 排行/趋势/分布窗口固定近 7 日（admin-web 契约调用口径）。
+// 趋势窗口按 days 参数（缺省 7，上限 90）；排行与分布窗口按 period 参数（T489，与 KPI 共用
+// periodWindow），缺省 today —— 三个周期在 KPI 与排行/分布之间不可能漂移。
 package service
 
 import (
@@ -267,15 +268,23 @@ func (s *DashboardService) GetAlertTrend(ctx context.Context, days int, scope mo
 	return out, nil
 }
 
-// rankingFromDate 排行窗口起点（近 7 日含今日，YYYY-MM-DD）
-func (s *DashboardService) rankingFromDate() string {
-	now := s.now().In(model.CSTZone())
-	return time.Date(now.Year(), now.Month(), now.Day()-(model.RankingWindowDays-1), 0, 0, 0, 0, model.CSTZone()).Format("2006-01-02")
+// rankingFromDate T489：period 枚举 → 排行/分布窗口起始日（YYYY-MM-DD）。
+// 直接复用 KPI 的 periodWindow，两个量纲不可能漂移；非法 period 在这里就 400，不打库。
+func (s *DashboardService) rankingFromDate(period string) (string, *model.AppError) {
+	fromDate, _, _, appErr := s.periodWindow(period)
+	if appErr != nil {
+		return "", appErr
+	}
+	return fromDate, nil
 }
 
-// GetTeamRanking 契约 getTeamRanking:团队排行 Top 10(近 7 日窗口)
-func (s *DashboardService) GetTeamRanking(ctx context.Context, scope model.TeamScope) ([]TeamRankingDTO, *model.AppError) {
-	rows, err := s.store.TeamRanking(ctx, s.rankingFromDate(), model.WearTargetMinutes, scope)
+// GetTeamRanking 契约 getTeamRanking：团队排行 Top 10（窗口 = period 对应周期，缺省 today）
+func (s *DashboardService) GetTeamRanking(ctx context.Context, period string, scope model.TeamScope) ([]TeamRankingDTO, *model.AppError) {
+	fromDate, appErr := s.rankingFromDate(period)
+	if appErr != nil {
+		return nil, appErr
+	}
+	rows, err := s.store.TeamRanking(ctx, fromDate, model.WearTargetMinutes, scope)
 	if err != nil {
 		log.Error().Err(err).Msg("query team ranking failed")
 		return nil, model.ErrInternal("query team ranking failed")
@@ -296,9 +305,16 @@ func (s *DashboardService) GetTeamRanking(ctx context.Context, scope model.TeamS
 	return out, nil
 }
 
-// GetDoctorRanking 契约 getDoctorRanking:医生排行 Top 10(近 7 日窗口)
-func (s *DashboardService) GetDoctorRanking(ctx context.Context, scope model.TeamScope) ([]DoctorRankingDTO, *model.AppError) {
-	rows, err := s.store.DoctorRanking(ctx, s.rankingFromDate(), model.WearTargetMinutes, scope)
+// GetDoctorRanking 契约 getDoctorRanking：医生排行 Top 10（达标率窗口 = period 对应周期）。
+//
+// T489 语义点：PatientCount 取自医生-患者绑定关系（repo.doctorRankingSQL 的患者侧关联不带
+// 日期谓词），是**存量**口径 —— 切 period 时该列不变属正确行为，跟随变化的是 ComplianceRate。
+func (s *DashboardService) GetDoctorRanking(ctx context.Context, period string, scope model.TeamScope) ([]DoctorRankingDTO, *model.AppError) {
+	fromDate, appErr := s.rankingFromDate(period)
+	if appErr != nil {
+		return nil, appErr
+	}
+	rows, err := s.store.DoctorRanking(ctx, fromDate, model.WearTargetMinutes, scope)
 	if err != nil {
 		log.Error().Err(err).Msg("query doctor ranking failed")
 		return nil, model.ErrInternal("query doctor ranking failed")
@@ -331,9 +347,13 @@ var wearDistributionRanges = []struct {
 	{"≥ 10小时", math.Inf(1)},
 }
 
-// GetWearDistribution 契约 getWearDistribution：按患者近 7 日日均佩戴时长分桶计数
-func (s *DashboardService) GetWearDistribution(ctx context.Context, scope model.TeamScope) ([]WearDistributionBucket, *model.AppError) {
-	avgs, err := s.store.PatientAvgWearMinutes(ctx, s.rankingFromDate(), scope)
+// GetWearDistribution 契约 getWearDistribution：按患者窗口内日均佩戴时长分桶计数（窗口 = period）
+func (s *DashboardService) GetWearDistribution(ctx context.Context, period string, scope model.TeamScope) ([]WearDistributionBucket, *model.AppError) {
+	fromDate, appErr := s.rankingFromDate(period)
+	if appErr != nil {
+		return nil, appErr
+	}
+	avgs, err := s.store.PatientAvgWearMinutes(ctx, fromDate, scope)
 	if err != nil {
 		log.Error().Err(err).Msg("query wear distribution failed")
 		return nil, model.ErrInternal("query wear distribution failed")

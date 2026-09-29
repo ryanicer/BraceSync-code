@@ -579,6 +579,7 @@ type RealtimeSnapshot struct {
 
 // Dashboard 常量 (shared between service + integration tests)
 const (
-	// RankingWindowDays 排行/趋势/分布固定近 7 日窗口 (dashboard.go:36, repo/integration tests)
+	// RankingWindowDays 趋势查询缺省天数（dashboard.go validateDays；T489 起排行/分布改随
+	// period 参数取窗口，不再用这个常量，见 service/dashboard.go rankingFromDate）
 	RankingWindowDays = 7
 )

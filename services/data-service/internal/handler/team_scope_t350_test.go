@@ -205,14 +205,18 @@ func t350Querier() *mockQuerier {
 	}
 }
 
-// dashboardEndpoints 6 条读路径 + querier 方法名（scopes map 的键）
-var dashboardEndpoints = []struct{ path, op string }{
-	{"/api/v1/admin/dashboard/kpi?period=week", "GetKPI"},
-	{"/api/v1/admin/dashboard/wear-trend?days=7", "GetWearTrend"},
-	{"/api/v1/admin/dashboard/alert-trend?days=7", "GetAlertTrend"},
-	{"/api/v1/admin/dashboard/team-ranking", "GetTeamRanking"},
-	{"/api/v1/admin/dashboard/doctor-ranking", "GetDoctorRanking"},
-	{"/api/v1/admin/dashboard/wear-distribution", "GetWearDistribution"},
+// dashboardEndpoints 6 条读路径 + querier 方法名（scopes map 的键）+ 实收 period。
+//
+// T489 后四条（KPI/两排行/分布）吃 period，两条趋势仍只吃 days：这里把非缺省值 week
+// 一并带上，让「医生范围只推导一次」这条 T350 判据跑在非缺省周期上；period 列为空串者
+// 反向断言 querier 没收到 period（趋势端点若被顺手接上 period，本用例判红）。
+var dashboardEndpoints = []struct{ path, op, wantPeriod string }{
+	{"/api/v1/admin/dashboard/kpi?period=week", "GetKPI", "week"},
+	{"/api/v1/admin/dashboard/wear-trend?days=7", "GetWearTrend", ""},
+	{"/api/v1/admin/dashboard/alert-trend?days=7", "GetAlertTrend", ""},
+	{"/api/v1/admin/dashboard/team-ranking?period=week", "GetTeamRanking", "week"},
+	{"/api/v1/admin/dashboard/doctor-ranking?period=week", "GetDoctorRanking", "week"},
+	{"/api/v1/admin/dashboard/wear-distribution?period=week", "GetWearDistribution", "week"},
 }
 
 // TestT350_DashboardDoctorScoped 医生令牌：6 端点全部带上本团队范围，且团队只推导一次/请求。
@@ -228,6 +232,11 @@ func TestT350_DashboardDoctorScoped(t *testing.T) {
 			require.Contains(t, q.scopes, ep.op)
 			assert.Equal(t, model.ScopeTeam(t350TeamA), q.scopes[ep.op])
 			assert.Equal(t, 1, lookup.teamLookup, "团队只从 doctors 表推导一次，不接受任何入参")
+			if ep.wantPeriod == "" {
+				assert.NotContains(t, q.periods, ep.op, "趋势端点不吃 period")
+			} else {
+				assert.Equal(t, ep.wantPeriod, q.periods[ep.op], "T489：service.%s 实收 period", ep.op)
+			}
 		})
 	}
 }

@@ -41,11 +41,11 @@ func TestT350_ScopeReachesEveryStoreQuery(t *testing.T) {
 	require.Nil(t, appErr)
 	_, appErr = svc.GetAlertTrend(ctx, 7, t350Scope)
 	require.Nil(t, appErr)
-	_, appErr = svc.GetTeamRanking(ctx, t350Scope)
+	_, appErr = svc.GetTeamRanking(ctx, "today", t350Scope)
 	require.Nil(t, appErr)
-	_, appErr = svc.GetDoctorRanking(ctx, t350Scope)
+	_, appErr = svc.GetDoctorRanking(ctx, "today", t350Scope)
 	require.Nil(t, appErr)
-	_, appErr = svc.GetWearDistribution(ctx, t350Scope)
+	_, appErr = svc.GetWearDistribution(ctx, "today", t350Scope)
 	require.Nil(t, appErr)
 
 	for _, op := range []string{"KPI", "KPICompare", "WearTrend", "AlertTrend",

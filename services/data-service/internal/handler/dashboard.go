@@ -5,9 +5,9 @@
 //	GET /api/v1/admin/dashboard/kpi?period=today|week|month
 //	GET /api/v1/admin/dashboard/wear-trend?days=
 //	GET /api/v1/admin/dashboard/alert-trend?days=
-//	GET /api/v1/admin/dashboard/team-ranking
-//	GET /api/v1/admin/dashboard/doctor-ranking
-//	GET /api/v1/admin/dashboard/wear-distribution
+//	GET /api/v1/admin/dashboard/team-ranking?period=today|week|month
+//	GET /api/v1/admin/dashboard/doctor-ranking?period=today|week|month
+//	GET /api/v1/admin/dashboard/wear-distribution?period=today|week|month
 //
 // 数据源 daily_wear_stats + Redis kpi:dashboard:{period}（架构 §4.7 TTL 60s 查询回填）；
 // 参数校验/枚举白名单/400 对齐 T028/T030 端点风格；DashboardQuerier 未注入时返回 500。
@@ -26,13 +26,14 @@ import (
 // DashboardQuerier Dashboard 查询契约（service.DashboardService 实现）
 //
 // 末位 scope：T350 数据范围，由 handler 从网关身份推导（医生 = 本团队，其余 = 全院）。
+// period（T489）：today|week|month，与 KPI 同一枚举，排行/分布的窗口起点由 service 换算。
 type DashboardQuerier interface {
 	GetKPI(ctx context.Context, period string, scope model.TeamScope) (*service.DashboardKPIDTO, *model.AppError)
 	GetWearTrend(ctx context.Context, days int, scope model.TeamScope) ([]service.WearTrendPoint, *model.AppError)
 	GetAlertTrend(ctx context.Context, days int, scope model.TeamScope) ([]service.AlertTrendPoint, *model.AppError)
-	GetTeamRanking(ctx context.Context, scope model.TeamScope) ([]service.TeamRankingDTO, *model.AppError)
-	GetDoctorRanking(ctx context.Context, scope model.TeamScope) ([]service.DoctorRankingDTO, *model.AppError)
-	GetWearDistribution(ctx context.Context, scope model.TeamScope) ([]service.WearDistributionBucket, *model.AppError)
+	GetTeamRanking(ctx context.Context, period string, scope model.TeamScope) ([]service.TeamRankingDTO, *model.AppError)
+	GetDoctorRanking(ctx context.Context, period string, scope model.TeamScope) ([]service.DoctorRankingDTO, *model.AppError)
+	GetWearDistribution(ctx context.Context, period string, scope model.TeamScope) ([]service.WearDistributionBucket, *model.AppError)
 }
 
 // SetDashboardQuerier 注入 Dashboard 数据源（生产由 main 注入；未注入时端点返回 500）
@@ -55,7 +56,7 @@ func (h *Handler) getDashboardKPI(c *gin.Context) {
 		fail(c, model.ErrInternal("dashboard querier not configured"))
 		return
 	}
-	period := c.DefaultQuery("period", "today")
+	period := periodParam(c)
 	scope, allowed := h.dashboardScope(c) // T350：医生只看本团队患者
 	if !allowed {
 		return
@@ -66,6 +67,12 @@ func (h *Handler) getDashboardKPI(c *gin.Context) {
 		return
 	}
 	ok(c, dto)
+}
+
+// periodParam 解析 period 查询参数（缺省 today，T489 起 KPI 与排行/分布共用）；
+// 枚举白名单校验在 service 层（非法值 400），此处不做判定以免两处口径漂移。
+func periodParam(c *gin.Context) string {
+	return c.DefaultQuery("period", "today")
 }
 
 // daysParam 解析 days 查询参数（缺省返回 0 由 service 兜底默认值）；非法整数 → 400
@@ -127,17 +134,18 @@ func (h *Handler) getAlertTrend(c *gin.Context) {
 	ok(c, list)
 }
 
-// getTeamRanking 团队排行
+// getTeamRanking 团队排行（T489：窗口随 period，缺省 today）
 func (h *Handler) getTeamRanking(c *gin.Context) {
 	if h.dashboard == nil {
 		fail(c, model.ErrInternal("dashboard querier not configured"))
 		return
 	}
+	period := periodParam(c)
 	scope, allowed := h.dashboardScope(c) // T350：医生只看本团队那一行
 	if !allowed {
 		return
 	}
-	list, appErr := h.dashboard.GetTeamRanking(c.Request.Context(), scope)
+	list, appErr := h.dashboard.GetTeamRanking(c.Request.Context(), period, scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -145,17 +153,18 @@ func (h *Handler) getTeamRanking(c *gin.Context) {
 	ok(c, list)
 }
 
-// getDoctorRanking 医生排行
+// getDoctorRanking 医生排行（T489：达标率窗口随 period；患者数列为存量绑定，见 service 注释）
 func (h *Handler) getDoctorRanking(c *gin.Context) {
 	if h.dashboard == nil {
 		fail(c, model.ErrInternal("dashboard querier not configured"))
 		return
 	}
+	period := periodParam(c)
 	scope, allowed := h.dashboardScope(c) // T350：医生只看本科室医生
 	if !allowed {
 		return
 	}
-	list, appErr := h.dashboard.GetDoctorRanking(c.Request.Context(), scope)
+	list, appErr := h.dashboard.GetDoctorRanking(c.Request.Context(), period, scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return
@@ -163,17 +172,18 @@ func (h *Handler) getDoctorRanking(c *gin.Context) {
 	ok(c, list)
 }
 
-// getWearDistribution 佩戴时长分布
+// getWearDistribution 佩戴时长分布（T489：分桶窗口随 period）
 func (h *Handler) getWearDistribution(c *gin.Context) {
 	if h.dashboard == nil {
 		fail(c, model.ErrInternal("dashboard querier not configured"))
 		return
 	}
+	period := periodParam(c)
 	scope, allowed := h.dashboardScope(c) // T350：医生只看本团队患者的分布
 	if !allowed {
 		return
 	}
-	list, appErr := h.dashboard.GetWearDistribution(c.Request.Context(), scope)
+	list, appErr := h.dashboard.GetWearDistribution(c.Request.Context(), period, scope)
 	if appErr != nil {
 		fail(c, appErr)
 		return
