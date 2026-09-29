@@ -120,6 +120,10 @@ type Store interface {
 	// WriteWifiClearAudit T448：清除设备 WiFi（纯 BLE）的留痕，只写 audit_logs 一行，
 	// 不动 devices / install_records 任何列。实现见 repo/audit_t448.go。
 	WriteWifiClearAudit(ctx context.Context, in WifiClearAuditInput) error
+	// WriteInstallRecordAudit T485：安装记录写通路（创建 / 元数据回填）的留痕，
+	// target_type=install_record。只写 audit_logs 一行，不动 install_records 任何列；
+	// 失败由调用方记 WARN，不反转主写。实现见 repo/audit_t485.go。
+	WriteInstallRecordAudit(ctx context.Context, in InstallAuditInput) error
 }
 
 // PGStore Store 的 pgxpool 实现

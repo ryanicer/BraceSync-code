@@ -17,11 +17,14 @@ type AuditInput struct {
 	OperatorID   string
 	OperatorRole string
 	Action       string // login | data_modify | config_change | permission_change（列无 CHECK，可扩展）
-	TargetType   string // patient | team | doctor | technician | role | sys_config | alert_rule ...
-	TargetID     string
-	Description  string
-	Detail       map[string]any // 与 Description 合并落 detail；Description 优先级更高
-	IP           string
+	// TargetType 全量清单（截至 T485，按代码实际写入值收口；列无 CHECK，取值全靠约定）。
+	// admin/flow_* 由本服务 handler 内直埋；patient…review_record 走表驱动 auditRoutes；
+	// device（T448）与 install_record（T485）由 device-service 同库直写，词形在此登记。
+	TargetType  string // admin | alert_rule | device | doctor | feedback | feeling_log | flow_instance | flow_template | install_record | member | orthosis_plan | patient | review_record | role | sys_config | team | technician
+	TargetID    string
+	Description string
+	Detail      map[string]any // 与 Description 合并落 detail；Description 优先级更高
+	IP          string
 }
 
 // auditOperatorName 操作人显示名反查（跨 4 张账号表，按 operator_id 逐表试；查不到 → NULL 不编造）

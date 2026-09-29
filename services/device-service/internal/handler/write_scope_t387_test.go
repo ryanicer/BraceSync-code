@@ -92,7 +92,8 @@ func t387GatedWritePath(method, path string) bool {
 	return false
 }
 
-// t387Store 计数壳：包住 testutil.FakeStore，记录九条写方法（T448 起含清除留痕）与三条只读探测的调用次数。
+// t387Store 计数壳：包住 testutil.FakeStore，记录十条写方法（T448 起含清除留痕，T485 起含安装记录留痕）
+// 与三条只读探测的调用次数。
 // 拒绝路径的硬判据就是这张计数表增量全 0 —— 返回 403 但已经落过库，等于没拦。
 type t387Store struct {
 	*testutil.FakeStore
@@ -197,6 +198,13 @@ func (s *t387Store) SaveBaseline(ctx context.Context, installID int64, offsets [
 func (s *t387Store) WriteWifiClearAudit(ctx context.Context, in repo.WifiClearAuditInput) error {
 	s.writes["WriteWifiClearAudit"]++
 	return s.FakeStore.WriteWifiClearAudit(ctx, in)
+}
+
+// WriteInstallRecordAudit T485 新增的安装记录留痕写：同上一格，让「越权必拒 + 零写」那条
+// 逐键扫增量的用例真的看得见这一类写（看不见就等于新通路没过同款门禁）。
+func (s *t387Store) WriteInstallRecordAudit(ctx context.Context, in repo.InstallAuditInput) error {
+	s.writes["WriteInstallRecordAudit"]++
+	return s.FakeStore.WriteInstallRecordAudit(ctx, in)
 }
 
 func (s *t387Store) GetDevice(ctx context.Context, deviceID string) (*model.Device, error) {
