@@ -58,6 +58,9 @@ export const CONTRACT_MAP = {
   BatchBindFailureDTO: { ts: null, reason: '写响应的子项，契约未声明' },
   DoctorAccountCreateDTO: { ts: null, reason: '写响应：整行 DoctorDTO + 一次性初始密码，契约未声明该信封' },
   DoctorAccountResetDTO: { ts: null, reason: '写响应：新密码 + 生效时间，契约未声明该信封' },
+  // T477 患者设密响应：与上面医护 reset-password 同形（明文口令只在这一个响应里出现一次），
+  // 契约侧不声明该信封——给契约加 password 键等于鼓励前端留存明文。
+  PatientPasswordSetDTO: { ts: null, reason: '写响应：一次性返回新口令，契约未声明该信封（同 DoctorAccountResetDTO 口径）' },
 
   // ===== user-service：入参方向且契约未声明请求类型（本卡只判响应侧键名/可选性） =====
   CreatePatientRequestDTO: { ts: null, reason: '入参：契约未声明请求类型' },

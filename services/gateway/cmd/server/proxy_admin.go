@@ -113,6 +113,7 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/patient/bind-phone"},                      // 患者绑定手机号（scope=bind）
 	{http.MethodPost, "/admin/patients/:patientId/unbind-wechat"}, // 解绑微信
 	{http.MethodPut, "/admin/patients/:patientId/phone"},          // 改手机号
+	{http.MethodPost, "/admin/patients/:patientId/password"},      // T477 设登录口令（仅 admin，口令一次性返回）
 	{http.MethodPut, "/admin/patients/:patientId"},                // T248 4.3 档案编辑（姓名/性别/年龄/诊断/Cobb）
 	{http.MethodDelete, "/admin/patients/:patientId"},             // T467 档案删除（仅删无关联行的患者，否则 409）
 

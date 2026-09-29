@@ -253,6 +253,13 @@ type fakeStore struct {
 	templateRowsErr   error
 	activeTemplate    *repo.ReviewTemplateRow
 	activeTemplateErr error
+
+	// T477 患者设密：setPwdErr 注入错误；正常时记录落库的 bcrypt 哈希与被设密的患者号，
+	// 供「写进库的是哈希不是明文」与「设密后能登录」两格断言。
+	setPwdErr         error
+	setPwdCalls       int
+	lastSetPwdHash    string
+	lastSetPwdPatient string
 }
 
 func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {

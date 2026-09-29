@@ -131,6 +131,9 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId/phone"),
 	// T248 4.3 档案编辑（姓名/性别/年龄/诊断/Cobb）。不登记则 default-allow 放行任意角色。
 	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId"),
+	// T477 患者设登录口令：能给别人设口令 = 能登别人账号，危害与「改手机号」同级甚至更高，
+	// 必须 admin-only（handler 侧另有 requireAdminRole 双层防御，同 T190 口径）。
+	rbacOf(http.MethodPost, "/api/v1/admin/patients/:patientId/password"),
 }
 
 // techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T122）：
