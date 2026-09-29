@@ -178,6 +178,22 @@ type installRequest struct {
 // 先例 services/alert-service/internal/handler/public.go 的 maxProcessNote。
 const installNotesMaxRunes = 200
 
+// checkInstallNotes 安装备注 200 字符上限判定（T475 定判据，T476 接进另两条写入通路）。
+// notes == "" 是「本条请求不送该列」，不判（可选字段语义归调用方的 nil 处理）。
+//
+// 为什么是函数而不是两处内联：install_records.notes 只有两个库写点
+// （repo.go:477 INSERT / repo.go:585 UPDATE COALESCE），但入口有三个 handler ——
+// PUT 由 T475 收口（其判定按当时口径写成了内联），POST 创建与 baseline 回填此前直接把这个
+// 字符串递给同一个库写点，等于 PUT 的入口判定形同虚设。本卡按边界「不动 T475 已合入的实现」
+// 不回填 PUT 那处，两处新通路共用这一份判定，常量同源（不会漂成两个上限）。
+func checkInstallNotes(notes string) *model.AppError {
+	if notes != "" && utf8.RuneCountInString(notes) > installNotesMaxRunes {
+		return model.ErrInvalidParam("notes too long: max %d characters, got %d",
+			installNotesMaxRunes, utf8.RuneCountInString(notes))
+	}
+	return nil
+}
+
 // installMetaRequest PUT /api/v1/install-records/:id 入参（T122）。
 // notes / signatureUrl 均可选：空字符串不覆盖该列（对齐 repo.UpdateInstallMeta COALESCE 语义）。
 // wifiStatus（T447 接通）：同样「空字符串 = 不送该列」。此前该键根本不在结构体里，
@@ -491,6 +507,12 @@ func (h *Handler) createInstall(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
+	// T476：这条通路此前把 req.Notes 原样递给 svc.CreateInstall，直落 repo.go:477 的 INSERT ——
+	// PUT 上的 T475 判定管不到它，200 上限等于只对一条通路成立。判定排在写库之前。
+	if appErr := checkInstallNotes(req.Notes); appErr != nil {
+		fail(c, appErr)
+		return
+	}
 	in := &service.CreateInstallRequest{
 		DeviceID:  req.DeviceID,
 		PatientID: req.PatientID,
@@ -630,6 +652,14 @@ func (h *Handler) saveBaseline(c *gin.Context) {
 	installID, err := strconv.ParseInt(req.InstallID, 10, 64)
 	if err != nil || installID <= 0 {
 		fail(c, model.ErrInvalidParam("invalid installId %q", req.InstallID))
+		return
+	}
+	// T476：req.Notes 不进 baselines，而是在本方法尾部回填进 install_records（下面那段），
+	// 走的是和 PUT 同一个库写点，却绕开了 PUT 的入口判定。
+	// 判定必须排在 SaveBaseline 之前：基线行与备注回填是同一请求里的两笔写，
+	// 只拒备注会把这次校准留下「基线已落、备注被丢」的半条结果。
+	if appErr := checkInstallNotes(req.Notes); appErr != nil {
+		fail(c, appErr)
 		return
 	}
 	calibrator := operatorID(c)
