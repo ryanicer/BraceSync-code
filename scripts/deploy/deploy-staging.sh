@@ -26,6 +26,11 @@
 #      $STAGING_DIR 发出（staging 的 compose 文件在那一层），「已执行 / 未执行」两种结局都要落可判读日志，
 #      失败原因取 stderr 原文、不再 2>/dev/null 吞掉。该段由 scripts/deploy/prometheus-reload-test.sh
 #      按标记抽段后用假 docker 真跑，见 ci-deploy-scripts.yml
+#  15. 执行副本身份（T479 顺带腿）：收尾的 DEPLOY OK 行带 run_script_sha256=<12 位>，取的是
+#      ⓪ 步快照 $SNAP_ROOT/deploy-staging.sh（即 `exec` 真正解释的那份），用来消掉同轮
+#      pass1/pass2 两份日志的形状歧义；取不到时打 UNAVAILABLE，不让日志行改动部署成败。
+#      该段由 scripts/deploy/deploy-ok-runid-test.sh 按收尾那对抽段标记真跑（标记名只写在围栏行上，
+#      别处一提就会让抽段抽到全文），接线面（这块还在不在收尾）由 deploy-chain-wiring-test.sh 的 W14/W15 管
 set -euo pipefail
 
 PROJECT_ROOT="/home/ubuntu/bracesync"
@@ -401,7 +406,20 @@ else
   fi
 fi
 
+# >>> T479-RUNID-BEGIN
+# T479 顺带腿 1：DEPLOY OK 行带上「本轮实际被解释的那份脚本副本」的 sha256 前缀。
+#   起因（派发单第三节的背景句）：第二十一轮同轮两份部署日志的 ⑧ 段形状互反（一份打「字节未变」、
+#   一份打 SELF-CHECK ALARM），单看日志文本分不清哪份是 pass1、哪份是 pass2 的执行面，
+#   当时是靠逐字节对平才钉住判据的（T471 验收报告第八节第 4 条，PM 裁并入 T479）。
+#   哈希取的是 SNAP_ROOT 下那一份 —— `exec bash "$SNAP_ROOT/deploy-staging.sh"` 跑的就是它；
+#   不取工作树真本：那正是 ① 步 checkout/pull 会换掉、因而带来歧义的那一侧。
+#   边界（T479 第四节）「部署脚本改动仅限日志行」⇒ 这一格只加一行字段，不碰编排与配置本体。
+#   取不到哈希时打 UNAVAILABLE 而不是让一行日志掐掉已成功部署：set -euo pipefail 下
+#   sha256sum 缺件、快照目录已被清理，都不该变成 rc≠0。
+RUN_SCRIPT_SHA256=$(sha256sum "${SNAP_ROOT:-}/deploy-staging.sh" 2>/dev/null | cut -c1-12 || true)
+[ -n "$RUN_SCRIPT_SHA256" ] || RUN_SCRIPT_SHA256=UNAVAILABLE
 log ""
 log "========================================"
-log "  DEPLOY OK  (sha=$SHA, tag=$TAG)"
+log "  DEPLOY OK  (sha=$SHA, tag=$TAG, run_script_sha256=$RUN_SCRIPT_SHA256)"
 log "========================================"
+# <<< T479-RUNID-END

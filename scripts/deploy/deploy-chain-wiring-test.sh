@@ -12,7 +12,8 @@
 #   反证：在临时副本上把这行按 Joe 的 M6/M7/M8 三例逐一拆掉（外加两例：改调工作树字节、
 #         把守卫挪到 git pull 之后；T463 起再加三例：删起跑门调用、删其必需项检查、
 #         把门挪到 ⓪ 段基线采集之后；T471 起再加两例：prometheus 重载退回在仓库根发出、
-#         重载那行的 stderr 被收回 /dev/null ⇒ 共十例），要求「对应那一格必判红」——
+#         重载那行的 stderr 被收回 /dev/null；T479 起再加两例：DEPLOY OK 行丢掉执行副本身份字段、
+#         收尾整块搬到 ⑧ 自检之前 ⇒ 共十二例），要求「对应那一格必判红」——
 #         不这么打一遍，就不知道断言是活的还是摆设（T364 那格假绿的教训）。
 set -uo pipefail
 
@@ -77,6 +78,26 @@ scan_file() {
     n_fail=$((n_fail + 1))
   else
     echo "  [PASS][W13] prometheus 重载的 stderr 没被吞（行内没有 2>/dev/null）"
+  fi
+  # T479 顺带腿 1：DEPLOY OK 行的「执行脚本副本」身份字段。为什么归本守卫而不是只靠新行为测试：
+  #   deploy-ok-runid-test.sh 抽的是 T479 收尾那对标记之间的整段，段内它测得准；但「这一整块还在不在
+  #   收尾、有没有被搬走」属于接线面，与 W4a/W8b/W10 同族。W14 看字面，W15 看位置。
+  req W14 'run_script_sha256=$RUN_SCRIPT_SHA256' \
+                                                    '收尾 DEPLOY OK 行带执行副本 sha256 字段（T479）'
+  # W15 位置判定：收尾块必须排在 ⑧ 自比对之后 —— DEPLOY OK 恒为整份回执的最后一块，
+  #   SELF-CHECK ALARM 三行要印在它之前。把整块搬到 ⑧ 之前时字面全在位（W14 仍绿）、只有位置坏，
+  #   与 W7/W9 同族：纯字面守卫抓不住这类改动。
+  local runid_ln selfchk_ln
+  runid_ln=$(grep -nF 'T479-RUNID-BEGIN' "$f" | head -1 | cut -d: -f1)
+  selfchk_ln=$(grep -nF 'bash "$SELFCHK" verify' "$f" | head -1 | cut -d: -f1)
+  if [ -z "$runid_ln" ] || [ -z "$selfchk_ln" ]; then
+    echo "  [FAIL][W15] 位置判定取不到行号（runid=$runid_ln selfchk=$selfchk_ln）"
+    n_fail=$((n_fail + 1))
+  elif [ "$runid_ln" -gt "$selfchk_ln" ]; then
+    echo "  [PASS][W15] T479 收尾块排在 ⑧ 自比对之后（第 $runid_ln 行 > 第 $selfchk_ln 行）：ALARM 仍先于 DEPLOY OK"
+  else
+    echo "  [FAIL][W15] T479 收尾块排在 ⑧ 自比对之前（第 $runid_ln 行 <= 第 $selfchk_ln 行）：DEPLOY OK 会印在 ALARM 之前，回执读序反了"
+    n_fail=$((n_fail + 1))
   fi
 
   # W7 是位置判定，不是字面判定：守卫必须在 ① 步 git pull 之前 —— 排在 pull 之后就已经晚了
@@ -177,6 +198,28 @@ counter_awk() { # $1=标签 $2=期望编号 $3=awk 程序 $4=此格必须仍然�
     ok "$label：$want 如期单独判红（$keep 仍在位，共 $rc 格红）"
   fi
 }
+# counter_awk 只能表达「先见到、往后搬」。要把文件尾部的整块往前搬到某个早先的锚点，得读两遍：
+#   第一遍收集块文本（NR==FNR），第二遍在原位置跳过它、并在锚点行之前把缓冲吐出来。
+# 参数与 counter_awk 一致：标签 | 期望红格 | awk 程序（对同一份文件跑两遍）| 此格必须仍绿
+counter_awk_back() {
+  local label="$1" want="$2" prog="$3" keep="$4" tmp
+  tmp="$WORK/mut-back.sh"
+  awk "$prog" "$DEPLOY_STAGING" "$DEPLOY_STAGING" > "$tmp" || { bad "$label：造反证副本失败"; return; }
+  if cmp -s "$tmp" "$DEPLOY_STAGING"; then
+    bad "$label：改动没落到被测文本上（反证无牙，等于没测）"
+    return
+  fi
+  scan_file "$tmp" > "$WORK/mut.out" 2>&1; local rc=$?
+  if [ "$rc" = "0" ]; then
+    bad "$label：搬走位置后扫描仍全绿 ⇒ 该格没有守卫"
+  elif ! grep -q "\[FAIL\]\[$want\]" "$WORK/mut.out"; then
+    bad "$label：判红了但不是那一格（期望 $want，实得 $(grep -o '\[FAIL\]\[[A-Za-z0-9_]*\]' "$WORK/mut.out" | tr '\n' ' '))"
+  elif ! grep -q "\[PASS\]\[$keep\]" "$WORK/mut.out"; then
+    bad "$label：$want 是判红了，但 $keep 也跟着红 ⇒ 这一例动的不止位置（块被删了而不是被搬了），判红归因不纯"
+  else
+    ok "$label：$want 如期单独判红（$keep 仍在位，共 $rc 格红）"
+  fi
+}
 counter_awk "cron 守卫挪到 ① 步 git pull 之后" W7 '
   index($0, "bash \"$SNAP_ROOT/cron-reference-guard.sh\" || fail") { saved = saved $0 "\n"; next }
   { print }
@@ -205,6 +248,26 @@ counter "prometheus 重载退回在仓库根发出（T471）" W10 \
 # T471 例二：把重载那行的 stderr 收回 /dev/null（静默面回来）。W13 是唯一该红的格 ——
 #   W10 的字面（发出目录那段）不该被这一例碰到，红了就是判读不纯。
 counter "prometheus 重载的 stderr 被吞回 /dev/null（T471）" W13 's@2>"\$PROM_ERR"@2>/dev/null@'
+# T479 例一：收尾行丢掉执行副本身份字段（退回改前那句只有 sha/tag 的 OK 行）。
+counter "DEPLOY OK 行丢掉 run_script_sha256 字段（T479）" W14 \
+  's@, run_script_sha256=\$RUN_SCRIPT_SHA256@@'
+# T479 例二：把整个收尾块搬到 ⑧ 自比对之前 —— 字面仍在位（W14 必须仍绿）、位置已失效，只有 W15 抓得住。
+#   这一例对应的现场是真读得出来的：ALARM 若印在 DEPLOY OK 之后，第二十一轮那种「两份日志形状互反、
+#   分不清哪份是 pass1」的歧义就又以另一种形式回来了。
+#   为什么用 counter_awk_back 而不是 counter_awk：上面的块要往后搬（先见到、后落点），单遍 awk 够用；
+#   这一例是把末尾的块往前搬，单遍走法会在收集到它之前就路过落点，块等于被删掉而不是被搬走
+#   —— 本机实测踩到：那样 W14 跟着红，判红归因不纯（测的是「字段没了」而不是「位置变了」）。
+counter_awk_back "T479 收尾块搬到 ⑧ 自比对之前" W15 '
+  NR == FNR {
+    if ($0 ~ /T479-RUNID-BEGIN/) blk = 1
+    if (blk) { buf = buf $0 "\n"; if ($0 ~ /T479-RUNID-END/) blk = 0 }
+    next
+  }
+  /T479-RUNID-BEGIN/ { skip = 1 }
+  skip { if ($0 ~ /T479-RUNID-END/) skip = 0; next }
+  index($0, "bash \"$SELFCHK\" verify") { printf "%s", buf }
+  { print }
+' W14
 
 echo "[3/4] N6 期望件与签发件的清单不得各说各话"
 guard_expect=$(grep '^EXPECTED_REF_SCRIPTS=' "$GUARD_SH" | cut -d'"' -f2)
