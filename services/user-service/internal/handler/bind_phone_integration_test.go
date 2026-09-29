@@ -115,6 +115,16 @@ func (f *fakeStore) UpdatePatientPhone(_ context.Context, _ string, _ []byte, _ 
 	return nil
 }
 
+// SetPatientPassword T477：记录落库的哈希（fake 只存哈希，明文口令无处可落）。
+// 存在性判定在 handler 的 GetPatient 那一步，与 PGStore 同口径；0 行 → ErrPatientNotFound
+// 这条由集成测覆盖，fake 不重复实现（同 UnbindWechat / UpdatePatientPhone 的 dumb stub 惯例）。
+func (f *fakeStore) SetPatientPassword(_ context.Context, patientID, passwordHash string) error {
+	f.setPwdCalls++
+	f.lastSetPwdPatient = patientID
+	f.lastSetPwdHash = passwordHash
+	return f.setPwdErr
+}
+
 func (f *fakeStore) PatientPhoneHashTaken(_ context.Context, _, _ string) (bool, error) {
 	return f.phoneTaken, f.takenErr
 }

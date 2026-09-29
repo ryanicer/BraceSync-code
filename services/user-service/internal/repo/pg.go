@@ -194,6 +194,24 @@ func (s *PGStore) UpdatePatientPhone(ctx context.Context, patientID string, phon
 	return nil
 }
 
+// SetPatientPassword T477：admin 通道给患者设登录口令，只写 bcrypt 哈希列。
+// 患者端手机号+密码登录（T037，handler 侧读 patients.password_hash）此前在本仓库
+// 没有任何 Go 写点：API 建档的 INSERT 不带该列，落库恒为 NULL，非 seed 患者登录必 401。
+// 口令明文由 handler 生成、只在 HTTP 响应里一次性返回，不进库、不进日志、不进审计。
+// 不命中返回 ErrPatientNotFound（与 UnbindWechat / UpdatePatientPhone 同口径）。
+func (s *PGStore) SetPatientPassword(ctx context.Context, patientID, passwordHash string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE patients SET password_hash = $2, updated_at = NOW() WHERE patient_id = $1`,
+		patientID, passwordHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrPatientNotFound
+	}
+	return nil
+}
+
 // UpdatePatientProfile T226 患者自助改本人档案：白名单字段动态 SET（nil=不改），
 // updated_at 应用层刷新；不命中返回 ErrPatientNotFound。phone 不在白名单（微信授权写入）。
 // T450-②b 起同一函数还承接 admin 通道的显式置空（in.ClearColumns ⇒ SET col = NULL）。

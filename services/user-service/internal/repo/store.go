@@ -493,6 +493,9 @@ type Store interface {
 	UnbindWechat(ctx context.Context, patientID string) error
 	// UpdatePatientPhone 改手机号：phone_enc + phone_hash 同步更新（admin 维护）。
 	UpdatePatientPhone(ctx context.Context, patientID string, phoneEnc []byte, phoneHash string) error
+	// SetPatientPassword T477：写 patients.password_hash（bcrypt，admin 通道唯一的患者口令写点）。
+	// sentinel：ErrPatientNotFound（无行）。
+	SetPatientPassword(ctx context.Context, patientID, passwordHash string) error
 	// UpdatePatientProfile 患者自助改本人档案（T226 白名单动态 SET，见 PatientProfileUpdate）。
 	UpdatePatientProfile(ctx context.Context, patientID string, in PatientProfileUpdate) error
 	// PatientPhoneHashTaken phone_hash 是否已被其他患者占用（excludePatientID 排除自身）。

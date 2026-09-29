@@ -143,6 +143,8 @@ var auditRoutes = map[string]auditRoute{
 	http.MethodPost + " /api/v1/admin/patients/batch-bind":               {auditActionDataModify, "patient", "", "批量绑定患者到团队"},
 	http.MethodPost + " /api/v1/admin/patients/:patientId/unbind-wechat": {auditActionDataModify, "patient", "patientId", "解绑患者 %s 的微信"},
 	http.MethodPut + " /api/v1/admin/patients/:patientId/phone":          {auditActionDataModify, "patient", "patientId", "修改患者 %s 的手机号"},
+	// T477 设登录口令：desc 不带口令也不带哈希（同上面 doctor reset-password 的口径）。
+	http.MethodPost + " /api/v1/admin/patients/:patientId/password": {auditActionDataModify, "patient", "patientId", "为患者 %s 设置登录口令"},
 	// T450 DEF-A：PR #126（T248）合并时欠下的档案编辑埋点，本笔补上（文件头注自述「合并后要补同一埋点」）。
 	http.MethodPut + " /api/v1/admin/patients/:patientId": {auditActionDataModify, "patient", "patientId", "编辑患者档案 %s"},
 	// T467 患者档案删除：收口档案比改手机号更该留痕，同族写端点全在表内，这条不能漏。

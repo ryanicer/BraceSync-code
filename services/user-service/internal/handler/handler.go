@@ -243,6 +243,9 @@ func (h *Handler) Router() *gin.Engine {
 		v1.PUT("/admin/patients/:patientId/phone", h.updatePatientPhone)    // 改手机号
 		v1.PUT("/admin/patients/:patientId", h.updatePatientAdmin)          // T248 4.3 档案编辑
 		v1.DELETE("/admin/patients/:patientId", h.deletePatientAdmin)       // T467 档案删除（reject-if-referenced）
+		// T477 设登录口令：patients.password_hash 的唯一 Go 写点，患者端 CI 凭据通道
+		// （形态取 T314 医护 reset-password 先例：口令服务端生成、只在响应里一次性返回）
+		v1.POST("/admin/patients/:patientId/password", h.setPatientPassword)
 
 		v1.GET("/teams", h.listTeams)
 		v1.GET("/teams/:teamId", h.getTeam) // T333 单条读（此前契约已声明 leader/leaderName 却无读路由，实测 404）
