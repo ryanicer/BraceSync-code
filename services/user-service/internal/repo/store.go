@@ -133,7 +133,7 @@ type PatientRow struct {
 	DeviceID   *string
 	TeamID     *string
 	DoctorID   *string
-	PhoneEnc   []byte // AES-GCM 密文（T057：创建患者含手机号；出参 handler 脱敏）
+	PhoneEnc   []byte // AES-GCM 密文（T057 建档含手机号；T491 起列表/详情投影也带回这一列）。出 service 层前经 phone.View 脱敏，密文不出接口
 	Status     string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -480,8 +480,15 @@ type BatchBindResult struct {
 type Store interface {
 	// 登录与身份
 	GetAdminByUsername(ctx context.Context, username string) (*AdminRow, error)
+	// GetAdminByPhoneHash T487：/auth/login 双凭证第二支，按 phone_hash 命中 admins；不存在返回 (nil, nil)
+	GetAdminByPhoneHash(ctx context.Context, phoneHash string) (*AdminRow, error)
+	// GetAdminByID T487：自助改密按网关注入的 X-User-Id 取当前哈希；不存在返回 (nil, nil)
+	GetAdminByID(ctx context.Context, adminID string) (*AdminRow, error)
 	UpdateAdminPasswordHash(ctx context.Context, adminID string, newHash string) error
 	GetTechByPhoneHash(ctx context.Context, phoneHash string) (*TechLoginRow, error)
+	// GetTechByTechID T486：技师自助改密按 JWT 身份（tech_id）取登录行，含 password_hash；
+	// 不存在返回 (nil, nil)。手机号查法（GetTechByPhoneHash）用在登录前，身份查法用在登录后。
+	GetTechByTechID(ctx context.Context, techID string) (*TechLoginRow, error)
 	GetPatientByPhoneHash(ctx context.Context, phoneHash string) (*PatientLoginRow, error)
 	// GetPatientByWXOpenID T069：按微信 openid 查患者登录行；不存在返回 (nil, nil)
 	GetPatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error)

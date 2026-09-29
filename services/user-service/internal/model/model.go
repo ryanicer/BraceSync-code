@@ -146,7 +146,7 @@ type AdminPatientDTO struct {
 	DeviceID   *string  `json:"deviceId"` // 当前绑定设备(devices.patient_id 只读关联)；非 patients.device_id(T151 方案1)
 	TeamID     *string  `json:"teamId"`
 	DoctorID   *string  `json:"doctorId"`
-	Phone      string   `json:"phone"` // 脱敏手机号（138****8000），仅写响应回填；读侧 patientSelect 不投影 phone_enc ⇒ 恒为空串（T361 登记）
+	Phone      string   `json:"phone"` // 脱敏手机号（138****8000），仅写响应回填；列表与详情两个只读端点不回值（toPatientDTO 不映射）。T491：读侧 patientSelect 已投影 phone_enc，但只供服务内脱敏（审计改前快照、写响应），密文与脱敏号都不进这两个响应
 	Status     string   `json:"status"`
 	CreatedAt  string   `json:"createdAt"`
 	UpdatedAt  string   `json:"updatedAt"`

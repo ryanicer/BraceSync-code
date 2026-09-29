@@ -247,8 +247,8 @@
     </el-dialog>
 
     <!-- T432 改手机号弹窗（PUT /admin/patients/:id/phone，admin_patient.go:61-135）。
-         输入框刻意留空、不预填当前号码：患者域读侧不投影 phone_enc（shared-types/index.ts:20-23 T361），
-         拿到的 phone 恒为空串，预填等于把空值伪装成「原号」。
+         输入框刻意留空、不预填当前号码：患者域两个读接口（列表/详情）都不回 phone（shared-types/index.ts:20-23 T361/T491），
+         拿到的恒为空串，预填等于把空值伪装成「原号」。
          也不做医护页那套「留空即不改」三态（utils/phoneField.ts）—— 本端点 validPhone 对空串判 400，
          只有「换成这个号」一种语义，没有清空通道。 -->
     <el-dialog v-model="phoneVisible" title="修改手机号" width="460px" :close-on-click-modal="false">

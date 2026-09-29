@@ -147,6 +147,10 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     expect(pwdLine, '口令行必须是「初始密码：<非空明文>」').toMatch(/^初始密码：\S+$/)
     const shownPwd = pwdLine.replace(/^初始密码：/, '')
     expect(shownPwd.length, `一次性口令不该是空串：${pwdLine}`).toBeGreaterThan(6)
+    // T486：第四段必须是「怎么登录」——技师端登录页只收手机号＋密码，弹窗里给了编号却不说明
+    // 它不能用于登录，管理员就会拿编号去试。段落数一并钉死：谁往中间插句子这里先红。
+    await expect(cred.locator('p')).toHaveCount(5)
+    await expect(cred.locator('p').nth(3)).toHaveText('技师使用手机号 + 密码登录（技师编号不能用于登录）。')
     // 关窗提示要在场：遗失走重置，不给二次查看入口
     await expect(cred).toContainText('仅此一次展示')
     await cred.getByRole('button', { name: '我已转交本人' }).click()
@@ -201,6 +205,9 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     // 重置态拿不到明文号码（读侧即已脱敏，T361）⇒ 展示脱敏号 + 一句「登录号＝建档手机号」
     await expect(cred.locator('p').nth(1)).toContainText('登录手机号：138****5678')
     await expect(cred.locator('p').nth(2)).toHaveText(/^初始密码：\S+$/)
+    // T486：重置态与创建态共用同一个弹窗 ⇒ 登录方式说明同样在场（段数与创建态一致）
+    await expect(cred.locator('p')).toHaveCount(5)
+    await expect(cred.locator('p').nth(3)).toHaveText('技师使用手机号 + 密码登录（技师编号不能用于登录）。')
     await cred.getByRole('button', { name: '我已转交本人' }).click()
     await expect(boxes).toHaveCount(0)
 

@@ -94,7 +94,7 @@
         <el-form-item label="手机号">
           <el-input v-model="form.phone" :placeholder="phoneHint" maxlength="11" />
           <span class="form-help">
-            选填：登录账号由系统生成，手机号不承担登录职责；列表按 §9.2 脱敏展示。
+            选填：填了之后这个号也能用来登录后台（登录页同一个框里填用户名或手机号）；列表按 §9.2 脱敏展示。
             编辑时此处不回显原号 —— 留空即保持库内号码不变，要换号请填 11 位新号。
           </span>
         </el-form-item>
@@ -139,7 +139,7 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
-import { userErrorCopy } from '@bracesync/shared-utils'
+import { userErrorCode, userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PhoneState, Team } from '@bracesync/shared-types'
 import { fetchTeams, teamNameOf } from '../../api'
@@ -306,7 +306,16 @@ async function submitForm() {
       await showCredentials(res.account.username, res.initialPassword, '创建成功')
     }
   } catch (e: unknown) {
-    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
+    // T487：手机号被别的后台账号占作登录凭据（uk_admins_phone_hash / 23505）后端回 10409。
+    // 码表那句是通用的「与现有记录冲突」，而这次提交里能撞它的只有手机号一格 ⇒ 点名到字段。
+    // 🔴 再加一个前件把「状态那一发」排除掉：编辑态改状态是紧随 PUT 的第二个请求（POST /status），
+    // 它对未绑登录账号的存量档案也回 10409 —— 那时手机号其实已经存上了，不能报成手机号撞号。
+    const noStatusLeg = !editing.value || form.value.status === originalStatus.value
+    if (userErrorCode(e) === 10409 && form.value.phone && noStatusLeg) {
+      ElMessage.error('该手机号已被其他后台账号用作登录凭据，请更换号码，或先在对方账号处清空手机号')
+    } else {
+      ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
+    }
   } finally {
     submitting.value = false
   }

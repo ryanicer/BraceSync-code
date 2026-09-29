@@ -47,7 +47,44 @@ func (s *PGStore) GetAdminByUsername(ctx context.Context, username string) (*Adm
 	return &a, nil
 }
 
-// UpdateAdminPasswordHash 更新 admins 密码哈希（渐进式重哈希：T040）
+// GetAdminByPhoneHash T487：/auth/login 双凭证的第二支——按 SHA-256(明文手机号) hex 命中 admins。
+// 不存在返回 (nil, nil)（与同族 GetAdminByUsername / GetTechByPhoneHash 一致，handler 靠它统一 401 防枚举）。
+// 投影列与 GetAdminByUsername 逐字相同 ⇒ 两支拿到的是同一个行结构，后续 bcrypt/status/重哈希链路不分叉。
+// phone_hash 走 000032 的部分唯一索引 uk_admins_phone_hash；NULL（管理员与未录号的存量账号）不在索引内，
+// 因此传 64 位 hex 永远命中不到它们——空手机号不可能被当成凭据。
+func (s *PGStore) GetAdminByPhoneHash(ctx context.Context, phoneHash string) (*AdminRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT admin_id, username, name, password_hash, role_id, status FROM admins WHERE phone_hash = $1`, phoneHash)
+	var a AdminRow
+	err := row.Scan(&a.AdminID, &a.Username, &a.Name, &a.PasswordHash, &a.RoleID, &a.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// GetAdminByID T487 自助改密用：按主键取当前哈希与状态（改密要先验旧密码，必须读回 password_hash）。
+// 不存在返回 (nil, nil)（与同族一致，handler 据此统一回「账号不存在」而不是 500）。
+// 投影列与 GetAdminByUsername / GetAdminByPhoneHash 逐字相同 ⇒ 三条登录/改密读法拿到同一个行结构。
+// 🔴 只按 admin_id 查：该值来自网关注入的 X-User-Id（jwtAuth 从 JWT claims 重签，外部同名头已被删除）。
+func (s *PGStore) GetAdminByID(ctx context.Context, adminID string) (*AdminRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT admin_id, username, name, password_hash, role_id, status FROM admins WHERE admin_id = $1`, adminID)
+	var a AdminRow
+	err := row.Scan(&a.AdminID, &a.Username, &a.Name, &a.PasswordHash, &a.RoleID, &a.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// UpdateAdminPasswordHash 更新 admins 密码哈希（渐进式重哈希：T040；T487 自助改密同用这一条）
 func (s *PGStore) UpdateAdminPasswordHash(ctx context.Context, adminID string, newHash string) error {
 	tag, err := s.pool.Exec(ctx, `UPDATE admins SET password_hash = $1 WHERE admin_id = $2`, newHash, adminID)
 	if err != nil {
@@ -68,6 +105,31 @@ func (s *PGStore) GetTechByPhoneHash(ctx context.Context, phoneHash string) (*Te
 	var teamID *string
 	// password_hash 自 000005 起可空；直接扫进 string 会让 NULL 行报错（T483），
 	// 同 team_id 一样走指针再抹平为空串。
+	var pwdHash *string
+	err := row.Scan(&t.TechID, &t.Name, &pwdHash, &teamID, &t.Status, &t.AuthStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if pwdHash != nil {
+		t.PasswordHash = *pwdHash
+	}
+	if teamID != nil {
+		t.TeamID = *teamID
+	}
+	return &t, nil
+}
+
+// GetTechByTechID 按技师号取登录行（T486 自助改密：身份来自 JWT 注入的 X-User-Id，不是手机号）；
+// 不存在返回 (nil, nil)。password_hash 可空（000005），同 GetTechByPhoneHash 走指针抹平为空串。
+func (s *PGStore) GetTechByTechID(ctx context.Context, techID string) (*TechLoginRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT tech_id, name, password_hash, team_id, status, auth_status
+		 FROM technicians WHERE tech_id = $1`, techID)
+	var t TechLoginRow
+	var teamID *string
 	var pwdHash *string
 	err := row.Scan(&t.TechID, &t.Name, &pwdHash, &teamID, &t.Status, &t.AuthStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -379,9 +441,15 @@ func (s *PGStore) DoctorTeamByAdmin(ctx context.Context, adminID string) (string
 // patientSelect 患者列表/详情投影。
 // T151(方案C)：当前绑定设备取自 devices（patient_id 只读关联；跨服务只读，写归属 device-service），
 // 依赖迁移 000012 的 uk_devices_active_patient 部分唯一索引保证一个患者至多一行；patients.device_id 已废弃、不再读取。
+//
+// T491：补投影 p.phone_enc —— 与医护域（doctorColumns）、技师域（techColumns）同口径：
+// 密文只进服务内行结构 PatientRow，出接口前一律经 phone.View 脱敏，患者读 DTO 一个键都不加。
+// 此前这一列没投影 ⇒ GetPatient 回行的 PhoneEnc 恒空，改号审计的「改前快照」永远记 absent
+// （T462 待裁一，消费方是 handler/admin_patient.go 的改前脱敏取数）。
+// 列序与 PatientRow 字段序逐位对应，scanPatient 的入参序同此。
 const patientSelect = `
 SELECT p.patient_id, p.name, p.gender, p.age, p.diagnosis, p.cobb_angle,
-       dev.device_id, p.team_id, p.primary_doctor_id, p.status, p.created_at, p.updated_at,
+       dev.device_id, p.team_id, p.primary_doctor_id, p.phone_enc, p.status, p.created_at, p.updated_at,
        t.name AS team_name, d.name AS doctor_name,
        p.height_cm, p.weight_kg, p.emergency_contact_name, p.emergency_contact_phone, p.emergency_contact_relation
 FROM patients p
@@ -415,7 +483,7 @@ func patientWhere(f PatientFilter) (string, []any) {
 func scanPatient(row pgx.Row) (*PatientRow, error) {
 	var p PatientRow
 	err := row.Scan(&p.PatientID, &p.Name, &p.Gender, &p.Age, &p.Diagnosis, &p.CobbAngle,
-		&p.DeviceID, &p.TeamID, &p.DoctorID, &p.Status, &p.CreatedAt, &p.UpdatedAt,
+		&p.DeviceID, &p.TeamID, &p.DoctorID, &p.PhoneEnc, &p.Status, &p.CreatedAt, &p.UpdatedAt,
 		&p.TeamName, &p.DoctorName,
 		&p.HeightCm, &p.WeightKg, &p.EmergencyContactName, &p.EmergencyContactPhone, &p.EmergencyContactRelation)
 	if err != nil {

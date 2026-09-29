@@ -40,6 +40,13 @@ var ErrDoctorNoAccount = errors.New("doctor profile has no linked admin account"
 // ErrUsernameExhausted 连续撞已占用序号超过上限（发号器被历史数据推到不可用）。
 var ErrUsernameExhausted = errors.New("doctor login account sequence exhausted on unique username")
 
+// ErrAdminPhoneTaken T487：手机号已被另一个后台账号占为登录凭据（撞 uk_admins_phone_hash）。
+// handler 映射 409 友好提示（派发单第 3 条「唯一性 23505 友好提示」）。
+// 🔴 只认这一条约束名：doctors 侧手机号没有唯一索引（000001 起就没有），
+//
+//	所以「两个医护档案填了同一个号」在库里一直是合法数据 —— 本卡的约束只加在 admins（凭据侧）。
+var ErrAdminPhoneTaken = errors.New("phone already used as another admin account login credential")
+
 // doctorAccountRole 医护账号固定登录角色（PRD（5）：本页不提供角色选择控件）。
 const doctorAccountRole = "ROLE_DOCTOR"
 
@@ -53,6 +60,14 @@ const usernameCollideRetries = 5
 func isUsernameCollision(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "admins_username_key"
+}
+
+// isPhoneCollision T487：判定 admins 手机号部分唯一索引违约（SQLSTATE 23505 + uk_admins_phone_hash）。
+// 与 isUsernameCollision 同形：只认这一条约束名。撞号不能重发（换 username 解决不了手机号重复），
+// 也不能上抛成 500 —— 调用方据此折成 409 友好提示。
+func isPhoneCollision(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "uk_admins_phone_hash"
 }
 
 // randID 前缀 + 12 位大写随机 hex（对齐 newRoleID 的抗并发口径，VARCHAR(32) 内）
@@ -103,6 +118,11 @@ func (s *PGStore) CreateDoctorAccount(ctx context.Context, in DoctorAccountInput
 
 // createDoctorAccountOnce 单轮事务：nextval 取号 → 写 admins → 写 doctors → commit。
 // 任一步失败整体回滚 ⇒ 不留「有登录账号、无医护档案」的半行（反之亦然）。
+//
+// T487：admins 侧多写手机号两列（登录凭据副本），与 doctors 档案那两列同事务成对落。
+//
+//	未录手机号时两列都传 NULL（不是空串、不是零字节密文）—— 部分唯一索引不管 NULL，
+//	存量/管理员通道因此继续只走 username 登录，见 000032 迁移头注释。
 func (s *PGStore) createDoctorAccountOnce(ctx context.Context, doctorID, adminID string, in DoctorAccountInput) (*DoctorRow, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -117,10 +137,20 @@ func (s *PGStore) createDoctorAccountOnce(ctx context.Context, doctorID, adminID
 	}
 	username := fmt.Sprintf("doc%05d", seq)
 
+	// 凭据副本成对：hash 为空 ⇒ enc 也置 NULL，绝不出现「有密文无哈希」（登不进又解不开）或
+	// 「有哈希无密文」（能登录但列表掩码列显示 unreadable）的半对状态。
+	var adminPhoneEnc, adminPhoneHash any
+	if in.PhoneHash != "" && len(in.PhoneEnc) > 0 {
+		adminPhoneEnc, adminPhoneHash = in.PhoneEnc, in.PhoneHash
+	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO admins (admin_id, username, name, password_hash, role_id, status)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		adminID, username, in.Name, in.PasswordHash, doctorAccountRole, in.Status); err != nil {
+		`INSERT INTO admins (admin_id, username, name, password_hash, role_id, status, phone_enc, phone_hash)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		adminID, username, in.Name, in.PasswordHash, doctorAccountRole, in.Status,
+		adminPhoneEnc, adminPhoneHash); err != nil {
+		if isPhoneCollision(err) {
+			return nil, ErrAdminPhoneTaken
+		}
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx,
@@ -204,6 +234,23 @@ func (s *PGStore) UpdateDoctorAccount(ctx context.Context, doctorID string, in D
 			`UPDATE admins SET name = $2
 			 FROM doctors WHERE admins.admin_id = doctors.admin_id AND doctors.doctor_id = $1`,
 			doctorID, *in.Name); err != nil {
+			return nil, err
+		}
+	}
+	// T487：手机号改了要同步刷 admins 那份凭据副本（清空 → 两列 NULL → 该账号退回 username 登录）。
+	// cur.AdminID == nil 时静默跳过，与上面 admins.name 的口径一致：档案在、没有账号，
+	// 号只落 doctors 展示侧（这类存量行拿不到手机号登录能力，属派发单「存量=继续 username 登录」面）。
+	if in.PhoneHash != nil && cur.AdminID != nil {
+		var enc, hash any
+		if *in.PhoneHash != "" && len(in.PhoneEnc) > 0 {
+			enc, hash = in.PhoneEnc, *in.PhoneHash
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE admins SET phone_enc = $2, phone_hash = $3 WHERE admin_id = $1`,
+			*cur.AdminID, enc, hash); err != nil {
+			if isPhoneCollision(err) {
+				return nil, ErrAdminPhoneTaken
+			}
 			return nil, err
 		}
 	}

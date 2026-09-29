@@ -35,10 +35,10 @@
         class="login-form"
         @submit.prevent
       >
-        <el-form-item label="用户名" prop="username">
+        <el-form-item label="用户名或手机号" prop="username">
           <el-input
             v-model="form.username"
-            placeholder="请输入用户名"
+            placeholder="请输入用户名，或已录入的 11 位手机号"
             autocomplete="username"
             @keyup.enter="handleLogin"
           />
@@ -85,7 +85,8 @@ const formRef = ref<FormInstance>()
 const loading = ref(false)
 const form = reactive({ username: '', password: '' })
 const rules: FormRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  // T487 双凭证：同一个输入框既能填用户名也能填手机号，提示语不许再只写「用户名」
+  username: [{ required: true, message: '请输入用户名或手机号', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
