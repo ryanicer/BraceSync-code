@@ -91,12 +91,18 @@ func (s *PGStore) GetPatientByPhoneHash(ctx context.Context, phoneHash string) (
 		`SELECT patient_id, name, password_hash, status
 		 FROM patients WHERE phone_hash = $1`, phoneHash)
 	var p PatientLoginRow
-	err := row.Scan(&p.PatientID, &p.Name, &p.PasswordHash, &p.Status)
+	// password_hash 自 000005 起可空；直接扫进 string 会让 NULL 行报普通错误
+	// （不是 ErrNoRows，上面的收口接不住），上抛后被调用方的错误分支吃掉成 500（T484）。
+	var pwdHash *string
+	err := row.Scan(&p.PatientID, &p.Name, &pwdHash, &p.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if pwdHash != nil {
+		p.PasswordHash = *pwdHash
 	}
 	return &p, nil
 }
@@ -107,12 +113,17 @@ func (s *PGStore) GetPatientByWXOpenID(ctx context.Context, openid string) (*Pat
 		`SELECT patient_id, name, password_hash, status
 		 FROM patients WHERE wx_openid = $1`, openid)
 	var p PatientLoginRow
-	err := row.Scan(&p.PatientID, &p.Name, &p.PasswordHash, &p.Status)
+	// 同 GetPatientByPhoneHash：可空口令列走指针再抹平为空串（T484）
+	var pwdHash *string
+	err := row.Scan(&p.PatientID, &p.Name, &pwdHash, &p.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if pwdHash != nil {
+		p.PasswordHash = *pwdHash
 	}
 	return &p, nil
 }

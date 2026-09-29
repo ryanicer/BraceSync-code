@@ -1035,6 +1035,35 @@ func TestPatientLoginSuccess(t *testing.T) {
 	assert.Equal(t, "", claims.TeamID)
 }
 
+// TestPatientLoginNullPasswordHashUnified401 T484：patients.password_hash 自迁移 000005 起可空，
+// 后台建号通路不落该列 ⇒ 现网存在「账号存在但无口令」的患者行。
+// repo 侧把 NULL 抹平为空串后，患者登录必须与「患者不存在」回同一个 401，
+// 且响应体逐字段相同 —— 否则响应差异本身就是账号存在性探测器。
+func TestPatientLoginNullPasswordHashUnified401(t *testing.T) {
+	e := newEnv(t, true, true)
+
+	// 基准：患者不存在（patientLogin=nil）
+	wBase, respBase := e.do(http.MethodPost, "/api/v1/patient/login", map[string]string{
+		"phone": "13800000002", "password": "Password1!",
+	}, nil)
+	require.Equal(t, http.StatusUnauthorized, wBase.Code)
+
+	// NULL 口令患者：repo 修复后返回非 nil 行、PasswordHash 为空串
+	e.store.patientLogin = &repo.PatientLoginRow{
+		PatientID: "P20260099", Name: "患者老号", Status: "active",
+	}
+	w, resp := e.do(http.MethodPost, "/api/v1/patient/login", map[string]string{
+		"phone": "13800000002", "password": "Password1!",
+	}, nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.NotEqual(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, model.CodeUnauthorized, resp.Code)
+	assert.Equal(t, respBase.Code, resp.Code)
+	assert.Equal(t, respBase.Message, resp.Message)
+	assert.Equal(t, string(respBase.Data), string(resp.Data),
+		"响应体逐字段相同 ⇒ 攻击者无法用响应差异区分「无口令患者」与「账号不存在」")
+}
+
 func TestPatientLoginErrors(t *testing.T) {
 	e := newEnv(t, true, true)
 
