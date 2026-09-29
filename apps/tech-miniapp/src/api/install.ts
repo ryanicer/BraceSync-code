@@ -42,24 +42,24 @@ export async function createInstall(
  * PUT 的实际请求体类型（T447）：wifiStatus 已随库侧 CHECK 扩到四值。
  * 后端 installMetaRequest 的语义是「空字符串 = 该列不改」，所以这里别传 ''；
  * 键整体省略同样是不改。
+ * T474：这里的键必须是后端 bind struct（notes / signatureUrl / wifiStatus）的子集 ——
+ * 原来挂在这儿的 baselineId／calibrateTime 后端根本不 bind，ShouldBindJSON 静默丢弃，
+ * 前端发了也到不了库（基线走 saveBaseline 独立接口、校准时刻由服务端记），故两键删除。
  */
 interface UpdateInstallMetaParams {
   wifiStatus?: 'connected' | 'unconfigured' | 'failed' | 'skipped'
-  baselineId?: string | null
   notes?: string
-  calibrateTime?: string
 }
 
 /**
- * 完成安装时补字段（PUT /api/v1/install-records/:id，后端 T122 已实现；
- * 旧注记里的 PATCH／「T084 未实现」是沿革措辞，实际方法与路径以上面 request 为准）
+ * 完成安装时补字段（PUT /api/v1/install-records/:id，后端 T122 已实现）
  */
 export async function updateInstallMeta(
   installId: string,
   meta: UpdateInstallMetaParams
 ): Promise<{ installId: string }> {
   if (USE_MOCK) {
-    // T089-MOCK: 等后端 T084 PATCH 就绪后切换
+    // mock 分支：真实 PUT 通道早已就绪（T122），这里只是 USE_MOCK 下不发请求
     await new Promise((r) => setTimeout(r, 250))
     return { installId }
   }
