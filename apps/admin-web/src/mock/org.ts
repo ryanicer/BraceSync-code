@@ -159,7 +159,20 @@ function maskPhoneLocal(phone: string): string {
   return phone.slice(0, 3) + '****' + phone.slice(7)
 }
 
-export function mockCreateTechnician(input: { name: string; phone: string; teamId: string }): Technician {
+/** 与医护账号 mock 同形：随机初始口令，只在创建/重置那一次返回里出现 */
+function genTechPassword(): string {
+  return `Br${Math.random().toString(36).slice(2, 10)}#7`
+}
+
+/**
+ * T480：创建返回「整行档案 + 一次性初始口令」，与后端 TechnicianCreateDTO 的展开形状一致。
+ * 技师端登录用「手机号 + 口令」，所以调用方展示的是手机号 + 口令，口令取不到即当缺失、不冒充空串。
+ */
+export function mockCreateTechnician(input: {
+  name: string
+  phone: string
+  teamId: string
+}): { account: Technician; initialPassword: string } {
   const tech: Technician = {
     techId: `TECH-${String(TECHNICIANS.length + 1).padStart(3, '0')}`,
     name: input.name,
@@ -172,7 +185,13 @@ export function mockCreateTechnician(input: { name: string; phone: string; teamI
     createdAt: new Date().toISOString(),
   }
   TECHNICIANS.push(tech)
-  return { ...tech }
+  return { account: { ...tech }, initialPassword: genTechPassword() }
+}
+
+/** T480：重置口令 —— 未知技师号照真实端点抛错，便于页面把 404 走成错误提示 */
+export function mockResetTechnicianPassword(techId: string): string {
+  if (!TECHNICIANS.some((t) => t.techId === techId)) throw new Error(`技师不存在：${techId}`)
+  return genTechPassword()
 }
 
 export function mockUpdateTechnician(techId: string, input: Partial<{ name: string; phone: string; teamId: string }>): Technician {
