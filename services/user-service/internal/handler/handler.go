@@ -622,7 +622,9 @@ func (h *Handler) patientLogin(c *gin.Context) {
 		return
 	}
 	// 统一 401 文案：不区分"用户不存在/密码错误/未激活"，防账号枚举
-	if patient == nil || bcrypt.CompareHashAndPassword([]byte(patient.PasswordHash), []byte(req.Password)) != nil {
+	// 无口令患者（password_hash 为 NULL，读侧抹平为空串）按凭据无效走同一 401（T484）
+	if patient == nil || patient.PasswordHash == "" ||
+		bcrypt.CompareHashAndPassword([]byte(patient.PasswordHash), []byte(req.Password)) != nil {
 		fail(c, model.ErrUnauthorized("invalid phone or password"))
 		return
 	}
