@@ -133,7 +133,7 @@ type PatientRow struct {
 	DeviceID   *string
 	TeamID     *string
 	DoctorID   *string
-	PhoneEnc   []byte // AES-GCM 密文（T057：创建患者含手机号；出参 handler 脱敏）
+	PhoneEnc   []byte // AES-GCM 密文（T057 建档含手机号；T491 起列表/详情投影也带回这一列）。出 service 层前经 phone.View 脱敏，密文不出接口
 	Status     string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time

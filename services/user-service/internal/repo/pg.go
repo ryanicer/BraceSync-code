@@ -441,9 +441,15 @@ func (s *PGStore) DoctorTeamByAdmin(ctx context.Context, adminID string) (string
 // patientSelect 患者列表/详情投影。
 // T151(方案C)：当前绑定设备取自 devices（patient_id 只读关联；跨服务只读，写归属 device-service），
 // 依赖迁移 000012 的 uk_devices_active_patient 部分唯一索引保证一个患者至多一行；patients.device_id 已废弃、不再读取。
+//
+// T491：补投影 p.phone_enc —— 与医护域（doctorColumns）、技师域（techColumns）同口径：
+// 密文只进服务内行结构 PatientRow，出接口前一律经 phone.View 脱敏，患者读 DTO 一个键都不加。
+// 此前这一列没投影 ⇒ GetPatient 回行的 PhoneEnc 恒空，改号审计的「改前快照」永远记 absent
+// （T462 待裁一，消费方是 handler/admin_patient.go 的改前脱敏取数）。
+// 列序与 PatientRow 字段序逐位对应，scanPatient 的入参序同此。
 const patientSelect = `
 SELECT p.patient_id, p.name, p.gender, p.age, p.diagnosis, p.cobb_angle,
-       dev.device_id, p.team_id, p.primary_doctor_id, p.status, p.created_at, p.updated_at,
+       dev.device_id, p.team_id, p.primary_doctor_id, p.phone_enc, p.status, p.created_at, p.updated_at,
        t.name AS team_name, d.name AS doctor_name,
        p.height_cm, p.weight_kg, p.emergency_contact_name, p.emergency_contact_phone, p.emergency_contact_relation
 FROM patients p
@@ -477,7 +483,7 @@ func patientWhere(f PatientFilter) (string, []any) {
 func scanPatient(row pgx.Row) (*PatientRow, error) {
 	var p PatientRow
 	err := row.Scan(&p.PatientID, &p.Name, &p.Gender, &p.Age, &p.Diagnosis, &p.CobbAngle,
-		&p.DeviceID, &p.TeamID, &p.DoctorID, &p.Status, &p.CreatedAt, &p.UpdatedAt,
+		&p.DeviceID, &p.TeamID, &p.DoctorID, &p.PhoneEnc, &p.Status, &p.CreatedAt, &p.UpdatedAt,
 		&p.TeamName, &p.DoctorName,
 		&p.HeightCm, &p.WeightKg, &p.EmergencyContactName, &p.EmergencyContactPhone, &p.EmergencyContactRelation)
 	if err != nil {
