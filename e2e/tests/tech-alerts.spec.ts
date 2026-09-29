@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('页头取接口总数，不再是本页条数（缺陷一）', async ({ page }) => {
-  await expect(page.getByText('告警通知').first()).toBeVisible()
+  await expect(page.getByText('告警列表').first()).toBeVisible()
   await expect(page.getByText('共 60 条告警')).toBeVisible()
   await expect(page.locator('.alert-card')).toHaveCount(60)
 })

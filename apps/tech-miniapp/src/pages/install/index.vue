@@ -474,11 +474,12 @@ async function completeInstall() {
   uni.showLoading({ title: '提交中...' })
   try {
     installStore.setInstallNote(installNote.value)
+    // 只送后端 installMetaRequest 认得的键：baselineId 走 saveBaseline 独立接口（上面采集流程已拿
+    // 到 bs.baselineId 并置进 store），calibrateTime 由服务端记 —— 两键此前一直被 ShouldBindJSON
+    // 静默丢弃，删掉属行为不变（T474）。
     await updateInstallMeta(installStore.installId, {
       wifiStatus: installStore.wifiStatus,
-      baselineId: installStore.baselineId,
       notes: installNote.value,
-      calibrateTime: new Date().toISOString(),
     })
     uni.hideLoading()
     uni.navigateTo({ url: '/pages/complete/index' })

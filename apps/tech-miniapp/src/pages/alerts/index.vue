@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <view class="page-header">
-      <text class="page-title">告警通知</text>
+      <text class="page-title">告警列表</text>
       <text class="page-subtitle">{{ countText }}</text>
     </view>
 
