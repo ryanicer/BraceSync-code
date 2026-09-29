@@ -34,6 +34,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -169,6 +170,13 @@ type installRequest struct {
 	Notes        string `json:"notes"`
 	SignatureURL string `json:"signatureUrl"`
 }
+
+// installNotesMaxRunes 安装备注长度上限（T475，PM 2026-09-29 08:1x 甲案：维持 200）。
+// 库列 install_records.notes 是无上限 TEXT（000001:127），裁定不动 schema ⇒ 上限只能在入口判。
+// 前端 apps/tech-miniapp/src/pages/install/index.vue 的 maxlength=200 是产品现行为，
+// 本常量与它同值，守住绕开小程序直打 API 的客户端。按 rune 计（中文一字算一），与 PG 字符口径一致 ——
+// 先例 services/alert-service/internal/handler/public.go 的 maxProcessNote。
+const installNotesMaxRunes = 200
 
 // installMetaRequest PUT /api/v1/install-records/:id 入参（T122）。
 // notes / signatureUrl 均可选：空字符串不覆盖该列（对齐 repo.UpdateInstallMeta COALESCE 语义）。
@@ -537,6 +545,13 @@ func (h *Handler) updateInstallMeta(c *gin.Context) {
 	var req installMetaRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	// T475：备注按字符数校验排在写库之前 —— 库列无上限，超长的值一旦落库，
+	// 前端 maxlength=200 的现行为就被直打 API 的客户端绕过去了。
+	if req.Notes != "" && utf8.RuneCountInString(req.Notes) > installNotesMaxRunes {
+		fail(c, model.ErrInvalidParam("notes too long: max %d characters, got %d",
+			installNotesMaxRunes, utf8.RuneCountInString(req.Notes)))
 		return
 	}
 	var notes, sigURL, wifiStatus *string
