@@ -241,6 +241,9 @@ function showCredentials(techId: string, accountLine: string, password: string, 
       h('p', `技师编号：${techId}`),
       h('p', accountLine),
       h('p', `初始密码：${password}`),
+      // T486：口令能用不等于管理员知道怎么用——技师端登录页只收手机号＋密码（无编号入口），
+      // 不说这一句就会有人拿着编号去登。创建与重置两次都要说，故不随调用方分叉。
+      h('p', { class: 'cred-hint' }, '技师使用手机号 + 密码登录（技师编号不能用于登录）。'),
       h('p', { class: 'cred-note' }, '仅此一次展示，关闭后不可再看。密码由系统随机生成，请当面 / 即时转交本人；如遗失，用列表行内「重置密码」按同一规则再生成一次。'),
     ]),
     confirmButtonText: '我已转交本人',

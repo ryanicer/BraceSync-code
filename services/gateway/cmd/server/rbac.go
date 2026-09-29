@@ -151,6 +151,10 @@ var adminOnlyPatterns = []rbacPattern{
 //   - POST /api/v1/install-records 仍为全 full-scope 角色开放（创建端点，收紧需另评）
 var techAdminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPut, "/api/v1/install-records/:id"), // T122 安装记录元数据回填（技师+管理员）
+	// T486 技师自助改登录口令：改的是自己那一行（身份只认 JWT 注入的 X-User-Id，body 里没有 techId），
+	// 但入口仍要按角色收口 —— 医护/客服/患者 token 打进来一律 403，不让请求落到 user-service。
+	// admin 在此矩阵放行后仍会被 user-service 的 technician 角色判定挡回 403（双层，同 T480 口径）。
+	rbacOf(http.MethodPost, "/api/v1/tech/change-password"),
 }
 
 // provisionKeyPatterns 配网密钥领卡端点（T067；T091 收紧为 tech+admin；T193 放开患者）

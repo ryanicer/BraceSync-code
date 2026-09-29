@@ -482,6 +482,9 @@ type Store interface {
 	GetAdminByUsername(ctx context.Context, username string) (*AdminRow, error)
 	UpdateAdminPasswordHash(ctx context.Context, adminID string, newHash string) error
 	GetTechByPhoneHash(ctx context.Context, phoneHash string) (*TechLoginRow, error)
+	// GetTechByTechID T486：技师自助改密按 JWT 身份（tech_id）取登录行，含 password_hash；
+	// 不存在返回 (nil, nil)。手机号查法（GetTechByPhoneHash）用在登录前，身份查法用在登录后。
+	GetTechByTechID(ctx context.Context, techID string) (*TechLoginRow, error)
 	GetPatientByPhoneHash(ctx context.Context, phoneHash string) (*PatientLoginRow, error)
 	// GetPatientByWXOpenID T069：按微信 openid 查患者登录行；不存在返回 (nil, nil)
 	GetPatientByWXOpenID(ctx context.Context, openid string) (*PatientLoginRow, error)

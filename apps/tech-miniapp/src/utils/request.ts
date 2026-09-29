@@ -1,5 +1,5 @@
 import { getToken, removeToken } from './token'
-import { AUTH_EXPIRED_MESSAGE, forceRelogin, isAuthFailure } from './authError'
+import { AUTH_EXPIRED_MESSAGE, forceRelogin, isAuthFailure, isOldPasswordCheckFailure } from './authError'
 import { logger } from './logger'
 import { markUserCopy } from '@bracesync/shared-utils'
 
@@ -61,7 +61,10 @@ export async function request<T>(options: RequestOptions): Promise<T> {
         const data = res.data as { code: number; message: string; data: T }
         // T326：token 失效（网关 401 / 服务层 10401）一律清凭据回登录页。
         // 登录请求本身除外 —— 密码错同样是 401 + 10401，回登录页会和「手机号或密码错误」提示打架。
-        if (!isLoginRequest && isAuthFailure(res.statusCode, data?.code)) {
+        // T486 再加一格豁免：自助改密的「原密码填错」也是 401（后端与登录口同形防枚举，信封码 10001），
+        // 不豁免的话填错一次就被踢回登录页，页面那句「原密码不正确」永远渲染不到。
+        if (!isLoginRequest && !isOldPasswordCheckFailure(options.url, data?.code) &&
+          isAuthFailure(res.statusCode, data?.code)) {
           // 会话过期是预期分支，用 warn：e2e-miniapp/real-mp-helpers 的 attachConsole 会把
           // 任何 console.error 记进 result.errors，误判成失败（fail-closed）。
           logger.warn('[T326]', `auth failure ← ${options.method || 'GET'} ${options.url}` +
