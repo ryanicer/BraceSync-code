@@ -205,6 +205,11 @@ var staffOnlyPatterns = []rbacPattern{
 	// T257 11.5：当前用户有效权限 —— 每个 staff 都要用它渲染菜单/按钮（只回自己的，非 admin 专属）；
 	// 患者 token 无后台菜单，一律 403
 	rbacOf(http.MethodGet, "/api/v1/admin/me/permissions"),
+	// T487 自助改密：与上面「读自己的有效权限」同域同口径 —— 每个后台账号都要用它改自己的口令，
+	// 不是 admin 专属（管理员代改另有 T314 医护 / T480 技师 / T477 患者三条 reset 通道，那些才是 admin-only）。
+	// 患者 token 一律 403；技师 token 能过网关（staffRoles 含 technician）但落服务层 404 ——
+	// admins 表没有技师行，技师口令由 admin 重置（T480），本卡不含技师自助改密。
+	rbacOf(http.MethodPost, "/api/v1/auth/change-password"),
 	rbacOf(http.MethodGet, "/api/v1/admin/patients"),
 	rbacOf(http.MethodGet, "/api/v1/admin/patients/:patientId"),
 	rbacOf(http.MethodGet, "/api/v1/admin/feeling-logs"), // T256 #2 跨患者感受日志流

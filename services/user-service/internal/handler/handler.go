@@ -228,6 +228,8 @@ func (h *Handler) Router() *gin.Engine {
 	v1.Use(h.auditTrail())
 	{
 		v1.POST("/auth/login", h.login)
+		// T487 后台账号自助改密（管理员/医护/客服，需后台 JWT；身份取 X-User-Id）
+		v1.POST("/auth/change-password", h.changePassword)
 		v1.POST("/tech/login", h.techLogin)         // T037 技师登录（免 JWT）
 		v1.POST("/patient/login", h.patientLogin)   // T037 患者登录（免 JWT）
 		v1.POST("/patient/wx-login", h.wxLogin)     // T069 患者端微信登录（免 JWT）
@@ -478,7 +480,42 @@ type phoneLoginRequest struct {
 	Password string `json:"password"`
 }
 
+// changePasswordRequest T487 自助改密入参。
+// 🔴 账号字段一律不从请求体取：身份只认网关注入的 X-User-Id（jwtAuth 删掉外部同名头后重签注入），
+// 否则任何人带别人的 adminId 就能改别人密码。
+type changePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+// lookupAdminByIdentifier T487 登录双凭证的解析步：同一个输入串先按用户名解析，
+// 未命中且形状是「11 位、1 开头」的手机号时再按 phone_hash 解析。
+//
+// 🔴 为什么两支都吃 req.username 这一个字段（不新增 body 字段）：
+//
+//	admin-web 的登录请求体、契约 adminLogin、既有单测/集成用例全部按 {username,password} 发与断言；
+//	加 phone 字段要么改前端契约、要么让服务端接受两种形状（多一个入口＝多一条枚举面与一份用例矩阵）。
+//	用户名与手机号的形状天然不重叠（发号器产出 doc%05d、seed 是 ops_admin 这类字母号），
+//	validPhone 就是把这条不重叠写成代码的那一步。
+//
+// 解析序「先用户名后手机号」= 存量行为零变化：今天能登进来的号，走的是同一条 GetAdminByUsername。
+func (h *Handler) lookupAdminByIdentifier(ctx context.Context, identifier string) (*repo.AdminRow, error) {
+	admin, err := h.store.GetAdminByUsername(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+	if admin != nil {
+		return admin, nil
+	}
+	phonePlain := phone.Normalize(identifier)
+	if !validPhone(phonePlain) {
+		return nil, nil
+	}
+	return h.store.GetAdminByPhoneHash(ctx, phone.Hash(phonePlain))
+}
+
 // login 运营后台登录：bcrypt 校验 admins 表，签发 HS256 JWT（契约 adminLogin）
+// T487：凭证支持用户名或手机号（医护通道），两支命中后走同一条校验链，401 文案不分叉。
 func (h *Handler) login(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -494,12 +531,12 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 
-	admin, err := h.store.GetAdminByUsername(c.Request.Context(), req.Username)
+	admin, err := h.lookupAdminByIdentifier(c.Request.Context(), req.Username)
 	if err != nil {
 		fail(c, model.ErrInternal("query admin failed"))
 		return
 	}
-	// 统一 401 文案：不区分"用户不存在/密码错误"，防账号枚举
+	// 统一 401 文案：不区分"用户不存在/密码错误"，也不区分"用户名没命中/手机号没命中"，防账号枚举
 	if admin == nil || bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(req.Password)) != nil {
 		fail(c, model.ErrUnauthorized("invalid username or password"))
 		return

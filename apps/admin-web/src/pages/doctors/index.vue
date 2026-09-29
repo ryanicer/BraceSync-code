@@ -139,7 +139,7 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
-import { userErrorCopy } from '@bracesync/shared-utils'
+import { userErrorCode, userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PhoneState, Team } from '@bracesync/shared-types'
 import { fetchTeams, teamNameOf } from '../../api'
@@ -306,7 +306,16 @@ async function submitForm() {
       await showCredentials(res.account.username, res.initialPassword, '创建成功')
     }
   } catch (e: unknown) {
-    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
+    // T487：手机号被别的后台账号占作登录凭据（uk_admins_phone_hash / 23505）后端回 10409。
+    // 码表那句是通用的「与现有记录冲突」，而这次提交里能撞它的只有手机号一格 ⇒ 点名到字段。
+    // 🔴 再加一个前件把「状态那一发」排除掉：编辑态改状态是紧随 PUT 的第二个请求（POST /status），
+    // 它对未绑登录账号的存量档案也回 10409 —— 那时手机号其实已经存上了，不能报成手机号撞号。
+    const noStatusLeg = !editing.value || form.value.status === originalStatus.value
+    if (userErrorCode(e) === 10409 && form.value.phone && noStatusLeg) {
+      ElMessage.error('该手机号已被其他后台账号用作登录凭据，请更换号码，或先在对方账号处清空手机号')
+    } else {
+      ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
+    }
   } finally {
     submitting.value = false
   }
