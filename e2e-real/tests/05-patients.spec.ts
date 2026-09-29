@@ -46,6 +46,21 @@ async function cellTexts(row: Locator): Promise<string[]> {
   )
 }
 
+/**
+ * 弹窗内按 form-item 文案锚出那一项（T462 S3 随 5.4 放开一起补）。
+ *
+ * 为什么不再按 input 序号填：本页新建表单自 T248/T353 起是
+ * 姓名/手机号/年龄/诊断/团队(select)/性别(radio)/医生(select)/Cobb角 八项
+ * （apps/admin-web/src/pages/patients/index.vue:159-191），而 5.4 旧写法是
+ * `allInputs.nth(1)`/`nth(2)` 位置填值 —— nth(2) 现在是「年龄」框，把中文诊断塞进去
+ * 必被后端值域校验判 400（services/user-service/internal/handler/handler.go createPatient
+ * 「invalid age range」），于是那条用例每次都没建成患者、却因为整段断言包在
+ * 「文案含成功」的 if 里而照常报绿。锚文案填、且成功文案改成硬断言，两处一起收。
+ */
+function formItem(scope: Locator, label: string): Locator {
+  return scope.locator('.el-form-item').filter({ hasText: label }).first()
+}
+
 test.describe('05-患者管理', () => {
   test.beforeEach(async ({ page }) => {
     await realLogin(page)
@@ -59,31 +74,64 @@ test.describe('05-患者管理', () => {
   let createdPatients: string[] = []
 
   test.afterAll(async ({ browser }) => {
-    // 清理：通过 API 批量删除本任务创建的患者（UI 删除入口未实现时兜底）
+    // 清理 5.4 自建的患者（T462 S3 甲案，PM 2589 裁「跑，跑完删除」）。
+    //
+    // 🔴 T462 订正「为什么以前这段等于没清」：旧实现打的是 GET /api/v1/patients 与
+    //   DELETE /api/v1/patients/:id —— 这条根路径全仓没有注册（网关 userServiceRoutes 只登记
+    //   /admin/patients 一族，见 services/gateway/cmd/server/proxy_admin.go:105-124 与
+    //   services/user-service/internal/handler/handler.go:236-245 的路由表），所以每次都是 404，
+    //   再被下面三层吞错静掉：`if (!list.ok()) continue` + 删除的 `.catch(() => {})` +
+    //   外层 `catch { /* ignore */ }`。「清干净了」与「一行都没删」在报告里同形，
+    //   staging 因此留下 P20264360f30837c4 / T053测试-672410 这类永久脏行
+    //   —— 也正是 5.4 当年被停跑的原因。
+    //   现改为走登记在架的 /admin/patients 两端点，并且**不吞错**：删不动就抛红，
+    //   让「没清干净」在 CI 里看得见，而不是留给下一轮或攒成脏数据。
     if (createdPatients.length === 0) return
     const ctx = await browser.newContext()
     const page = await ctx.newPage()
     try {
       await realLogin(page)
       const token = await getAuthToken(page)
-      if (!token) return
+      if (!token) throw new Error('05 收尾清理取不到 admin JWT，无法删除自建患者')
+      const headers = { Authorization: `Bearer ${token}` }
       for (const name of createdPatients) {
-        const list = await page.request.get('/api/v1/patients', {
-          headers: { Authorization: `Bearer ${token}` },
-          params: { keyword: name },
+        const listRes = await page.request.get('/api/v1/admin/patients', {
+          headers,
+          params: { page: '1', pageSize: '10', keyword: name },
         })
-        if (!list.ok()) continue
-        const data: any = await list.json().catch(() => null)
-        const items = data?.data?.items || data?.items || data?.data || []
-        for (const p of items) {
-          if (p.name === name || String(p.name || '').includes(name)) {
-            await page.request.delete(`/api/v1/patients/${p.id || p.patientId}`, {
-              headers: { Authorization: `Bearer ${token}` },
-            }).catch(() => {})
+        const listBody = (await listRes.json().catch(() => null)) as {
+          code?: number
+          message?: string
+          data?: { list?: Array<{ patientId: string; name: string }> }
+        } | null
+        if (!listRes.ok() || listBody?.code !== 0) {
+          throw new Error(
+            `清理前置查询失败：GET /api/v1/admin/patients?keyword=${name} → status=${listRes.status()} code=${listBody?.code} message=${listBody?.message}`,
+          )
+        }
+        const hits = (listBody.data?.list ?? []).filter((p) => p.name === name)
+        // 「≥1 而不是恰好 1」：清理段的职责是把同名行全删掉，行数多于 1 只说明唯一命名撞过号
+        // （uniqueName 取毫秒后 6 位，约 11.6 天一轮）—— 那是 5.4 的判据要管的事，不该在这里
+        // 变成「清不动」的理由。
+        expect(hits.length, `按唯一姓名应至少查回自建患者 ${name} 的一行，实得 ${hits.length} 行`).toBeGreaterThanOrEqual(1)
+        for (const p of hits) {
+          const delRes = await page.request.delete(`/api/v1/admin/patients/${p.patientId}`, { headers })
+          const delBody = (await delRes.json().catch(() => null)) as { code?: number; message?: string } | null
+          console.log(
+            `[t053-cleanup] DELETE /api/v1/admin/patients/${p.patientId} (${name}) → status=${delRes.status()} code=${delBody?.code}`,
+          )
+          if (!delRes.ok() || delBody?.code !== 0) {
+            // 409 = 该患者被别处引用（逐表计数只进技术日志，响应体 message 恒为中文短句，T464 双通道）
+            // ⇒ 停手回报，不绕库、不删别人的关联行。
+            throw new Error(
+              `自建患者未删净：${p.patientId}（${name}）→ status=${delRes.status()} code=${delBody?.code} message=${delBody?.message}` +
+                (delBody?.code === 10409 ? ' ⇒ 被引用，请拿患者号查 user-service 技术日志的 per-table 计数后停手回报' : ''),
+            )
           }
         }
       }
-    } catch { /* ignore */ } finally {
+      createdPatients = []
+    } finally {
       await ctx.close()
     }
   })
@@ -289,14 +337,14 @@ test.describe('05-患者管理', () => {
 
   test.describe('添加患者（写操作，可重放唯一命名）', () => {
     test('5.4 添加患者 → 唯一姓名（T053测试-xxx）+ 最小必填 → 提交成功 → 搜索可找到', async ({ page }) => {
-      // T279 停跑：后端无 DELETE /admin/patients/{id}（user-service 路由表与 proxy_admin.go 均无），
-      //   患者页也无删除入口 ⇒ afterAll 的 API 清理是结构性空转，跑一次永久留一条脏数据
-      //   （staging 遗留 P20264360f30837c4 / T053测试-672410 即证）。补删除端点后再恢复。
-      //   ⚠️ PM 裁定（本卡 2026-09-21 13:00）把 5.4 列入「跑（自建唯一命名数据、跑完删除）」，
-      //      但「跑完删除」这一步在 staging 没有端点可做 ⇒ 前提不成立，已回报 PM 待重裁；
-      //      PM 若确认「可留一条脏患者」，删掉下面这行 test.skip 即可放开，不需其他改动。
-      test.skip(true, '无 DELETE /admin/patients 端点，afterAll 清理失效 ⇒ 「跑完删除」前提不成立，会永久留脏数据；已报 PM 待重裁')
+      // T462 S3 放开（PM 2589 裁甲案「跑，跑完删除」）。T279 当年停跑的理由是「后端没有
+      // DELETE /admin/patients/:id ⇒ afterAll 是结构性空转，跑一次永久留一条脏数据」，
+      // 该前提自 T467 起不再成立：端点在架（handler.go:245 + gateway proxy_admin.go:118），
+      // 本文件上方 afterAll 也已改走它做真删除并去掉三层吞错。原停跑注释全文留在 git 历史。
       const patientName = uniqueName(E2E_PATIENT_NAME_PREFIX)
+      // 手机号每次唯一：建档按 phone_hash 查重（repo/pg.go:1275-1284），写死一个号时
+      // 只要有一轮清理没跑成，下一轮就必 409 ⇒ 又落回「没建成也算过」。
+      const phone = `135${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`
 
       // 找"添加患者"/"新建患者"按钮
       const addBtn = page
@@ -305,81 +353,49 @@ test.describe('05-患者管理', () => {
       await expect(addBtn.first()).toBeVisible({ timeout: 8_000 })
       await addBtn.first().click()
 
-      const dialog = page.locator('.el-dialog').filter({ hasText: /患者|新建|添加/ })
-      await expect(dialog).toBeVisible({ timeout: 10_000 })
+      const dialog = page.locator('.el-dialog:visible').filter({ hasText: /新建患者/ }).first()
+      await expect(dialog, '点「添加患者」应开标题为「新建患者」的弹窗').toBeVisible({ timeout: 10_000 })
 
-      // 填最小必填集（姓名 + 手机号/诊断 + 性别/生日等）：找到所有非 password input 逐个填
-      // 1) 姓名：第一个 input 或有 "姓名" 标签的字段
-      const nameInput = dialog
-        .locator('input, .el-input__inner')
-        .filter({ hasNot: page.locator('[type="password"]') })
-        .first()
-      await nameInput.fill(patientName)
+      // 最小必填集＝姓名 + 手机号（createRules 只给这两项挂 prop，index.vue:159-191）。
+      // 年龄/诊断/Cobb/团队/性别/医生一律留空 —— 这一格验的正是「只带必填也能建档」。
+      await formItem(dialog, '姓名').locator('input').first().fill(patientName)
+      await formItem(dialog, '手机号').locator('input').first().fill(phone)
 
-      // 2) 手机号（如果表单有）：11 位数字
-      const allInputs = dialog.locator('input:not([type="password"])')
-      const inputCount = await allInputs.count()
-      if (inputCount >= 2) {
-        await allInputs.nth(1).fill('13900000001')
-      }
-      if (inputCount >= 3) {
-        // 诊断 / 备注：兜底文字
-        await allInputs.nth(2).fill('测试诊断 T053 真实模式')
-      }
-
-      // 3) 如果有 select（性别/团队），选第一个非空值
-      const selects = dialog.locator('.el-select')
-      for (let i = 0; i < Math.min(await selects.count(), 2); i++) {
-        const s = selects.nth(i)
-        try {
-          await s.click({ timeout: 3_000 })
-          const opt = page.locator('.el-select-dropdown:visible .el-select-dropdown__item').nth(1)
-          if (await opt.isVisible({ timeout: 3_000 })) {
-            await opt.click()
-          } else {
-            // 第一个选项
-            await page.locator('.el-select-dropdown:visible .el-select-dropdown__item').first().click()
-          }
-        } catch { /* ignore */ }
-        await page.locator('.el-select-dropdown:visible')
-          .waitFor({ state: 'hidden', timeout: 3_000 })
-          .catch(() => {})
-      }
-
-      // 4) 保存 / 提交按钮（staging 应用文案是「确定」，兼容 保存/确认/提交/添加）
-      const saveBtn = dialog.getByRole('button', { name: /保存|确定|确认|提交|添加/ }).first()
+      const saveBtn = dialog.getByRole('button', { name: '确定' }).first()
       await expect(saveBtn).toBeVisible()
       await saveBtn.click()
 
-      // ElMessage 成功（或错误：如必填未齐）
-      const msg = adminMessage(page)
-      const msgVisible = await msg.isVisible({ timeout: 15_000 }).catch(() => false)
-      if (msgVisible) {
-        const msgText = await msg.textContent()
-        if (/成功|完成|已添加/.test(msgText ?? '')) {
-          createdPatients.push(patientName)
-          // 对话框关闭
-          await expect(dialog).toBeHidden({ timeout: 5_000 }).catch(() => {})
-          // 回到列表搜索姓名
-          await page.waitForTimeout(1_500)
-          const search = page.locator('.search-input input')
-          if ((await search.count()) > 0) {
-            await search.fill(patientName)
-            const qBtn = page.locator('.page-toolbar').getByRole('button', { name: '查询' })
-            if ((await qBtn.count()) > 0) await qBtn.first().click()
-            else await search.press('Enter')
-            await page.waitForTimeout(2_000)
-            const rows = tableRows(page, patientTable(page))
-            expect(await rows.count()).toBeGreaterThanOrEqual(1)
-            expect(await rows.first().textContent()).toContain(patientName)
-            // 清空搜索
-            await search.fill('')
-            if ((await qBtn.count()) > 0) await qBtn.first().click()
-            else await search.press('Enter')
-          }
-        }
-        // 如果是必填校验错误，不算 bug（只是我们没填全），记录即可
-      }
+      // 成功文案是硬断言（旧写法「文案含成功才往下断言」＝ 建失败也判绿）
+      await expect(adminMessage(page), '最小必填建档应回「创建成功」').toHaveText('创建成功', {
+        timeout: 15_000,
+      })
+      createdPatients.push(patientName)
+      await expect(dialog).toBeHidden({ timeout: 5_000 })
+
+      // 回到列表搜索姓名，验「建出来的行查得到」
+      const search = page.locator('.search-input input')
+      await expect(search, '本页应有姓名搜索框').toBeVisible({ timeout: 8_000 })
+      await search.fill(patientName)
+      const qBtn = page.locator('.page-toolbar').getByRole('button', { name: '查询' }).first()
+      await qBtn.click()
+      const rows = tableRows(page, patientTable(page))
+      await expect
+        .poll(
+          async () => {
+            const n = await rows.count()
+            if (n === 0) return false
+            const t = await rows.first().textContent()
+            return (t ?? '').includes(patientName)
+          },
+          { timeout: 20_000, message: `按唯一姓名搜索后，列表首行应为刚建的 ${patientName}` },
+        )
+        .toBe(true)
+      expect(await rows.count()).toBeGreaterThanOrEqual(1)
+      expect(await rows.first().textContent()).toContain(patientName)
+
+      // 清空搜索：不把筛选态留给同文件的下一条用例
+      await search.fill('')
+      await qBtn.click()
     })
   })
 
