@@ -744,7 +744,7 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
     expect(
       net.filter((m) => m === 'POST /api/v1/teams'),
       `采集面里混进了 node 侧 callApi 的请求（页面自己没建过团队）⇒ 通道分离前提已不成立，页面请求序列=${net.join(' → ')}`,
-    ).toEqual(['T462M2 通道分离前提被改成非空期望'])
+    ).toEqual([])
 
     const uiWrites = net.filter((m) => !m.startsWith('GET '))
     expect(
@@ -755,7 +755,7 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
       'POST /api/v1/admin/patients',
       `PUT /api/v1/admin/patients/${pid}/phone`,
       `PUT /api/v1/admin/patients/${pid}`,
-      `PUT /api/v1/admin/patients/${pid}/team`,
+      `PUT /api/v1/admin/patients/${pid}/team T462M3`,
     ])
   })
 
@@ -878,7 +878,7 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
       `/api/v1/admin/patients/${created.patientId}`,
       { token: token! },
     )
-    expect(gone.code, `删后详情应回 T462M5a code=10404（硬删），实得 ${gone.code}`).toBe(10405)
+    expect(gone.code, `删后详情应回 code=10404（硬删），实得 ${gone.code}`).toBe(10404)
     const after = await callOk<{ total: number }>(
       page,
       'GET',
@@ -924,10 +924,10 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
         // 不能留到循环后再统一反证：下面每次成功都会把该号从 createdPatientIds 摘掉，
         // 循环结束后那个数组必然为空，届时按它循环的「反证」是一段恒绿的死代码。
         const gonePatient = await callApi(page, 'GET', `/api/v1/admin/patients/${pid}`, { token })
-        expect(
+        expect.soft(
           gonePatient.code,
-          `患者 ${pid} 删除后详情应回 code=10404（硬删），实得 status=${gonePatient.status} code=${gonePatient.code}`,
-        ).toBe(10404)
+          `患者 ${pid} 删除后详情应回 T462M5b code=10404（硬删），实得 status=${gonePatient.status} code=${gonePatient.code}`,
+        ).toBe(10406)
         createdPatientIds.splice(createdPatientIds.indexOf(pid), 1)
       }
 

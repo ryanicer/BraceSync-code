@@ -318,7 +318,7 @@ async function loginAsTechnician(page: Page, net: NetLog, why: string): Promise<
 
 /** 零写自证：除技师登录外页面不得发出任何非 GET；并显式钉住请求源与页面源同源 */
 function assertZeroBusinessWrites(net: NetLog, testId: string): void {
-  const offenders = net.writes.filter((w) => w.line !== ALLOWED_WRITE && w.line !== 'PATCH /api/v1/tech/t462-probe-nonexistent')
+  const offenders = net.writes.filter((w) => w.line !== ALLOWED_WRITE)
   expect(
     offenders,
     `${testId} 零写自查：链 B 只允许 ${ALLOWED_WRITE}（成功只签令牌、失败统一 401，两条出口都在任何库表写之前，handler.go:596-640），实得非 GET 明细=${JSON.stringify(net.writes)}`,
@@ -373,12 +373,6 @@ test.describe('23-链 B 技师端（T462 S5）', () => {
     // 成功腿
     const data = await loginAsTechnician(page, net, '23.1 成功腿')
     expect(data.techId, '签出的 techId 应非空（与首页顶栏工号同源那一格已在 loginAsTechnician 里断过）').toBeTruthy()
-    // T462M B3 注入：页内发一条无路由的非 GET（网关 404，业务表零写），看零写判据抓不抓到
-    await page.evaluate(() =>
-      fetch('/api/v1/tech/t462-probe-nonexistent', { method: 'PATCH' })
-        .then((r) => r.status)
-        .catch(() => -1),
-    )
     assertZeroBusinessWrites(net, '23.1')
     expect(net.writes.filter((w) => w.line === ALLOWED_WRITE).length, '非 GET 应恰为两条登录 POST：失败腿与成功腿各一条').toBe(2)
   })
@@ -404,7 +398,7 @@ test.describe('23-链 B 技师端（T462 S5）', () => {
       '设备位应逐行等于接口回的行序（数组序＝展示序）',
     ).toEqual(captured.rows.map((r) => r.deviceId))
     expect(
-      domCards.map((c) => `${c.fields['患者']} T462B2a`),
+      domCards.map((c) => c.fields['患者']),
       '患者位应是 patientName 回落 patientId（后端空值语义是空串）',
     ).toEqual(captured.rows.map((r) => r.patientName || r.patientId))
     expect(
@@ -550,7 +544,7 @@ test.describe('23-链 B 技师端（T462 S5）', () => {
     const indexBack = visible2.findIndex((r) => r.alertId === anchor.alertId)
     expect(indexBack, '回到告警页后应仍能找到锚点那条告警').toBeGreaterThanOrEqual(0)
     const secondTitle = await openDetailAt(indexBack, visible2)
-    expect(secondTitle, '跨页回来后弹层仍是同一条告警（这一段是设计稿 §四 B4 声明的新覆盖）').toBe(firstTitle + ' T462B2b')
+    expect(secondTitle, '跨页回来后弹层仍是同一条告警（这一段是设计稿 §四 B4 声明的新覆盖）').toBe(firstTitle)
 
     const stored = await readTechStorage(page)
     expect(stored.techId, '回页后仍在同一技师会话里').toBe(session.techId)
