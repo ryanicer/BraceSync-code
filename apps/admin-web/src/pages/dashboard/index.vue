@@ -21,16 +21,16 @@
     <!-- 趋势图表行：自适应双列/单列 -->
     <div class="chart-row">
       <div class="page-card chart-card">
-        <el-tooltip content="近7天日均佩戴时长" placement="top" :show-after="300">
-          <div class="page-card-title card-title-ellipsis">近7天日均佩戴时长</div>
+        <el-tooltip :content="wearTrendTitle" placement="top" :show-after="300">
+          <div class="page-card-title card-title-ellipsis">{{ wearTrendTitle }}</div>
         </el-tooltip>
         <div class="chart-container">
           <Line v-if="wearTrendData" :data="wearTrendData" :options="lineOptions" />
         </div>
       </div>
       <div class="page-card chart-card">
-        <el-tooltip content="近7天告警趋势" placement="top" :show-after="300">
-          <div class="page-card-title card-title-ellipsis">近7天告警趋势</div>
+        <el-tooltip :content="alertTrendTitle" placement="top" :show-after="300">
+          <div class="page-card-title card-title-ellipsis">{{ alertTrendTitle }}</div>
         </el-tooltip>
         <div class="chart-container">
           <Bar v-if="alertTrendData" :data="alertTrendData" :options="barOptions" />
@@ -124,6 +124,16 @@ const BLUE_ALPHA = 'rgba(26,109,181,0.1)'
 const PALETTE = ['#1a6db5', '#2E86DE', '#10AC84', '#EE5A24', '#F39C12', '#8E44AD']
 
 const period = ref<'today' | 'week' | 'month'>('today')
+
+// 两条趋势端点只吃 days（后端 T489 未扩 period），前端按派发单口径映射：
+// today/week 都是近 7 日（维持现状），month 30 日 —— 与后端 periodWindow 的 7/30 自然日窗口对齐。
+const trendDaysParam = computed(() => (period.value === 'month' ? 30 : 7))
+
+// 设计稿 数据概览.html:130,134 的标题是「今日」态的静态快照；默认态下这两个串与稿面逐字相同，
+// 只有切到本月才会变成「近30天」，避免选了三十年窗口还挂着「近7天」。
+const wearTrendTitle = computed(() => `近${trendDaysParam.value}天日均佩戴时长`)
+const alertTrendTitle = computed(() => `近${trendDaysParam.value}天告警趋势`)
+
 const kpi = ref<DashboardKPI | null>(null)
 const wearTrend = ref<{ date: string; avgHours: number }[]>([])
 const alertTrend = ref<{ date: string; count: number }[]>([])
@@ -226,13 +236,14 @@ function applySettled<T>(res: PromiseSettledResult<T>, set: (value: T) => void, 
 }
 
 async function loadData() {
+  const days = trendDaysParam.value
   const [kpiRes, wearRes, alertRes, teamRankRes, doctorRes, distRes] = await Promise.allSettled([
     fetchDashboardKPI(period.value),
-    fetchWearTrend(7),
-    fetchAlertTrend(7),
-    fetchTeamRanking(),
-    fetchDoctorRanking(),
-    fetchWearDistribution(),
+    fetchWearTrend(days),
+    fetchAlertTrend(days),
+    fetchTeamRanking(period.value),
+    fetchDoctorRanking(period.value),
+    fetchWearDistribution(period.value),
   ])
   const errors: string[] = []
   applySettled(kpiRes, (v) => { kpi.value = v }, errors)

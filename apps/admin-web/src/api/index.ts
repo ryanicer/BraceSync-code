@@ -88,19 +88,19 @@ export async function fetchAlertTrend(days = 7): Promise<{ date: string; count: 
   return request<{ date: string; count: number }[]>({ url: '/api/v1/admin/dashboard/alert-trend', data: { days } })
 }
 
-export async function fetchTeamRanking(): Promise<TeamRanking[]> {
-  if (USE_MOCK) { await delay(); return dashboardMock.mockTeamRanking() }
-  return request<TeamRanking[]>({ url: '/api/v1/admin/dashboard/team-ranking' })
+export async function fetchTeamRanking(period: 'today' | 'week' | 'month'): Promise<TeamRanking[]> {
+  if (USE_MOCK) { await delay(); return dashboardMock.mockTeamRanking(period) }
+  return request<TeamRanking[]>({ url: '/api/v1/admin/dashboard/team-ranking', data: { period } })
 }
 
-export async function fetchDoctorRanking(): Promise<DoctorRanking[]> {
-  if (USE_MOCK) { await delay(); return dashboardMock.mockDoctorRanking() }
-  return request<DoctorRanking[]>({ url: '/api/v1/admin/dashboard/doctor-ranking' })
+export async function fetchDoctorRanking(period: 'today' | 'week' | 'month'): Promise<DoctorRanking[]> {
+  if (USE_MOCK) { await delay(); return dashboardMock.mockDoctorRanking(period) }
+  return request<DoctorRanking[]>({ url: '/api/v1/admin/dashboard/doctor-ranking', data: { period } })
 }
 
-export async function fetchWearDistribution(): Promise<{ range: string; count: number }[]> {
-  if (USE_MOCK) { await delay(); return dashboardMock.mockWearDistribution() }
-  return request<{ range: string; count: number }[]>({ url: '/api/v1/admin/dashboard/wear-distribution' })
+export async function fetchWearDistribution(period: 'today' | 'week' | 'month'): Promise<{ range: string; count: number }[]> {
+  if (USE_MOCK) { await delay(); return dashboardMock.mockWearDistribution(period) }
+  return request<{ range: string; count: number }[]>({ url: '/api/v1/admin/dashboard/wear-distribution', data: { period } })
 }
 
 // ========== Patient / Realtime ==========

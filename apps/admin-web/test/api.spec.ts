@@ -33,12 +33,38 @@ describe('API 层（USE_MOCK 模式）', () => {
     expect(alertTrend).toHaveLength(7)
     expect(alertTrend[0]).toHaveProperty('count')
 
-    const teamRanking = await fetchTeamRanking()
+    const teamRanking = await fetchTeamRanking('today')
     expect(teamRanking[0].rank).toBe(1)
-    const doctorRanking = await fetchDoctorRanking()
+    const doctorRanking = await fetchDoctorRanking('today')
     expect(doctorRanking[0].rank).toBe(1)
-    const distribution = await fetchWearDistribution()
+    const distribution = await fetchWearDistribution('today')
     expect(distribution.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('T489：排行/分布 mock 随 period 变值，患者数列保持存量不变', async () => {
+    const week = await fetchTeamRanking('week')
+    const month = await fetchTeamRanking('month')
+    const today = await fetchTeamRanking('today')
+    expect(week[0].avgDailyWear).not.toBe(today[0].avgDailyWear)
+    expect(month[0].complianceRate).not.toBe(today[0].complianceRate)
+    // patientCount 是存量口径（后端 SQL 患者侧无日期谓词），三周期必须同值
+    expect(month.map((t) => t.patientCount)).toEqual(today.map((t) => t.patientCount))
+
+    const docWeek = await fetchDoctorRanking('week')
+    expect(docWeek[0].complianceRate).not.toBe((await fetchDoctorRanking('today'))[0].complianceRate)
+    expect(docWeek[0].patientCount).toBe(68)
+
+    const distMonth = await fetchWearDistribution('month')
+    const distToday = await fetchWearDistribution('today')
+    expect(distMonth[3].count).toBeGreaterThan(distToday[3].count)
+
+    // 趋势端点只吃 days：days=30 必须真给 30 个点（旧实现硬编码 7 条，slice 会把多出来的天数吃掉）
+    expect(await fetchWearTrend(30)).toHaveLength(30)
+    expect(await fetchAlertTrend(30)).toHaveLength(30)
+    const wear7 = await fetchWearTrend(7)
+    expect(wear7[0].date).toBe('08-05')
+    expect(wear7[6].date).toBe('08-11')
+    expect(wear7.map((d) => d.avgHours)).toEqual([7.8, 8.1, 7.9, 8.3, 8.0, 8.5, 8.2])
   })
 
   it('KPI 支持 today/week/month 三个周期', async () => {
