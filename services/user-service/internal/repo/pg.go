@@ -66,12 +66,18 @@ func (s *PGStore) GetTechByPhoneHash(ctx context.Context, phoneHash string) (*Te
 		 FROM technicians WHERE phone_hash = $1`, phoneHash)
 	var t TechLoginRow
 	var teamID *string
-	err := row.Scan(&t.TechID, &t.Name, &t.PasswordHash, &teamID, &t.Status, &t.AuthStatus)
+	// password_hash 自 000005 起可空；直接扫进 string 会让 NULL 行报错（T483），
+	// 同 team_id 一样走指针再抹平为空串。
+	var pwdHash *string
+	err := row.Scan(&t.TechID, &t.Name, &pwdHash, &teamID, &t.Status, &t.AuthStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if pwdHash != nil {
+		t.PasswordHash = *pwdHash
 	}
 	if teamID != nil {
 		t.TeamID = *teamID

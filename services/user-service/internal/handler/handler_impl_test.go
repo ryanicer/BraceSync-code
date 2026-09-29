@@ -969,6 +969,32 @@ func TestTechLoginErrors(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// T483：password_hash 为 NULL 的技师（读侧抹平为空串）登录回 401，不回 500；
+// 且响应体与「技师不存在」逐字段相同 —— 统一 401 防枚举口径对 NULL 行同样成立。
+func TestTechLoginNullPasswordHashUnified401(t *testing.T) {
+	e := newEnv(t, true, true)
+
+	// 基准：技师不存在（techLogin=nil）
+	wBase, respBase := e.do(http.MethodPost, "/api/v1/tech/login", map[string]string{
+		"phone": "13800000001", "password": "Password1!",
+	}, nil)
+	require.Equal(t, http.StatusUnauthorized, wBase.Code)
+
+	// NULL 口令技师：repo 修复后返回非 nil 行、PasswordHash 为空串
+	e.store.techLogin = &repo.TechLoginRow{
+		TechID: "T1", Name: "技师老陈", Status: "enabled", AuthStatus: "authorized",
+	}
+	w, resp := e.do(http.MethodPost, "/api/v1/tech/login", map[string]string{
+		"phone": "13800000001", "password": "Password1!",
+	}, nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, model.CodeUnauthorized, resp.Code)
+	assert.Equal(t, respBase.Code, resp.Code)
+	assert.Equal(t, respBase.Message, resp.Message)
+	assert.Equal(t, string(respBase.Data), string(resp.Data),
+		"响应体逐字段相同 ⇒ 攻击者无法用响应差异区分「无口令技师」与「账号不存在」")
+}
+
 func TestTechLoginWithoutSigner(t *testing.T) {
 	e := newEnv(t, false, true)
 	w, resp := e.do(http.MethodPost, "/api/v1/tech/login", map[string]string{
