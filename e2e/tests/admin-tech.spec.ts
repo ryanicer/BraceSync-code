@@ -121,7 +121,7 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     await expect(page.locator('.el-dialog:visible')).toHaveCount(0)
   })
 
-  test('A-TECH-03 新建技师：成功提示 + 弹窗关闭 + 列表刷新含新行 + 总数 +1，随后禁用新增行', async ({ page }) => {
+  test('A-TECH-03 新建技师：一次性凭据弹窗 + 关窗后列表刷新含新行 + 总数 +1，随后禁用新增行', async ({ page }) => {
     const marker = MARK(test.info()!.testId.replace(/[^0-9a-zA-Z]/g, '').slice(-8))
     const totalBefore = await paginationTotal(page)
     const rowsBefore = await tableRows(page).count()
@@ -137,8 +137,24 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     await expect(dialog.locator('.el-select')).toContainText(chosenTeam)
     await dialog.getByRole('button', { name: '确认创建' }).click()
 
-    await expect(adminMessage(page)).toContainText('创建成功')
-    await expect(page.locator('.el-dialog:visible')).toHaveCount(0)
+    // T480：建号即发口令 ⇒ 成功反馈是一次性凭据弹窗，不再是一句无用的「创建成功」toast。
+    // 展示的是「技师编号 + 登录手机号 + 初始密码」：技师端登录走手机号，只给编号登不进去。
+    const cred = page.locator('.el-message-box:visible').last()
+    await expect(cred).toContainText('创建成功')
+    await expect(cred.locator('p').nth(0)).toHaveText(/^技师编号：TECH-\d+$/)
+    await expect(cred.locator('p').nth(1)).toHaveText('登录手机号：13800000270')
+    const pwdLine = await cred.locator('p').nth(2).innerText()
+    expect(pwdLine, '口令行必须是「初始密码：<非空明文>」').toMatch(/^初始密码：\S+$/)
+    const shownPwd = pwdLine.replace(/^初始密码：/, '')
+    expect(shownPwd.length, `一次性口令不该是空串：${pwdLine}`).toBeGreaterThan(6)
+    // 关窗提示要在场：遗失走重置，不给二次查看入口
+    await expect(cred).toContainText('仅此一次展示')
+    await cred.getByRole('button', { name: '我已转交本人' }).click()
+    await expect(page.locator('.el-message-box:visible')).toHaveCount(0)
+
+    // 口令只活在这一次弹窗里：列表与弹窗都不该再出现它
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('.technicians')).not.toContainText(shownPwd)
 
     // 列表自动刷新：新行在位，且各列按新建语义渲染
     const row = rowByName(page, marker)
@@ -158,6 +174,39 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     await page.locator('.el-popconfirm').getByRole('button', { name: '确定' }).click()
     await expect(adminMessage(page)).toContainText('已禁用')
     await expect(row.locator('.el-tag--info')).toContainText('禁用')
+  })
+
+  test('A-TECH-09 重置密码：二次确认才发号，一次性展示新口令', async ({ page }) => {
+    // T480：口令遗失的唯一出口。取消必须先于写发生 ⇒ 取消那一腿不能改到任何东西。
+    const row = rowByName(page, '周师傅')
+    await expect(row).toHaveCount(1)
+
+    await row.getByRole('button', { name: '重置密码' }).click()
+    const boxes = page.locator('.el-message-box:visible')
+    // 取消那一腿只有一张确认框：出现第二张 = 没等确认就发了号
+    await expect(boxes).toHaveCount(1)
+    const confirm = boxes.last()
+    await expect(confirm).toContainText('确认重置密码')
+    await expect(confirm).toContainText('旧密码即时失效')
+    await confirm.getByRole('button', { name: '取消' }).click()
+    await expect(boxes).toHaveCount(0)
+
+    await row.getByRole('button', { name: '重置密码' }).click()
+    // .last()：确认框的退场动画未结束时它会与新弹窗同时 :visible，取最后一张才是弹窗本身
+    const cred = boxes.last()
+    await boxes.getByRole('button', { name: '确认' }).last().click()
+
+    await expect(cred).toContainText('重置成功')
+    await expect(cred.locator('p').nth(0)).toHaveText(/^技师编号：TECH-\d+$/)
+    // 重置态拿不到明文号码（读侧即已脱敏，T361）⇒ 展示脱敏号 + 一句「登录号＝建档手机号」
+    await expect(cred.locator('p').nth(1)).toContainText('登录手机号：138****5678')
+    await expect(cred.locator('p').nth(2)).toHaveText(/^初始密码：\S+$/)
+    await cred.getByRole('button', { name: '我已转交本人' }).click()
+    await expect(boxes).toHaveCount(0)
+
+    // 重置不动档案：姓名仍在、状态未翻面
+    await expect(row).toHaveCount(1)
+    expect((await cellTexts(row))[5], '重置口令不得改动启停状态').toBe('启用')
   })
 
   test('A-TECH-05 编辑技师：标题/回填/手机号锁定 → 改名保存 → 强制还原', async ({ page }) => {

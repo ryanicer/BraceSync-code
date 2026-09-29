@@ -260,6 +260,20 @@ type fakeStore struct {
 	setPwdCalls       int
 	lastSetPwdHash    string
 	lastSetPwdPatient string
+
+	// T480 技师重置口令：同 T477 口径，另记被重置的技师号；lastTechQuery 供「被拒请求不得触库」取证。
+	resetTechPwdErr   error
+	resetTechPwdCalls int
+	lastResetTechID   string
+	lastResetTechHash string
+	lastTechQuery     string
+}
+
+func (f *fakeStore) SetTechnicianPassword(_ context.Context, techID, passwordHash string) error {
+	f.resetTechPwdCalls++
+	f.lastResetTechID = techID
+	f.lastResetTechHash = passwordHash
+	return f.resetTechPwdErr
 }
 
 func (f *fakeStore) GetAdminByUsername(_ context.Context, _ string) (*repo.AdminRow, error) {
@@ -349,7 +363,8 @@ func (f *fakeStore) ListTechnicians(_ context.Context, _, _ int) ([]repo.Technic
 func (f *fakeStore) ListTechniciansByTeam(_ context.Context, _ string) ([]repo.TechnicianRow, error) {
 	return f.teamTechs, f.teamTechsErr
 }
-func (f *fakeStore) GetTechnician(_ context.Context, _ string) (*repo.TechnicianRow, error) {
+func (f *fakeStore) GetTechnician(_ context.Context, techID string) (*repo.TechnicianRow, error) {
+	f.lastTechQuery = techID
 	return f.tech, f.techErr
 }
 func (f *fakeStore) CreateTechnician(_ context.Context, in repo.TechInput) (*repo.TechnicianRow, error) {

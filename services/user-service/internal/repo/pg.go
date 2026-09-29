@@ -690,12 +690,19 @@ func (s *PGStore) GetTechnician(ctx context.Context, techID string) (*Technician
 	return t, nil
 }
 
-// CreateTechnician 新建技师（phone_hash 唯一约束由 uk_technicians_phone_hash 兜底）
+// CreateTechnician 新建技师（phone_hash 唯一约束由 uk_technicians_phone_hash 兜底）。
+// T480：写入 password_hash —— 此前这一列不在 INSERT 里、落库恒为 NULL，
+// 而 techLogin 比对的就是它 ⇒ 后台新建的技师登不进小程序（只有 seed 那几行能登）。
+// 不带口令的调用（如既有集成测试）仍写 NULL，不把「未设口令」洗成「空串口令」。
 func (s *PGStore) CreateTechnician(ctx context.Context, in TechInput) (*TechnicianRow, error) {
+	var pwdHash any
+	if in.PasswordHash != "" {
+		pwdHash = in.PasswordHash
+	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO technicians (tech_id, name, phone_enc, phone_hash, team_id)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		in.TechID, in.Name, in.PhoneEnc, in.PhoneHash, in.TeamID)
+		`INSERT INTO technicians (tech_id, name, phone_enc, phone_hash, team_id, password_hash)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		in.TechID, in.Name, in.PhoneEnc, in.PhoneHash, in.TeamID, pwdHash)
 	if err != nil {
 		return nil, err
 	}
@@ -723,6 +730,14 @@ func (s *PGStore) ToggleTechnician(ctx context.Context, techID, status string) (
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// SetTechnicianPassword T480 重置登录口令（POST /api/v1/admin/technicians/:techId/reset-password）：
+// 只换 password_hash 这一列，其余列不动（启停/认证状态/团队归属都不该被重置密码顺带改掉）。
+// 新哈希一写，旧哈希即取不回 ⇒ 旧口令当场失效。存在性判定排在调用之前（handler 先 GetTechnician）。
+func (s *PGStore) SetTechnicianPassword(ctx context.Context, techID, passwordHash string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE technicians SET password_hash = $2 WHERE tech_id = $1`, techID, passwordHash)
+	return err
 }
 
 // TechPhoneHashTaken 手机号哈希查重（excludeTechID 编辑时排除自身；新建传空串）

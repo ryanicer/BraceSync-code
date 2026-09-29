@@ -61,6 +61,11 @@ export const CONTRACT_MAP = {
   // T477 患者设密响应：与上面医护 reset-password 同形（明文口令只在这一个响应里出现一次），
   // 契约侧不声明该信封——给契约加 password 键等于鼓励前端留存明文。
   PatientPasswordSetDTO: { ts: null, reason: '写响应：一次性返回新口令，契约未声明该信封（同 DoctorAccountResetDTO 口径）' },
+  // T480 技师口令两条写响应：与上面医护/患者同形（明文只在这一个响应里出现一次）。
+  // 🔴 不给契约加 initialPassword/password 键 —— 那等于鼓励前端留存明文；
+  // 页面按 DoctorAccountCreateResponse 的先例做本地交叉类型。
+  TechnicianCreateDTO: { ts: null, reason: '写响应：整行 TechnicianDTO + 一次性初始口令，契约未声明该信封（同 DoctorAccountCreateDTO 口径）' },
+  TechnicianPasswordResetDTO: { ts: null, reason: '写响应：一次性返回新口令，契约未声明该信封（同 PatientPasswordSetDTO 口径）' },
 
   // ===== user-service：入参方向且契约未声明请求类型（本卡只判响应侧键名/可选性） =====
   CreatePatientRequestDTO: { ts: null, reason: '入参：契约未声明请求类型' },

@@ -426,6 +426,13 @@
     {
       "role": "ROLE_ADMIN",
       "method": "POST",
+      "path": "/api/v1/admin/technicians/S1/reset-password",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
       "path": "/api/v1/alerts/S1/process",
       "deny": false,
       "why": "admin 全放行"

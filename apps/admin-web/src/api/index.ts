@@ -396,9 +396,39 @@ export interface CreateTechnicianInput {
   teamId: string
 }
 
-export async function createTechnicianApi(input: CreateTechnicianInput): Promise<Technician> {
+export interface CreateTechnicianResult {
+  account: Technician
+  /** 一次性凭据：只在创建响应里出现这一次，页面关窗后不再有入口（T480，同医护账号口径） */
+  initialPassword: string
+}
+
+/** 创建响应 = 整行 Technician + initialPassword（后端 TechnicianCreateDTO 是 TechnicianDTO 的展开） */
+type TechnicianCreateResponse = Technician & { initialPassword?: string }
+
+export async function createTechnicianApi(input: CreateTechnicianInput): Promise<CreateTechnicianResult> {
   if (USE_MOCK) { await delay(); return orgMock.mockCreateTechnician(input) }
-  return request<Technician>({ url: '/api/v1/admin/technicians', method: 'POST', data: input as unknown as Record<string, unknown> })
+  const res = await request<TechnicianCreateResponse>({
+    url: '/api/v1/admin/technicians',
+    method: 'POST',
+    data: input as unknown as Record<string, unknown>,
+  })
+  const { initialPassword, ...account } = res
+  // 服务端 bcrypt 后不留明文，只在本响应出现一次；取不到即当缺失，不拿空串冒充「密码为空」
+  return { account, initialPassword: initialPassword ?? '' }
+}
+
+/**
+ * T480 重置技师登录口令：服务端重新随机发号、旧口令即时失效、明文只在本次响应返回一次。
+ * 技师端登录用「手机号 + 口令」⇒ 弹窗要连手机号一起给，否则拿到口令也不知道登哪个账号。
+ */
+export async function resetTechnicianPasswordApi(techId: string): Promise<string> {
+  if (USE_MOCK) { await delay(); return orgMock.mockResetTechnicianPassword(techId) }
+  const res = await request<{ techId: string; password: string }>({
+    url: `/api/v1/admin/technicians/${techId}/reset-password`,
+    method: 'POST',
+    data: {},
+  })
+  return res.password
 }
 
 export async function updateTechnicianApi(techId: string, input: Partial<CreateTechnicianInput>): Promise<Technician> {

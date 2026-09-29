@@ -38,9 +38,10 @@
         <el-table-column label="创建时间" width="110">
           <template #default="{ row }">{{ row.createdAt ? row.createdAt.slice(0, 10) : '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button size="small" link type="warning" @click="askReset(row)">重置密码</el-button>
             <el-popconfirm
               :title="row.status === 'enabled' ? `确认禁用技师 ${row.name}？` : `确认启用技师 ${row.name}？`"
               @confirm="toggle(row)"
@@ -100,14 +101,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, h, onMounted } from 'vue'
 import { userErrorCopy } from '@bracesync/shared-utils'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PhoneState, Technician, Team } from '@bracesync/shared-types'
 import { PHONE_PLACEHOLDER, PHONE_RE, phoneDisplay } from '../../utils/phoneField'
 import {
   fetchTechnicians, toggleTechnicianApi, teamNameOf,
-  createTechnicianApi, updateTechnicianApi, fetchTeams,
+  createTechnicianApi, updateTechnicianApi, resetTechnicianPasswordApi, fetchTeams,
 } from '../../api'
 
 const list = ref<Technician[]>([])
@@ -204,20 +205,70 @@ async function submitForm() {
     if (editing.value) {
       await updateTechnicianApi(editingId.value, { name: form.value.name.trim(), teamId: form.value.teamId })
       ElMessage.success('修改成功')
+      formVisible.value = false
+      loadData()
     } else {
-      await createTechnicianApi({
+      // 创建态的手机号是管理员刚填的明文，本就在页面手里 ⇒ 弹窗用它当「登录账号」
+      const loginPhone = form.value.phone.trim()
+      const res = await createTechnicianApi({
         name: form.value.name.trim(),
-        phone: form.value.phone,
+        phone: loginPhone,
         teamId: form.value.teamId,
       })
-      ElMessage.success('创建成功')
+      formVisible.value = false
+      await loadData()
+      // T480：口令只在这一次响应里出现，用一次性弹窗替代原先那句无用的「创建成功」toast
+      await showCredentials(res.account.techId, `登录手机号：${loginPhone}`, res.initialPassword, '创建成功')
     }
-    formVisible.value = false
-    loadData()
   } catch (e: unknown) {
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
   } finally {
     submitting.value = false
+  }
+}
+
+/**
+ * 一次性凭据弹窗（T480，与医护账号页同规则）：关窗后页面上再没有入口可看这个口令。
+ *
+ * 账号行由调用方给可展示形态：创建时前端握着明文手机号；重置时读侧只有脱敏号
+ * （T361 起服务端即已掩码）⇒ 重置那次必须显式说明「登录号＝建档手机号」，
+ * 否则管理员拿着口令却不知道登哪个号。
+ */
+function showCredentials(techId: string, accountLine: string, password: string, title: string): Promise<void> {
+  return ElMessageBox({
+    title,
+    message: h('div', { class: 'cred-box' }, [
+      h('p', `技师编号：${techId}`),
+      h('p', accountLine),
+      h('p', `初始密码：${password}`),
+      h('p', { class: 'cred-note' }, '仅此一次展示，关闭后不可再看。密码由系统随机生成，请当面 / 即时转交本人；如遗失，用列表行内「重置密码」按同一规则再生成一次。'),
+    ]),
+    confirmButtonText: '我已转交本人',
+    // 关窗（X / Esc）不是操作失败：口令已经展示过了，拒绝对 Promise 无意义 ⇒ 吞掉，
+    // 免得调用方的 catch 把「我点了 X」弹成「操作失败」。
+  }).then(() => undefined).catch(() => undefined)
+}
+
+async function askReset(row: Technician) {
+  try {
+    await ElMessageBox.confirm(
+      `将为 ${row.name}（${row.techId}） 重新随机生成登录密码，确认后一次性展示、旧密码即时失效。重置动作本身计入操作日志。`,
+      '确认重置密码',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const pwd = await resetTechnicianPasswordApi(row.techId)
+    await showCredentials(
+      row.techId,
+      `登录手机号：${phoneDisplay(row.phoneMasked)}（建档时登记的号码，列表按 §9.2 脱敏展示）`,
+      pwd,
+      '重置成功',
+    )
+  } catch (e: unknown) {
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '操作失败' }))
   }
 }
 
