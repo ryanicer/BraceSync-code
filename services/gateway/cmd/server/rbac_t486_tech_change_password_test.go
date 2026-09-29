@@ -106,7 +106,7 @@ func TestRBAC_T486_NoToken401(t *testing.T) {
 
 	cases := map[string]map[string]string{
 		"无 Authorization": nil,
-		"非法 token":       {"Authorization": "Bearer not.a.jwt"},
+		"非法 token":        {"Authorization": "Bearer not.a.jwt"},
 		"错误 secret": {"Authorization": "Bearer " + signTestJWT(t, "t486-wrong-secret",
 			"TECH0002", roleTech, time.Now().Add(time.Hour).Unix())},
 		"过期 token": {"Authorization": "Bearer " + signTestJWT(t, testJWTSecretMain,

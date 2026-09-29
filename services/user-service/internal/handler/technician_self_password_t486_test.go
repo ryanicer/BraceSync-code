@@ -171,7 +171,7 @@ func TestT486_WindowBoundaryAccepted(t *testing.T) {
 		pwd  string
 		want int
 	}{
-		{"ab1def", techPasswordMinLen},         // 6
+		{"ab1def", techPasswordMinLen},           // 6
 		{"ab1defghijklmnop", techPasswordMaxLen}, // 16
 	} {
 		require.Len(t, []rune(tc.pwd), tc.want, "夹具长度必须与声称的边界一致：%s", tc.pwd)
@@ -268,8 +268,8 @@ func TestT486_BodyKeysAreCamelCase(t *testing.T) {
 
 // t486RuleTable 跨语言对拍夹具（前端改密页与本端点各读同一份，判据分叉时两侧腿同时判红）。
 type t486RuleTable struct {
-	MinLength int    `json:"minLength"`
-	MaxLength int    `json:"maxLength"`
+	MinLength int `json:"minLength"`
+	MaxLength int `json:"maxLength"`
 	Cases     []struct {
 		Password string `json:"password"`
 		OK       bool   `json:"ok"`
