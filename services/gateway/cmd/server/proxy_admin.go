@@ -105,10 +105,11 @@ func registerServiceRoutes(api *gin.RouterGroup, targetURL, serviceName string, 
 // userServiceRoutes T030 admin 域用户侧端点（patients/teams/doctors/technicians/feedbacks/
 // orthosis/feeling-logs/roles/settings/login，全部 user-service 归属）
 var userServiceRoutes = []proxyRoute{
-	{http.MethodPost, "/auth/login"},       // T030 #9 admin 登录（免 JWT 白名单）
-	{http.MethodPost, "/tech/login"},       // T037 技师登录（免 JWT 白名单）
-	{http.MethodPost, "/patient/login"},    // T037 患者登录（免 JWT 白名单）
-	{http.MethodPost, "/patient/wx-login"}, // T069 患者微信小程序登录（免 JWT 白名单）
+	{http.MethodPost, "/auth/login"},           // T030 #9 admin 登录（免 JWT 白名单）
+	{http.MethodPost, "/auth/change-password"}, // T487 后台自助改密（需 JWT，staffOnly 矩阵）
+	{http.MethodPost, "/tech/login"},           // T037 技师登录（免 JWT 白名单）
+	{http.MethodPost, "/patient/login"},        // T037 患者登录（免 JWT 白名单）
+	{http.MethodPost, "/patient/wx-login"},     // T069 患者微信小程序登录（免 JWT 白名单）
 	// T085 患者微信绑定 + Admin 档案维护
 	{http.MethodPost, "/patient/bind-phone"},                      // 患者绑定手机号（scope=bind）
 	{http.MethodPost, "/admin/patients/:patientId/unbind-wechat"}, // 解绑微信
