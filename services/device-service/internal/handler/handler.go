@@ -529,6 +529,8 @@ func (h *Handler) createInstall(c *gin.Context) {
 		fail(c, appErr)
 		return
 	}
+	// T485：核心业务数据的写操作须在审计面留痕；留痕失败只记日志，不反转这条已经落库的新建。
+	h.auditInstallRecord(c, rec.InstallID, installAuditDescCreate, nil)
 	ok(c, gin.H{"installId": strconv.FormatInt(rec.InstallID, 10)})
 }
 
@@ -590,6 +592,9 @@ func (h *Handler) updateInstallMeta(c *gin.Context) {
 		fail(c, appErr)
 		return
 	}
+	// T485：回填成功后留痕，detail 带本次实际提交的列名（全空请求也留一行，形状同 user-service
+	// 的表驱动埋点：成功即留痕）。留痕失败只记日志，不反转这条已经落库的更新。
+	h.auditInstallRecord(c, id, installAuditDescUpdate, changedInstallMetaColumns(notes, sigURL, wifiStatus))
 	ok(c, nil)
 }
 
