@@ -158,4 +158,11 @@ func TestITPatientAvgWear(t *testing.T) {
 	// 只有昨天的数据；窗口内应有一天的数据，平均分钟 > 0
 	assert.Greater(t, len(avgs), 0)
 	assert.Greater(t, avgs[0], 0.0)
+
+	// T489 反证锚点：起点若被 SQL 忽略（写死或不带谓词），换成「明天起」的窗口不会变空。
+	// 分布/排行的 period 支持全部落在这个 fromDate 谓词上，service 层已保证三个周期传不同起点。
+	tomorrow := time.Date(to.Year(), to.Month(), to.Day()+1, 0, 0, 0, 0, model.CSTZone()).Format("2006-01-02")
+	emptyAvgs, err := r.PatientAvgWearMinutes(ctx, tomorrow, model.ScopeAll())
+	require.NoError(t, err)
+	assert.Empty(t, emptyAvgs, "起点晚于种子数据的窗口必须为空，否则 fromDate 谓词失效")
 }

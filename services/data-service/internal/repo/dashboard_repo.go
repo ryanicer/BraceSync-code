@@ -69,10 +69,12 @@ type DashboardStore interface {
 	// AlertTrend 按业务时区（Asia/Shanghai）切日的告警日计数
 	AlertTrend(ctx context.Context, from time.Time, scope model.TeamScope) ([]TrendRow, error)
 	// TeamRanking 团队排行（fromDate 起窗口；wearTargetMin 为达标判定分钟数）
+	// T489：fromDate 由 service 按 period 换算（today/week/month），SQL 侧只认起点，
+	// 因此三条排行的 patient_count 取自 patients 关联、不带日期谓词 = 存量口径。
 	TeamRanking(ctx context.Context, fromDate string, wearTargetMin int, scope model.TeamScope) ([]RankingRow, error)
 	// DoctorRanking 医生排行（fromDate 起窗口；wearTargetMin 为达标判定分钟数）
 	DoctorRanking(ctx context.Context, fromDate string, wearTargetMin int, scope model.TeamScope) ([]RankingRow, error)
-	// PatientAvgWearMinutes 每位患者窗口内日均佩戴分钟（佩戴分布输入）
+	// PatientAvgWearMinutes 每位患者窗口内日均佩戴分钟（佩戴分布输入，窗口 = fromDate 起）
 	PatientAvgWearMinutes(ctx context.Context, fromDate string, scope model.TeamScope) ([]float64, error)
 }
 
