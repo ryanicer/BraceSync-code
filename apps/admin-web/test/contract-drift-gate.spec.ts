@@ -37,6 +37,11 @@ import {
   unbindPatientWechatApi,
   teamNameOf,
   doctorNameOf,
+  fetchTeamRanking,
+  fetchDoctorRanking,
+  fetchWearDistribution,
+  fetchWearTrend,
+  fetchAlertTrend,
 } from '../src/api'
 import {
   createMedicalAccountApi,
@@ -426,6 +431,63 @@ describe('T338 医护账号真实模式守卫', () => {
     expect(req.url).toBe('/api/v1/admin/doctors/D0001/reset-password')
     expect(req.method).toBe('POST')
     expect(pwd).toBe('Brzzzz2345ab#7')
+  })
+})
+
+// ===== T489 数据概览 period 真实模式守卫 =====
+// dashboard-period-t489.spec.ts 把整个 src/api 都 mock 掉了，那张只证「页面发了什么参数」；
+// 这里 USE_MOCK=false，证「api 层到底把 period 拼进了请求」——少了 data:{period} 这一格，
+// mock 模式一切正常、真上线三块区域仍是写死近 7 日（就是 Boss 报的那个现场）。
+describe('T489 dashboard period 真实模式守卫', () => {
+  beforeEach(() => {
+    requestMock.mockClear()
+  })
+
+  it('排行/分布三端点带 period 查询参数，且不带 days', async () => {
+    requestMock.mockResolvedValueOnce([])
+    await fetchTeamRanking('month')
+    expect(lastRequest()).toEqual({
+      url: '/api/v1/admin/dashboard/team-ranking',
+      data: { period: 'month' },
+    })
+
+    requestMock.mockResolvedValueOnce([])
+    await fetchDoctorRanking('week')
+    expect(lastRequest()).toEqual({
+      url: '/api/v1/admin/dashboard/doctor-ranking',
+      data: { period: 'week' },
+    })
+
+    requestMock.mockResolvedValueOnce([])
+    await fetchWearDistribution('today')
+    expect(lastRequest()).toEqual({
+      url: '/api/v1/admin/dashboard/wear-distribution',
+      data: { period: 'today' },
+    })
+
+    // 反向：这三条端点后端不吃 days，前端夹带会静默失效（period 缺省时后端按 today）
+    for (const req of (requestMock.mock.calls as unknown as [{ data?: Record<string, unknown> }][])) {
+      expect(req[0].data).not.toHaveProperty('days')
+    }
+  })
+
+  it('两条趋势端点仍只发 days，不发 period（后端未扩参数，夹带会被静默忽略）', async () => {
+    requestMock.mockResolvedValueOnce([])
+    await fetchWearTrend(30)
+    expect(lastRequest()).toEqual({
+      url: '/api/v1/admin/dashboard/wear-trend',
+      data: { days: 30 },
+    })
+
+    requestMock.mockResolvedValueOnce([])
+    await fetchAlertTrend(30)
+    expect(lastRequest()).toEqual({
+      url: '/api/v1/admin/dashboard/alert-trend',
+      data: { days: 30 },
+    })
+    for (const req of (requestMock.mock.calls as unknown as [{ data?: Record<string, unknown> }][])) {
+      expect(req[0].data).not.toHaveProperty('period')
+    }
   })
 })
 
