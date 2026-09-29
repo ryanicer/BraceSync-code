@@ -268,6 +268,8 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/technicians", h.listTechnicians)
 		v1.POST("/admin/technicians", h.createTechnician)
 		v1.PUT("/admin/technicians/:techId", h.updateTechnician)
+		// T480：口令遗失的唯一出口（同族 doctor reset-password），收口 admin-only
+		v1.POST("/admin/technicians/:techId/reset-password", h.resetTechnicianPassword)
 		v1.POST("/technicians/:techId/toggle", h.toggleTechnician)
 
 		v1.GET("/feedbacks", h.listFeedbacks)
@@ -1113,15 +1115,27 @@ func (h *Handler) createTechnician(c *gin.Context) {
 		fail(c, model.ErrConflict("phone already registered"))
 		return
 	}
+	// T480：初始口令服务端随机生成（复用医护侧同一个发号器，不另造第二种口令形态），
+	// 只落 bcrypt 哈希、明文仅在本次响应出现一次 —— 否则这一行永远登不进技师端小程序。
+	password, err := genDoctorPassword()
+	if err != nil {
+		fail(c, model.ErrInternal("generate password failed"))
+		return
+	}
+	pwdHash, err := GenerateBcryptHash([]byte(password))
+	if err != nil {
+		fail(c, model.ErrInternal("hash password failed"))
+		return
+	}
 	row, err := h.store.CreateTechnician(c.Request.Context(), repo.TechInput{
 		TechID: newTechID(), Name: strings.TrimSpace(req.Name),
-		PhoneEnc: enc, PhoneHash: hash, TeamID: req.TeamID,
+		PhoneEnc: enc, PhoneHash: hash, TeamID: req.TeamID, PasswordHash: pwdHash,
 	})
 	if err != nil {
 		fail(c, model.ErrInternal("create technician failed"))
 		return
 	}
-	ok(c, h.toTechDTO(*row))
+	ok(c, model.TechnicianCreateDTO{TechnicianDTO: h.toTechDTO(*row), InitialPassword: password})
 }
 
 // updateTechnician PUT /api/v1/admin/technicians/:techId —— 编辑（phone 缺省保留原值）

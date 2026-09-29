@@ -160,6 +160,9 @@ var auditRoutes = map[string]auditRoute{
 	http.MethodPost + " /api/v1/admin/technicians":          {auditActionDataModify, "technician", "", "创建技师账号"},
 	http.MethodPut + " /api/v1/admin/technicians/:techId":   {auditActionDataModify, "technician", "techId", "编辑技师账号 %s"},
 	http.MethodPost + " /api/v1/technicians/:techId/toggle": {auditActionDataModify, "technician", "techId", "启停技师账号 %s"},
+	// T480：desc 不带口令也不带哈希（同 doctor reset-password / T477 患者设密口径）。
+	// handler 里 setAuditTrace 会把这条覆盖成更明确的一次性口令说明，表内这行只在中间件兜底路径生效。
+	http.MethodPost + " /api/v1/admin/technicians/:techId/reset-password": {auditActionDataModify, "technician", "techId", "重置技师账号 %s 的登录口令"},
 
 	// T314 医护账号四类写操作（PRD §7D.10（6）「本页全部写操作计入操作日志」）。
 	// 🔴 description 不带密码：随机初始密码只在 HTTP 响应里一次性出现，不留进 audit_logs.detail。

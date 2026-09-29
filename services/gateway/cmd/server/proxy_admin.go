@@ -139,8 +139,9 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/admin/doctors/:doctorId/reset-password"}, // 重置密码
 	{http.MethodPost, "/admin/doctors/:doctorId/status"},         // 禁用/启用
 	{http.MethodGet, "/technicians"},
-	{http.MethodPost, "/admin/technicians"},        // T030 #4 新建
-	{http.MethodPut, "/admin/technicians/:techId"}, // T030 #4 编辑
+	{http.MethodPost, "/admin/technicians"},                        // T030 #4 新建
+	{http.MethodPut, "/admin/technicians/:techId"},                 // T030 #4 编辑
+	{http.MethodPost, "/admin/technicians/:techId/reset-password"}, // T480 重置登录口令（一次性返回新密码）
 	{http.MethodPost, "/technicians/:techId/toggle"},
 	{http.MethodGet, "/feedbacks"},
 	{http.MethodPost, "/feedbacks"},                     // T311 患者端配网失败自动存档

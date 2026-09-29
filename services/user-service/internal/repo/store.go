@@ -430,13 +430,18 @@ type FeelingLogAdminFilter struct {
 	TeamScoped bool
 }
 
-// TechInput 技师新建/编辑入参（PhoneEnc/PhoneHash 由 service/handler 层准备）
+// TechInput 技师新建/编辑入参（PhoneEnc/PhoneHash 由 service/handler 层准备）。
+// PasswordHash 只参与新建：编辑走 UpdateTechnician，全字段覆盖但不碰 password_hash
+// （改口令是 T480 reset-password 端点的专属职责，编辑档案不许顺带换掉登录凭据）。
 type TechInput struct {
 	TechID    string // 新建时由 handler 生成；编辑时忽略
 	Name      string
 	PhoneEnc  []byte
 	PhoneHash string
 	TeamID    *string
+	// T480：新建时由 handler 服务端随机生成初始口令并 bcrypt 后传入。
+	// 此前 INSERT 不带该列 ⇒ 列恒为 NULL，而 techLogin 比对的就是它，新建技师永远登不进小程序。
+	PasswordHash string
 }
 
 // PatientInput 创建患者入参（T057 写功能契约；T069 扩展可空 phone 支持微信-only 用户）。
@@ -549,6 +554,9 @@ type Store interface {
 	UpdateTechnician(ctx context.Context, techID string, in TechInput) (*TechnicianRow, error)
 	ToggleTechnician(ctx context.Context, techID, status string) (bool, error)
 	TechPhoneHashTaken(ctx context.Context, phoneHash, excludeTechID string) (bool, error)
+	// SetTechnicianPassword T480 重置登录口令：只换 password_hash，旧口令即时失效。
+	// 存在性判定排在调用之前（handler 先 GetTechnician），本方法不做 404 判定。
+	SetTechnicianPassword(ctx context.Context, techID, passwordHash string) error
 
 	// 医护账号写通道（T314，PRD §7D.10）：一行跨 admins + doctors 两表，创建同事务写两表。
 	// sentinel：ErrDoctorNotFound(404) / ErrDoctorNoAccount(409，档案未绑登录账号) /

@@ -92,6 +92,9 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPut, "/api/v1/admin/technicians/:techId"),
 	rbacOf(http.MethodDelete, "/api/v1/admin/technicians/:techId"), // 未注册代理方法，补注册防绕过（见 registerAPIProxies）
 	rbacOf(http.MethodPost, "/api/v1/technicians/:techId/toggle"),
+	// T480 技师重置登录口令：能给他人设登录凭据 = 能登他人账号，与 doctor reset-password 同级，
+	// 收口 admin-only（不登记 = gateway 默认拒绝，且 TestRBAC_T190_AllAdminRoutesAreGated 会红）。
+	rbacOf(http.MethodPost, "/api/v1/admin/technicians/:techId/reset-password"),
 
 	// /teams 页（团队/成员/医生）
 	rbacOf(http.MethodGet, "/api/v1/teams"),
