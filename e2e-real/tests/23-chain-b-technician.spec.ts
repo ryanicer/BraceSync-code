@@ -19,7 +19,7 @@ import { test, expect, type Page, type Response } from '@playwright/test'
  *   type=pressure_fluctuation 属展示侧隐藏（packages/shared-utils/src/index.ts:109，界面不展示、数据不删）。
  *   于是「待处理 + 已处理 = 全部」这个二态直觉在现网不成立：processing 那行落在两个 chip 之外，
  *   而卡片脚注又按 `processStatus === 'pending' ? '待处理' : '已处理'` 把它显示成「已处理」。
- *   这是 T433 已登记的三态映射遗留（pages/alerts/index.vue:109-120 与 utils/alertDisplay.ts 末尾注释），
+ *   这是 T433 已登记的三态映射遗留（pages/alerts/index.vue:57 的三元式 + utils/alertDisplay.ts:51 的注），
  *   本用例不修它、也不假装它不存在：判据写成「全部 = 待处理 + 已处理 + processing 行数」，
  *   并显式钉住「脚注显示为已处理的行数 = 已处理 chip 行数 + processing 行数」——
  *   摘掉隐藏过滤、改掉 chip 判据或改掉三态映射都会判红，而不是悄悄换口径。
@@ -30,7 +30,7 @@ import { test, expect, type Page, type Response } from '@playwright/test'
  *   不需要凭据也能跑，所以缺凭据时这一腿仍会先把「表单真的驱动了部署产物」证一遍再撞凭据门。
  *
  * 零写：全链只发 GET 与 POST /api/v1/tech/login。登录成功只签令牌、失败统一 401，
- *   两条出口在 handler.go:558-600 里都排在任何库表写之前（技师域没有删除路由；B3 采集与 B5 处理备注
+ *   两条出口在 handler.go:596-640 techLogin 里都排在任何库表写之前（行号按合并头 3792f79 实测；技师域没有删除路由；B3 采集与 B5 处理备注
  *   属不可逆段，本轮不做）。每条 test 收尾都跑 assertZeroBusinessWrites() 自证，而不是靠注释声明。
  *
  * 同源约束：技师端产物把 API 基址在构建期写死（apps/tech-miniapp/.env.staging = http://hbksd.com.cn:81，
@@ -40,7 +40,7 @@ import { test, expect, type Page, type Response } from '@playwright/test'
  *   正文与首页同长（SPA fallback，本轮实测），所以这里断的是渲染出来的页面本身（uni-page 的 data-page）。
  *
  * 不动既有面：不改 real-helpers.ts、不改 playwright.real.config.ts、不碰 apps/tech-miniapp 的任何源码，
- *   也不动既有 16 条单页回归的断言语义（链 B 独立成这一个新文件）。CI 侧只往
+ *   既有 e2e-real 用例的断言语义一条没动（链 B 独立成这一个新文件，实测 --list 只 +3 条）。CI 侧只往
  *   .github/workflows/e2e.yml 的「Run e2e-real against staging」env 块补两个 secret 注入；
  *   缺了那两行，值到不了用例，登录腿必红 —— 那是设计意图，不是偶发。
  */
@@ -260,8 +260,13 @@ async function driveLoginForm(page: Page, net: NetLog, account: string, password
   await expect(inputs.nth(0), '手机号应真的写进了控件').toHaveValue(account)
   await expect(inputs.nth(1), '口令应真的写进了控件').toHaveValue(password)
   const checkbox = page.locator('.agree-row .checkbox')
-  await checkbox.click()
-  await expect(checkbox, '勾协议后 .checkbox 应带上 checkbox-checked').toHaveClass(/checkbox-checked/)
+  // 勾选态存在应用 store 里且登录 401 后不重置：第二次进登录页它可能已是勾上的，再点一次会把它 toggle 回未勾（CI 23.1 实红）
+  const agreeClassBefore = (await checkbox.getAttribute('class')) ?? ''
+  if (!agreeClassBefore.includes('checkbox-checked')) await checkbox.click()
+  await expect(
+    checkbox,
+    `勾协议后 .checkbox 应带上 checkbox-checked（进门时 class="${agreeClassBefore}"）`,
+  ).toHaveClass(/checkbox-checked/)
   const waiting = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/tech/login', { timeout: 25_000 })
   await page.locator('.btn-primary').click()
   return waiting
@@ -316,7 +321,7 @@ function assertZeroBusinessWrites(net: NetLog, testId: string): void {
   const offenders = net.writes.filter((w) => w.line !== ALLOWED_WRITE)
   expect(
     offenders,
-    `${testId} 零写自查：链 B 只允许 ${ALLOWED_WRITE}（成功只签令牌、失败统一 401，两条出口都在任何库表写之前，handler.go:558-600），实得非 GET 明细=${JSON.stringify(net.writes)}`,
+    `${testId} 零写自查：链 B 只允许 ${ALLOWED_WRITE}（成功只签令牌、失败统一 401，两条出口都在任何库表写之前，handler.go:596-640），实得非 GET 明细=${JSON.stringify(net.writes)}`,
   ).toEqual([])
   expect([...net.origins], `${testId} 同源自查：技师端应用发出的请求应全部来自产物内写死的源`).toEqual([H5_ORIGIN])
   console.log(
@@ -507,6 +512,27 @@ test.describe('23-链 B 技师端（T462 S5）', () => {
     // 跨页：去安装记录再回告警页（告警页在首页无入口，回它只能 hash 直达，正是 T433 缺陷四的现网实况）
     await gotoTechPage(page, PAGE_RECORDS, 'pages/records/index', '.record-card', net)
     await gotoTechPage(page, PAGE_ALERTS, 'pages/alerts/index', '.alert-card', net)
+    // uni-app H5 保留页面实例：hash 直达一个已访问过的页面不会再发 GET（CI 23.3 实红：回页采不到接口侧）。
+    // 整页 reload 逼一次真请求，判据反而更严 —— 断的是「刷新回来仍是同一会话里的同一份数据」。
+    resetCapturedResponses(net)
+    const refetch = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/alerts', { timeout: 25_000 })
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await refetch
+    await expect(page.locator('uni-page[data-page="pages/alerts/index"]'), '刷新后应仍落在告警页').toHaveCount(1, {
+      timeout: 25_000,
+    })
+    await expect(page.locator('.alert-card').first(), '刷新后告警列表应重新渲染出行').toBeVisible({ timeout: 25_000 })
+    // 页面按 pageSize=50 逐页取满（现网 93 条 ⇒ 两跳）。第一跳落地就往下走会让「接口侧行数」少一页，
+    // 于是下面那句逐行对平变成随机红，所以先等它把 total 取满。
+    await expect
+      .poll(
+        async () => {
+          const c = await capturePaged<AlertRow>(net, '/api/v1/alerts', '23.3 回页取满中')
+          return c.rows.length >= c.total ? c.rows.length : 0
+        },
+        { message: '23.3 回页：刷新后页面应把整份告警重新取满（采集到的行数达到接口 total）', timeout: 25_000, intervals: [500, 1000] },
+      )
+      .toBeGreaterThan(0)
     const captured2 = await capturePaged<AlertRow>(net, '/api/v1/alerts', '23.3 回页')
     const visible2 = captured2.rows.filter((r) => !HIDDEN_ALERT_TYPES.includes(r.type))
     const counts2 = parseCountSubtitle(await page.locator('.page-subtitle').innerText())

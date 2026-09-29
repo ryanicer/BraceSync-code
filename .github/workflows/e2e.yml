@@ -265,7 +265,7 @@ jobs:
     #     本条不再走「PUT 被拒即跳过」分支 ⇒ 每次 run 都会真写一次并还原
     #   · T462 S5 链 B（tests/23-chain-b-technician.spec.ts）：写动作 0 行。整条链只发 GET 与两条
     #     POST /api/v1/tech/login —— 假凭据那条必 401（user-service 失败分支无写、无锁定），
-    #     真凭据那条成功也只签一个 JWT（handler.go:558-600 判完即 return，不落库）⇒ 无脏数据可还原。
+    #     真凭据那条成功也只签一个 JWT（handler.go:596-640 techLogin 判完即 return，不落库）⇒ 无脏数据可还原。
     #     该链缺 TECHE2E_TECH_ACCOUNT / TECHE2E_TECH_PASSWORD 时判红而不跳过，是设计意图（PM 2598 丙案），
     #     不是本文件漏配；不可逆的 B3（安装采集写入）/ B5（告警 process）本轮根本没接进 CI。
     # 不可逆的用例在代码里就 test.skip 掉了，CI 放开不了（要放开须 PM 裁定后删那行 skip）：
