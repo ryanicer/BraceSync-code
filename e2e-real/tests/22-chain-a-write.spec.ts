@@ -736,7 +736,7 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
 
     // ── 10) 反证：这条链真的按顺序打了 staging，且 UI 腿只有那四笔写 ──
     expect(net, '应真的发出过登录请求（BASE_URL 打空也会让上面全绿）').toContain(
-      'POST /api/v1/auth/login',
+      'POST /api/v1/auth/login T462M1',
     )
     // 通道分离：node 侧 callApi 建的那条团队不该出现在页面请求里。这条红了就说明
     // page.request 也会进 page.on('request') ⇒ 下面那条「UI 写了什么」的精确集合失去意义，
@@ -834,7 +834,7 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
     expect(
       net,
       `应捕获到解绑那一条 POST（UI 腿没发出去＝成功文案来自别处），序列=${net.join(' → ')}`,
-    ).toContain(`POST /api/v1/admin/patients/${created.patientId}/unbind-wechat`)
+    ).toContain(`POST /api/v1/admin/patients/${created.patientId}/unbind-wechat T462M4`)
 
     // 留痕两态分开记：before.wechatBound=false 是「服务端确认它没绑过」，
     // 写成 null 意味着那次只读探测失败（admin_patient.go:70-87 的 auditBoundLabel/auditBool 口径），
@@ -949,8 +949,8 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
         const goneTeam = await callApi(page, 'GET', `/api/v1/teams/${t.teamId}`, { token })
         expect(
           goneTeam.code,
-          `团队 ${t.teamId} 删除后详情应回 code=10404（getTeam，handler.go:950-964），实得 status=${goneTeam.status} code=${goneTeam.code}`,
-        ).toBe(10404)
+          `团队 ${t.teamId} 删除后详情应回 T462M5c code=10404（getTeam，handler.go:950-964），实得 status=${goneTeam.status} code=${goneTeam.code}`,
+        ).toBe(10407)
         createdTeams.splice(createdTeams.indexOf(t), 1)
       }
 

@@ -373,6 +373,12 @@ test.describe('23-链 B 技师端（T462 S5）', () => {
     // 成功腿
     const data = await loginAsTechnician(page, net, '23.1 成功腿')
     expect(data.techId, '签出的 techId 应非空（与首页顶栏工号同源那一格已在 loginAsTechnician 里断过）').toBeTruthy()
+    // T462M B3 注入：页内发一条无路由的非 GET（网关 404，业务表零写），看零写判据抓不抓到
+    await page.evaluate(() =>
+      fetch('/api/v1/tech/t462-probe-nonexistent', { method: 'PATCH' })
+        .then((r) => r.status)
+        .catch(() => -1),
+    )
     assertZeroBusinessWrites(net, '23.1')
     expect(net.writes.filter((w) => w.line === ALLOWED_WRITE).length, '非 GET 应恰为两条登录 POST：失败腿与成功腿各一条').toBe(2)
   })
