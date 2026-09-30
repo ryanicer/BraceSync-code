@@ -9,6 +9,7 @@
 //	GET  /api/v1/patients/:patientId/health-reports 健康报告列表（T030）
 //	GET  /api/v1/patients/:patientId/daily-wear      患者日佩戴聚合（T076）
 //	GET  /api/v1/admin/dashboard/*         admin Dashboard 6 聚合查询端点（T033）
+//	POST /internal/mock-frame        T498 受控 mock 帧注入（ALLOW_MOCK_INGEST 门控，服务间/运维直连，不经网关）
 //	GET  /healthz                      存活探针
 //	GET  /metrics                      Prometheus 采集端点（架构 §6.1，T010）
 //
@@ -132,6 +133,9 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/patients/:patientId/daily-wear", h.getDailyWear)         // T076
 		h.registerDashboardRoutes(v1)                                     // T033 admin Dashboard 6 端点
 	}
+
+	// T498：服务间/运维直连，与 alert-service 的 /internal/evaluate 同一层级（不经网关）。
+	r.POST("/internal/mock-frame", h.injectMock)
 	return r
 }
 
@@ -185,6 +189,24 @@ func (h *Handler) uploadBatch(c *gin.Context) {
 		return
 	}
 	resp, appErr := h.svc.UploadBatch(c.Request.Context(), c.GetHeader(headerDeviceID), &req)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	ok(c, resp)
+}
+
+// injectMock T498 受控 mock 帧注入。开关状态由 service 层判定（每个请求查一次，
+// 关时 403 且在校验/触库之前），本函数只负责解体与取源 IP。
+// IP 是审计行里唯一客观的「谁干的」线索：内网直连拿到的是调用方容器地址，
+// 不是自报字段，故即便 body 的 operator 造假也仍可反查。
+func (h *Handler) injectMock(c *gin.Context) {
+	var req model.MockFrameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	resp, appErr := h.svc.InjectMock(c.Request.Context(), &req, c.ClientIP())
 	if appErr != nil {
 		fail(c, appErr)
 		return

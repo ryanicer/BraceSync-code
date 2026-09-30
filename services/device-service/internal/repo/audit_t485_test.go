@@ -77,8 +77,11 @@ func TestT485_TargetTypeIsRegisteredInUpstreamVocabulary(t *testing.T) {
 // 而登记处只是一行注释 —— 补一个类型容易，下一个类型照样会漏。这里把注释与写入值对平：
 // 写了没登记（红）、登记了没写（红）。列无 CHECK，这是唯一能拦住词表分叉的地方。
 //
-// 写入侧只有三个来源（grep INSERT INTO audit_logs 实测：user-service repo/audit.go 一处，
-// device-service repo/audit_t448.go、audit_t485.go 两处），词形来源对应三种写法，见 patterns。
+// 写入侧有四个来源（grep INSERT INTO audit_logs 实测：user-service repo/audit.go 一处，
+// device-service repo/audit_t448.go、audit_t485.go 两处，data-service repo/mock_t498.go 一处），
+// 词形来源对应三种写法，见 patterns。
+// T498 起把 data-service 也扫进来：它的注入留痕是新写点，不扫就是「代码在写、词表看不见」
+// 这个本卡要拦的形状在测试自己身上复发。
 func TestT485_UpstreamVocabularyIsTheWholeWrittenSet(t *testing.T) {
 	root := repoRootT485(t)
 	src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(userServiceAuditRepoFile)))
@@ -109,7 +112,7 @@ func TestT485_UpstreamVocabularyIsTheWholeWrittenSet(t *testing.T) {
 	}
 	written := map[string]bool{}
 	scanned := 0
-	for _, svc := range []string{"services/user-service/internal", "services/device-service/internal"} {
+	for _, svc := range []string{"services/user-service/internal", "services/device-service/internal", "services/data-service/internal"} {
 		err := filepath.Walk(filepath.Join(root, filepath.FromSlash(svc)), func(p string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 				return err

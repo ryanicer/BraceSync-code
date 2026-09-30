@@ -44,19 +44,33 @@ type RecordRepo struct {
 // NewRecordRepo 创建 RecordRepo
 func NewRecordRepo(pool *pgxpool.Pool) *RecordRepo { return &RecordRepo{pool: pool} }
 
+// insertRecordSQL 单帧落库。第 24 列 ingest_source 是 T498 的来源印章：
+// 走参数而不是写死字面量，因为同一个语句形状被真实上报与受控注入两条链路共用
+// （注入侧见本包 mock_t498.go，那里整条事务里也要用同一份列清单）。
 const insertRecordSQL = `
 INSERT INTO pressure_records (device_id, patient_id, ts,
   p01,p02,p03,p04,p05,p06,p07,p08,p09,p10,
-  p11,p12,p13,p14,p15,p16,p17,p18,p19,p20)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+  p11,p12,p13,p14,p15,p16,p17,p18,p19,p20, ingest_source)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 ON CONFLICT (device_id, ts) DO NOTHING
 RETURNING record_id`
 
+// rowQuerier 收 pgxpool.Pool 与 pgx.Tx 的公共形状：注入链路要在事务里跑同一条 INSERT。
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // InsertRecord 实现幂等单帧落库（幂等键 (device_id, ts)，架构 §3.5）
 func (r *RecordRepo) InsertRecord(ctx context.Context, deviceID, patientID string, f PendingFrame) (int64, bool, error) {
-	args := frameArgs(deviceID, patientID, f)
+	return insertRecord(ctx, r.pool, deviceID, patientID, f, model.IngestReal)
+}
+
+// insertRecord 幂等单帧落库的共用实现；source 只能是 model.IngestReal / IngestMock
+// （库侧 CHECK 000033 兜住非法值，两条调用点各自显式表态）。
+func insertRecord(ctx context.Context, q rowQuerier, deviceID, patientID string, f PendingFrame, source string) (int64, bool, error) {
+	args := append(frameArgs(deviceID, patientID, f), source)
 	var recordID int64
-	err := r.pool.QueryRow(ctx, insertRecordSQL, args...).Scan(&recordID)
+	err := q.QueryRow(ctx, insertRecordSQL, args...).Scan(&recordID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil // 幂等命中：重复帧
 	}
@@ -67,6 +81,8 @@ func (r *RecordRepo) InsertRecord(ctx context.Context, deviceID, patientID strin
 }
 
 // batchInsertColumns 批量插入列数：device_id, patient_id, ts, p01..p20
+// ingest_source 不占参数位（写死 'real'）：补传通道只有设备自己会打，T498 的注入端点
+// 刻意不开批量形态，少一处「注入帧被当成补传帧盖章」的分支。
 const batchInsertColumns = 23
 
 // buildBatchInsertSQL 构造 n 帧的多行幂等 INSERT 语句（占位符 $1..$n*23）
@@ -74,7 +90,7 @@ func buildBatchInsertSQL(n int) string {
 	var sb strings.Builder
 	sb.WriteString(`INSERT INTO pressure_records (device_id, patient_id, ts,
   p01,p02,p03,p04,p05,p06,p07,p08,p09,p10,
-  p11,p12,p13,p14,p15,p16,p17,p18,p19,p20) VALUES `)
+  p11,p12,p13,p14,p15,p16,p17,p18,p19,p20, ingest_source) VALUES `)
 	for i := 0; i < n; i++ {
 		if i > 0 {
 			sb.WriteByte(',')
@@ -87,7 +103,7 @@ func buildBatchInsertSQL(n int) string {
 			}
 			fmt.Fprintf(&sb, "$%d", base+j+1)
 		}
-		sb.WriteByte(')')
+		sb.WriteString(`,'real')`)
 	}
 	sb.WriteString(` ON CONFLICT (device_id, ts) DO NOTHING RETURNING ts`)
 	return sb.String()

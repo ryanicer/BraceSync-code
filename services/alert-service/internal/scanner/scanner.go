@@ -49,6 +49,10 @@ type NewAlert struct {
 	ThresholdValue float64
 	ActualValue    float64
 	Ts             time.Time
+	// IngestSource 触发本告警的帧来源（T498）。空 → 落库写 NULL：
+	// 扫描器派生告警（佩戴中断/时长不足）读的是设备状态与日聚合，无逐帧来源可证，
+	// 故一律留空而非填 real（见迁移 000033 的 COMMENT）。
+	IngestSource string
 }
 
 // DeviceStore 设备仓储契约（repo 层实现）
@@ -216,6 +220,7 @@ func (s *Scanner) ScanDailyWear(ctx context.Context, targetDay time.Time, target
 			ThresholdValue: result.ThresholdValue,
 			ActualValue:    result.ActualValue,
 			Ts:             alertTs,
+			// IngestSource 刻意留空（落 NULL）：日聚合派生，无逐帧来源可证（T498）
 		})
 		if err != nil {
 			report.WearErrors++
@@ -336,7 +341,8 @@ func (s *Scanner) raiseInterrupt(ctx context.Context, dev Device, lastSeen, now 
 		Detail:         result.Message,
 		ThresholdValue: result.ThresholdValue,
 		ActualValue:    result.ActualValue,
-		Ts:             now,
+		// IngestSource 刻意留空（落 NULL）：读 Redis lastseen 派生，无逐帧来源可证（T498）
+		Ts: now,
 	})
 	if err != nil {
 		s.log.Error().Err(err).Str("device_id", dev.DeviceID).Msg("scan: create alert failed")

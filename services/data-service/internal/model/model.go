@@ -210,6 +210,45 @@ type BatchResponse struct {
 }
 
 // ─────────────────────────────────────────────────────────────
+// T498 受控 mock 注入（POST /internal/mock-frame）
+// ─────────────────────────────────────────────────────────────
+
+// 来源印章取值（pressure_records.ingest_source / alerts.ingest_source，迁移 000033）。
+// 库侧 CHECK 只放行这两个值 + NULL；NULL = 本卡之前的存量行与 seed 手工示例帧，
+// 刻意不给列 DEFAULT，也不回填（000033 up.sql 里写了理由）。
+const (
+	IngestReal = "real" // 设备真实上报链路（两条上报端点 + alert:pending 补偿）
+	IngestMock = "mock" // 受控注入端点写入
+)
+
+// MockFrameRequest 注入请求体。字段形状对齐 SingleFrameRequest（points 同为 mN 量纲，
+// 同样经 toPendingFrame ÷1000 归一），差别有两处：
+//   - DeviceID 必填：注入端点不经 gateway，没有 X-Device-Id 身份头，目标设备只能显式给；
+//   - Reason 必填：它同时是 audit_logs.detail 里「为什么要造这帧」的唯一答案。
+type MockFrameRequest struct {
+	DeviceID  string    `json:"device_id"`
+	Timestamp int64     `json:"timestamp"` // 采集时刻，Unix 秒，与真实上报同一合法区间校验
+	Points    []float64 `json:"points"`
+	Battery   int       `json:"battery"`
+	FaultCode int       `json:"fault_code,omitempty"`
+	Reason    string    `json:"reason"`
+	// Operator 注入方自报的操作者标识。/internal/* 不经 gateway，服务端无从验证身份，
+	// 只能原样落进审计 detail.operator；客观那一半是同事务的 ip 列。
+	Operator string `json:"operator,omitempty"`
+}
+
+// MockFrameResponse 注入成功响应 data
+type MockFrameResponse struct {
+	// RecordID 本次注入帧的 id；Duplicated=true 时是**冲突那条既有帧**的 id
+	// （可能是真帧，也可能是既往注入帧 —— 它的来源落在审计 detail 的
+	// conflicting_ingest_source，响应体不带，见 repo.MockFrameResult 的注释）。
+	RecordID     string `json:"record_id"`
+	Duplicated   bool   `json:"duplicated"`    // 幂等命中：本次未新增帧，只补了一行审计
+	IngestSource string `json:"ingest_source"` // 恒为 IngestMock，回显给调用方以便对拍
+	AuditLogID   int64  `json:"audit_log_id"`  // 与注入帧同事务写入的 audit_logs.log_id
+}
+
+// ─────────────────────────────────────────────────────────────
 // 领域实体与查询 DTO（对齐 shared-types PressureRecord / SensorPoint）
 // ─────────────────────────────────────────────────────────────
 
