@@ -217,6 +217,8 @@ async function bindManual() {
       firmwareVersion: 'v1.2.3',
       patientId: patId,
       wifiSsid: null,
+      // T508 契约新键：刚绑定的设备面积尚未在后台配置 ⇒ null
+      contactAreaCm2: null,
       bindTime: new Date().toISOString(),
       status: bindResp.status || 'unbound',
       lastReportAt: null,

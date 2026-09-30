@@ -57,13 +57,14 @@ func (s *stubDevices) GetBinding(_ context.Context, deviceID string) (string, st
 	return pid, "online", true, nil
 }
 
-func (s *stubDevices) GetDeviceByPatient(_ context.Context, patientID string) (string, string, bool, error) {
+func (s *stubDevices) GetDeviceByPatient(_ context.Context, patientID string) (string, string, *float64, bool, error) {
 	for dev, pid := range s.patientByDevice {
 		if pid == patientID {
-			return dev, "online", true, nil
+			// T508：夹具设备一律未配置面积（返回 nil），走 kPa 不可换算的 fail-closed 态
+			return dev, "online", nil, true, nil
 		}
 	}
-	return "", "", false, nil
+	return "", "", nil, false, nil
 }
 
 type stubConfigs struct{}

@@ -343,6 +343,45 @@ func BuildSensorPoints(points [PointCount]float32, th PressureThresholds) []Sens
 // HeatmapMaxN 热力图色阶上界默认值（T203 ÷10 后 6N）。
 const HeatmapMaxN = 6.0
 
+// KpaFromN 展示层 N 到 kPa 的换算（T508，PRD §7A.2.1 三）。三步序，逐字对齐稿面图：
+// ①归零（负值按 0，零点漂移不折算成负压力）→ ②kPa = N / area(cm²) × 10 →
+// ③取整 round half up（k 非负，math.Round 的四舍五入即 half up）。
+// 边界（裁定 b）：0 N 仍 0，真非零最小 1 kPa。
+//
+// 返回 nil = 不可换算，前端显示「--」，这是 fail-closed 而不是 0：
+// 面积缺失 / ≤0 / NaN / Inf、以及被除后仍非有限或超出可显示整数范围。
+// 0.64 cm² 只是后台配置项的默认值，**不在这里补位** —— 库里没配就是没配。
+//
+// 只在展示层用：落库、告警判档、聚合恒为 N（PRD 裁定四）。
+func KpaFromN(n float64, areaCm2 *float64) *int {
+	if areaCm2 == nil {
+		return nil
+	}
+	a := *areaCm2
+	if !(a > 0) || math.IsInf(a, 0) { // NaN > 0 恒假，一并挡掉
+		return nil
+	}
+	// 不用 math.Max：它对 (0, NaN) 返回 0，会把 NaN 洗成合法零值
+	zeroed := n
+	if zeroed < 0 {
+		zeroed = 0
+	}
+	k := zeroed / a * 10
+	if math.IsNaN(k) || math.IsInf(k, 0) {
+		return nil
+	}
+	if k == 0 {
+		zero := 0
+		return &zero
+	}
+	// 面积下界不设（写侧只挡非正数），极端配置会把结果推出 int32；溢出成负数是假读数，不如「--」
+	if k > math.MaxInt32 {
+		return nil
+	}
+	v := int(math.Max(1, math.Round(k)))
+	return &v
+}
+
 // HeatmapPoint 热力图 20 点单格（RealtimeSnapshot.pressureHeatmap 元素）
 type HeatmapPoint struct {
 	PointID       string  `json:"pointId"`       // P01–P20
@@ -351,10 +390,14 @@ type HeatmapPoint struct {
 	Label         string  `json:"label"`         // RrCc，如 R3C2
 	PressureValue float64 `json:"pressureValue"` // 压力 N
 	IsMax         bool    `json:"isMax"`         // 是否为当前最大点（前端 ★ + 脉冲用）
+	// PressureKpa T508 展示档：同一响应内派生，不落库；nil = 面积未配置/非法，前端显示「--」。
+	// IsMax 与色阶分档仍按 PressureValue（N）判，kPa 只改数值文本。
+	PressureKpa *int `json:"pressureKpa"`
 }
 
-// BuildHeatmap 将 20 点压力值构造为 HeatmapPoint 数组（唯一 IsMax 标记）
-func BuildHeatmap(points [PointCount]float32) []HeatmapPoint {
+// BuildHeatmap 将 20 点压力值构造为 HeatmapPoint 数组（唯一 IsMax 标记）；
+// areaCm2 为设备有效受压面积（devices.contact_area_cm2，T508），用于派生每点 kPa 展示值。
+func BuildHeatmap(points [PointCount]float32, areaCm2 *float64) []HeatmapPoint {
 	out := make([]HeatmapPoint, PointCount)
 	maxIdx, maxV := 0, float32(-1)
 	for i, v := range points {
@@ -365,6 +408,7 @@ func BuildHeatmap(points [PointCount]float32) []HeatmapPoint {
 			Col:           col,
 			Label:         label,
 			PressureValue: float64(v),
+			PressureKpa:   KpaFromN(float64(v), areaCm2),
 			IsMax:         false,
 		}
 		if v > maxV {
@@ -614,6 +658,15 @@ type RealtimeSnapshot struct {
 	// 供前端色阶上界与分级渲染用——写死常量会与 sys_configs 漂移（T203 前端即因写死 60/45 滞后一个量级）。
 	HeatmapMaxN   float64 `json:"heatmapMaxN"`
 	PressureHighN float64 `json:"pressureHighN"`
+	// T508 双单位（N/kPa）展示档：三字段全部同源于 device-service 写的 devices.contact_area_cm2，
+	// 只在本响应内派生，不落库、不进告警与聚合（PRD 裁定四）。
+	//   - ContactAreaCm2：当前绑定设备的面积；null = 未配置（前端「未配置面积，暂无法换算」)
+	//   - HeatmapMaxKpa：色阶上界的 kPa 档文本值，与 HeatmapMaxN 同一次换算；不可换算为 null
+	//   - 每点 kPa 见 HeatmapPoint.PressureKpa
+	//
+	// 换算失败一律是 null 而不是 0：0 kPa 是「读到零压力」，与「配置缺失」在稿面图上是两回事。
+	ContactAreaCm2 *float64 `json:"contactAreaCm2"`
+	HeatmapMaxKpa  *int     `json:"heatmapMaxKpa"`
 }
 
 // Dashboard 常量 (shared between service + integration tests)

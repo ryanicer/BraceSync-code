@@ -117,6 +117,11 @@ type Store interface {
 	UpdateInstallMeta(ctx context.Context, installID int64, notes, signatureURL *string, wifiStatus *string) error
 	// SetWifiSSID 维护 devices.wifi_ssid（架构 §2.3 配网状态）
 	SetWifiSSID(ctx context.Context, deviceID, ssid string) error
+	// SetContactArea T508：整写 devices.contact_area_cm2（压力点有效受压面积，cm2）。
+	// 唯一落库通路；非正数（含 NaN）由 service 层挡，这里不重复校验。
+	// 设备不存在返回 ErrNotFound —— 与 SetWifiSSID 同族形状（RowsAffected==0 判查无），
+	// 不把「设备不存在」与「已被删除」分档，避免设备号存在性成为可探测面。
+	SetContactArea(ctx context.Context, deviceID string, areaCm2 float64) error
 	// WriteWifiClearAudit T448：清除设备 WiFi（纯 BLE）的留痕，只写 audit_logs 一行，
 	// 不动 devices / install_records 任何列。实现见 repo/audit_t448.go。
 	WriteWifiClearAudit(ctx context.Context, in WifiClearAuditInput) error
@@ -152,10 +157,10 @@ func (r *PGStore) GetDevice(ctx context.Context, deviceID string) (*model.Device
 	d := &model.Device{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT device_id, model, COALESCE(firmware_version, ''), device_secret_enc, secret_version,
-		        patient_id, wifi_ssid, bind_time, status, last_report_at, created_at, updated_at
+		        patient_id, wifi_ssid, contact_area_cm2, bind_time, status, last_report_at, created_at, updated_at
 		 FROM devices WHERE device_id = $1`, deviceID,
 	).Scan(&d.DeviceID, &d.Model, &d.FirmwareVersion, &d.DeviceSecretEnc, &d.SecretVersion,
-		&d.PatientID, &d.WifiSSID, &d.BindTime, &d.Status, &d.LastReportAt, &d.CreatedAt, &d.UpdatedAt)
+		&d.PatientID, &d.WifiSSID, &d.ContactAreaCm2, &d.BindTime, &d.Status, &d.LastReportAt, &d.CreatedAt, &d.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -619,6 +624,23 @@ func (r *PGStore) SetWifiSSID(ctx context.Context, deviceID, ssid string) error 
 		 WHERE install_id = (SELECT install_id FROM install_records WHERE device_id = $1 ORDER BY install_id DESC LIMIT 1)`,
 		deviceID); err != nil {
 		return fmt.Errorf("set wifi status: %w", err)
+	}
+	return nil
+}
+
+// SetContactArea T508：整写 devices.contact_area_cm2（压力点有效受压面积，cm2）。
+// 与 SetWifiSSID 同族：RowsAffected==0 判查无，不区分「设备不存在」与「设备被删」。
+// 面积只有展示层换算消费（kPa = N / area × 10），判档/告警恒为 N，故本列不参与任何写侧校验。
+// 本方法是唯一的列写通路：NULL（未配置）只能由迁移/注册时的「不写该列」产生，
+// 没有回退成 NULL 的通路 —— PRD §7D.5 的配置项只有设置动作，没有清除动作。
+func (r *PGStore) SetContactArea(ctx context.Context, deviceID string, areaCm2 float64) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE devices SET contact_area_cm2 = $2, updated_at = now() WHERE device_id = $1`, deviceID, areaCm2)
+	if err != nil {
+		return fmt.Errorf("set contact area: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

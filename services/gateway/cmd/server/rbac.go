@@ -260,6 +260,12 @@ var staffOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/rebind"),
 	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/unbind"),
 	rbacOf(http.MethodPost, "/api/v1/devices/:deviceId/wifi"),
+	// T508 有效受压面积配置：登记在 staffOnly 而非 techAdminOnly，与本族其余八条写端点逐字同形 ——
+	// 真正的收口（技师+管理员 allow-list）在 device-service assertDeviceWriteRole，网关这层只挡患者。
+	// 理由是「拒绝形状要一致」：医护/客服打这八条中的任何一条，拿到的都是设备域的 20403 + 同一句中文
+	// 短句；若这一条改在网关 403，同一族越权在网关侧与服务侧会是两种报文（口径同 T387 N-c「网关未动」，
+	// 是否把整族上收到 techAdminOnly 仍是那条待裁项，不在本卡擅自变更）。
+	rbacOf(http.MethodPut, "/api/v1/devices/:deviceId/contact-area"),
 	rbacOf(http.MethodPost, "/api/v1/baselines"),
 	// T407：基线只读（与 POST /baselines 同域；给内部复算 avg_pressure 用，患者无此需求）
 	rbacOf(http.MethodGet, "/api/v1/devices/:deviceId/baseline"),

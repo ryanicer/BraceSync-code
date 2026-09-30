@@ -417,6 +417,23 @@ func (s *DeviceService) SetWifiSSID(ctx context.Context, deviceID, ssid string) 
 	return nil
 }
 
+// SetContactArea T508：整写 devices.contact_area_cm2（压力点有效受压面积，cm2）。
+//
+// 校验只有 >0 一条：面积是 kPa 换算的除数（kPa = N / area × 10），0 或负数会把
+// 「配了个非法值」变成读侧的除零/负压强，而这类值一旦落库只能靠再写一次纠正。
+// NaN 由同一个谓词一并挡掉（NaN > 0 恒假）；上界不设——PRD §7A.2.1 只裁了下界语义，没给量程。
+//
+// 默认值 0.64 属后台配置项默认值，不在服务端补位（未配置就是 NULL，读侧 fail-closed）。
+func (s *DeviceService) SetContactArea(ctx context.Context, deviceID string, areaCm2 float64) *model.AppError {
+	if !(areaCm2 > 0) {
+		return model.ErrInvalidParam("contact area must be greater than 0")
+	}
+	if err := s.store.SetContactArea(ctx, deviceID, areaCm2); err != nil {
+		return mapRepoErr(err, model.ErrNotFound("device %q not registered", deviceID))
+	}
+	return nil
+}
+
 // ReportWifiCleared T448：「设备 WiFi 已清除」的留痕上报。
 //
 // 清除动作走 BLE（技师端向 B513 写 0x02、等 B512 notify=0），没有也不该有专用端点（T446 §二），

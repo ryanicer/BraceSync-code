@@ -82,6 +82,10 @@ export interface Device {
   /** 绑定患者姓名（T030：GET /api/v1/devices 后端 join 返回；未绑定为 null） */
   patientName?: string | null;
   wifiSsid: string | null;
+  /** 压力点有效受压面积 cm²（T508 / PRD §7A.2.1，后台设备管理配置）。
+   *  null = 未配置 ⇒ kPa 档 fail-closed 显示「--」；🔴 前端不得用 0.64 之类常量补位
+   *  （0.64 是配置项默认值，不是数据），也不得反推自整片 40mm×50mm 外形尺寸。 */
+  contactAreaCm2: number | null;
   bindTime: string | null;
   status: 'online' | 'offline' | 'abnormal' | 'unbound';  // 对齐 DB 状态机
   lastReportAt: string | null;

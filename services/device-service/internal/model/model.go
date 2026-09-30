@@ -147,11 +147,15 @@ type Device struct {
 	SecretVersion   int
 	PatientID       *string // NULL=未绑定
 	WifiSSID        *string
-	BindTime        *time.Time
-	Status          string
-	LastReportAt    *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// ContactAreaCm2 压力点有效受压面积（cm2，T508 / PRD §7A.2.1）。
+	// NULL = 未配置（000034 刻意不带 DEFAULT）——kPa 档据此 fail-closed 显示 --，
+	// 读侧禁止用 0.64 之类的常量默认值补位（那是配置项默认值，不是数据）。
+	ContactAreaCm2 *float64
+	BindTime       *time.Time
+	Status         string
+	LastReportAt   *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // Binding device_bindings 表行（当前绑定权威源，架构 §4.3）
@@ -266,9 +270,11 @@ type DeviceDTO struct {
 	FirmwareVersion string  `json:"firmwareVersion"`
 	PatientID       *string `json:"patientId"`
 	WifiSsid        *string `json:"wifiSsid"`
-	BindTime        *string `json:"bindTime"`
-	Status          string  `json:"status"`
-	LastReportAt    *string `json:"lastReportAt"`
+	// ContactAreaCm2 T508：null = 未配置（前端 kPa 档显示 --），0 也是非法值不会出现
+	ContactAreaCm2 *float64 `json:"contactAreaCm2"`
+	BindTime       *string  `json:"bindTime"`
+	Status         string   `json:"status"`
+	LastReportAt   *string  `json:"lastReportAt"`
 }
 
 func fmtTs(t *time.Time) *string {
@@ -287,6 +293,7 @@ func (d *Device) ToDTO() DeviceDTO {
 		FirmwareVersion: d.FirmwareVersion,
 		PatientID:       d.PatientID,
 		WifiSsid:        d.WifiSSID,
+		ContactAreaCm2:  d.ContactAreaCm2,
 		BindTime:        fmtTs(d.BindTime),
 		Status:          d.Status,
 		LastReportAt:    fmtTs(d.LastReportAt),

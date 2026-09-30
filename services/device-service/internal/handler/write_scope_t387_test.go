@@ -6,9 +6,11 @@
 //
 // T404 在本族补第八条：POST /api/v1/devices 设备注册。判定序、放行面与拒绝形状与这七条逐字同形，
 // 于是下面判据一、二里的条数按八条计（注册那条的脏数据面是「任意 deviceId 无归属幂等入库」）。
+// T508 再补第九条：PUT /api/v1/devices/:deviceId/contact-area 有效受压面积配置 —— 同款形状，
+// 于是本文件的条数按九条计。
 //
 // 本文件守四件事（卡面判据二、三）：
-//  1. 医护 / 客服 / 患者 / 身份缺失 / 未知角色 → 403，且八条端点的写仓储与读探测计数增量均为 0
+//  1. 医护 / 客服 / 患者 / 身份缺失 / 未知角色 → 403，且九条端点的写仓储与读探测计数增量均为 0
 //     （判定排在 JSON 解析与任何仓储访问之前）；
 //  2. 反证：技师与运营管理员对同一组端点照常 200，各自的目标写方法恰好落库一次；
 //  3. 拒绝形状与「资源根本不存在」逐字同形 ⇒ deviceId / installId 存在性不作为探测面；
@@ -50,7 +52,7 @@ const (
 )
 
 // t387DefaultRole 给**既有用例**的共享请求夹具补默认身份：仅当这条请求打在本卡新收口的
-// 写端点上（T387 七条 + T404 第八条注册）、且调用方没显式给 X-Role 时，按技师代发。
+// 写端点上（T387 七条 + T404 第八条注册 + T508 第九条面积配置）、且调用方没显式给 X-Role 时，按技师代发。
 //
 // 为什么按路径判定而不是无条件补：handler_http_test / install_*_test / t299 / t356 里的
 // 夹具测的是技师安装流程的业务行为（操作人一律 TECH-*），期望值不该因本卡逐条改写；
@@ -70,8 +72,9 @@ func t387DefaultRole(method, path string, headers map[string]string) map[string]
 	return out
 }
 
-// t387GatedWritePath 与 write_scope_t387.go 的八条挂载点一一对应（GET 安装记录/设备详情不在其列）。
+// t387GatedWritePath 与 write_scope_t387.go 的九条挂载点一一对应（GET 安装记录/设备详情不在其列）。
 // 第八条是 T404 补的 POST /api/v1/devices 注册：它不带 /:deviceId 前缀，只能按整串精确匹配。
+// 第九条是 T508 补的 PUT /api/v1/devices/:deviceId/contact-area：PUT 分支此前只有安装记录回填一条。
 func t387GatedWritePath(method, path string) bool {
 	switch method {
 	case http.MethodPost:
@@ -87,13 +90,16 @@ func t387GatedWritePath(method, path string) bool {
 			}
 		}
 	case http.MethodPut:
-		return strings.HasPrefix(path, "/api/v1/install-records/")
+		if strings.HasPrefix(path, "/api/v1/install-records/") {
+			return true
+		}
+		return strings.HasSuffix(path, "/contact-area") && strings.HasPrefix(path, "/api/v1/devices/")
 	}
 	return false
 }
 
-// t387Store 计数壳：包住 testutil.FakeStore，记录十条写方法（T448 起含清除留痕，T485 起含安装记录留痕）
-// 与三条只读探测的调用次数。
+// t387Store 计数壳：包住 testutil.FakeStore，记录十一条写方法（T448 起含清除留痕，T485 起含安装记录留痕，
+// T508 起含面积配置）与三条只读探测的调用次数。
 // 拒绝路径的硬判据就是这张计数表增量全 0 —— 返回 403 但已经落过库，等于没拦。
 type t387Store struct {
 	*testutil.FakeStore
@@ -177,6 +183,13 @@ func (s *t387Store) Unbind(ctx context.Context, deviceID, operatorID string) (bo
 func (s *t387Store) SetWifiSSID(ctx context.Context, deviceID, ssid string) error {
 	s.writes["SetWifiSSID"]++
 	return s.FakeStore.SetWifiSSID(ctx, deviceID, ssid)
+}
+
+// SetContactArea T508 新增的面积写：纳入拒绝路径计数表 —— 与上一格同理，
+// 身份门禁放行前这一列也必须一格不落（面积一旦被改，kPa 展示档整片漂移）。
+func (s *t387Store) SetContactArea(ctx context.Context, deviceID string, areaCm2 float64) error {
+	s.writes["SetContactArea"]++
+	return s.FakeStore.SetContactArea(ctx, deviceID, areaCm2)
 }
 
 func (s *t387Store) CreateInstall(ctx context.Context, rec *model.InstallRecord) (int64, error) {
@@ -313,7 +326,7 @@ func t387Install(t *testing.T, st *t387Store, deviceID string) int64 {
 	return id
 }
 
-// t387Endpoints 设备域收口的写端点：T387 七条 + T404 注册（第八条）。absent=true 时把资源号换成
+// t387Endpoints 设备域收口的写端点：T387 七条 + T404 注册（第八条）+ T508 面积配置（第九条）。absent=true 时把资源号换成
 // 不存在的号（注册那条的资源号在 body 里，不在路径上），供「拒绝形状与查无同形」那条判据复用同一张表。
 func t387Endpoints() []t387Ep {
 	dev := func(absent bool) string {
@@ -377,6 +390,16 @@ func t387Endpoints() []t387Ep {
 				d := dev(absent)
 				t387Register(t, st, d)
 				return "/api/v1/devices/" + d + "/wifi", map[string]string{"ssid": "AP-T387"}
+			},
+		},
+		{
+			// T508 第九条：有效受压面积配置。面积值本身不是资源号，越权面是「把别人的设备
+			// 换算分母改掉 ⇒ kPa 展示档整片漂移」，所以现场只需一台已注册设备 + 一个合法正数。
+			name: "contact-area", method: http.MethodPut, write: "SetContactArea",
+			prepare: func(t *testing.T, st *t387Store, absent bool) (string, any) {
+				d := dev(absent)
+				t387Register(t, st, d)
+				return "/api/v1/devices/" + d + "/contact-area", map[string]any{"contactAreaCm2": 0.8}
 			},
 		},
 		{
@@ -525,6 +548,7 @@ func TestT387_DenyPrecedesBodyParsing(t *testing.T) {
 		{http.MethodPost, "/api/v1/devices"},
 		{http.MethodPost, "/api/v1/devices/" + t387Device + "/bind"},
 		{http.MethodPost, "/api/v1/devices/" + t387Device + "/wifi"},
+		{http.MethodPut, "/api/v1/devices/" + t387Device + "/contact-area"},
 		{http.MethodPost, "/api/v1/install-records"},
 		{http.MethodPut, "/api/v1/install-records/abc"},
 		{http.MethodPost, "/api/v1/baselines"},
@@ -535,6 +559,9 @@ func TestT387_DenyPrecedesBodyParsing(t *testing.T) {
 
 		status, msg, _ := t387Req(t, r, tc.method, tc.path, roleDoctor, t387DoctorUID, "{not-json")
 		assert.Equal(t, http.StatusForbidden, status, "%s %s → %s", tc.method, tc.path, msg)
-		assert.Zero(t, st.snapshot().writes["Bind"]+st.snapshot().writes["CreateInstall"])
+		// T508 起把面积写也计入这一格：非法 body 若先被解析并落库，403 也会照发（本端点没有
+		// 「body 非法但已写过」的通路，写上这个和才真看得见）。
+		assert.Zero(t, st.snapshot().writes["Bind"]+st.snapshot().writes["CreateInstall"]+
+			st.snapshot().writes["SetContactArea"])
 	}
 }
