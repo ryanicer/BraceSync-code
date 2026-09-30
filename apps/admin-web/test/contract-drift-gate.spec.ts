@@ -88,6 +88,8 @@ const deviceRow: Device = {
   firmwareVersion: '1.0.0',
   patientId: null,
   wifiSsid: null,
+  // T508：null = 面积未配置（Go 侧无 omitempty ⇒ 键恒在），与本行未绑定状态同形
+  contactAreaCm2: null,
   bindTime: null,
   status: 'unbound',
   lastReportAt: null,

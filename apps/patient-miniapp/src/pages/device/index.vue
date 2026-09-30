@@ -114,6 +114,8 @@ async function refreshDevice() {
           firmwareVersion: (snap as { device?: { firmwareVersion?: string } }).device?.firmwareVersion || '-',
           patientId,
           wifiSsid: (snap as { device?: { wifiSsid?: string } }).device?.wifiSsid || '-',
+          // T508：快照顶层的 contactAreaCm2（面积未配置为 null），本页只透传不换算
+          contactAreaCm2: (snap as { contactAreaCm2?: number | null }).contactAreaCm2 ?? null,
           bindTime: (snap as { device?: { bindTime?: string } }).device?.bindTime || new Date().toISOString(),
           status: ((snap.status ?? 'offline') as Device['status']) || 'offline',
           lastReportAt: (snap as { device?: { lastReportAt?: string } }).device?.lastReportAt || new Date().toISOString(),

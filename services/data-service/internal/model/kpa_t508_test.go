@@ -60,8 +60,9 @@ func TestT508_KpaFromN_NegativeZeroesFirst(t *testing.T) {
 	assert.Equal(t, 16, t508Kpa(t, 1, area), "归零只作用于负数本身，同号正数那格不受牵连")
 }
 
-// PRD 表 0.014 N 那格显示值写 0，稿面图 kpaOf 现文是 Math.max(1, Math.round(k))；
-// 本实现按稿面（设计稿口径高于 PRD 表），并已把「真非零最小 1 kPa」作为待裁项登记在卡上。
+// PRD 裁定 b（Boss 2026-09-30 08:58:12，V3.37 已入 PRD）：真非零值在 kPa 档最小显示
+// 1 kPa，归零后本就是 0 N 仍显示 0 —— 与稿面图 kpaOf 的 Math.max(1, Math.round(k)) 同形。
+// 🔴 该步只在显示层，不回写 N 档读数、不参与判档/告警/聚合。
 func TestT508_KpaFromN_NonZeroClampsToOne(t *testing.T) {
 	area := t508Area(0.64)
 	assert.Equal(t, 1, t508Kpa(t, 0.014, area), "0.21875 取整为 0，但真非零压力不得读成 0 kPa")
