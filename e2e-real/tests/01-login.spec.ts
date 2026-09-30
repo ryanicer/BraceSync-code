@@ -10,6 +10,8 @@ import {
   isLoginPath,
   REAL_MOUNT,
   submitRealLoginForm,
+  timedLogin,
+  expectLoginWithinBudget,
 } from '../real-helpers'
 import { requireDeployedBuild } from '../deploy-guard'
 
@@ -23,6 +25,8 @@ import { requireDeployedBuild } from '../deploy-guard'
  * T419 补：1.9 = 登录页品牌名收口（1.1 只验标题非空，新旧包都成立，
  *          品牌字符串本身交给带守卫的 1.9，免得换包前把整条 1.1 的结构检查一起跳掉）。
  * T442 订正：Boss 09-28 06:4x 定名为「矫智通」，原 T312 L-1「应写矫治通」口径作废 ⇒ 1.9 期望串反转。
+ * T502 补：登录耗时显式化（T497 定性缺口）——1.2 的首登耗时改为实测 + 预算断言，
+ *          新增 1.10 量首登/二登两个数值。阈值与 mock 线共用 e2e/login-timing.ts 一份常量。
  */
 test.describe('01-登录模块', () => {
 
@@ -57,7 +61,10 @@ test.describe('01-登录模块', () => {
 
   test.describe('真实账号登录成功', () => {
     test('1.2 ops_admin 登录 → Dashboard + localStorage JWT + 顶栏用户名', async ({ page }) => {
-      await realLogin(page)
+      // T502：耗时改为实测数值 + 预算断言。原来只有下面那条 20s 跳转超时，
+      // 语义是「20s 内跳到就算绿」——登录慢到 15s 报告上仍是一片绿（T497 定性缺口）。
+      const firstLoginMs = await timedLogin('real 首登（ops_admin）', () => realLogin(page))
+      expectLoginWithinBudget('real 首登（ops_admin）', firstLoginMs)
       // 1) 跳转到 dashboard（T336 后带挂载前缀 /admin/dashboard；旧构建是根路径 /dashboard，故只匹配尾部）
       await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 })
       // 2) ElMessage 欢迎提示（非空即可，文案为「欢迎，xxx」）
@@ -252,6 +259,25 @@ test.describe('01-登录模块', () => {
       const tokenAfter = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
       expect(tokenAfter).toBe(tokenBefore)
       await expect(tableRows(page).first()).toBeVisible({ timeout: 25_000 })
+    })
+  })
+
+  test.describe('登录耗时（T502：慢登录必须红，不许「15s 也绿」）', () => {
+    test('1.10 首登 / 退出后二登：两个实测耗时入报告且低于预算', async ({ page }) => {
+      const firstLoginMs = await timedLogin('real 首登（退出前）', () => realLogin(page))
+      expectLoginWithinBudget('real 首登（退出前）', firstLoginMs)
+      await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 })
+      const tokenFirst = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
+      expect(tokenFirst).toBeTruthy()
+
+      await realLogout(page)
+      await expect(page).toHaveURL(/\/login/, { timeout: 15_000 })
+
+      const secondLoginMs = await timedLogin('real 二登（退出后重登）', () => realLogin(page))
+      expectLoginWithinBudget('real 二登（退出后重登）', secondLoginMs)
+      await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 })
+      const tokenSecond = await page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
+      expect(tokenSecond).toBeTruthy()
     })
   })
 })

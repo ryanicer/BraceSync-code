@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { adminRoutes, adminLogin, adminLogout, adminMessage, menuItems, topBarUserName, pickSelectOption } from '../admin-helpers'
+import { timedLogin, expectLoginWithinBudget } from '../login-timing'
 
 /**
  * admin-web 登录：三角色 mock 预置账号登录 + 未登录守卫 + 退出
@@ -120,5 +121,22 @@ test.describe('登录守卫与退出', () => {
     // 退出后再访问受保护页仍被拦截
     await page.goto(adminRoutes.dashboard)
     await expect(page).toHaveURL(/\/login/)
+  })
+})
+
+test.describe('登录耗时（T502：慢登录必须红，不许「15s 也绿」）', () => {
+  test('运营管理员首登 / 退出后二登：实测耗时入输出且低于预算', async ({ page }) => {
+    const firstLoginMs = await timedLogin('mock 首登（运营管理员）', () => adminLogin(page, 'admin'))
+    expectLoginWithinBudget('mock 首登（运营管理员）', firstLoginMs)
+    // 耗时判据不替行为判据：首登仍要真进 Dashboard
+    await expect(page).toHaveURL(/\/dashboard/)
+    await expect(topBarUserName(page)).toHaveText('运营管理员')
+
+    await adminLogout(page)
+
+    const secondLoginMs = await timedLogin('mock 二登（运营管理员）', () => adminLogin(page, 'admin'))
+    expectLoginWithinBudget('mock 二登（运营管理员）', secondLoginMs)
+    await expect(page).toHaveURL(/\/dashboard/)
+    await expect(topBarUserName(page)).toHaveText('运营管理员')
   })
 })
