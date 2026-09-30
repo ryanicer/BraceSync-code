@@ -3,13 +3,22 @@
     <view class="page-header">
       <text class="back-link" @click="goHome">← 返回</text>
       <text class="page-title">设备绑定</text>
-      <text class="page-subtitle">扫码或手动输入设备 ID 进行绑定</text>
+      <text class="page-subtitle">扫患者码带出患者 ID，设备 ID 用蓝牙列表选或手输</text>
     </view>
 
     <template v-if="authStore.isLoggedIn">
-      <!-- 扫码绑定 -->
+      <!-- 扫码入口（T507：UI 只暴露「扫患者码」一张卡） -->
       <view class="section">
-        <view class="scan-card" @click="scanDevice">
+        <view class="scan-card" @click="scanPatient">
+          <view class="scan-icon-box"><text class="scan-icon">📷</text></view>
+          <text class="scan-title">扫患者码</text>
+          <text class="scan-desc">扫后台「患者详情」里的二维码，自动填入患者 ID</text>
+          <text class="scan-desc">可直扫电脑屏幕，也可从相册选图识别</text>
+        </view>
+        <!-- T478 v2 §一.3（Boss 2026-09-29 裁定 3）：设备码模式不彻底移除，只把入口隐藏。
+             解码链路两模式共用（同一 readQrCode + uni.scanCode），将来设备带码时把
+             DEVICE_SCAN_ENTRY_ENABLED 置真即恢复本卡，无需重写扫码层。 -->
+        <view v-if="DEVICE_SCAN_ENTRY_ENABLED" class="scan-card" @click="scanDeviceCode">
           <view class="scan-icon-box"><text class="scan-icon">📷</text></view>
           <text class="scan-title">扫码绑定</text>
           <text class="scan-desc">扫描设备背面二维码快速绑定</text>
@@ -103,12 +112,24 @@ function goHome() {
   uni.navigateBack({ fail: () => uni.reLaunch({ url: '/pages/home/index' }) })
 }
 
-async function scanDevice() {
+/**
+ * 设备码入口是否暴露给技师（T478 v2 §一.3，Boss 2026-09-29 裁定 3）：
+ * 扫码模块保留患者码／设备码双模式，UI 先只暴露患者码，将来设备带码置真即恢复入口。
+ */
+const DEVICE_SCAN_ENTRY_ENABLED = false
+
+/** 扫码回填目标：患者码模式写患者 ID，设备码模式写设备 ID */
+type ScanTarget = 'patient' | 'device'
+
+async function runScan(target: ScanTarget) {
   // T362: 去掉 T089 的 mock 硬编码（原先无条件把设备 ID 写成 PRS-ML05-RC-001 并提示成功），
   //       改真机 uni.scanCode。H5 无相机链路，走 failed 分支提示手动输入。
   const outcome = await readQrCode((opts) => uni.scanCode(opts))
   if (outcome.kind === 'ok') {
-    manualDeviceId.value = outcome.value
+    // T507：扫到的内容按模式落进对应输入框，只填充——不自动提交、不跳转、不做前端存在性
+    //       校验（v2 §一.4「校验全走后端」），患者是否存在由后端判。
+    if (target === 'patient') patientId.value = outcome.value
+    else manualDeviceId.value = outcome.value
     uni.showToast({ title: SCAN_TOAST.success, icon: 'none' })
     return
   }
@@ -117,6 +138,14 @@ async function scanDevice() {
     logger.warn('bind 扫码失败 errMsg=' + (outcome.message || '(无 errMsg)'))
   }
   uni.showToast({ title: SCAN_TOAST[outcome.kind], icon: 'none' })
+}
+
+function scanPatient() {
+  return runScan('patient')
+}
+
+function scanDeviceCode() {
+  return runScan('device')
 }
 
 // T299 一患者一设备：后端 409 带 occupiedDeviceId 时，按 PRD §7C.3 弹「是否换绑？」

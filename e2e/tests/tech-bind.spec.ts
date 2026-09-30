@@ -52,13 +52,18 @@ test.describe('设备绑定', () => {
     await expect(ph).toHaveText(/^例: P\d{4}[0-9a-f]{12}$/)
   })
 
-  test('扫码入口走真实 uni.scanCode，不再注入假设备 ID', async ({ page }) => {
+  test('扫码入口扫患者码：走真实 uni.scanCode，两个输入框都不落假值', async ({ page }) => {
     const deviceInput = page.locator('.section').nth(1).locator('.form-input').first()
+    const patientInput = page.locator('.section').nth(1).locator('.form-input').nth(1)
+    // T507：设备码入口按 v2 §一.3 保留在代码里但 UI 不暴露 ⇒ DOM 里只有一张扫码卡
+    await expect(page.locator('.scan-card')).toHaveCount(1)
+    await expect(page.locator('.scan-title')).toHaveText('扫患者码')
     await page.locator('.scan-card').click()
     // H5 构建里 uni.scanCode 是 createUnsupportedAsyncApi（必然 reject），
     // 所以真机上唯一的成功路径不可能在这里出现：断言「没有假成功」而不是断言旧 mock 的「扫码成功」
-    await expect(page.locator('uni-toast')).toContainText('扫码失败，请手动输入设备 ID', { timeout: 5_000 })
+    await expect(page.locator('uni-toast')).toContainText('扫码失败，请手动输入患者 ID', { timeout: 5_000 })
     await expect(deviceInput.locator('input')).toHaveValue('')
+    await expect(patientInput.locator('input')).toHaveValue('')
   })
 
   test('手动输入设备 ID + 患者 ID 绑定成功并跳转 install', async ({ page }) => {
