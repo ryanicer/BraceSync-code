@@ -2,20 +2,23 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FEELING_AREAS, LEGACY_AREA_LABELS, areaLabel } from '../src/utils/feelingAreas'
+import { FEELING_AREAS, FEELING_LEVELS, FEELING_NOTES_MAX_LEN, LEGACY_AREA_LABELS, areaLabel } from '@bracesync/shared-utils'
 
 /**
  * T370「不适部位」词表门禁（展示层收口 + 跨端防漂移）
  *
  * 为什么要这么多条同源断言：这套词能分叉至今，是因为它同时存在于几处而全仓只有 1 处展示位点 ——
- * 患者端设计稿 8 区（docs/design/patient/feelings.html:64-72）、后端写侧白名单
+ * 患者端设计稿 8 区（docs/design/patient/feelings.html:104-111）、后端写侧白名单
  * （handler.go 的 feelingAreaLabels，PM T188 裁定 Q4 存中文原词）、seed/mock 的历史英文码、
  * 前端译名表。没有一条把两端字面量摆在一起比的断言，改任何一处都不会判红。
  * T368 的权限矩阵是同一个形状的事故。
  *
+ * T505 起词表住在 @bracesync/shared-utils（患者端 feelings 页是第二个消费端，
+ * 不能再各端自造一套），本门禁的对账对象没变，只是比较源换了位置。
+ *
  * 现网实测（staging 只读探针 2026-09-24，原始回包见 docs 仓 T370 证据包）：
  * feeling_logs 7 行，discomfort_areas 取值 lumbar 3 / thoracic 3 / 空 2，中文区名 0 条
- * —— 写侧只收 8 区中文，而患者端录入端点尚无 App 在调（T188 患者端是只读版）。
+ * —— 写侧只收 8 区中文，而患者端录入页直到 T505 才存在。
  *
  * 稿面区名不从 docs 文件里读：docs 仓不随 code 仓 CI 检出，读了会在 CI 里必然抛错。
  * 基数与顺序由下面那条硬字面量断言钉住（PRD §7A.7 是同一份口径），改设计稿时由人同步这里。
@@ -52,6 +55,35 @@ describe('FEELING_AREAS 与写侧白名单同源（T370 跨端漂移门禁）', 
 
   it('基数 8 且逐字等于设计稿区名（稿面改名必须同步这里）', () => {
     expect([...FEELING_AREAS]).toEqual(['右肩', '左肩', '胸椎', '右侧腰', '左侧腰', '骶骨', '右髂嵴', '左髂嵴'])
+  })
+})
+
+describe('FEELING_LEVELS / FEELING_NOTES_MAX_LEN 与写侧同源（T505 患者端录入页接入后新增）', () => {
+  /** 后端两档白名单字面量：var feelingLevels = map[string]bool{"fitted": true, ...}（单行写法） */
+  function backendLevelLiterals(): string[] {
+    const src = read('services/user-service/internal/handler/handler.go')
+    const block = src.match(/var feelingLevels = map\[string\]bool\{([^}]*)\}/)
+    if (!block) {
+      throw new Error('后端源码里找不到 feelingLevels 声明：两档口径被改名或挪走了，本门禁要跟着改，不能静默放行')
+    }
+    return [...block[1].matchAll(/"([^"]+)"\s*:\s*true/g)].map((m) => m[1])
+  }
+
+  function backendNotesMaxLen(): number {
+    const src = read('services/user-service/internal/handler/handler.go')
+    const m = src.match(/const feelingNotesMaxLen\s*=\s*(\d+)/)
+    if (!m) {
+      throw new Error('后端源码里找不到 feelingNotesMaxLen 常量：字数上限改了没同步前端，患者端 maxlength 会假绿')
+    }
+    return Number(m[1])
+  }
+
+  it('前端两档码值 = 后端 feelingLevels 白名单（三档 good/mild/pain 不得回潮）', () => {
+    expect([...FEELING_LEVELS].sort()).toEqual(backendLevelLiterals().sort())
+  })
+
+  it('「详细描述」字数上限 = 后端 feelingNotesMaxLen（PRD §7A.7 的 200 字约束仍保留）', () => {
+    expect(FEELING_NOTES_MAX_LEN).toBe(backendNotesMaxLen())
   })
 })
 
