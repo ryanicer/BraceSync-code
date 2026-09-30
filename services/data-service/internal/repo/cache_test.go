@@ -155,7 +155,8 @@ func TestBuildBatchInsertSQL(t *testing.T) {
 	sql := buildBatchInsertSQL(2)
 	assert.Contains(t, sql, "ON CONFLICT (device_id, ts) DO NOTHING RETURNING ts")
 	assert.Contains(t, sql, "($1,$2,$3")
-	assert.Contains(t, sql, "$46)") // 2 帧 × 23 列
+	// T498：补传每帧末尾带字面量来源印章，故末位占位符后紧跟 `,'real')` 而非 `)`
+	assert.Contains(t, sql, "$46,'real')") // 2 帧 × 23 列
 	assert.NotContains(t, buildBatchInsertSQL(1), "$24")
 }
 

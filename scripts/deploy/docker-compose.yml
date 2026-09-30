@@ -109,6 +109,15 @@ services:
       - ALERT_SERVICE_URL=http://alert-service:8080
       # T137：上报/补传状态回写（devices.last_report_at 写归 device-service）；不可用时仅告警不阻塞上报
       - DEVICE_SERVICE_URL=http://device-service:8082
+      # T498 受控 mock 帧注入开关：两键都要显式给默认值，缺省即「关 + 生产」。
+      #   APP_ENV 未设 → production；ALLOW_MOCK_INGEST 未设 → 空 = 关（只有 true/1 算开）。
+      #   🔴 生产禁设 ALLOW_MOCK_INGEST：APP_ENV 不在 dev/test/staging 白名单内时
+      #      data-service 直接 log.Fatal 起不来（cmd/server/main.go mockIngestGate），
+      #      APP_ENV 拼错（prodction/prod）也按生产对待 —— fail-closed 的是「拒绝启动」那一侧。
+      #   staging 要造触发数据：只在 staging 那份 .env 里写 ALLOW_MOCK_INGEST=true + APP_ENV=staging，
+      #      用完删键重启（注入帧落库带 ingest_source='mock' 印章，不会与真帧混成一片）。
+      - APP_ENV=${APP_ENV:-production}
+      - ALLOW_MOCK_INGEST=${ALLOW_MOCK_INGEST:-}
     depends_on:
       postgres:
         condition: service_healthy

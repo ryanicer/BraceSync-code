@@ -25,6 +25,10 @@ type AlertEvalRequest struct {
 	Points     []float64 `json:"points"`    // 20 点压力值
 	UploadTime time.Time `json:"upload_time"`
 	IsBackfill bool      `json:"is_backfill"`
+	// IngestSource T498 来源印章（real / mock；空 = 未表态，告警落 NULL）。
+	// omitempty：旧调用方与已在队列里的历史 alert:pending 元素不带这个键，
+	// 反序列化按空值走，不会因为本键而整条降级项失效。
+	IngestSource string `json:"ingest_source,omitempty"`
 }
 
 // AlertEvalResult 内联评估响应 data

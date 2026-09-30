@@ -54,6 +54,9 @@ type FrameRef struct {
 	Points     []float64 `json:"points"`
 	UploadTime time.Time `json:"upload_time"`
 	IsBackfill bool      `json:"is_backfill"`
+	// IngestSource 数据来源印章（T498，与 data-service AlertEvalRequest 同名字段）。
+	// 空 = 存量负载 / 旧版本 data-service，落库时写 NULL（不臆断成 real）。
+	IngestSource string `json:"ingest_source,omitempty"`
 }
 
 // PendingItem alert:pending 队列元素（与 data-service pendingAlertItem 契约一致）
@@ -274,6 +277,7 @@ func (c *Consumer) processItem(ctx context.Context, payload string) {
 		ThresholdValue: result.ThresholdValue,
 		ActualValue:    result.ActualValue,
 		Ts:             frame.Timestamp, // 告警时刻 = 帧采集时刻（uk_alerts_natural 组成部分）
+		IngestSource:   item.Frame.IngestSource,
 	}
 	alertID, created, err := c.alerts.CreateAlert(ctx, alert)
 	if err != nil {

@@ -31,16 +31,22 @@ type PGAlertRepo struct {
 // NewAlertRepo 创建 PGAlertRepo
 func NewAlertRepo(pool *pgxpool.Pool) *PGAlertRepo { return &PGAlertRepo{pool: pool} }
 
+// createAlertSQL 落库语句（T498 加 ingest_source 一列）。
+// 单列成 const 是为了让 repo/t498_source_sql_test.go 能在无库的情况下钉住它：
+// 第 9 参用 NULLIF 把空串洗成 NULL，这是「空 → NULL」这条口径的唯一执行点，丢了它库里会多出空串，
+// 而空串既读不出「未表态」、又过不了 CHECK（值域只有 NULL/real/mock）。
+const createAlertSQL = `
+		INSERT INTO alerts (patient_id, device_id, type, sensor_point, detail, threshold_value, actual_value, ts, ingest_source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9,''))
+		ON CONFLICT ON CONSTRAINT uk_alerts_natural DO NOTHING
+		RETURNING alert_id`
+
 // CreateAlert 落库告警；自然唯一约束 uk_alerts_natural 冲突时 created=false（DB 层保底去重，A7）。
 // 返回 alertID（BIGINT 字符串化）用于通知链路；冲突时 alertID 为空。
 func (r *PGAlertRepo) CreateAlert(ctx context.Context, a scanner.NewAlert) (alertID string, created bool, err error) {
 	var id int64
-	err = r.pool.QueryRow(ctx, `
-		INSERT INTO alerts (patient_id, device_id, type, sensor_point, detail, threshold_value, actual_value, ts)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT ON CONSTRAINT uk_alerts_natural DO NOTHING
-		RETURNING alert_id`,
-		a.PatientID, a.DeviceID, string(a.Type), a.SensorPoint, a.Detail, a.ThresholdValue, a.ActualValue, a.Ts).Scan(&id)
+	err = r.pool.QueryRow(ctx, createAlertSQL,
+		a.PatientID, a.DeviceID, string(a.Type), a.SensorPoint, a.Detail, a.ThresholdValue, a.ActualValue, a.Ts, a.IngestSource).Scan(&id)
 	if err != nil {
 		// ON CONFLICT DO NOTHING 无 RETURNING 行 → Scan 返回 ErrNoRows，视为去重命中
 		if errors.Is(err, pgx.ErrNoRows) {
