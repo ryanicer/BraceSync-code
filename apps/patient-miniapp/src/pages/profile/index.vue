@@ -49,7 +49,7 @@
             <text class="menu-sub">时长统计 · 佩戴提醒</text>
             <text class="menu-arrow">›</text>
           </view>
-          <view class="menu-item" @click="comingSoon">
+          <view class="menu-item" @click="goFeelings">
             <text class="menu-ic">📝</text>
             <text class="menu-text">矫形日志</text>
             <text class="menu-sub">记录每日感受与调整</text>
@@ -315,8 +315,13 @@ function goWearing() {
   uni.navigateTo({ url: '/pages/wearing/index' })
 }
 
+function goFeelings() {
+  // T505：矫形日志页建立，入口从占位改为直连（非 tabBar 页，同 goWearing 画法）
+  uni.navigateTo({ url: '/pages/feelings/index' })
+}
+
 function comingSoon() {
-  // 矫形日志页未建：只呈现入口，不接坏链
+  // 我的医生页未建：只呈现入口，不接坏链
   uni.showToast({ title: '即将开放', icon: 'none' })
 }
 

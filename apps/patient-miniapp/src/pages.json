@@ -47,6 +47,10 @@
     {
       "path": "pages/wearing/index",
       "style": { "navigationBarTitleText": "佩戴管理" }
+    },
+    {
+      "path": "pages/feelings/index",
+      "style": { "navigationBarTitleText": "矫形日志" }
     }
   ],
   "tabBar": {
