@@ -123,6 +123,13 @@ export const CONTRACT_MAP = {
   //     删了会判「未登记」红，而不是变干净。
   // 稿面登记交 Peter 回写（api-contracts.ts 侧的 DeviceConfig 注释加「非设备协议帧」限定）。
   DeviceConfig: { ts: null, reason: '设备协议结构（snake_case，与同名契约接口不是一回事；T418 结论不补，理由见本段注释）' },
+  // T498 受控 mock 帧注入的两端结构体：端点是 POST /internal/mock-frame，
+  // 🔴 不经 gateway（/internal/* 在服务间白名单内），也没有任何前端调用方 ——
+  // 调用方是运维脚本/验收脚本。契约（packages/shared-types）是「前端会读什么」的清单，
+  // 给它加一条前端永远打不到的端点，等于让下次读契约的人以为有页面在用。
+  // 该端点的字段口径写在 docs 仓 api-contracts.ts 的运维端点段，不进对拍面。
+  MockFrameRequest: { ts: null, reason: '入参：/internal/mock-frame（T498 受控注入），不经网关、无前端消费方，契约不声明' },
+  MockFrameResponse: { ts: null, reason: '写响应：同上，注入结果只回给运维脚本（record_id / duplicated / ingest_source / audit_log_id）' },
 
   // ===== msg-service =====
   NotifyRuleDTO: { ts: 'NotifyRule' },

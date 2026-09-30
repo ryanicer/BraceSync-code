@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,6 +35,26 @@ import (
 //   PARTITION_CRON    分区预建 cron，默认 "0 0 25 * *"（每月 25 日）
 //   ARCHIVE_CRON      冷归档 cron，默认 "0 2 1 * *"（每月 1 日 02:00 CST）
 //   ARCHIVE_DIR       冷归档导出目录，默认 /tmp/brace-archive
+//   APP_ENV           部署环境标记，默认 production（T498：未识别值一律按生产对待）
+//   ALLOW_MOCK_INGEST T498 受控 mock 帧注入开关，默认关；取值 true/1 才算开。
+//                     🔴 生产禁设：APP_ENV=production 时设了直接 log.Fatal，不给「起来忘了关」留窗口
+
+// nonProdEnvs 允许开 mock 注入的环境白名单。白名单而不是「非 production 即可」：
+// APP_ENV 拼错（prodction / prod）时按生产对待才是 fail-closed 的那一侧。
+var nonProdEnvs = map[string]bool{"dev": true, "test": true, "staging": true}
+
+// mockIngestGate T498 开关判定，抽成纯函数供单测覆盖真值表（main 里的 log.Fatal 不可测）。
+// 返回 (是否启用, 拒绝原因)；原因非空 = 配置本身矛盾，调用方必须 Fatal。
+func mockIngestGate(appEnv, allow string) (bool, string) {
+	on := allow == "true" || allow == "1"
+	if !on {
+		return false, ""
+	}
+	if !nonProdEnvs[strings.ToLower(strings.TrimSpace(appEnv))] {
+		return false, "ALLOW_MOCK_INGEST is set but APP_ENV is not a known non-production env"
+	}
+	return true, ""
+}
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -89,8 +110,9 @@ func main() {
 	}
 
 	// 组装
+	recordRepo := repo.NewRecordRepo(pool)
 	svc := service.NewRecordService(
-		repo.NewRecordRepo(pool),
+		recordRepo,
 		repo.NewDeviceRepo(pool),
 		repo.NewConfigRepo(pool),
 		repo.NewRedisCache(rdbClient),
@@ -100,6 +122,15 @@ func main() {
 	// T173 基线校准读侧装配：baselines 表只读（写归 device-service，D3）
 	svc.SetCalibrator(calibration.NewCalibrator(repo.NewBaselineRepo(pool)))
 	h := handler.New(svc)
+
+	// T498 受控 mock 帧注入开关：默认关；生产环境设了开关直接启动失败（验收 1）。
+	// 关掉时端点仍在路由表内，但每个请求在方法体最前判 403（验收 2），
+	// 所以「开关」这件事只需要一次重启语义之外的保证：判定与请求同批。
+	mockOn, reject := mockIngestGate(envOr("APP_ENV", "production"), os.Getenv("ALLOW_MOCK_INGEST"))
+	if reject != "" {
+		log.Fatal().Str("app_env", envOr("APP_ENV", "production")).Msg(reject)
+	}
+	svc.SetMockIngest(mockOn, recordRepo)
 
 	// device-service 上报状态回写（devices.last_report_at 单调推进；devices 表写归 device-service）
 	if deviceURL := os.Getenv("DEVICE_SERVICE_URL"); deviceURL != "" {

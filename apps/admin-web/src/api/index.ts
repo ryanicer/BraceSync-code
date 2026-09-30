@@ -180,6 +180,26 @@ export async function unbindPatientWechatApi(patientId: string): Promise<{ patie
   return request<{ patientId: string }>({ url, method: 'POST' })
 }
 
+/**
+ * T500 患者设登录口令（POST /admin/patients/:id/password，T477 端点）。
+ * 口令由服务端随机生成、bcrypt 落库，明文只在本次响应返回一次，之后任何端点都取不回来
+ * （遗失就再调一次重设，同技师/医护侧口径）。响应形状 {patientId, password} 未登记进契约
+ * （scripts/contract/dto-contract-map.mjs 把这类一次性写响应显式记为 ts:null），故本地声明。
+ */
+export async function setPatientPasswordApi(patientId: string): Promise<string> {
+  if (USE_MOCK) { await delay(); return patientMock.mockSetPatientPassword(patientId).password }
+  // 这里的请求地址必须写成内联字符串字面量，不能先存进变量再简写进参数对象：
+  // T379 的跨源门禁（test/perm-gateway-cross-source.spec.ts）是从源码里派生「页面 import 的函数打了哪些端点」，
+  // 派生正主要认的就是参数对象里的地址键。写成变量简写它读不到这条 ⇒
+  // 「患者页只对 admin 端点」那一格对拍会静默失明（前端把这条挂给非 admin 页面时没人拦）。
+  const res = await request<{ patientId: string; password: string }>({
+    url: `/api/v1/admin/patients/${encodeURIComponent(patientId)}/password`,
+    method: 'POST',
+    data: {},
+  })
+  return res.password
+}
+
 // ========== Alert（复用 T019B 已验证端点） ==========
 
 export async function fetchAlerts(params: { patientId?: string; type?: string; status?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<Alert>> {

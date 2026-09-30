@@ -74,6 +74,12 @@ type RecordService struct {
 	// devices.last_report_at 不回填但上报主链路不受影响）
 	deviceReport DeviceReporter
 
+	// mockEnabled / mocks 是 T498 的注入通路：mockEnabled = ALLOW_MOCK_INGEST
+	// （生产由 main 挡在启动期），mocks = 注入帧 + 审计行的同事务落库实现。
+	// 两者零值 = 关闭 + 未装配 ⇒ 端点一律 403。
+	mockEnabled bool
+	mocks       MockFrameStore
+
 	alertTimeout        time.Duration
 	deviceReportTimeout time.Duration
 	now                 func() time.Time
@@ -183,7 +189,7 @@ func (s *RecordService) UploadSingle(ctx context.Context, headerDeviceID string,
 	s.notifyDeviceReport(ctx, deviceID, frame.Ts, req.FaultCode)
 
 	if inserted {
-		s.evaluateInline(ctx, deviceID, patientID, frame, now)
+		s.evaluateInline(ctx, deviceID, patientID, frame, now, model.IngestReal)
 	} else {
 		log.Debug().Str("device_id", deviceID).Time("ts", ts).Msg("duplicate frame skipped (idempotent)")
 	}
@@ -250,15 +256,19 @@ func (s *RecordService) applyRealtimeCache(ctx context.Context, deviceID, patien
 // evaluateInline 内联告警评估（100ms 熔断 → alert:pending 降级，架构 §3.4）
 // T173：传给 alert-service 的是「减偏移后」帧——内联与 alert:pending 补偿两路同源，
 // 佩戴/漂移判定（含负值故障检测）自动基于校准后值，alert-service 无需持有校准码（D6）。
-func (s *RecordService) evaluateInline(ctx context.Context, deviceID, patientID string, frame repo.PendingFrame, uploadTime time.Time) {
+// T498：source 是这一帧的来源印章（real / mock），随评估请求一起出站，
+// 命中告警时由 alert-service 落成 alerts.ingest_source —— 内联与降级补偿两路都带，
+// 所以「注入帧触发的告警」在两条通路上都可溯源。
+func (s *RecordService) evaluateInline(ctx context.Context, deviceID, patientID string, frame repo.PendingFrame, uploadTime time.Time, source string) {
 	calibRes := s.calibrate(ctx, deviceID, frame.Points)
 	evalReq := &AlertEvalRequest{
-		DeviceID:   deviceID,
-		PatientID:  patientID,
-		Timestamp:  frame.Ts.UTC(),
-		Points:     pointsToFloat64(calibRes.Points),
-		UploadTime: uploadTime.UTC(),
-		IsBackfill: false,
+		DeviceID:     deviceID,
+		PatientID:    patientID,
+		Timestamp:    frame.Ts.UTC(),
+		Points:       pointsToFloat64(calibRes.Points),
+		UploadTime:   uploadTime.UTC(),
+		IsBackfill:   false,
+		IngestSource: source,
 	}
 
 	evalCtx, cancel := context.WithTimeout(ctx, s.alertTimeout)

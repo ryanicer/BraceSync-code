@@ -129,6 +129,7 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 		ThresholdValue: result.ThresholdValue,
 		ActualValue:    result.ActualValue,
 		Ts:             frame.Timestamp,
+		IngestSource:   req.IngestSource, // T498 来源印章，空 → 落 NULL（见迁移 000033）
 	}
 	alertID, _, err := h.alerts.CreateAlert(r.Context(), alert)
 	if err != nil {
