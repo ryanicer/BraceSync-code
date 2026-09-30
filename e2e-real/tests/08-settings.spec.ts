@@ -56,11 +56,32 @@ async function readSettings(page: Page): Promise<Settings> {
   return body.data as Settings
 }
 
-/** 进系统配置页（staging 深链不可用，只能点侧边栏 —— 见 real-helpers 顶部说明） */
+/**
+ * 进系统配置页（staging 深链不可用，只能点侧边栏 —— 见 real-helpers 顶部说明）。
+ *
+ * T493 收口回填竞态：`.settings-form` 可见只证明组件挂载了，不证明页面自己那条
+ * GET /api/v1/admin/settings 已落地回填 —— 而 settings/index.vue 第 254-267 行的 reactive
+ * 初值是写死的（collectIntervalSeconds=60，现网该键回 1800），于是单发 inputValue 会读到初值
+ * （2026-09-29/30 CI 上 8.1 偶发判红即此形）。
+ * 就绪门按页面码的先后取（settings/index.vue 第 390-399 行的 onMounted：loading 置 true →
+ * await GET → Object.assign(form, 响应) → finally 里 loading 置 false）：v-loading 遮罩挂在装
+ * .settings-form 的那张 .page-card 上，它的摘除必然晚于 Object.assign 那一次渲染，
+ * 所以「本条 GET 落地」再「遮罩已从 DOM 消失」= 回填已完成。判据一条没放宽，也没多等不必要的时间。
+ * 等待器必须在点菜单之前挂好：GET 是组件挂载才发的，先点后挂会漏掉这一次响应事件。
+ */
 async function openSettings(page: Page): Promise<void> {
+  const hydrated = page.waitForResponse(
+    (res) =>
+      res.request().method() === 'GET' && res.url().includes(SETTINGS_API) && res.status() === 200,
+    { timeout: 20_000 },
+  )
+  // gotoMenu / URL 落位先抛时，这个等待器的超时不该变成 unhandled rejection（真判据在下面 await）
+  hydrated.catch(() => {})
   await gotoMenu(page, '系统配置')
   await expect(page).toHaveURL(/\/settings$/, { timeout: 15_000 })
   await expect(page.locator('.settings-form')).toBeVisible({ timeout: 15_000 })
+  await hydrated
+  await expect(page.locator('.page-card:has(.settings-form) .el-loading-mask')).toHaveCount(0)
 }
 
 /**
