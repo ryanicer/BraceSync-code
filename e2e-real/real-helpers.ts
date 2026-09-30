@@ -86,7 +86,61 @@ export function uniqueName(prefix: string): string {
 
 /** 默认 staging 运营账号（T051 seed） */
 export const DEFAULT_REAL_USERNAME = 'ops_admin'
+/**
+ * 本地自验用的 seed 默认口令（值出自 scripts/db/seed 的模拟账号）。
+ * T506：CI 不再读它 —— 管理端口令一律经 E2E_REAL_PASSWORD 注入，见 realPassword 的凭据门。
+ */
 export const DEFAULT_REAL_PASSWORD = 'admin123'
+
+/** 管理端口令的注入变量名（CI 侧同名 Secrets 项在 e2e.yml 的 e2e-real-staging job 注入） */
+export const REAL_PASSWORD_ENV = 'E2E_REAL_PASSWORD'
+
+/**
+ * 凭据门（T506 乙案），姿势对齐 23-chain-b-technician.spec.ts 的 requireTechCredentials（丙案）：
+ * 缺凭据即抛、不 skip、只打印长度、正文写清 CI 该在哪注入 —— 静默跳过的绿不是证据。
+ *
+ * 为什么 CI 不许回退到源码常量：回退就等于把「这一轮测的是哪一份口令」变成不可知，
+ * 口令被改之后照样一片红，而红的是下游断言（见 credentialDriftMessage 那三种面貌）。
+ * 本地不设该变量时沿用 DEFAULT_REAL_PASSWORD，否则无 env 的开发自验会全判红（范围 1 允许）。
+ */
+export function realPassword(why: string): string {
+  const injected = process.env[REAL_PASSWORD_ENV] ?? ''
+  if (injected) {
+    console.log(
+      `[e2e-real][凭据门] ${why}: 口令来自 ${REAL_PASSWORD_ENV} 注入（长度 ${injected.length}，值不落日志）`,
+    )
+    return injected
+  }
+  if (process.env.CI === 'true') {
+    throw new Error(
+      `凭据未注入（${why}）：CI 里 ${REAL_PASSWORD_ENV} 未设置或为空，按 T506 口径这里判红而不是回退到源码常量。\n` +
+        `修法：1) 在 BraceSync-code 仓库 Settings → Secrets and variables → Actions 配 ${REAL_PASSWORD_ENV}，` +
+        `值 = staging 现役管理端口令；2) 确认 .github/workflows/e2e.yml 的 e2e-real-staging job env 块把它注入进来；` +
+        `3) 复位类动作走 T504 那条线（staging 四纪律），不要改用例判据去迁就现网口令。`,
+    )
+  }
+  console.log(
+    `[e2e-real][凭据门] ${why}: 未设 ${REAL_PASSWORD_ENV}，本地自验沿用 seed 默认口令（长度 ${DEFAULT_REAL_PASSWORD.length}）。CI 不适用本回退。`,
+  )
+  return DEFAULT_REAL_PASSWORD
+}
+
+/**
+ * 凭据漂移的显式判语（T506）。
+ *
+ * 背景（T502 实测）：staging 上 doctor_li 口令被改之后，同一件事在 CI 里露出三副面貌 ——
+ * 「ops_admin/doctor_li 登录应 200 实收 401」「应拿到 doctor 的 JWT」「侧栏元素未找到」，
+ * 全部长得像代码回归，没有一处说「这是凭据」。这里把 401 当场定性，并给出可执行的自查三步。
+ */
+export function credentialDriftMessage(username: string, status: number, password: string): string {
+  return (
+    `凭据漂移（不是代码回归）：${username} 用当前口令登录 staging 实收 HTTP ${status}。` +
+    `口令长度 ${password.length}（值不落日志）。\n` +
+    `自查：1) 该账号在 staging 的现口令是否被改过（管理端重置、本人自助改密都会在审计留痕里落行）；` +
+    `2) CI 的 Secrets（本地则同名环境变量）${REAL_PASSWORD_ENV} 是否配置且与现值一致；` +
+    `3) 复位后重跑本用例即转绿 —— 判据本身不许放宽。`
+  )
+}
 
 /**
  * 把浏览器发出的接口请求打到 stdout（T304）。
@@ -113,7 +167,7 @@ export function logRealRequests(page: Page, tag: string): void {
 export async function realLogin(
   page: Page,
   username: string = DEFAULT_REAL_USERNAME,
-  password: string = DEFAULT_REAL_PASSWORD,
+  password: string = realPassword('realLogin'),
 ): Promise<void> {
   logRealRequests(page, 'login')
   await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
@@ -129,7 +183,7 @@ export async function realLogin(
 export async function submitRealLoginForm(
   page: Page,
   username: string = DEFAULT_REAL_USERNAME,
-  password: string = DEFAULT_REAL_PASSWORD,
+  password: string = realPassword('submitRealLoginForm'),
 ): Promise<void> {
   // 用户名：.login-form 下「未带 type=password」的第一个可输入 input
   const usernameInput = page.locator('.login-form input:not([type="password"])').first()
@@ -151,7 +205,21 @@ export async function submitRealLoginForm(
   await passwordInput.fill('')
   await passwordInput.fill(password)
 
+  // T506：先把登录接口的响应挂上观察，再点提交。登录非 200 时当场定性成「凭据漂移」——
+  // 否则上层只会看到「应拿到 xxx 的 JWT」「侧栏元素未找到」这类下游噪音（T502 在 CI 里实测过三种面貌）。
+  const loginResponse = page
+    .waitForResponse(
+      (r) => r.url().includes('/api/v1/auth/login') && r.request().method() === 'POST',
+      { timeout: 20_000 },
+    )
+    .catch(() => null)
+
   await loginBtn.click()
+
+  const resp = await loginResponse
+  if (resp && resp.status() !== 200) {
+    throw new Error(credentialDriftMessage(username, resp.status(), password))
+  }
 
   // 登录成功：离开登录页（T336 后浏览器地址是 /admin/dashboard；旧构建是根路径 /dashboard，
   // 故判定写成「路径尾部是 login」而不是 startsWith('/login')——带挂载前缀时也成立）

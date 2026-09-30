@@ -1,4 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
+// T506：口令经凭据门取数；登录 401 时把失败信息定性为凭据漂移，而不是留给下游断言差异
+import { credentialDriftMessage, realPassword } from '../real-helpers'
 
 /**
  * T371-B1 · 团队「患者数」实时计数的现网防回归（真实模式 / staging，全 GET 只读）
@@ -58,11 +60,13 @@ async function okGet(req: APIRequestContext, token: string, path: string): Promi
 }
 
 async function realToken(req: APIRequestContext): Promise<string> {
+  const password = realPassword('16-team-patient-count.realToken')
   const res = await req.post('/api/v1/auth/login', {
-    data: { username: 'ops_admin', password: 'admin123' },
+    data: { username: 'ops_admin', password },
     headers: { 'Content-Type': 'application/json' },
   })
-  expect(res.status(), '运营账号登录应 200').toBe(200)
+  const status = res.status()
+  expect(status, status === 401 ? credentialDriftMessage('ops_admin', status, password) : '运营账号登录应 200').toBe(200)
   const token = (await res.json())?.data?.token
   expect(typeof token, '应拿到 JWT').toBe('string')
   return token as string

@@ -1,5 +1,7 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { requireDeployedBuild } from '../deploy-guard'
+// T506：口令经凭据门取数；登录 401 时把失败信息定性为凭据漂移，而不是留给下游断言差异
+import { credentialDriftMessage, realPassword } from '../real-helpers'
 
 /**
  * T353 · 跨服务「查无此人」判定防回归（真实模式 / staging，全 GET 只读）
@@ -83,11 +85,15 @@ async function realToken(
   req: APIRequestContext,
   username: string = 'ops_admin',
 ): Promise<string> {
+  const password = realPassword(`11-patient-exists.realToken(${username})`)
   const res = await req.post('/api/v1/auth/login', {
-    data: { username, password: 'admin123' },
+    data: { username, password },
     headers: { 'Content-Type': 'application/json' },
   })
-  expect(res.status(), `${username} 登录应 200`).toBe(200)
+  // 401 单独定性为凭据漂移（T502 实测：doctor_li 口令被改时，这里红的是断言文案，
+  // 读起来像代码回归）；其它非 200 保持原口径，不借漂移之名掩盖服务端问题。
+  const status = res.status()
+  expect(status, status === 401 ? credentialDriftMessage(username, status, password) : `${username} 登录应 200`).toBe(200)
   const body = await res.json()
   expect(body.code, '登录 code 应为 0').toBe(0)
   const token = body?.data?.token
