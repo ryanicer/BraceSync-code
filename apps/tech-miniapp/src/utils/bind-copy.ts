@@ -44,5 +44,7 @@ export const SCAN_TOAST = {
   success: '扫码成功',
   cancelled: '已取消扫码',
   empty: '未识别到二维码内容，请手动输入',
-  failed: '扫码失败，请手动输入设备 ID',
+  // T507：扫码位改扫患者码，失败后的手输指引进患者 ID（v2 §一.3 设备码模式仍在代码里但 UI 不暴露，
+  //       技师手输设备 ID 的入口是同页「手动输入设备 ID」区，不在本句职责内）。
+  failed: '扫码失败，请手动输入患者 ID',
 } as const
