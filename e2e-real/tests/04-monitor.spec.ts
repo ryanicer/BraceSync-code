@@ -16,15 +16,39 @@ test.describe('04-实时监控', () => {
     await gotoMenu(page, '实时监控')
   })
 
-  // 4.1b / 4.1c / 4.2c / 4.2d / 4.2e / 4.4 都改写 realtime 响应，而监控页每 2s 轮询同一接口：用例结束时
-  // 可能还有一个 handler 卡在冷缓存首包那次 await route.fetch()。它抛的 "route.fetch: Test ended" 会被
+  // 4.1b / 4.1c / 4.2c / 4.2d / 4.2e / 4.4 都改写 realtime 响应，而监控页每 1s 轮询同一接口
+  // （apps/admin-web/src/pages/monitor/index.vue:247 `POLL_MS = 1000`；T511 实测校正本注释旧值 2s 落后）：
+  // 用例结束时可能还有一个 handler 卡在冷缓存首包那次 await route.fetch()。它抛的 "route.fetch: Test ended" 会被
   // 判给同 worker 的下一条用例（2026-09-22 CI 实测：5.6 以 0ms 判红，05 文件另 3 条只读
   // 用例 did not run），所以这里在用例收尾时先 remove + 等在飞的 handler 跑完。
   // T450-①：拦截已全部收口到 real-helpers.ts 的 stubRealtimeSnapshot（首包那次 await 外面套了
   // 「收尾竞态 ⇒ 吞掉这一次出口」的守卫），本条 unrouteAll 因此从「唯一防线」降级为「第二道」——
   // 留着不判负也不掩盖：它等的仍是 handler 返回，而守卫等的正是那条抛出来的错。
+  //
+  // T511 格 4.4：正因为「第二道」等的是 handler 返回，它会自己把用例拖红。收尾窗口里在飞的那发
+  // 是本 helper 冷缓存那次 route.fetch()（一次公网往返，页面早已不等它的产物）：它不抛错、只是慢，
+  // 于是 behavior:'wait' 一直等，把整条用例的 120s 预算（e2e-real/playwright.real.config.ts 的
+  // timeout）吃光，记成 Test timeout of 120000ms exceeded while running "afterEach" hook
+  // ——CI run 36749906416（schedule／head bf44345f）第 34 格实证，body 的断言全部先过了。
+  // 收口 = 有界等：等满预算仍未 settle 就摘路由不再等，并当场打一行日志，不把这件事静默掉。
+  // 判据面不放宽：用例的可见断言与末尾 realtimeServed() 反证锁都在 body 里，本钩子不参与判定。
+  const TEARDOWN_SETTLE_BUDGET_MS = 5_000
+
   test.afterEach(async ({ page }) => {
-    await page.unrouteAll({ behavior: 'wait' })
+    const graceful = page.unrouteAll({ behavior: 'wait' }).catch(() => undefined)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const budget = new Promise<'late'>((resolve) => {
+      timer = setTimeout(() => resolve('late'), TEARDOWN_SETTLE_BUDGET_MS)
+    })
+    const outcome = await Promise.race([graceful.then(() => 'settled' as const), budget])
+    if (timer !== undefined) clearTimeout(timer)
+    if (outcome === 'late') {
+      console.log(
+        `[t511][teardown] unrouteAll(wait) 超预算 ${TEARDOWN_SETTLE_BUDGET_MS}ms ⇒ 改 ignoreErrors 摘路由` +
+          `（在飞的是本用例自己的冷缓存取包，不是被测行为）`,
+      )
+      await page.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => undefined)
+    }
   })
 
   /** 等待快照时间戳出现（即数据加载完成信号） */

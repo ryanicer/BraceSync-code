@@ -646,9 +646,14 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
     expect(detailAfterAssign.name, '分配团队不得改回旧姓名').toBe(renamed)
     expect(detailAfterAssign.diagnosis, '分配团队不得清掉诊断').toBe('胸段侧弯')
 
-    const assignedCells = await cellTexts(targetRow)
-    expect(assignedCells[teamIdx], '列表「绑定团队」格应显示自建队名，而不是团队编号').toBe(teamName)
-    expect(assignedCells[teamIdx], '团队格不得回落成原始编号').not.toBe(team.teamId)
+    // 列表那一格改走 locator 自动重等（T511 格 22.1）。旧写法在这里一次性读 DOM（cellTexts 的一行快照），
+    // 而分配成功后页面自己重枪列表那一次是 fire-and-forget（apps/admin-web/src/pages/patients/index.vue:519
+    // 的 loadData() 没有 await）⇒ 读到过期值就判红。CI run 36685175924 实证形状：
+    // Expected "T053团队-082277" / Received "-"，而紧邻其上的详情端点已读到自建团队（650 行之前的两条先过）。
+    // 这不是无条件重试：判据值与两条断言一字未动，到点仍不是队名就红；变的只是「等谁把 DOM 更新到位」。
+    const assignedTeamCell = targetRow.locator('td').nth(teamIdx)
+    await expect(assignedTeamCell, '列表「绑定团队」格应显示自建队名，而不是团队编号').toHaveText(teamName)
+    await expect(assignedTeamCell, '团队格不得回落成原始编号').not.toHaveText(team.teamId)
 
     // 抽屉那一格走的是挂载时的 teams 字典兜底（写响应不带 teamName）⇒ 这正是「团队必须先建」的依据
     const drawerTeamCell = await drawer
