@@ -150,6 +150,9 @@
              稿面与 PRD 回写归口已登记在卡，本卡不改文档。 -->
         <el-button @click="openEditProfile">编辑档案</el-button>
         <el-button @click="openEditPhone">改手机号</el-button>
+        <!-- T500 患者设登录口令（T477 端点的人工入口）。稿面与 PRD 均无这一条（同「改手机号」「解绑微信」的处境）：
+             入口位置与形态按 PM 派发单第三节由本卡自定，文档回写归口已在卡内登记，本卡不改 docs/design 与 PRD。 -->
+        <el-button v-if="canSetPatientPassword(auth.role)" :loading="settingPwd" @click="askSetPatientPassword">设登录口令</el-button>
         <el-button type="danger" plain :loading="unbinding" @click="confirmUnbindWechat">解绑微信</el-button>
       </div>
     </el-drawer>
@@ -270,7 +273,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, h } from 'vue'
 import { userErrorCopy } from '@bracesync/shared-utils'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -281,14 +284,18 @@ import {
   fetchPatients, fetchTeams, fetchDoctors, teamNameOf, doctorNameOf,
   createPatientApi, assignPatientTeamApi, batchBindPatientsApi,
   updatePatientPhoneApi, updatePatientProfileApi, unbindPatientWechatApi,
+  setPatientPasswordApi,
 } from '../../api'
 import type { BatchBindFailure, PatientProfilePatch } from '../../mock/patients'
 import { PHONE_RE } from '../../utils/phoneField'
+import { canSetPatientPassword } from '../../utils/patientPasswordAccess'
+import { useAuthStore } from '../../stores/auth'
 
 /** T269 D1：后端 /admin/patients 已 join 出团队名与医生名，优先用返回值显示 */
 type PatientRow = Patient & { teamName?: string | null; doctorName?: string | null }
 
 const router = useRouter()
+const auth = useAuthStore()
 const list = ref<PatientRow[]>([])
 const teams = ref<Team[]>([])
 const doctors = ref<Doctor[]>([])
@@ -337,6 +344,8 @@ const editBase = ref<{ name: string; gender: string; age: string; diagnosis: str
 const phoneVisible = ref(false)
 const savingPhone = ref(false)
 const unbinding = ref(false)
+// T500 设登录口令（POST /admin/patients/:id/password，T477）
+const settingPwd = ref(false)
 const phoneFormRef = ref<FormInstance>()
 const phoneForm = ref({ phone: '', reason: '' })
 const phoneRules = {
@@ -679,6 +688,52 @@ async function confirmUnbindWechat() {
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '解绑失败' }))
   } finally {
     unbinding.value = false
+  }
+}
+
+/**
+ * T500 一次性凭据弹窗（形态照技师页 / 医护账号页的 showCredentials）：关窗后页面上再没有入口
+ * 能看这个口令——服务端只落 bcrypt 哈希，明文取不回来。
+ *
+ * 🔴 患者用「手机号 + 密码」登录，而患者域两个读接口都不回 phone（T361/T491）⇒ 这里只能说
+ * 「登录号＝建档时登记的手机号」，不能假装本页查得到那个号。
+ */
+function showPatientCredentials(patientId: string, name: string, password: string): Promise<void> {
+  return ElMessageBox({
+    title: '设置成功',
+    message: h('div', { class: 'cred-box' }, [
+      h('p', `患者：${name}（${patientId}）`),
+      h('p', `初始密码：${password}`),
+      h('p', { class: 'cred-hint' }, '患者使用手机号 + 密码登录（患者编号不能用于登录，登录号＝建档时登记的手机号）。'),
+      h('p', { class: 'cred-note' }, '仅此一次展示，关闭后不可再看。口令由系统随机生成，请当面 / 即时转交本人；如遗失，重开本入口按同一规则再生成一次，旧口令即时失效。'),
+    ]),
+    confirmButtonText: '我已转交本人',
+    // 关窗（X / Esc）不是失败：口令已经展示过了，拒绝对 Promise 无意义 ⇒ 吞掉，
+    // 免得调用方的 catch 把「我点了 X」弹成「设密失败」
+  }).then(() => undefined).catch(() => undefined)
+}
+
+async function askSetPatientPassword() {
+  const d = detail.value
+  if (!d) return
+  try {
+    await ElMessageBox.confirm(
+      `将为患者 ${d.name}（${d.patientId}）随机生成患者端登录口令，确认后一次性展示、旧口令即时失效。此操作会写入审计日志。`,
+      '确认设置登录口令',
+      { type: 'warning', confirmButtonText: '确认设置', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 取消或关掉弹层都不发请求
+  }
+  settingPwd.value = true
+  try {
+    const password = await setPatientPasswordApi(d.patientId)
+    await showPatientCredentials(d.patientId, d.name, password)
+    // 不改任何会显示在列表上的字段，故只收 loading 不刷列表（同解绑微信那支的处理）
+  } catch (e: unknown) {
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '设密失败' }))
+  } finally {
+    settingPwd.value = false
   }
 }
 

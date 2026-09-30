@@ -289,3 +289,61 @@ test.describe('解绑微信', () => {
     await expect(adminMessage(page)).toContainText('已解绑微信')
   })
 })
+
+// ─────────────────────────────────────────────────────────────
+// T500 设登录口令：人工入口的「确认 → 一次性出示」链
+//
+// 为什么这三条落 Playwright 而不是 vitest：口令只出现一次、关掉就再也取不回来，
+// 「关窗后页面上不得残留口令」这一格量的是真实 DOM 的销毁，happy-dom 里 EP 的
+// MessageBox 生命周期与真实浏览器不同形（本文件 T432 段头已记过一次同类坑）。
+// 非 admin 那一腿不在这里测：ROLE_PAGE_MATRIX 实测 admin 16 页含 /patients、
+// doctor 7 页与 cs 1 页都不含 ⇒ 路由守卫根本不落该页，比「按钮隐藏」更强；
+// 闸门真值表与 rbac.go 的七张矩阵对拍在 test/patient-password-t500.spec.ts。
+// ─────────────────────────────────────────────────────────────
+
+test.describe('设登录口令', () => {
+  test('详情抽屉给出入口，确认框写清「旧口令即时失效」', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await expect(drawer.getByRole('button', { name: '设登录口令' })).toBeVisible()
+
+    await drawer.getByRole('button', { name: '设登录口令' }).click()
+    const box = page.locator('.el-message-box').filter({ hasText: '确认设置登录口令' })
+    await expect(box).toBeVisible()
+    // 后果句必须点名「旧口令即时失效」：运营据此决定要不要先通知患者
+    await expect(box).toContainText('旧口令即时失效')
+    await expect(box).toContainText('PT-001')
+  })
+
+  test('取消 ⇒ 不出示口令、无任何提示（确认之前一发请求都不许发）', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '设登录口令' }).click()
+    const box = page.locator('.el-message-box').filter({ hasText: '确认设置登录口令' })
+    await box.getByRole('button', { name: '取消' }).click()
+    await expect(box).toBeHidden()
+    await expect(page.locator('.el-message')).toHaveCount(0)
+    // 反证「取消也生成了口令」：关掉确认框后页面上不许有「初始密码」字样
+    await expect(page.getByText('初始密码')).toHaveCount(0)
+  })
+
+  test('确认 ⇒ 一次性弹窗出示口令；关窗后口令不再留在页面上', async ({ page }) => {
+    const drawer = await openDetail(page)
+    await drawer.getByRole('button', { name: '设登录口令' }).click()
+    await page.locator('.el-message-box').filter({ hasText: '确认设置登录口令' })
+      .getByRole('button', { name: '确认设置' }).click()
+
+    const cred = page.locator('.el-message-box').filter({ hasText: '初始密码：' })
+    await expect(cred).toBeVisible()
+    await expect(cred).toContainText('仅此一次展示，关闭后不可再看')
+    // 登录号口径必须写清是建档手机号：患者编号 PT-001 不能登录，不写这句运营会拿去当账号
+    await expect(cred).toContainText('手机号 + 密码登录')
+    await expect(cred).toContainText('PT-001')
+    const pwd = (await cred.innerText()).match(/初始密码：(\S+)/)?.[1]
+    expect(pwd, '凭据弹窗没按「初始密码：<口令>」的形态出数').toBeTruthy()
+    expect(pwd).toMatch(/^Br[0-9a-z]{8}#7$/)
+
+    await cred.getByRole('button', { name: '我已转交本人' }).click()
+    await expect(cred).toBeHidden()
+    // 这条才是「一次性」的真判据：DOM 里不留口令副本（toHaveCount 会重试到动画收尾）
+    await expect(page.getByText(pwd as string)).toHaveCount(0)
+  })
+})

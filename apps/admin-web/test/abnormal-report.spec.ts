@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createRouter, createMemoryHistory, type RouteRecordRaw } from 'vue-router'
+import { createPinia } from 'pinia'
 import { defineComponent } from 'vue'
 import PatientsPage from '../src/pages/patients/index.vue'
 import {
@@ -135,7 +136,7 @@ describe('患者管理抽屉的异常报告入口（T372 拆页后的处置）',
     const router = createRouter({ history: createMemoryHistory(), routes })
     await router.push('/patients')
     await router.isReady()
-    wrapper = mount(PatientsPage, { global: { plugins: [router, ElementPlus] } })
+    wrapper = mount(PatientsPage, { global: { plugins: [router, createPinia(), ElementPlus] } })
     await flushAll()
     return router
   }

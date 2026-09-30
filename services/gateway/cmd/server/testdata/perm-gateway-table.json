@@ -391,6 +391,13 @@
     {
       "role": "ROLE_ADMIN",
       "method": "POST",
+      "path": "/api/v1/admin/patients/S1/password",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
       "path": "/api/v1/admin/review-records",
       "deny": false,
       "why": "admin 全放行"
