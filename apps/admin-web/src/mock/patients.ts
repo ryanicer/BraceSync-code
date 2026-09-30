@@ -378,6 +378,21 @@ export function mockUnbindPatientWechat(patientId: string): { patientId: string 
   return { patientId }
 }
 
+/** 与医护/技师 mock 同形：前缀 + 8 位随机 + 后缀，镜像 handler.go genDoctorPassword 的发号器 */
+function genPatientPassword(): string {
+  return `Br${Math.random().toString(36).slice(2, 10)}#7`
+}
+
+/**
+ * T500 设登录口令（POST /admin/patients/:id/password，T477）。
+ * 后端只回 {patientId, password}、明文不落库不进审计；未知患者 404 不写（patient_password_t477.go 判定序）。
+ * mock 侧没有 password_hash 列可落，口令态在两个读接口都不投影 ⇒ 只镜像存在性与一次性返回。
+ */
+export function mockSetPatientPassword(patientId: string): { patientId: string; password: string } {
+  if (!PATIENTS.some((x) => x.patientId === patientId)) throw new Error('患者不存在')
+  return { patientId, password: genPatientPassword() }
+}
+
 /** 分配/更改患者团队（幂等：同 teamId no-op，不变更 updatedAt） */
 export function mockAssignPatientTeam(patientId: string, teamId: string): Patient {
   const p = PATIENTS.find((x) => x.patientId === patientId)

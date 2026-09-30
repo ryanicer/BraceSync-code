@@ -35,6 +35,7 @@ import {
   updatePatientPhoneApi,
   updatePatientProfileApi,
   unbindPatientWechatApi,
+  setPatientPasswordApi,
   teamNameOf,
   doctorNameOf,
   fetchTeamRanking,
@@ -529,5 +530,30 @@ describe('T432 患者写三入口真实模式守卫', () => {
     for (const forbidden of ['phone', 'teamId', 'primaryDoctorId', 'doctorId', 'status', 'name', 'cobbAngle']) {
       expect(data).not.toHaveProperty(forbidden)
     }
+  })
+})
+
+// ===== T500 患者设登录口令：真实模式线形守卫 =====
+// 派发单 §3 第 2 条要求「复用 T477 已登记的契约与网关路由，不新增后端端点」。这条就是把那句话钉成机器可判：
+// URL 换一段、method 换一个词、或把口令写成请求体参数（后端压根不读 body），都在此处判红。
+// 响应形状本地声明而非引契约：scripts/contract/dto-contract-map.mjs 把 PatientPasswordSetDTO 记为 ts:null
+// （一次性凭据响应刻意不登记 TS 契约，与 TechnicianPasswordResetDTO 同口径），所以「password」这个字段名
+// 没有类型层守卫，只能靠本条与 T477 handler 的 DTO tag 对拍 —— 后端改名而不改这里，真模式会拿到 undefined。
+describe('T500 患者设登录口令真实模式守卫', () => {
+  it('⇒ POST /admin/patients/:id/password，body 为空对象，口令只从本次响应的 password 取', async () => {
+    requestMock.mockResolvedValue({ patientId: 'P00001', password: 'Br7f3k2q#7' })
+    const pwd = await setPatientPasswordApi('P00001')
+    expect(lastRequest()).toEqual({
+      url: '/api/v1/admin/patients/P00001/password',
+      method: 'POST',
+      data: {},
+    })
+    expect(pwd).toBe('Br7f3k2q#7')
+  })
+
+  it('患者编号里的保留字符必须转义（不许拼出第二条路由）', async () => {
+    requestMock.mockResolvedValue({ patientId: 'P 001/x', password: 'Br7f3k2q#7' })
+    await setPatientPasswordApi('P 001/x')
+    expect(lastRequest().url).toBe('/api/v1/admin/patients/P%20001%2Fx/password')
   })
 })

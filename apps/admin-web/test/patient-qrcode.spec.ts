@@ -5,9 +5,11 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import QRCode from 'qrcode'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import { createPinia } from 'pinia'
 import PatientsPage from '../src/pages/patients/index.vue'
 
 // T372 后抽屉里有「异常报告」跳转按钮 ⇒ 页面 setup 用到 useRouter()，本用例必须装一个 router
+// T500 后页面 setup 还读 auth store（设登录口令按钮的角色闸门）⇒ 必须装 pinia，否则 setup 直接抛错
 const noop = { render: () => null }
 
 async function flushAll() {
@@ -57,7 +59,7 @@ beforeEach(() => {
       { path: '/abnormal-report', component: noop },
     ],
   })
-  wrapper = mount(PatientsPage, { global: { plugins: [router, ElementPlus] } })
+  wrapper = mount(PatientsPage, { global: { plugins: [router, createPinia(), ElementPlus] } })
 })
 
 afterEach(() => {

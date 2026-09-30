@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vite
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import { createPinia } from 'pinia'
 import type { Patient } from '@bracesync/shared-types'
 import PatientsPage from '../src/pages/patients/index.vue'
 
@@ -132,7 +133,9 @@ beforeEach(async () => {
     ],
   })
   // attachTo 必须传：不挂进 document 时，弹层里的节点用 document.querySelector 数不到（VTU 默认挂在游离容器上）
-  wrapper = mount(PatientsPage, { attachTo: document.body, global: { plugins: [router, ElementPlus] } })
+  // pinia 必须装：T500 起页面 setup 读 auth store 做「设登录口令」的角色闸门；这里不给登录态 ⇒ role=null ⇒ 该按钮不渲染，
+  // 下面那条「抽屉五入口逐字对平」的判据才维持 T432 的口径
+  wrapper = mount(PatientsPage, { attachTo: document.body, global: { plugins: [router, createPinia(), ElementPlus] } })
   await flushPromises()
 })
 
