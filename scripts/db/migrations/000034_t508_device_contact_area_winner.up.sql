@@ -10,9 +10,13 @@
 --    注册通路（RegisterDevice 的 INSERT 列清单）也不写该列 ⇒ 新注册设备同样是未配置态。
 --
 -- 类型取 DOUBLE PRECISION，与同族展示口径列 daily_wear_stats.wearing_threshold_n（迁移 000027 用 REAL）
--- 有意不同：本列存的是**后台录入、并原样回显**的配置值，REAL（float4）会把 0.64 存成
--- 0.6399999856948853，设备管理页回显即出现一串尾数。DOUBLE PRECISION 保持十进制短形式往返，
--- 且与 REAL 一样是 PG 原生浮点，pgx 侧直扫 *float64，避开 NUMERIC 的回读形状问题。
+-- 有意不同：本列存的是**后台录入、并原样回显**的配置值。REAL（float4）没有 0.64 的精确表示，
+-- 而读路把它扫进 Go 的 float64（同族先例：data-service model.go:488 的 *float64 扫 REAL 列），
+-- 拓宽即现形为 0.6399999856948853 ⇒ 设备管理页 JSON 回显会带一串尾数。
+-- ⚠️ psql 自己打印 0.64::real::text 仍显示 0.64（float4 的最短往返表示），失真只在拓宽侧可见，
+--    所以选型证据是 pgx 那两条读数，不是 psql 的那一行。
+-- DOUBLE PRECISION 保持十进制短形式往返，且与 REAL 一样是 PG 原生浮点，pgx 侧直扫 *float64，
+-- 避开 NUMERIC 的回读形状问题。
 BEGIN;
 
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS contact_area_cm2 DOUBLE PRECISION;
