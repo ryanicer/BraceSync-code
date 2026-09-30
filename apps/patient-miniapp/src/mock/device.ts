@@ -15,6 +15,8 @@ export function mockDevice(): Device {
     firmwareVersion: 'v1.2.3',
     patientId: 'pat-001',
     wifiSsid: '2.4G-Network',
+    // T508 契约新键：mock 与真实写路径同形（未配置 = null，前端 kPa 档显示 --）
+    contactAreaCm2: null,
     bindTime: '2026-07-01T08:00:00Z',
     status: 'online',
     lastReportAt: new Date().toISOString(),

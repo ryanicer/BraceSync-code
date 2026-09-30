@@ -19,9 +19,12 @@ type DeviceListItem struct {
 	PatientID       *string
 	PatientName     *string // patients.name join（未绑定为 nil）
 	WifiSSID        *string
-	BindTime        *time.Time
-	Status          string
-	LastReportAt    *time.Time
+	// ContactAreaCm2 T508：压力点有效受压面积（cm2），nil = 未配置。
+	// 与 DeviceDTO 同键（T356「详情键 ⊆ 列表键」门禁要求列表也投影本列）。
+	ContactAreaCm2 *float64
+	BindTime       *time.Time
+	Status         string
+	LastReportAt   *time.Time
 }
 
 // InstallListItem install_records 双 join 投影（管理端安装记录列表）
@@ -108,7 +111,7 @@ func (r *PGStore) ListDevices(ctx context.Context, keyword string, scope ListSco
 	offset := (page - 1) * pageSize
 	listArgs := append(append([]any{}, args...), pageSize, offset)
 	query := `SELECT d.device_id, d.model, COALESCE(d.firmware_version, ''), d.patient_id, p.name,
-	                 d.wifi_ssid, d.bind_time, d.status, d.last_report_at ` + base +
+	                 d.wifi_ssid, d.contact_area_cm2, d.bind_time, d.status, d.last_report_at ` + base +
 		fmt.Sprintf(` ORDER BY d.created_at DESC, d.device_id LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
 
 	rows, err := r.pool.Query(ctx, query, listArgs...)
@@ -121,7 +124,7 @@ func (r *PGStore) ListDevices(ctx context.Context, keyword string, scope ListSco
 	for rows.Next() {
 		var d DeviceListItem
 		if scanErr := rows.Scan(&d.DeviceID, &d.Model, &d.FirmwareVersion, &d.PatientID, &d.PatientName,
-			&d.WifiSSID, &d.BindTime, &d.Status, &d.LastReportAt); scanErr != nil {
+			&d.WifiSSID, &d.ContactAreaCm2, &d.BindTime, &d.Status, &d.LastReportAt); scanErr != nil {
 			return nil, 0, fmt.Errorf("scan device item: %w", scanErr)
 		}
 		list = append(list, d)

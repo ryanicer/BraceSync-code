@@ -476,11 +476,15 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 		PressureHighN:   th.PressureHighN,
 	}
 
-	deviceID, dbStatus, exists, err := s.devices.GetDeviceByPatient(ctx, patientID)
+	deviceID, dbStatus, areaCm2, exists, err := s.devices.GetDeviceByPatient(ctx, patientID)
 	if err != nil {
 		return nil, model.ErrInternal("lookup device: %v", err)
 	}
 	snapshot.DeviceID = deviceID // 未绑定时为空串，前端按「无设备」处理，不报错
+	// T508：面积与色阶上界的 kPa 档随设备行同源回填（换算只在这一次做，两条读路共用同一个 areaCm2）。
+	// 未绑定 / 未配置 → 保持 nil，前端显示「--」，不用后台默认 0.64 补位。
+	snapshot.ContactAreaCm2 = areaCm2
+	snapshot.HeatmapMaxKpa = model.KpaFromN(th.HeatmapMaxN, areaCm2)
 	// T200 真机取证点：配网入口「无设备」弹窗的唯一判据
 	log.Info().Str("patient_id", patientID).Str("device_id", deviceID).Bool("bound", exists).
 		Msg("realtime: snapshot device resolved (T200)")
@@ -490,18 +494,18 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 
 	// DB 优先路径（*repo.RecordRepo 实现 GetLatestRecord 时）
 	if s.latest != nil {
-		return s.getRealtimeFromDB(ctx, patientID, deviceID, dbStatus, snapshot, th)
+		return s.getRealtimeFromDB(ctx, patientID, deviceID, dbStatus, areaCm2, snapshot, th)
 	}
 
 	// Redis 回退路径（测试 stub 无 GetLatestRecord 时走旧逻辑）
-	return s.getRealtimeFromRedis(ctx, patientID, deviceID, dbStatus, snapshot, th)
+	return s.getRealtimeFromRedis(ctx, patientID, deviceID, dbStatus, areaCm2, snapshot, th)
 }
 
 // getRealtimeFromDB DB 优先实时快照：pressure_records 最新行驱动，Redis 仅补充状态与今日统计
 // 口径对齐 Redis 路径：maxPressure/maxPoint 取 stat:today（当日全量最大，T173 起按减偏移后值累计），
 // 热力图 & PressureRecords 取 pressure_records 最新行（读侧减偏移，T173），
 // stat:today 为空时回退到最新帧的 max（避免前端空值）。
-func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
+func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, deviceID, dbStatus string, areaCm2 *float64, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
 	rec, hasRecord, err := s.latest.GetLatestRecord(ctx, patientID)
 	if err != nil {
 		return nil, model.ErrInternal("read latest record: %v", err)
@@ -512,7 +516,7 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 
 	res := s.calibrate(ctx, deviceID, rec.Points)
 	snapshot.PressureRecords = []model.PressureRecordDTO{s.calibratedRecordDTO(ctx, th, rec)}
-	snapshot.PressureHeatmap = model.BuildHeatmap(res.Points)
+	snapshot.PressureHeatmap = model.BuildHeatmap(res.Points, areaCm2)
 
 	// 一次性读 stat:today：wear_minutes / max_pressure / max_point / abnormal_count
 	if stats, stErr := s.cache.GetStatToday(ctx, patientID); stErr == nil {
@@ -566,7 +570,7 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 // T173：rt:frame 为 ÷1000 后 raw 值，读侧统一减偏移（与 DB 分支同源）。
 // T325：帧能解析出 20 点就下发真值（未佩戴时就是接近 0 的真值），解析不出就不渲染热力图——
 // 不再按 allDead 判「无有效帧」后塞 seed（那是无数据造数据）。
-func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
+func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, areaCm2 *float64, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
 	// 状态推导：abnormal 优先，其次 lastseen ≤2h 判 online
 	if dbStatus == "abnormal" {
 		snapshot.Status = "abnormal"
@@ -612,7 +616,7 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 		}
 	}
 	if frameValid {
-		snapshot.PressureHeatmap = model.BuildHeatmap(hmPoints)
+		snapshot.PressureHeatmap = model.BuildHeatmap(hmPoints, areaCm2)
 	}
 
 	// 今日统计（stat:today）

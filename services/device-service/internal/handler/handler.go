@@ -10,6 +10,7 @@
 //	POST /api/v1/devices/:deviceId/rebind         换绑（旧绑定历史可追溯）
 //	POST /api/v1/devices/:deviceId/unbind         解绑（幂等）
 //	POST /api/v1/devices/:deviceId/wifi           WiFi 配置状态（wifi_ssid 维护）
+//	PUT  /api/v1/devices/:deviceId/contact-area   有效受压面积配置（T508：kPa 档换算除数）
 //	POST /api/v1/devices/:deviceId/provision-key  配网密钥派生（T067，HKDF-SHA256 16B→32hex）
 //	POST /api/v1/install-records                  新建安装记录（技师安装流程）
 //	GET  /api/v1/install-records/:id              单条安装记录详情（T122）
@@ -86,6 +87,7 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/devices/:deviceId/rebind", h.rebind)
 		v1.POST("/devices/:deviceId/unbind", h.unbind)
 		v1.POST("/devices/:deviceId/wifi", h.setWifi)
+		v1.PUT("/devices/:deviceId/contact-area", h.setContactArea) // T508 有效受压面积配置
 		v1.POST("/devices/:deviceId/provision-key", h.provisionKey) // T067
 		v1.POST("/install-records", h.createInstall)
 		v1.GET("/install-records/:id", h.getInstall)        // T122 单条详情
@@ -161,6 +163,15 @@ type wifiRequest struct {
 	Ssid string `json:"ssid"`
 	// Cleared T448：true 表示「BLE 清除已完成」的留痕上报，与 ssid 回写互斥（此时 ssid 必须为空）
 	Cleared bool `json:"cleared"`
+}
+
+// contactAreaRequest T508：PUT /devices/:deviceId/contact-area 的请求体。
+//
+// 指针只用来把「没给数」和「给了 0」分开报：省略键与显式 null 都解成 nil，两者一律 400。
+// 本列没有回退成 NULL 的通路（PRD §7D.5 只有设置、没有清除），所以这里不允许「不表态」
+// 被静默读成清空——那是整值覆盖路由最容易踩的形状。
+type contactAreaRequest struct {
+	ContactAreaCm2 *float64 `json:"contactAreaCm2"`
 }
 
 type installRequest struct {
@@ -441,6 +452,29 @@ func (h *Handler) setWifi(c *gin.Context) {
 		return
 	}
 	if appErr := h.svc.SetWifiSSID(c.Request.Context(), c.Param("deviceId"), req.Ssid); appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	ok(c, nil)
+}
+
+// setContactArea T508：设备有效受压面积配置（devices.contact_area_cm2）。
+// 整值覆盖，一次写一个设备；变更后下一次实时读数即生效（PRD §7D.5），无需等设备上报。
+func (h *Handler) setContactArea(c *gin.Context) {
+	// 判定排在方法体最前，先于 JSON 解析与任何仓储访问（同族其余八条写端点一致）。
+	if !h.assertDeviceWriteRole(c, "configure device contact area") {
+		return
+	}
+	var req contactAreaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	if req.ContactAreaCm2 == nil {
+		fail(c, model.ErrInvalidParam("contactAreaCm2 is required"))
+		return
+	}
+	if appErr := h.svc.SetContactArea(c.Request.Context(), c.Param("deviceId"), *req.ContactAreaCm2); appErr != nil {
 		fail(c, appErr)
 		return
 	}

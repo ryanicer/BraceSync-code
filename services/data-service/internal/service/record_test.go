@@ -114,16 +114,23 @@ func (f *fakeRecords) QueryHistory(_ context.Context, patientID string, from, to
 type fakeDevices struct {
 	bindings  map[string][2]string // deviceID → {patientID, status}
 	byPatient map[string][2]string // patientID → {deviceID, status}
-	err       error
+	// areas deviceID → 有效受压面积 cm²（T508）。没登记的机器 = 列 NULL = 未配置。
+	areas map[string]float64
+	err   error
 }
 
 func newFakeDevices() *fakeDevices {
-	return &fakeDevices{bindings: map[string][2]string{}, byPatient: map[string][2]string{}}
+	return &fakeDevices{bindings: map[string][2]string{}, byPatient: map[string][2]string{}, areas: map[string]float64{}}
 }
 
 func (f *fakeDevices) bind(deviceID, patientID, status string) {
 	f.bindings[deviceID] = [2]string{patientID, status}
 	f.byPatient[patientID] = [2]string{deviceID, status}
+}
+
+// setArea 登记设备面积（T508）；不调用即该设备面积为 nil
+func (f *fakeDevices) setArea(deviceID string, cm2 float64) {
+	f.areas[deviceID] = cm2
 }
 
 func (f *fakeDevices) GetBinding(_ context.Context, deviceID string) (string, string, bool, error) {
@@ -134,12 +141,20 @@ func (f *fakeDevices) GetBinding(_ context.Context, deviceID string) (string, st
 	return v[0], v[1], ok, nil
 }
 
-func (f *fakeDevices) GetDeviceByPatient(_ context.Context, patientID string) (string, string, bool, error) {
+func (f *fakeDevices) GetDeviceByPatient(_ context.Context, patientID string) (string, string, *float64, bool, error) {
 	if f.err != nil {
-		return "", "", false, f.err
+		return "", "", nil, false, f.err
 	}
 	v, ok := f.byPatient[patientID]
-	return v[0], v[1], ok, nil
+	if !ok {
+		return "", "", nil, false, nil
+	}
+	// 面积跟着解析出的那台设备走（与 DeviceRepo 的同行 SELECT 同形）
+	area, hasArea := f.areas[v[0]]
+	if !hasArea {
+		return v[0], v[1], nil, true, nil
+	}
+	return v[0], v[1], &area, true, nil
 }
 
 type fakeConfigs struct {

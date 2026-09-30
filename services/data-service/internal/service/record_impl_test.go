@@ -40,6 +40,7 @@ func (m *mockRecordStore) GetLatestRecord(_ context.Context, _ string) (model.Pr
 type mockDeviceStore struct {
 	deviceID string
 	status   string
+	areaCm2  *float64 // T508 有效受压面积，nil = 未配置
 	exist    bool
 	err      error
 }
@@ -47,8 +48,8 @@ type mockDeviceStore struct {
 func (m *mockDeviceStore) GetBinding(_ context.Context, _ string) (string, string, bool, error) {
 	return "", "", false, nil
 }
-func (m *mockDeviceStore) GetDeviceByPatient(_ context.Context, _ string) (string, string, bool, error) {
-	return m.deviceID, m.status, m.exist, m.err
+func (m *mockDeviceStore) GetDeviceByPatient(_ context.Context, _ string) (string, string, *float64, bool, error) {
+	return m.deviceID, m.status, m.areaCm2, m.exist, m.err
 }
 
 // mockCacheStore 实现 repo.CacheStore（GetLastSeen / GetStatToday 有意义）

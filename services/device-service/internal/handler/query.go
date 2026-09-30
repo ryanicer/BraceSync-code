@@ -37,9 +37,12 @@ type deviceListDTO struct {
 	PatientID       *string `json:"patientId"`
 	PatientName     *string `json:"patientName"`
 	WifiSsid        *string `json:"wifiSsid"`
-	BindTime        *string `json:"bindTime"`
-	Status          string  `json:"status"`
-	LastReportAt    *string `json:"lastReportAt"`
+	// ContactAreaCm2 T508：null = 未配置（kPa 档显示 --）。键须与 DeviceDTO 同名，
+	// 否则 list_detail_superset_t356_test.go 判红（详情键 ⊆ 列表键）。
+	ContactAreaCm2 *float64 `json:"contactAreaCm2"`
+	BindTime       *string  `json:"bindTime"`
+	Status         string   `json:"status"`
+	LastReportAt   *string  `json:"lastReportAt"`
 }
 
 // installListDTO InstallRecord + patientName/techName（契约 getInstallRecords 扩展）
@@ -118,6 +121,7 @@ func (h *Handler) listDevices(c *gin.Context) {
 			PatientID:       r.PatientID,
 			PatientName:     r.PatientName,
 			WifiSsid:        r.WifiSSID,
+			ContactAreaCm2:  r.ContactAreaCm2,
 			BindTime:        fmtTsPtr(r.BindTime),
 			Status:          r.Status,
 			LastReportAt:    fmtTsPtr(r.LastReportAt),

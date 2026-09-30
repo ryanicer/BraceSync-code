@@ -26,17 +26,18 @@ import (
 // deviceManageRoutes device-service 注册/绑定/基线/安装端点（T032 补全；
 // T030 的 GET /devices、GET /install-records 列表保持在 deviceServiceRoutes）
 var deviceManageRoutes = []proxyRoute{
-	{http.MethodPost, "/devices"},                   // 设备注册（幂等）
-	{http.MethodGet, "/devices/:deviceId"},          // 设备详情
-	{http.MethodGet, "/devices/:deviceId/bindings"}, // 绑定历史
-	{http.MethodPost, "/devices/:deviceId/bind"},    // 绑定（互斥）
-	{http.MethodPost, "/devices/:deviceId/rebind"},  // 换绑
-	{http.MethodPost, "/devices/:deviceId/unbind"},  // 解绑（幂等）
-	{http.MethodPost, "/devices/:deviceId/wifi"},    // 配网状态
-	{http.MethodPost, "/install-records"},           // 新建安装记录
-	{http.MethodPut, "/install-records/:id"},        // T122 回填安装元数据
-	{http.MethodPost, "/baselines"},                 // 校准基线落库
-	{http.MethodGet, "/devices/:deviceId/baseline"}, // T407 设备当前生效基线只读
+	{http.MethodPost, "/devices"},                       // 设备注册（幂等）
+	{http.MethodGet, "/devices/:deviceId"},              // 设备详情
+	{http.MethodGet, "/devices/:deviceId/bindings"},     // 绑定历史
+	{http.MethodPost, "/devices/:deviceId/bind"},        // 绑定（互斥）
+	{http.MethodPost, "/devices/:deviceId/rebind"},      // 换绑
+	{http.MethodPost, "/devices/:deviceId/unbind"},      // 解绑（幂等）
+	{http.MethodPost, "/devices/:deviceId/wifi"},        // 配网状态
+	{http.MethodPut, "/devices/:deviceId/contact-area"}, // T508 有效受压面积（kPa 展示档的换算分母）
+	{http.MethodPost, "/install-records"},               // 新建安装记录
+	{http.MethodPut, "/install-records/:id"},            // T122 回填安装元数据
+	{http.MethodPost, "/baselines"},                     // 校准基线落库
+	{http.MethodGet, "/devices/:deviceId/baseline"},     // T407 设备当前生效基线只读
 }
 
 // deviceReportRoutes 设备域上报路由（data-service；走设备验签组，非 JWT）
