@@ -29,6 +29,9 @@ export {
   ADMIN_MOUNT as REAL_MOUNT,
 } from '../e2e/admin-helpers'
 
+// T502：登录耗时判据与 mock 线同一份实现，真实层用例从这里取，不复制第二套阈值
+export { LOGIN_BUDGET_MS, timedLogin, expectLoginWithinBudget } from '../e2e/login-timing'
+
 // ─────────────────────────────────────────────────────────────
 // 真实模式「staging 路由」全量常量（前端挂在 Nginx /admin/ 下）
 //
