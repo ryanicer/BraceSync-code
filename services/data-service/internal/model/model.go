@@ -666,7 +666,7 @@ type RealtimeSnapshot struct {
 	//
 	// 换算失败一律是 null 而不是 0：0 kPa 是「读到零压力」，与「配置缺失」在稿面图上是两回事。
 	ContactAreaCm2 *float64 `json:"contactAreaCm2"`
-	HeatmapMaxKpa  *int      `json:"heatmapMaxKpa"`
+	HeatmapMaxKpa  *int     `json:"heatmapMaxKpa"`
 }
 
 // Dashboard 常量 (shared between service + integration tests)
