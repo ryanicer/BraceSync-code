@@ -423,6 +423,20 @@ func (f *FakeStore) SetWifiSSID(_ context.Context, deviceID, ssid string) error 
 	return nil
 }
 
+// SetContactArea T508：整写 devices.contact_area_cm2。与 PG 实现对齐——
+// 查无设备返回 ErrNotFound，其余情况覆盖整列值（无「清空回 NULL」通路）。
+func (f *FakeStore) SetContactArea(_ context.Context, deviceID string, areaCm2 float64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dev, ok := f.devices[deviceID]
+	if !ok {
+		return repo.ErrNotFound
+	}
+	dev.ContactAreaCm2 = &areaCm2
+	dev.UpdatedAt = time.Now()
+	return nil
+}
+
 func (f *FakeStore) WriteWifiClearAudit(_ context.Context, in repo.WifiClearAuditInput) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

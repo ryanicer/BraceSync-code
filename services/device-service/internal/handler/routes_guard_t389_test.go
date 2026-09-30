@@ -36,13 +36,15 @@ type t389GatedWrite struct {
 }
 
 // t389GatedWrites 设备域收口的写路由：T387 点名的七条 + T404 补的第八条（POST /api/v1/devices
-// 注册，原先挂在豁免表里等裁，裁后迁来此处）。条数与本表逐字对应，少一条即「假覆盖」。
+// 注册，原先挂在豁免表里等裁，裁后迁来此处）+ T508 补的第九条（PUT /devices/:deviceId/contact-area
+// 有效受压面积配置）。条数与本表逐字对应，少一条即「假覆盖」。
 var t389GatedWrites = []t389GatedWrite{
 	{"POST /api/v1/devices", "register", "T387 assertDeviceWriteRole（T404 第八条）"},
 	{"POST /api/v1/devices/:deviceId/bind", "bind", "T387 assertDeviceWriteRole"},
 	{"POST /api/v1/devices/:deviceId/rebind", "rebind", "T387 assertDeviceWriteRole"},
 	{"POST /api/v1/devices/:deviceId/unbind", "unbind", "T387 assertDeviceWriteRole"},
 	{"POST /api/v1/devices/:deviceId/wifi", "wifi", "T387 assertDeviceWriteRole"},
+	{"PUT /api/v1/devices/:deviceId/contact-area", "contact-area", "T508 assertDeviceWriteRole（第九条）"},
 	{"POST /api/v1/install-records", "create-install", "T387 assertDeviceWriteRole"},
 	{"PUT /api/v1/install-records/:id", "update-install-meta", "T387 assertDeviceWriteRole"},
 	{"POST /api/v1/baselines", "save-baseline", "T387 assertDeviceWriteRole"},
@@ -102,7 +104,7 @@ func TestT389_EveryDerivedWriteRouteIsGatedOrExempt(t *testing.T) {
 		require.False(t, gated[g.pattern] != (t389GatedWrite{}), "已收口表里 %s 重复登记", g.pattern)
 		gated[g.pattern] = g
 	}
-	require.Len(t, t389GatedWrites, 8, "收口面是 T387 点名的七条 + T404 补的注册，本表条数须与之相等")
+	require.Len(t, t389GatedWrites, 9, "收口面是 T387 点名的七条 + T404 补的注册 + T508 补的面积配置，本表条数须与之相等")
 
 	for _, key := range derived {
 		_, isGated := gated[key]

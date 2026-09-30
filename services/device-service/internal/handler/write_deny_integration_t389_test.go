@@ -8,8 +8,9 @@
 // 门禁只在内存 FakeStore 上绿过，不等于 PGStore 这条事务链路上没人绕过。
 //
 // 本文件补的就是这一格，三件事一起判：
-//  1. 八条写端点 × {医护, 客服} → HTTP 403，业务码逐字 20403（字面量，理由见 N1 说明）
-//     —— T389 交件时是七条，T404 把 POST /api/v1/devices 注册补成第八条；
+//  1. 九条写端点 × {医护, 客服} → HTTP 403，业务码逐字 20403（字面量，理由见 N1 说明）
+//     —— T389 交件时是七条，T404 把 POST /api/v1/devices 注册补成第八条，
+//     T508 把 PUT /api/v1/devices/:deviceId/contact-area 面积配置补成第九条；
 //  2. 四张写表（devices / device_bindings / install_records / baselines）行数增量全 0，
 //     且目标设备行、安装记录行的关键列逐字不变 —— 计数字段用 count(*)，改值型越权（UPDATE
 //     不新增行）靠关键列捕获，两条合起来才是「零写」；
@@ -78,17 +79,20 @@ func it389Snapshot(t *testing.T) it389Counts {
 	}
 }
 
-// it389DeviceRow 目标设备的关键列（改值型越权的捕获面）
+// it389DeviceRow 目标设备的关键列（改值型越权的捕获面）。
+// T508 起把 contact_area_cm2 也纳入：面积是 UPDATE 不新增行的改写，四张表行数快照看不见它，
+// 而它一旦被动过，同一台设备的 kPa 展示档会整片漂移。
 func it389DeviceRow(t *testing.T) string {
 	t.Helper()
-	var patientID, status, wifiSSID, bindTime, updatedAt string
+	var patientID, status, wifiSSID, bindTime, updatedAt, contactArea string
 	require.NoError(t, itPool.QueryRow(context.Background(),
 		`SELECT COALESCE(patient_id,'<NULL>'), status, COALESCE(wifi_ssid,'<NULL>'),
-		        COALESCE(bind_time::text,'<NULL>'), updated_at::text
+		        COALESCE(bind_time::text,'<NULL>'), updated_at::text,
+		        COALESCE(contact_area_cm2::text,'<NULL>')
 		 FROM devices WHERE device_id = $1`, it389Device).
-		Scan(&patientID, &status, &wifiSSID, &bindTime, &updatedAt), "读取设备行失败")
-	return fmt.Sprintf("patient=%s status=%s wifi=%s bindTime=%s updatedAt=%s",
-		patientID, status, wifiSSID, bindTime, updatedAt)
+		Scan(&patientID, &status, &wifiSSID, &bindTime, &updatedAt, &contactArea), "读取设备行失败")
+	return fmt.Sprintf("patient=%s status=%s wifi=%s bindTime=%s updatedAt=%s contactArea=%s",
+		patientID, status, wifiSSID, bindTime, updatedAt, contactArea)
 }
 
 // it389InstallRow 安装记录的关键列
@@ -116,7 +120,7 @@ func it389Offsets() []float32 {
 	return v
 }
 
-// it389Probes 设备域收口的八条写端点越权探针（目标一律指向「别人的资源」，即真正有害的那一组参数）
+// it389Probes 设备域收口的九条写端点越权探针（目标一律指向「别人的资源」，即真正有害的那一组参数）
 func it389Probes(installID int64) []struct {
 	name, method, path string
 	body               any
@@ -135,6 +139,8 @@ func it389Probes(installID int64) []struct {
 		{"unbind", http.MethodPost, "/api/v1/devices/" + it389Device + "/unbind", nil},
 		{"wifi", http.MethodPost, "/api/v1/devices/" + it389Device + "/wifi",
 			map[string]string{"ssid": "T389-EVIL"}},
+		{"contact-area", http.MethodPut, "/api/v1/devices/" + it389Device + "/contact-area",
+			map[string]any{"contactAreaCm2": 0.9}},
 		{"create-install", http.MethodPost, "/api/v1/install-records", map[string]string{
 			"deviceId": it389Device, "patientId": it389PatientA, "techId": it389Tech}},
 		{"update-install-meta", http.MethodPut, instPath,
@@ -200,10 +206,23 @@ func TestIT_T389_DeviceWritesDeniedForDoctorAndCS(t *testing.T) {
 	// 3. 反证：上面那套快照 detector 真的看得见技师的写（否则零写判据是空的）
 	t.Run("counterproof/technician-write-is-visible", func(t *testing.T) {
 		before := it389Snapshot(t)
+		beforeDev := it389DeviceRow(t)
+		require.Contains(t, beforeDev, "contactArea=<NULL>",
+			"反证前提：面积列此刻须还是未配置，否则下面的「改写可见」判据是空的：%s", beforeDev)
 		_, r := env.do(t, http.MethodPost, "/api/v1/devices/"+it389Device+"/wifi",
 			map[string]string{"ssid": "T389-LEGIT"}, it389Req("technician", it389Tech))
 		require.Equal(t, 0, r.Code, "技师正常写应成功：%s", r.Message)
 		assert.Contains(t, it389DeviceRow(t), "wifi=T389-LEGIT", "关键列快照应显出这次改写")
+
+		// T508 第九条的反证：面积是 UPDATE 不新增行，四张表行数快照对它无感 ——
+		// 全靠关键列快照这一层兜住。这里必须看得见 NULL → 有值的改写，否则拒绝腿的
+		// 「设备行逐字不变」是在守一个看不见面积写的 detector。
+		_, r = env.do(t, http.MethodPut, "/api/v1/devices/"+it389Device+"/contact-area",
+			map[string]any{"contactAreaCm2": 0.9}, it389Req("technician", it389Tech))
+		require.Equal(t, 0, r.Code, "技师配置受压面积应成功：%s", r.Message)
+		afterDev := it389DeviceRow(t)
+		assert.NotEqual(t, beforeDev, afterDev, "关键列快照应显出面积改写")
+		assert.NotContains(t, afterDev, "contactArea=<NULL>", "面积改写后不应仍是未配置：%s", afterDev)
 
 		_, r = env.do(t, http.MethodPost, "/api/v1/install-records", map[string]string{
 			"deviceId": it389Device, "patientId": it389PatientA, "techId": it389Tech,
