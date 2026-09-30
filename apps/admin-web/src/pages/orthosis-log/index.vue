@@ -301,7 +301,7 @@ import {
   Tooltip, Legend, Filler, type ChartData, type ChartOptions,
 } from 'chart.js'
 import { Line, Bar } from 'vue-chartjs'
-import { alertTypeLabel, userErrorCopy } from '@bracesync/shared-utils'
+import { alertTypeLabel, areaLabel, feelingLevelLabel, userErrorCopy } from '@bracesync/shared-utils'
 import type { Alert, FeelingLog, HealthReport, OrthosisPlan, Patient } from '@bracesync/shared-types'
 import {
   fetchPatients, fetchPatientDetail, fetchTeams, fetchAlerts, fetchSystemSettings,
@@ -314,7 +314,6 @@ import {
   alignWearSeries, constantLine, rangeForDays, seriesIsEmpty,
   type DailyWearDay, type WearRangeDays, type WearSeries,
 } from '../../utils/workbenchData'
-import { areaLabel } from '../../utils/feelingAreas'
 import { useAuthStore } from '../../stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
@@ -368,9 +367,7 @@ const FEELING_TAG: Record<string, 'success' | 'warning' | 'info'> = {
 }
 
 function feelingLabel(feeling: FeelingLog['feeling']): string {
-  if (feeling === 'fitted') return '贴合'
-  if (feeling === 'discomfort') return '不适'
-  return '未评'
+  return feelingLevelLabel(feeling) || '未评'
 }
 
 function formatDateTime(iso: string): string {
