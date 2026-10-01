@@ -1,0 +1,253 @@
+# T490 Q4 尾格记录件：生产在役 compose 副本 + 13 个服务的镜像 TAG 与 image ID 钉值
+#
+# 身份：本文件是「生产当前在役状态」的记录件，不是部署通道。
+#   - 部署脚本只认 scripts/deploy/docker-compose.yml（deploy-staging.sh 第 237 行按全名取），本文件不参与任何部署，
+#     deploy-staging.sh 与生产 /opt/bracesync 本笔一行未动。
+#   - 合入本文件会让 Release workflow 在 main 上跑一次构建（release.yml 的 paths 含 scripts/deploy/**），
+#     该 job 的 concurrency 是 release-main 且 cancel-in-progress，合并前请先看有没有在跑的 Release run。
+#
+# 读数出处（全部只读动作，writes_performed=NONE）：
+#   - 在役 compose 文本：生产宿主机上那份文件的副本，取自证据包 docs 仓
+#     docs/tasks/andy/T490-evidence-q1q4/compose/docker-compose.in-service.after-q3.yml（Q3 于 13:30:35 把
+#     file-service 的 restart 改回 unless-stopped 之后的那一版）。
+#   - TAG 与 image ID：docker inspect 只读回显（13 个容器，按 label com.docker.compose.project=bracesync
+#     取生产那 13 个并显式排除 -staging- 命名的 13 个；宿主上 bracesync 前缀容器共 26 个）。
+#     采集时刻 2026-10-01 16:10:13（北京时间），读数锚点见下方 Q0 行。
+#
+# digest 面的一条诚实说明（别把这里当 registry digest）：
+#   宿主 docker image inspect 回显的 RepoDigests 与 image ID 逐字相同——自研镜像如此，连从公网 pull 来的
+#   nginx:1.25-alpine 也同形（对照读数见包内 raw/26 的 Q2b 行）。正常 registry manifest digest 不会等于
+#   config digest，所以这份 RepoDigests 不是独立的镜像仓库摘要，本件只用 image ID 作内容寻址钉值。
+#   要真正的 registry digest，得等镜像被推到带摘要的仓库之后再补一次读数。
+#
+# 钉值表（service / 在役 TAG / image ID，与下面每行 image: 后的行内注释同源生成）：
+#   nginx          nginx:1.25-alpine                 sha256:516475cc129da42866742567714ddc681e5eed7b9ee0b9e9c015e464b4221a00
+#   gateway        bracesync/gateway:5bd4ab3         sha256:a918013411e05d5560054c6c9a072578b4c82533f8bf466a388d5a992b75600c
+#   user-service   bracesync/user-service:5bd4ab3    sha256:43eba9951577bfe4434e7f36d7a1caccb857ddca7cc970c48ac79106b39a2c81
+#   device-service bracesync/device-service:63fc466  sha256:b2033ca432488bb22cbe11ff4bbbfa2fb3acd1e24b5ac8dd4ff69f70cf90c008
+#   data-service   bracesync/data-service:61b2970    sha256:d2998dc6e3aa604eef065bfae632fed0b0a0a8a069304ded926a418d0ab90dba
+#   alert-service  bracesync/alert-service:acead6e   sha256:d877fb08371236e531c6f2c3f4d478436a0bad0c3f5edc703572e886becb65c9
+#   msg-service    bracesync/msg-service:63fc466     sha256:061fa7da7bb0f92148b682c7d32944acab0e1076b60d32334d632ca41cd1b11f
+#   file-service   bracesync/file-service:5bd4ab3    sha256:d31df28503e08fc1a6f45df2f48f1ddcd5e2c7ff3b277b3c0638286757dd59bc
+#   postgres       postgres:15-alpine                sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
+#   redis          redis:7-alpine                    sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+#   prometheus     prom/prometheus:v2.51.0           sha256:5ccad477d0057e62a7cd1981ffcc43785ac10c5a35522dc207466ff7e7ec845f
+#   grafana        grafana/grafana:10.4.0            sha256:f9811e4e687ffecf1a43adb9b64096c50bc0d7a782f8608530f478b6542de7d5
+#   node_exporter  prom/node-exporter:v1.7.0         sha256:4cb2b9019f1757be8482419002cb7afe028fdba35d47958829e4cfeaf6246d80
+#   读数锚点：Q0|bj=2026-10-01 16:10:13 mode=readonly writes_performed=NONE
+#   容器态（采集时，由同一次 inspect 回显统计）：state 13 running；health 9 healthy / 4 none（health=none 的是 grafana、nginx、node_exporter、prometheus，compose 里未给这些服务定义健康检查）；restart 13 unless-stopped。
+
+# BraceSync 生产/Staging 部署 Compose
+# 对齐：docs/deployment/runbook.md §1 · docs/architecture/tech-architecture.md §6.1
+# 用法：docker compose up -d（生产）/ docker compose -p staging up -d（staging）
+
+services:
+  nginx:
+    image: nginx:1.25-alpine   # imageid sha256:516475cc129da42866742567714ddc681e5eed7b9ee0b9e9c015e464b4221a00
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - /opt/bracesync/apps/admin-web/dist:/usr/share/nginx/html/admin:ro
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  gateway:
+    image: bracesync/gateway:5bd4ab3   # imageid sha256:a918013411e05d5560054c6c9a072578b4c82533f8bf466a388d5a992b75600c
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+      - ALERT_SERVICE_URL=http://alert-service:8080
+      - USER_SERVICE_URL=http://user-service:8081
+      - DEVICE_SERVICE_URL=http://device-service:8082
+      - DATA_SERVICE_URL=http://data-service:8083
+      - MSG_SERVICE_URL=http://msg-service:8086
+      - FILE_SERVICE_URL=http://file-service:8085
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  user-service:
+    image: bracesync/user-service:5bd4ab3   # imageid sha256:43eba9951577bfe4434e7f36d7a1caccb857ddca7cc970c48ac79106b39a2c81
+    environment:
+      - PORT=8081
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - PHONE_ENC_KEY=${PHONE_ENC_KEY}
+      # T069：患者端微信登录凭据（缺失则 /patient/wx-login 降级 500，不影响其他端点）
+      - WX_APPID=${WX_APPID}
+      - WX_APP_SECRET=${WX_APP_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  device-service:
+    image: bracesync/device-service:63fc466   # imageid sha256:b2033ca432488bb22cbe11ff4bbbfa2fb3acd1e24b5ac8dd4ff69f70cf90c008
+    environment:
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+      - DEVICE_SECRET_ENC_KEY=${DEVICE_SECRET_ENC_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8082/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  data-service:
+    image: bracesync/data-service:61b2970   # imageid sha256:d2998dc6e3aa604eef065bfae632fed0b0a0a8a069304ded926a418d0ab90dba
+    environment:
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+      - ALERT_SERVICE_URL=http://alert-service:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8083/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  alert-service:
+    image: bracesync/alert-service:acead6e   # imageid sha256:d877fb08371236e531c6f2c3f4d478436a0bad0c3f5edc703572e886becb65c9
+    environment:
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  msg-service:
+    image: bracesync/msg-service:63fc466   # imageid sha256:061fa7da7bb0f92148b682c7d32944acab0e1076b60d32334d632ca41cd1b11f
+    environment:
+      - DB_URL=${DB_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8086/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  file-service:
+    image: bracesync/file-service:5bd4ab3   # imageid sha256:d31df28503e08fc1a6f45df2f48f1ddcd5e2c7ff3b277b3c0638286757dd59bc
+    environment:
+      - PORT=8085
+      - DB_URL=${DB_URL}
+      - COS_SECRET_ID=${COS_SECRET_ID}
+      - COS_SECRET_KEY=${COS_SECRET_KEY}
+      - COS_BUCKET=${COS_BUCKET}
+      - COS_REGION=${COS_REGION}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8085/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
+  postgres:
+    image: postgres:15-alpine   # imageid sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
+    environment:
+      - POSTGRES_DB=bracesync
+      - POSTGRES_USER=${POSTGRES_USER:-bracesync}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bracesync}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine   # imageid sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    command: redis-server --appendonly yes --appendfsync everysec --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:v2.51.0   # imageid sha256:5ccad477d0057e62a7cd1981ffcc43785ac10c5a35522dc207466ff7e7ec845f
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    restart: unless-stopped
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:10.4.0   # imageid sha256:f9811e4e687ffecf1a43adb9b64096c50bc0d7a782f8608530f478b6542de7d5
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafanadata:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    logging: *default-logging
+
+  node_exporter:
+    image: prom/node-exporter:v1.7.0   # imageid sha256:4cb2b9019f1757be8482419002cb7afe028fdba35d47958829e4cfeaf6246d80
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  pgdata:
+  redisdata:
+  promdata:
+  grafanadata:
