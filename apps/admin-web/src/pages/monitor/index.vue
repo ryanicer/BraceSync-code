@@ -65,7 +65,7 @@
           <div class="peak-label">当前最大压力</div>
           <!-- 帧派生值：无帧时不得显示 0.0 N（后端此刻给的是 seed 兜底），只能给占位 -->
           <div class="peak-num" :style="{ color: showFrame ? hmColor(curFrameValue, hmMaxN) : undefined }">
-            {{ showFrame ? fmtN(curFrameValue) + ' N' : '--' }}
+            {{ showFrame ? unitValueText(unit, fmtN(curFrameValue) + ' N', curFrameKpa) : '--' }}
           </div>
         </div>
         <div class="peak-cell">
@@ -113,6 +113,16 @@
             {{ liveState === 'fresh' ? '每秒刷新' : liveState === 'expired' ? '已过期' : '无实时帧' }}
           </span>
           <span v-if="frameStamp" class="hm-frame-stamp" title="本帧采集时刻（数据侧时间戳）">本帧 {{ frameStamp }}</span>
+          <!-- T513：档位只改「数字怎么写」，不改格子算什么色 —— 判档恒为 N（PRD §7A.2.1 四.9③）。
+               起版档读本地记忆（裁定 e 的 admin 侧按派发单取本地持久化），切换不发任何请求。 -->
+          <span class="unit-seg" aria-label="压力单位">
+            <span
+              v-for="u in PRESSURE_UNITS"
+              :key="u"
+              :class="['unit-seg-btn', { 'unit-seg-active': unit === u }]"
+              @click="switchUnit(u)"
+            >{{ u }}</span>
+          </span>
         </div>
         <div class="heatmap-wrap">
           <div class="hm-size-hint">压力片 4×5 网格 (40mm × 50mm)</div>
@@ -124,11 +134,11 @@
                 :key="pt.pointId"
                 :class="['hm-cell', { 'hm-cell-max': pt.isMax, 'hm-cell-pulse': pt.isMax && liveState === 'fresh' }]"
                 :style="{ background: hmColor(pt.pressureValue, hmMaxN) }"
-                :title="`${pt.pointId} (${pt.label}): ${fmtN(pt.pressureValue, 2)} N`"
+                :title="`${pt.pointId} (${pt.label}): ${unitValueText(unit, fmtN(pt.pressureValue, 2) + ' N', pt.pressureKpa)}`"
                 @click="selectHeatmapPoint(pt)"
               >
                 <span class="hm-cell-id">{{ pt.pointId }}</span>
-                <span class="hm-cell-val">{{ fmtN(pt.pressureValue) }}</span>
+                <span class="hm-cell-val">{{ unitNumberText(unit, fmtN(pt.pressureValue), pt.pressureKpa) }}</span>
               </div>
             </div>
           </div>
@@ -139,6 +149,8 @@
             <span class="hm-lg-item"><span class="hm-swatch" style="background: #ef4444" />高压</span>
           </div>
           <div class="hm-detail">{{ heatmapDetail }}</div>
+          <!-- T513 fail-closed：面积未配置/非法时 kPa 档只出 --，并显式说明原因（不许退化成 0，也不许前端补默认面积） -->
+          <div v-if="showAreaWarn" class="hm-area-warn">{{ AREA_MISSING_HINT }}</div>
         </div>
       </div>
     </div>
@@ -157,7 +169,8 @@
               <tr>
                 <th>采集点</th>
                 <th>位置</th>
-                <th>当前压力 (N)</th>
+                <!-- T513 四.9⑤：表头单位字母与数值列随档切换，不新增第二列（并列两列＝同一表两读法，未裁） -->
+                <th>{{ unit === 'N' ? '当前压力 (N)' : '当前压力 (kPa)' }}</th>
                 <th>状态</th>
               </tr>
             </thead>
@@ -165,7 +178,7 @@
               <tr v-for="pt in flatHeatmap" :key="pt.pointId" :class="{ 'point-max': pt.isMax }">
                 <td>{{ pt.pointId }}</td>
                 <td>{{ pt.label }}</td>
-                <td :style="{ color: hmColor(pt.pressureValue, hmMaxN) }">{{ fmtN(pt.pressureValue) }}</td>
+                <td :style="{ color: hmColor(pt.pressureValue, hmMaxN) }">{{ unitNumberText(unit, fmtN(pt.pressureValue), pt.pressureKpa) }}</td>
                 <td>
                   <span class="status-dot" :class="pointStatus(pt.pressureValue)" />
                   {{ pointStatusLabel(pt.pressureValue) }}
@@ -228,9 +241,20 @@ import {
   type ChartData,
 } from 'chart.js'
 import type { Patient } from '@bracesync/shared-types'
-import { alertTypeLabel, isHiddenAlertType, userErrorCopy } from '@bracesync/shared-utils'
+import {
+  alertTypeLabel,
+  isHiddenAlertType,
+  userErrorCopy,
+  AREA_MISSING_HINT,
+  PRESSURE_UNITS,
+  areaHintVisible,
+  unitNumberText,
+  unitValueText,
+  type PressureUnit,
+} from '@bracesync/shared-utils'
 import { fetchPatients, fetchPatientRealtime } from '../../api'
 import type { RealtimeSnapshot, PressureHeatmapPoint } from '../../mock/patients'
+import { persistUnit, readStoredUnit } from '../../utils/unitPref'
 import {
   FRAME_TAG_TEXT,
   FRAME_TTL_MS,
@@ -272,6 +296,11 @@ const chartReady = ref(false)
 const chartRef = ref<InstanceType<typeof Line> | null>(null)
 const todayPeak = ref<TodayPeak | null>(null)
 const curFrameValue = ref(0)
+// T513：本帧最大点的 kPa 派生值（快照下发，前端不换算）；null = 面积缺失/非法
+const curFrameKpa = ref<number | null>(null)
+// T513 档位记忆 = 本地持久化（派发单 §一.2 裁定 e 的 admin 侧落地；PRD 四.8③ 把 admin 侧记为待裁，
+// 差异已在交件披露）。起版档取序：本地记忆 → 默认 N，不读 URL ?unit=（稿面评审钩子非实现契约）。
+const unit = ref<PressureUnit>(readStoredUnit())
 let lastFrameAt: number | null | undefined // 同一帧每秒会被重读一次，曲线不能靠轮询把平线「推活」
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -348,6 +377,12 @@ function positiveNum(v: unknown): number | null {
 const hmMaxN = computed(() => positiveNum(snapshot.value?.heatmapMaxN) ?? HM_MAX_FALLBACK)
 const pressHighN = computed(() => positiveNum(snapshot.value?.pressureHighN) ?? PRESS_HIGH_FALLBACK)
 
+// T513：fail-closed 提示行的可用性判据取 heatmapMaxKpa —— 它与逐点 pressureKpa 同一次换算、
+// 同一份面积，同源才不会「提示说有、数字说无」。无帧时数字整块不渲染，提示行也不孤挂。
+const showAreaWarn = computed(
+  () => showFrame.value && areaHintVisible(unit.value, snapshot.value?.heatmapMaxKpa),
+)
+
 /** 压力值渲染：先按位数取整再归一 -0，避免亚阈值负值显示成「-0」这种非物理读数 */
 function fmtN(v: number, digits = 1): string {
   const r = Number(v.toFixed(digits))
@@ -372,6 +407,8 @@ const heatmapRows = computed<PressureHeatmapPoint[][]>(() => {
       col: (i % 5) + 1,
       label: `R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`,
       pressureValue: 0,
+      // 兜底点没有真实帧来源 ⇒ 也没有后端派生值，kPa 档按缺失出 --
+      pressureKpa: null,
       isMax: false,
     }))
     return [empty.slice(0, 5), empty.slice(5, 10), empty.slice(10, 15), empty.slice(15, 20)]
@@ -385,10 +422,10 @@ const heatmapDetail = computed(() => {
   const maxPt = pts.find((p) => p.isMax)
   const sel = heatmapSelected.value
   if (sel) {
-    return `${sel.isMax ? '★ ' : ''}当前选中：${sel.pointId} (${sel.label}) · ${sel.pressureValue.toFixed(2)} N`
+    return `${sel.isMax ? '★ ' : ''}当前选中：${sel.pointId} (${sel.label}) · ${unitValueText(unit.value, `${sel.pressureValue.toFixed(2)} N`, sel.pressureKpa)}`
   }
   if (maxPt) {
-    return `★ 压力最大点：${maxPt.pointId} (${maxPt.label}) · ${maxPt.pressureValue.toFixed(2)} N`
+    return `★ 压力最大点：${maxPt.pointId} (${maxPt.label}) · ${unitValueText(unit.value, `${maxPt.pressureValue.toFixed(2)} N`, maxPt.pressureKpa)}`
   }
   return '点击热力图格子查看点位数值'
 })
@@ -404,6 +441,7 @@ const flatHeatmap = computed<PressureHeatmapPoint[]>(() => {
     col: (i % 5) + 1,
     label: `R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`,
     pressureValue: 0,
+    pressureKpa: null,
     isMax: false,
   }))
 })
@@ -534,7 +572,15 @@ function resetHistory() {
   heatmapSelected.value = null
   todayPeak.value = null
   curFrameValue.value = 0
+  curFrameKpa.value = null
   lastFrameAt = undefined
+}
+
+/** T513：切档纯本地——只改数字文本与一条 localStorage 写入，不发请求、不碰任何服务端字段 */
+function switchUnit(next: PressureUnit) {
+  if (unit.value === next) return
+  unit.value = next
+  persistUnit(next)
 }
 
 // ====== 数据加载 ======
@@ -581,6 +627,9 @@ async function refreshTick() {
     const curV = curMaxPt?.pressureValue ?? 0
     // 无帧时后端给的是 seed 兜底值，不参与任何显示与统计
     curFrameValue.value = frame.value.state === 'none' ? 0 : curV
+    // kPa 档取快照里该点的派生值（T508 同响应下发）。无帧 / 面积缺失一律 null，页面出 --
+    curFrameKpa.value =
+      frame.value.state === 'none' ? null : curMaxPt?.pressureKpa === undefined ? null : curMaxPt.pressureKpa
 
     // ===== 今日峰值累计（跨日自动重置、仅 curV > 0 才写入，避免 0N 占位） =====
     const dateKey = `${new Date(pullAt).getFullYear()}-${String(new Date(pullAt).getMonth() + 1).padStart(2, '0')}-${String(new Date(pullAt).getDate()).padStart(2, '0')}`
@@ -746,6 +795,33 @@ void h
   color: #64748b;
 }
 
+/* ===== T513 压力单位切换（稿面 实时监控.html:79-81 / :207）===== */
+.unit-seg {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 2px;
+  gap: 1px;
+  /* 无帧时刻位为空 ⇒ 本控件自己顶到右侧；有刻位时由刻位吸收剩余空间 */
+  margin-left: auto;
+  flex: none;
+}
+.hm-frame-stamp + .unit-seg {
+  margin-left: 12px;
+}
+.unit-seg-btn {
+  padding: 3px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #666;
+  user-select: none;
+}
+.unit-seg-active {
+  background: #1a6db5;
+  color: #fff;
+}
+
 /* ===== 患者选择 ===== */
 .patient-card .patient-bar {
   display: flex;
@@ -907,6 +983,12 @@ void h
   color: #ee5a24;
   font-weight: 500;
   min-height: 18px;
+}
+/* T513 fail-closed 提示行（稿面 实时监控.html:218） */
+.hm-area-warn {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b45309;
 }
 
 /* ===== 今日峰值卡片 ===== */

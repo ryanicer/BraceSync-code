@@ -61,7 +61,22 @@ export function sensorPoints20(): SensorPoint[] {
 }
 
 // ---------- realtime 快照（GET /patients/:pid/realtime） ----------
-export function realtimeSnapshot() {
+// T513 双单位：夹具在这里充当「服务端替身」，造出后端同响应下发的派生字段
+// （pressureHeatmap[].pressureKpa / contactAreaCm2 / heatmapMaxKpa）。
+// 本函数不是显示层逻辑 —— 页面只读字段值，不重复换算（派发单 §三 选型 A）。
+export const E2E_AREA_CM2 = 0.64
+
+/** 对齐 model.go KpaFromN：面积非法返回 null（前端显示 --），0 N 仍 0，真非零最小 1 */
+function serverKpa(n: number, areaCm2: number | null): number | null {
+  if (areaCm2 === null || !(areaCm2 > 0)) return null
+  const zeroed = Math.max(0, n)
+  const k = (zeroed / areaCm2) * 10
+  if (k === 0) return 0
+  return Math.max(1, Math.round(k))
+}
+
+export function realtimeSnapshot(opts: { areaCm2?: number | null } = {}) {
+  const areaCm2 = opts.areaCm2 === undefined ? E2E_AREA_CM2 : opts.areaCm2
   const points = sensorPoints20()
   const nowIso = new Date().toISOString()
   const record: PressureRecord = {
@@ -74,6 +89,8 @@ export function realtimeSnapshot() {
   }
   const maxP = points.reduce((m, p) => (p.pressureValue > m ? p.pressureValue : m), 0)
   const maxPt = points.find(p => p.pressureValue === maxP)?.pointId || 'P12'
+  // 稿面阈值上限 6N ⇒ 后端按同一次换算派生 heatmapMaxKpa（0.64cm² 下 = 94kPa）
+  const heatmapMaxN = 6
   return ok({
     deviceId: E2E_DEVICE_ID,
     status: 'online',
@@ -82,6 +99,18 @@ export function realtimeSnapshot() {
     maxPoint: maxPt,
     events: 2,
     pressureRecords: [record],
+    pressureHeatmap: points.map(p => ({
+      pointId: p.pointId,
+      row: p.row,
+      col: p.col,
+      label: p.label,
+      pressureValue: p.pressureValue,
+      isMax: p.pointId === maxPt,
+      pressureKpa: serverKpa(p.pressureValue, areaCm2),
+    })),
+    heatmapMaxN,
+    contactAreaCm2: areaCm2,
+    heatmapMaxKpa: serverKpa(heatmapMaxN, areaCm2),
   })
 }
 
