@@ -13,10 +13,10 @@
       <text class="hero-label">{{ activePoint ? activePoint.pointId + ' · 当前压力值' : '暂无数据' }}</text>
       <view class="hero-value-wrap">
         <text class="hero-number">{{ heroValue }}</text>
-        <text class="hero-unit">N</text>
+        <text class="hero-unit">{{ unit }}</text>
       </view>
       <view class="hero-meta">
-        <view class="hero-meta-left">
+        <view v-show="heroRangeHintVisible(unit)" class="hero-meta-left">
           <view class="dot dot-blue"></view>
           <text class="meta-text">20-60N 正常范围</text>
         </view>
@@ -34,6 +34,15 @@
         <view v-if="calibratedFlag !== null" :class="['calib-badge', calibratedFlag ? 'calib-on' : 'calib-off']">
           <text>{{ calibratedFlag ? '已校准' : '未校准' }}</text>
         </view>
+        <!-- T513 双单位：稿面 monitor.html:154 = 标题行右侧二档分段；无帧时仍可见可点（PRD 四.6） -->
+        <view class="segmented unit-seg">
+          <view
+            v-for="u in PRESSURE_UNITS"
+            :key="u"
+            :class="['seg-btn', { 'seg-active': unit === u }]"
+            @click="switchUnit(u)"
+          ><text>{{ u }}</text></view>
+        </view>
       </view>
       <view class="card">
         <PressureHeatmap
@@ -41,6 +50,9 @@
           :points="sensorPoints"
           :active-index="activeIndex"
           :selected-by-user="userTappedPoint"
+          :unit="unit"
+          :kpa-by-point="kpaByPoint"
+          :heatmap-max-kpa="heatmapMaxKpa"
           @select="onSelectPoint"
         />
       </view>
@@ -65,7 +77,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { logErrorText, userErrorCopy } from '@bracesync/shared-utils'
+import { logErrorText, userErrorCopy, unitNumberText, heroRangeHintVisible, PRESSURE_UNITS, type PressureUnit } from '@bracesync/shared-utils'
 import { onPullDownRefresh } from '@dcloudio/uni-app'
 import PressureHeatmap from '../../components/PressureHeatmap.vue'
 import PressureCurve from '../../components/PressureCurve.vue'
@@ -75,9 +87,17 @@ import { request } from '../../utils/request'
 import { logger } from '../../utils/logger'
 import { formatPressureValue } from '../../utils/format'
 import { trendSectionTitle } from '../../utils/monitor-copy'
+import { readStoredUnit, persistUnit } from '../../utils/unit-pref'
 import { useAuthStore } from '../../stores/auth'
 
 // 后端 data-service RealtimeSnapshot（返回结构）简化接口描述
+interface SnapshotHeatmapPoint {
+  pointId: string
+  pressureValue: number
+  /** T508：与 pressureValue 同一次换算的下发值；null = 面积未配置/非法 */
+  pressureKpa?: number | null
+}
+
 interface RealtimeSnapshot {
   deviceId?: string
   status?: string
@@ -87,6 +107,11 @@ interface RealtimeSnapshot {
   battery?: number
   pressureRecords?: PressureRecord[]
   events?: number
+  /** T513 双单位取数面：以下三项均为 T508 在同一快照响应里下发的派生值 */
+  pressureHeatmap?: SnapshotHeatmapPoint[]
+  /** 设备有效受压面积。本卡只声明字段、不参与任何换算（换算由后端做，前端重复实现＝双口径） */
+  contactAreaCm2?: number | null
+  heatmapMaxKpa?: number | null
 }
 
 // GET /patients/:patientId/records 返回分页结构（data-service HistoryPage）
@@ -109,13 +134,20 @@ const loading = ref(false)
 const battery = ref(0)
 // T444 M-1：热力图详情行只在患者真正点选后显示数值，否则显示稿面默认句
 const userTappedPoint = ref(false)
+// T513 双单位：起版档 = 本地记忆档 → 默认 N（裁定 e；稿面的 ?unit= 钩子仅演示，实现不读）
+const unit = ref<PressureUnit>(readStoredUnit())
+// T513：快照 pressureHeatmap[].pressureKpa 按点位号索引；heatmapMaxKpa 同响应下发
+const kpaByPoint = ref<Record<string, number | null>>({})
+const heatmapMaxKpa = ref<number | null>(null)
 
 const activePoint = computed(() =>
   activeIndex.value >= 0 ? sensorPoints.value[activeIndex.value] : undefined
 )
-const heroValue = computed(() =>
-  activePoint.value ? formatPressureValue(activePoint.value.pressureValue) : '--'
-)
+const heroValue = computed(() => {
+  const pt = activePoint.value
+  if (!pt) return unitNumberText(unit.value, '--', null)
+  return unitNumberText(unit.value, formatPressureValue(pt.pressureValue), kpaByPoint.value[pt.pointId] ?? null)
+})
 const segLabel = computed(() => {
   const map = { day: '今日', week: '本周', month: '本月' }
   return map[segment.value]
@@ -269,6 +301,11 @@ async function loadData() {
     battery.value = snap?.battery ?? 0
     const points: SensorPoint[] = recs.length && recs[0].points ? recs[0].points : []
     sensorPoints.value = points
+    // T513：kPa 一律取同一响应里后端派生好的值，前端不自算换算（派发单 §三 选型 A）
+    const byPoint: Record<string, number | null> = {}
+    for (const hp of snap?.pressureHeatmap ?? []) byPoint[hp.pointId] = hp.pressureKpa ?? null
+    kpaByPoint.value = byPoint
+    heatmapMaxKpa.value = snap?.heatmapMaxKpa ?? null
     calibratedFlag.value = recs.length ? recs[0].calibrated === true : null
     let maxIdx = -1
     if (points.length > 0) {
@@ -290,6 +327,10 @@ async function loadData() {
       maxPointId: maxIdx >= 0 ? points[maxIdx].pointId : null,
       maxPressure: base,
       sampleValues: points.slice(0, 5).map(p => ({ id: p.pointId, v: p.pressureValue })),
+      // T513：当前档 + 后端同响应下发的换算值，便于 SSH frontend 远程反查「显示的是哪一档」
+      unit: unit.value,
+      heatmapMaxKpa: heatmapMaxKpa.value,
+      sampleKpa: points.slice(0, 5).map(p => ({ id: p.pointId, kpa: byPoint[p.pointId] ?? null })),
     })
     void loadTrend(base)
   } catch (e: unknown) {
@@ -297,6 +338,9 @@ async function loadData() {
     uni.showToast({ title: msg, icon: 'none' })
     sensorPoints.value = []
     trendData.value = []
+    // T513：取不到帧就别留上一帧的换算值（fail-closed，禁止沿用上一帧）
+    kpaByPoint.value = {}
+    heatmapMaxKpa.value = null
   } finally {
     loading.value = false
   }
@@ -319,6 +363,13 @@ function switchSegment(seg: 'day' | 'week' | 'month') {
   segment.value = seg
   const base = activePoint.value?.pressureValue ?? 0
   void loadTrend(base)
+}
+
+// T513 双单位（裁定 e）：切档只改显示档并写本地记忆，不重新请求、不写任何服务端字段
+function switchUnit(u: PressureUnit) {
+  if (unit.value === u) return
+  unit.value = u
+  persistUnit(u)
 }
 
 // T019B: 导航至异常监测页（tabBar 页须用 switchTab，navigateTo 会静默失败）
@@ -347,8 +398,11 @@ onPullDownRefresh(() => {
 .refresh-btn.loading { opacity: 0.6; pointer-events: none; }
 .section { padding: 0 40rpx; margin-top: 24rpx; }
 .section-title { font-size: 28rpx; font-weight: 500; color: #1e293b; margin-bottom: 20rpx; display: block; letter-spacing: 0.6rpx; }
-.section-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20rpx; }
+.section-title-row { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-bottom: 20rpx; }
 .section-title-row .section-title { margin-bottom: 0; }
+/* T513 双单位分段（稿面 monitor.html:154：outer padding 2px / gap 1px / btn 3px 14px / 12px，px×2=rpx）*/
+.unit-seg { flex: none; margin-left: auto; padding: 4rpx; gap: 2rpx; }
+.unit-seg .seg-btn { flex: none; padding: 6rpx 28rpx; font-size: 24rpx; }
 .calib-badge { padding: 4rpx 16rpx; border-radius: 18rpx; font-size: 20rpx; }
 .calib-badge.calib-on { background: #dcfce7; color: #15803d; }
 .calib-badge.calib-off { background: #fef3c7; color: #b45309; }

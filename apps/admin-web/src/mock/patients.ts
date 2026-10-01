@@ -26,9 +26,27 @@ export interface PressureHeatmapPoint {
   label: string
   pressureValue: number
   isMax: boolean
+  /** T508/T513：同一响应内派生的 kPa 展示值；null = 面积未配置/非法，前端显示 -- */
+  pressureKpa?: number | null
 }
 
-function makeHeatmap(points: SensorPoint[]): PressureHeatmapPoint[] {
+// T513：mock 在这里充当「服务端替身」，造出后端算好的派生字段。
+// 对齐 services/data-service/internal/model/model.go KpaFromN（①归零 → ②N/area×10 →
+// ③四舍五入，真非零最小 1，0 N 仍 0，面积非法返回 null）。
+// 🔴 这段不是显示层逻辑：页面只显示本函数的返回值，前端不重复换算（派发单 §三 选型 A）。
+export const MOCK_AREA_CM2 = 0.64
+/** 面积未配置态的载体患者（e2e 用它验 fail-closed 的「--」与提示行） */
+export const AREA_UNSET_PATIENT_ID = 'PT-003'
+
+function mockKpaOf(n: number, areaCm2: number | null): number | null {
+  if (areaCm2 === null || !(areaCm2 > 0)) return null
+  const zeroed = Math.max(0, n)
+  const k = (zeroed / areaCm2) * 10
+  if (k === 0) return 0
+  return Math.max(1, Math.round(k))
+}
+
+function makeHeatmap(points: SensorPoint[], areaCm2: number | null = MOCK_AREA_CM2): PressureHeatmapPoint[] {
   let maxIdx = 0
   let maxV = -Infinity
   points.forEach((p, i) => {
@@ -44,6 +62,7 @@ function makeHeatmap(points: SensorPoint[]): PressureHeatmapPoint[] {
     label: p.label,
     pressureValue: p.pressureValue,
     isMax: i === maxIdx && maxV > 0,
+    pressureKpa: mockKpaOf(p.pressureValue, areaCm2),
   }))
 }
 
@@ -148,6 +167,10 @@ export interface RealtimeSnapshot {
   /** T296 展示口径：色阶上界 / 偏高分界（N），与后端 sys_configs 同源；缺字段时前端回落到 6 / 5 */
   heatmapMaxN?: number
   pressureHighN?: number
+  /** T513 双单位（候选 A：随快照下发）：设备有效受压面积 + 色阶上界的 kPa 派生值。
+   *  两者同为 null = 面积未配置，kPa 档显示 -- 并出页内提示（fail-closed）。kPa 不落库。 */
+  contactAreaCm2?: number | null
+  heatmapMaxKpa?: number | null
 }
 
 // T322：mock 帧时刻改为「每次调用取当下」，并让 PT-002 固定落后 3 小时。
@@ -186,6 +209,8 @@ export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
   const status = offline || stale ? 'offline' : abnormal ? 'abnormal' : 'online'
   const sensorPts = stale ? STALE_FRAME_POINTS : makePoints(abnormal ? 68 : 35)
   const frameAt = stale ? STALE_FRAME_AT_MS : Date.now()
+  // T513：面积按设备维度给两名患者造两种态 —— PT-003 未配置（fail-closed 载体），其余 0.64
+  const areaCm2 = patientId === AREA_UNSET_PATIENT_ID ? null : MOCK_AREA_CM2
   const record: PressureRecord = {
     recordId: `REC-${patientId}-latest`,
     deviceId: patient?.deviceId ?? '',
@@ -202,7 +227,11 @@ export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
     events: abnormal ? 3 : patientId === 'PT-002' ? 1 : 0,
     pressureRecords: offline ? [] : [record],
     alerts: [],
-    pressureHeatmap: offline ? seedHeatmap(patientId) : makeHeatmap(sensorPts),
+    pressureHeatmap: offline ? seedHeatmap(patientId) : makeHeatmap(sensorPts, areaCm2),
+    // T513：与 pressureHeatmap 同一次下发的面积与色阶上界派生值（后端 T508 同型）
+    heatmapMaxN: 6,
+    contactAreaCm2: areaCm2,
+    heatmapMaxKpa: mockKpaOf(6, areaCm2),
   }
 }
 

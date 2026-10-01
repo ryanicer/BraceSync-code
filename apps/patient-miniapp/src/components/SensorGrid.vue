@@ -14,7 +14,7 @@
         @click="onSelect(r, c)"
       >
         <text class="cell-id">{{ getCell(r, c)?.id }}</text>
-        <text class="cell-value">{{ formatPressureValue(getCell(r, c)?.value) }}</text>
+        <text class="cell-value">{{ cellText(r, c) }}</text>
       </view>
     </view>
   </view>
@@ -22,12 +22,15 @@
 
 <script setup lang="ts">
 import { formatPressureValue } from '../utils/format'
+import { unitNumberText, type PressureUnit } from '@bracesync/shared-utils'
 
 export interface GridCell {
   id: string
   value: number
   label: string
   color?: string
+  /** T513：后端在同一快照响应里算好的 kPa 派生值；null/缺 = 不可换算（稿面 fail-closed 显示 --） */
+  kpa?: number | null
 }
 
 const props = withDefaults(defineProps<{
@@ -35,10 +38,12 @@ const props = withDefaults(defineProps<{
   cols?: number
   cells: GridCell[]
   activeIndex?: number
+  unit?: PressureUnit
 }>(), {
   rows: 4,
   cols: 5,
   activeIndex: -1,
+  unit: 'N',
 })
 
 const emit = defineEmits<{
@@ -60,6 +65,13 @@ function isActive(r: number, c: number): boolean {
 function cellStyle(r: number, c: number): Record<string, string> {
   const cell = getCell(r, c)
   return cell?.color ? { backgroundColor: cell.color } : {}
+}
+
+// T513：格子里只有数字、不带单位字母（稿面 monitor.html:295 同形）；
+// 颜色与 isMax 由上游按 N 判档，本函数只管「这一档怎么写」
+function cellText(r: number, c: number): string {
+  const cell = getCell(r, c)
+  return unitNumberText(props.unit, formatPressureValue(cell?.value), cell?.kpa)
 }
 
 function onSelect(r: number, c: number) {

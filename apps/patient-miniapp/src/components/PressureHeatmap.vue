@@ -10,6 +10,7 @@
       :cols="cols"
       :cells="coloredCells"
       :active-index="resolvedActiveIndex"
+      :unit="unit"
       @select="onSelect"
     />
     <view v-if="showLegend" class="heatmap-legend">
@@ -21,6 +22,9 @@
     <view v-if="showDetail" class="heatmap-detail">
       <text>{{ detailLine }}</text>
     </view>
+    <view v-if="showAreaWarn" class="heatmap-area-warn">
+      <text>{{ AREA_MISSING_HINT }}</text>
+    </view>
   </view>
 </template>
 
@@ -29,6 +33,7 @@ import { computed } from 'vue'
 import SensorGrid from './SensorGrid.vue'
 import type { SensorPoint } from '@bracesync/shared-types'
 import { HEATMAP_TIERS } from '@bracesync/constants'
+import { AREA_MISSING_HINT, areaHintVisible, type PressureUnit } from '@bracesync/shared-utils'
 import { heatmapDetailLine } from '../utils/monitor-copy'
 
 const props = withDefaults(defineProps<{
@@ -39,12 +44,21 @@ const props = withDefaults(defineProps<{
   selectedByUser?: boolean
   showLegend?: boolean
   showDetail?: boolean
+  /** T513 双单位：显示档。判档（颜色 / isMax / 图例）恒按 N，本 prop 只改数值文本 */
+  unit?: PressureUnit
+  /** T513：点位号 → 快照下发的 kPa 派生值（`pressureHeatmap[].pressureKpa`）。缺项 = 不可换算 */
+  kpaByPoint?: Record<string, number | null>
+  /** T513：阈值上限的 kPa 派生值（快照 `heatmapMaxKpa`），null = 面积未配置 / 非法 */
+  heatmapMaxKpa?: number | null
 }>(), {
   thresholds: () => ({ lowMax: HEATMAP_TIERS.LOW_MAX, normalMax: HEATMAP_TIERS.NORMAL_MAX, elevatedMax: HEATMAP_TIERS.ELEVATED_MAX }),
   activeIndex: -1,
   selectedByUser: false,
   showLegend: true,
   showDetail: true,
+  unit: 'N',
+  kpaByPoint: () => ({}),
+  heatmapMaxKpa: null,
 })
 
 const emit = defineEmits<{
@@ -68,6 +82,7 @@ const coloredCells = computed(() =>
     value: p.pressureValue,
     label: p.label,
     color: getColor(p.pressureValue),
+    kpa: props.kpaByPoint[p.pointId] ?? null,
   }))
 )
 
@@ -89,9 +104,18 @@ const activePoint = computed(() => props.points[resolvedActiveIndex.value])
 // T444 M-1：稿面 monitor.html:102 的默认句只在「患者还没点选」时呈现；
 // 页面为 hero/趋势联动而预选的最大点位，不该冒充患者主动查看的结果。
 const detailLine = computed(() => {
-  if (!props.selectedByUser) return heatmapDetailLine(null, null, props.thresholds.elevatedMax)
-  return heatmapDetailLine(activePoint.value?.pointId, activePoint.value?.pressureValue, props.thresholds.elevatedMax)
+  const segs = {
+    unit: props.unit,
+    pressureKpa: activePoint.value ? props.kpaByPoint[activePoint.value.pointId] ?? null : null,
+    elevatedMaxKpa: props.heatmapMaxKpa,
+  }
+  if (!props.selectedByUser) return heatmapDetailLine(null, null, props.thresholds.elevatedMax, segs)
+  return heatmapDetailLine(activePoint.value?.pointId, activePoint.value?.pressureValue, props.thresholds.elevatedMax, segs)
 })
+
+// T513 fail-closed（稿面 monitor.html:165 + 顶部注记 三）：kPa 档且后端换算不出来 ⇒ 页内提示。
+// 判据取 heatmapMaxKpa（与逐点同一次换算），不看逐点，否则会出现「提示说有、数字说无」。
+const showAreaWarn = computed(() => areaHintVisible(props.unit, props.heatmapMaxKpa))
 
 function onSelect(index: number) {
   emit('select', index)
@@ -130,5 +154,11 @@ function onSelect(index: number) {
   margin-top: 12rpx;
   font-size: 22rpx;
   color: #64748b;
+}
+/* 稿面 monitor.html:165 的 areaWarn：11px / #b45309 / 上边距 6px，按本页 px×2=rpx 换算 */
+.heatmap-area-warn {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  color: #b45309;
 }
 </style>
