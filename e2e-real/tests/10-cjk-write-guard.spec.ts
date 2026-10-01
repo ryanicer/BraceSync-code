@@ -1,4 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
+// T506：口令经凭据门取数；登录 401 时把失败信息定性为凭据漂移，而不是留给下游断言差异
+import { credentialDriftMessage, realPassword } from '../real-helpers'
 
 /**
  * T334 · 中文写入字节面防回归（真实模式 / staging）
@@ -26,11 +28,13 @@ const NAME_PREFIX = 'T334CJK-'
 const MUTATE = process.env.E2E_REAL_CJK_MUTATE === 'ascii-lossy'
 
 async function realToken(req: APIRequestContext): Promise<string> {
+  const password = realPassword('10-cjk.realToken')
   const res = await req.post('/api/v1/auth/login', {
-    data: { username: 'ops_admin', password: 'admin123' },
+    data: { username: 'ops_admin', password },
     headers: { 'Content-Type': 'application/json' },
   })
-  expect(res.status(), '登录应 200').toBe(200)
+  const status = res.status()
+  expect(status, status === 401 ? credentialDriftMessage('ops_admin', status, password) : '登录应 200').toBe(200)
   const body = await res.json()
   expect(body.code, '登录 code 应为 0').toBe(0)
   const token = body?.data?.token

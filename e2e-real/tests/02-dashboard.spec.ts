@@ -141,7 +141,9 @@ test.describe('02b-Dashboard 医护角色（T348）', () => {
       }
     })
 
-    await realLogin(page, 'doctor_li', 'admin123')
+    // T506：口令不再写死在这里，经 real-helpers 的凭据门取数（CI 走 E2E_REAL_PASSWORD 注入，
+    // 缺注入即显式判红；被 401 拦下时报「凭据漂移」而不是下游的「侧栏元素未找到」）。
+    await realLogin(page, 'doctor_li')
     await page.goto(realRoutes.dashboard, { waitUntil: 'domcontentloaded' })
 
     await requireDeployedBuild(page, {
