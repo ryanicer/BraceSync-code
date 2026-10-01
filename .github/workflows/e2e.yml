@@ -361,6 +361,9 @@ jobs:
           # 缺任一值时 23.1/23.2/23.3 判红而不是 skip（PM 2598 丙案）——静默跳过的绿不是证据。
           TECHE2E_TECH_ACCOUNT: ${{ secrets.TECHE2E_TECH_ACCOUNT }}
           TECHE2E_TECH_PASSWORD: ${{ secrets.TECHE2E_TECH_PASSWORD }}
+          # T506（e2e-real 凭据接线）：真实模式口令只从 secrets 进用例，堵源码常量兜底假绿点（T509 实锤）。
+          # 缺值时凭据门按设计抛错判红，静默兜底的绿不算证据（与 361 行同口径）。
+          E2E_REAL_PASSWORD: ${{ secrets.E2E_REAL_PASSWORD }}
         run: npx playwright test --config=./e2e-real/playwright.real.config.ts
       - name: Summarise post-deploy skips（T324 门禁阶段结论，进 job summary）
         # if: always() —— 判红的 run 也要能看到「红在哪几条、缺哪个构建标记」，否则又要人重跑一遍去猜
