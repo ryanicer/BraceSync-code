@@ -224,7 +224,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, h, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Line } from 'vue-chartjs'
 import {
@@ -658,6 +658,8 @@ async function refreshTick() {
   }
 }
 
+// 触发线只有模板上 el-select 的 @change 这一条。曾另挂 watch(selectedPatientId)，
+// 一次切换两条各跑一遍 ⇒ 同一份实时快照被请求两次（T533）。
 function handlePatientChange(pid: string) {
   if (!pid) return
   // 重置历史，立即刷新一次（不等待下一轮轮询）
@@ -666,12 +668,6 @@ function handlePatientChange(pid: string) {
 }
 
 // ====== 生命周期 ======
-watch(selectedPatientId, (id, oldId) => {
-  if (id && id !== oldId) {
-    handlePatientChange(id)
-  }
-})
-
 onMounted(async () => {
   await loadPatients()
   // 让 vue-chartjs 先挂载，避免首次 render 报错
