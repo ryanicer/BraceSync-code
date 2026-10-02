@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { requireDeployedBuild } from '../deploy-guard'
 // T506：口令经凭据门取数；登录 401 时把失败信息定性为凭据漂移，而不是留给下游断言差异
@@ -31,14 +32,27 @@ import { credentialDriftMessage, realPassword } from '../real-helpers'
  * 现存患者从 GET /api/v1/admin/patients 取当次首行，不硬编码 seed 患者 ID。
  *
  * ── T350 返工追加的 11.4（派发单 c 项：本文件原来只登运营账号，医护身份一层从不覆盖）──────
- * 三条被返工的端点（daily-wear / feeling-logs / review-records）在返工前后都回 403，
- * 状态码差探不出部署与否 —— 返工前是 T264 的 self-only 403，返工后是团队范围 403。
- * 故 probe 按【文案】探（新文案含 "out of your data scope"，旧文案是 "your own ..."），
+ * T528 把这里的 probe 判据从「单看文案」升级为三元组，三项缺一即不成立：
+ *   ① HTTP 403
+ *   ② 响应体业务码 = 该域的越权码（daily-wear 属 data-service ⇒ 30403；码表按域分配，
+ *      user-service 的 feeling-logs / review-records 是 10403 —— 见 REWORK_ENDPOINTS 第三列）
+ *   ③ 服务端技术日志的同窗窗口里，该端点那一行含 "out of your data scope"
+ *      （配对键是「同窗 + 同一不含 query 的路径段」，不是 request_id —— 它每请求随机，
+ *       窗外语料永远配不上；本次的 request_id 仍打进行日志，供按窗反查）
+ * 为什么必须补 ③：返工前后对医护都回 403 + 越权码（2026-10-02 现网两版实测同形），①② 单独
+ * 探不出部署与否；而自 T464 起响应体 message 一律换成中文码表文案，旧判据「文案含
+ * out of your data scope」当场恒假 —— 那句英文从此只存在于技术日志。
  * 它仍只做存在性探测、不含业务判据，符合本文件顶部对 probe 的边界。
  *
- * 覆盖缺口要说清（现网数据决定的，不是用例写松）：staging 的 doctor_li 所在团队当前零患者，
- * 所以「本团队患者 200 读回」这条在现网拿不到样本 ⇒ 该腿按数据可得性条件执行，
- * 拿不到时在报告 annotations 与 run 日志里显式登记「未跑」。一旦有人给该团队建档，自动转真跑。
+ * ③ 的取数在 CI 里不可得（e2e-real-staging job 的八步里没有 ssh / 日志拉取，网关也没有技术日志
+ * 端点），故按「有语料才判」实现：E2E_SCOPE_LOG_FILE 指向一份日志窗口文件时三元组齐判、
+ * 缺项即红；未设该变量时 ①② 硬判 + ③ 在 annotations 与 run 日志里显式登记「未量」，
+ * 并打出复查通道与按 request_id 的复现姿势 —— 不静默、不假绿。
+ * 若裁「把日志通道接进 CI」，只需在该 job 里落一份语料并设这个变量，判据本体不动。
+ *
+ * 覆盖缺口（2026-10-02 按现值订正，本段原写「doctor_li 团队当前零患者」）：staging 上该团队现有
+ * 3 名患者、运营可见 10 名 ⇒ 「本团队患者 200 读回」与「跨团队 403 与查无此人同形」两格都已转真跑；
+ * 缺口登记逻辑保留，数据再被清空时照常回报「未跑」。
  * 该缺口的代码侧对位判据（同团队可读、跨团队零触库）在单测层：
  *   services/user-service/internal/handler/team_scope_t350_rework_test.go
  *   services/data-service/internal/handler/team_scope_t350_test.go
@@ -68,18 +82,32 @@ const MSG_ENDPOINTS: Array<[string, (pid: string) => string]> = [
   ['notifications', (p) => `/api/v1/patients/${p}/notifications?pageSize=5`],
 ]
 
-/** T350 返工（D-1/D-2/D-3）纳入团队推导的三条：医护身份腿只跑这三条 */
-const REWORK_ENDPOINTS: Array<[string, (pid: string) => string]> = [
-  ['daily-wear', (p) => `/api/v1/patients/${p}/daily-wear?days=7`],
-  ['feeling-logs', (p) => `/api/v1/patients/${p}/feeling-logs`],
-  ['review-records', (p) => `/api/v1/patients/${p}/review-records`],
+/**
+ * T350 返工（D-1/D-2/D-3）纳入团队推导的三条：医护身份腿只跑这三条。
+ * 第三列是该域越权业务码（model.CodeForbidden 按域分配：data 30403 / user 10403），
+ * 端点分属两个服务，故逐条登记而非共用一个常量。
+ */
+const REWORK_ENDPOINTS: Array<[string, (pid: string) => string, number]> = [
+  ['daily-wear', (p) => `/api/v1/patients/${p}/daily-wear?days=7`, 30403],
+  ['feeling-logs', (p) => `/api/v1/patients/${p}/feeling-logs`, 10403],
+  ['review-records', (p) => `/api/v1/patients/${p}/review-records`, 10403],
 ]
 
-/** staging 预置医护账号（无团队归属 ⇒ 全部患者对其越界，见 11.4 的覆盖缺口说明） */
-const DOCTOR_USERNAME = 'doctor_li'
+/** 11.4 的 probe 走 daily-wear（data-service），故三元组第 ② 项按该域越权码取值 */
+const SCOPE_DENY_CODE = 30403
 
-/** 团队范围 403 的新文案（denyCrossTeam），旧文案是 T264 self-only 的 "your own ..." */
-const SCOPE_DENY_TEXT = 'out of your data scope'
+/**
+ * 三元组第 ③ 项在技术日志里的锚点（data-service assertTeamScope / user-service denyCrossTeam
+ * 写的英文原文）。T464 后这句只进日志、不进响应体 message，所以它只能取一份日志窗口来配，
+ * 不能从 HTTP 响应里读 —— 旧判据「响应文案含这句」在现网恒假。
+ */
+const SCOPE_DENY_LOG_MARK = 'out of your data scope'
+
+/** ③ 的带外语料入口（见文件头：CI 无日志通道 ⇒ 未设即「未量」，不静默也不假绿） */
+const SCOPE_LOG_ENV = 'E2E_SCOPE_LOG_FILE'
+
+/** staging 预置医护账号（有团队归属：2026-10-02 实测该团队 3 名患者，运营可见 10 名） */
+const DOCTOR_USERNAME = 'doctor_li'
 
 async function realToken(
   req: APIRequestContext,
@@ -163,14 +191,93 @@ async function probe404(req: APIRequestContext, token: string, path: string): Pr
 }
 
 /**
- * 存在性探测（文案版，T350 返工用）：返工前后对医护都是 403，状态码探不出部署与否
- * （旧的是 T264 self-only，新的是团队范围），故这里探「拒绝文案是不是团队范围口径」。
- * 同样只做存在性探测，不含业务判据。
+ * 三元组①② 的取数：一次 GET，把判定要用的量一并取出（关联号取响应体 trace.requestId，
+ * 与同请求的服务端日志行同源 —— 见 services/data-service/internal/handler/trace_t464.go）。
  */
-async function probeDenyText(req: APIRequestContext, token: string, path: string): Promise<boolean> {
+async function readScopeDeny(
+  req: APIRequestContext,
+  token: string,
+  path: string,
+): Promise<{ http: number; code: unknown; requestId: string }> {
   const res = await req.get(path, { headers: { Authorization: `Bearer ${token}` } })
   const body = await res.json().catch(() => null)
-  return String(body?.message ?? '').includes(SCOPE_DENY_TEXT)
+  return {
+    http: res.status(),
+    code: body?.code,
+    requestId: String(body?.trace?.requestId ?? ''),
+  }
+}
+
+/** ③ 语料的本轮缓存：undefined 未取 / null 未设入口 / 数组为已读到的窗口 */
+let scopeLogCorpus: string[] | null | undefined
+
+/**
+ * 读 E2E_SCOPE_LOG_FILE 指向的技术日志窗口（每行一条 JSON，含 request_id 与 message）。
+ * 未设 ⇒ null（CI 的常态，按「未量」处理）；设了却读不到 ⇒ 抛，不降级成「未量」——
+ * 配了语料又读失败是取数坏了，这种时候判红是对的，静默放行才是假绿。
+ */
+function readScopeLogCorpus(): string[] | null {
+  if (scopeLogCorpus === undefined) {
+    const file = process.env[SCOPE_LOG_ENV]
+    if (!file) {
+      scopeLogCorpus = null
+    } else {
+      const raw = readFileSync(file, 'utf8')
+      scopeLogCorpus = raw.split(/\r?\n/).filter((line) => line.trim() !== '')
+      console.log(`[e2e-real][t528] ③ 语料已载入 ${file} —— ${scopeLogCorpus.length} 行非空`)
+    }
+  }
+  return scopeLogCorpus
+}
+
+/**
+ * ③ 的配对判据：同一行里既有本次端点路径（日志记不含 query 的 path，且带 probe 患者号），
+ * 又有英文锚点原文。
+ * 为什么不用 trace.requestId 当配对键：它每请求随机（同服务 handler/trace_t464.go 的 newRequestID），
+ * 而语料只能窗外语料化 ⇒ 本次请求的号必然不在手上这份窗口里，用它当键这条腿永远配不上。
+ * 改按「同窗 + 同路径」后两跑即可闭合：第一跑让服务端落行，取覆盖它的窗口当语料，第二跑即命中。
+ * 牙仍在（2026-10-02 按 git 一手读数核过）：返工前 daily-wear 对医护写的是 self-only 文案
+ * 「may only query your own daily-wear stats」（见 148f9b6 前一版 handler.go 的 getDailyWear），
+ * 不含本锚点；同一患者号在别的端点上的越权行路径段不同，也配不上本键 ⇒ 旧包探不出命中。
+ */
+function logScopeHit(path: string): boolean | null {
+  const lines = readScopeLogCorpus()
+  if (lines === null) return null
+  const logPath = path.split('?')[0]
+  return lines.some((line) => line.includes(logPath) && line.includes(SCOPE_DENY_LOG_MARK))
+}
+
+/** ③ 未量时的登记：把缺口写进 annotations，并把复查姿势连关联号一起打出来，不静默 */
+function noteScopeLogGap(requestId: string, path: string): void {
+  const desc =
+    `T350-doctor-scope：三元组第 ③ 项本 run 未量（未设 ${SCOPE_LOG_ENV}，CI 无日志通道），` +
+    `① ② 已硬判。复查通道按 docs/tasks/joe/LOG-QUERY-HOWTO.md 的 backend 子命令取 data-service 日志窗口，` +
+    `按本次关联号 request_id=${requestId || '（响应未带 trace.requestId，需按同窗 path 反查）'}` +
+    `（本次端点 ${path.split('?')[0]}）核对那一行是否含「${SCOPE_DENY_LOG_MARK}」；` +
+    `要把这格转成真判：落一份覆盖上一次 probe 的窗口文件，把路径写进 ${SCOPE_LOG_ENV} 再跑，判据本体不动。`
+  console.log(`[e2e-real][t528] ${desc}`)
+  test.info().annotations.push({ type: 'coverage-gap', description: desc })
+}
+
+/**
+ * 存在性探测（三元组版，T528）：① HTTP 403 ② 响应体业务码 = 该域越权码 ③ 同窗技术日志里
+ * 该端点那一行含英文锚点。返工前后对医护都回 403 + 越权码（2026-10-02 现网两版实测同形），
+ * ①② 单独探不出部署与否，而 T464 后那句英文只进日志不进响应体 ⇒ 旧「看文案」判据恒假。
+ * 无语料（CI）时 ① ② 硬判 + ③ 登记「未量」；有语料时三项缺一即 false。
+ * 仍然只做存在性探测：真业务判据在 assertDoctorScope，这里红不掉它。
+ */
+async function probeScopeDeny(req: APIRequestContext, token: string, path: string): Promise<boolean> {
+  const deny = await readScopeDeny(req, token, path)
+  const leg3 = logScopeHit(path)
+  const ok1 = deny.http === 403
+  const ok2 = deny.code === SCOPE_DENY_CODE
+  console.log(
+    `[e2e-real][t528] 三元组 ${path} —— ①HTTP=${deny.http}(${ok1 ? '合' : '不合'}) ` +
+      `②code=${deny.code}(${ok2 ? '合' : '不合'}，应 ${SCOPE_DENY_CODE}) ` +
+      `③log=${leg3 === null ? '未量' : leg3 ? '命中' : '未命中'} request_id=${deny.requestId || '-'}`,
+  )
+  if (leg3 === null) noteScopeLogGap(deny.requestId, path)
+  return ok1 && ok2 && leg3 !== false
 }
 
 /** 把调用者自己填的患者号折成占位符，用于比对两种拒绝是否「同形」 */
@@ -182,13 +289,16 @@ function foldPid(message: string, pid: string): string {
  * 医护身份腿（T350 返工派发单 c 项）：三条端点在患者号维度对 ROLE_DOCTOR 一律 403 且同形，
  * 本团队患者必须读得回 200 —— 后面两格按现网数据可得性执行，拿不到样本由调用方登记缺口。
  * 偏差同样累计成清单，一条端点红掉不挡其余端点的现状。
+ * T528 把「拒绝文案含团队范围口径」换成按域登记的越权码（group 第三列）：
+ * T464 起 message 一律是中文码表文案，旧判据在现网恒假；三条端点分属 data / user 两个服务，
+ * 码值不同（30403 / 10403），故逐条判而非共用一个常量。
  */
 async function assertDoctorScope(
   req: APIRequestContext,
   docToken: string,
   ownPids: string[],
   outPid: string,
-  group: Array<[string, (pid: string) => string]>,
+  group: Array<[string, (pid: string) => string, number]>,
 ): Promise<void> {
   const headers = { Authorization: `Bearer ${docToken}` }
   const ownPid = ownPids[0] ?? ''
@@ -197,15 +307,13 @@ async function assertDoctorScope(
   const badShape: string[] = []
   const badLive: string[] = []
 
-  for (const [name, build] of group) {
+  for (const [name, build, denyCode] of group) {
     const gone = await req.get(build(GONE_PID), { headers })
     const goneBody = await gone.json().catch(() => null)
     console.log(`[e2e-real][t350r] GET ${gone.url()} -> HTTP ${gone.status()} code=${goneBody?.code}`)
     if (gone.status() !== 403) badGone.push(`${name} HTTP=${gone.status()}`)
+    if (goneBody?.code !== denyCode) badGone.push(`${name} code=${goneBody?.code}，应 ${denyCode}`)
     if (goneBody?.data !== null) badGone.push(`${name} data 非 null`)
-    if (!String(goneBody?.message ?? '').includes(SCOPE_DENY_TEXT)) {
-      badGone.push(`${name} 拒绝文案不是团队范围口径：${goneBody?.message}`)
-    }
 
     if (outPid) {
       const out = await req.get(build(outPid), { headers })
@@ -280,9 +388,11 @@ test.describe('11-按 patientId 查询的存在性判定', () => {
     const docToken = await realToken(page.request, DOCTOR_USERNAME)
     await requireDeployedBuild(page, {
       marker: 'T350-doctor-scope',
-      why: `daily-wear 对医护仍吃 T264 self-only 403（文案不含「${SCOPE_DENY_TEXT}」）`,
+      why:
+        `探针三项未齐：① 应 403、② 业务码应 ${SCOPE_DENY_CODE}、③ 同窗日志里该端点那一行应含团队范围原文` +
+        `（未设 ${SCOPE_LOG_ENV} 时 ③ 记「未量」、不参与判定，缺项即 false）`,
       probe: () =>
-        probeDenyText(page.request, docToken, `/api/v1/patients/${GONE_PID}/daily-wear?days=7`),
+        probeScopeDeny(page.request, docToken, `/api/v1/patients/${GONE_PID}/daily-wear?days=7`),
     })
 
     // 「本团队患者」不硬编码：由服务端按 doctors.team_id 过滤后的患者列表给出
