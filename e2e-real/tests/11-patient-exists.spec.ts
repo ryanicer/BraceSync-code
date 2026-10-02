@@ -236,6 +236,7 @@ function readScopeLogCorpus(): string[] | null {
  * 为什么不用 trace.requestId 当配对键：它每请求随机（同服务 handler/trace_t464.go 的 newRequestID），
  * 而语料只能窗外语料化 ⇒ 本次请求的号必然不在手上这份窗口里，用它当键这条腿永远配不上。
  * 改按「同窗 + 同路径」后两跑即可闭合：第一跑让服务端落行，取覆盖它的窗口当语料，第二跑即命中。
+ * （未量登记里那条按 rid 的复查命令不与此冲突：那是事后实时查线上日志，语料就在服务端。）
  * 牙仍在（2026-10-02 按 git 一手读数核过）：返工前 daily-wear 对医护写的是 self-only 文案
  * 「may only query your own daily-wear stats」（见 148f9b6 前一版 handler.go 的 getDailyWear），
  * 不含本锚点；同一患者号在别的端点上的越权行路径段不同，也配不上本键 ⇒ 旧包探不出命中。
@@ -247,13 +248,16 @@ function logScopeHit(path: string): boolean | null {
   return lines.some((line) => line.includes(logPath) && line.includes(SCOPE_DENY_LOG_MARK))
 }
 
-/** ③ 未量时的登记：把缺口写进 annotations，并把复查姿势连关联号一起打出来，不静默 */
+/** ③ 未量时的登记：把缺口写进 annotations，并把带关联号的复查命令原样打出来，不静默 */
 function noteScopeLogGap(requestId: string, path: string): void {
+  const logPath = path.split('?')[0]
+  const cmd = `backend data-service --since 30m -g ${requestId || logPath}`
   const desc =
-    `T350-doctor-scope：三元组第 ③ 项本 run 未量（未设 ${SCOPE_LOG_ENV}，CI 无日志通道），` +
-    `① ② 已硬判。复查通道按 docs/tasks/joe/LOG-QUERY-HOWTO.md 的 backend 子命令取 data-service 日志窗口，` +
-    `按本次关联号 request_id=${requestId || '（响应未带 trace.requestId，需按同窗 path 反查）'}` +
-    `（本次端点 ${path.split('?')[0]}）核对那一行是否含「${SCOPE_DENY_LOG_MARK}」；` +
+    `T350-doctor-scope：三元组第 ③ 项本 run 未量（未设 ${SCOPE_LOG_ENV}，CI 无日志通道），① ② 已硬判。` +
+    `复查命令（ssh 外壳见 docs/tasks/joe/LOG-QUERY-HOWTO.md 第二节，KEY/USER/HOST 换成自己的私钥、花名与基址主机）：` +
+    `ssh -i KEY USER@HOST '${cmd}'` +
+    ` —— 本次 request_id=${requestId || '（响应未带 trace.requestId，按同窗 path 反查）'}、` +
+    `本次端点 ${logPath}，核对那一行是否含「${SCOPE_DENY_LOG_MARK}」；` +
     `要把这格转成真判：落一份覆盖上一次 probe 的窗口文件，把路径写进 ${SCOPE_LOG_ENV} 再跑，判据本体不动。`
   console.log(`[e2e-real][t528] ${desc}`)
   test.info().annotations.push({ type: 'coverage-gap', description: desc })
