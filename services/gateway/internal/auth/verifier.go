@@ -22,14 +22,22 @@ import (
 // nonce 取自 X-Nonce header，参与签名串（硬件清单 §2.2）。
 // 返回 *VerifyResult 永不为 nil：Valid=true 或携带 ErrorCode。
 func (v *DeviceSigVerifier) VerifySignature(method, path, body, timestampStr, signature, deviceID, deviceSecret, nonce string, serverTime time.Time) *VerifyResult {
+	return v.VerifySignatureWindowed(method, path, body, timestampStr, signature, deviceID, deviceSecret, nonce, serverTime, SignatureTimeWindow)
+}
+
+// VerifySignatureWindowed 同 VerifySignature，只有时间窗按入参取（分钟）。
+// T550：校时端点用 DeviceTimeSyncWindow —— 设备时钟超 ±5min 时上报已被 20402 拒，
+// 若校时同窗则设备拿不到校时、永远出不了死锁。除窗口外（HMAC、常量时间比对、
+// 签名串格式）与 VerifySignature 一字不差，放宽只延长「这枚已签名请求」的有效期。
+func (v *DeviceSigVerifier) VerifySignatureWindowed(method, path, body, timestampStr, signature, deviceID, deviceSecret, nonce string, serverTime time.Time, windowMinutes int) *VerifyResult {
 	ts, err := strconv.ParseInt(timestampStr, 10, 64)
 	if err != nil {
 		return &VerifyResult{Valid: false, ErrorCode: "20402", ErrorMessage: "invalid X-Timestamp"}
 	}
 	deviceTime := time.Unix(ts, 0)
-	if !IsTimestampInWindow(deviceTime, serverTime, SignatureTimeWindow) {
+	if !IsTimestampInWindow(deviceTime, serverTime, windowMinutes) {
 		return &VerifyResult{Valid: false, ErrorCode: "20402",
-			ErrorMessage: "timestamp outside ±" + strconv.Itoa(SignatureTimeWindow) + "min window"}
+			ErrorMessage: "timestamp outside ±" + strconv.Itoa(windowMinutes) + "min window"}
 	}
 
 	want := HMACSHA256(deviceSecret, BuildSignString(method, path, deviceID, nonce, body, deviceTime))

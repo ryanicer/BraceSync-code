@@ -25,6 +25,12 @@ import (
 // SignatureTimeWindow 签名有效时间窗（分钟）
 const SignatureTimeWindow = 5
 
+// DeviceTimeSyncWindow 校时端点专用时间窗（分钟，T550）。
+// 上报组用 ±SignatureTimeWindow 拒时钟超差的设备；若 /device/time 同窗，
+// 时钟已经超差的设备就被锁在门外、拿不到校时，形成「越不准越进不来」的死锁。
+// 只放宽这一个端点的时间窗：HMAC 比对、设备注册状态、body 上限一律不变。
+const DeviceTimeSyncWindow = 24 * 60
+
 // NonceDedupTTL Nonce 去重 TTL（分钟）
 const NonceDedupTTL = 10
 

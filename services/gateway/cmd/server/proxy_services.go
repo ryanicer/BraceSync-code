@@ -3,7 +3,7 @@
 // 路由总表（代理模式沿用 T028：ReverseProxy + 环境变量 URL + 10s 超时 + 502 兜底）：
 //
 //	/api/v1/device/records · /records/batch        → data-service   （设备验签组，非 JWT）
-//	/api/v1/device/time                            → gateway 本地   （协议 §4.3 校时，验签组）
+//	/api/v1/device/time                            → gateway 本地   （协议 §4.3 校时，验签组 · T550 放宽时间窗）
 //	/api/v1/patients/:id/realtime|records|health-reports → data-service（JWT 组，T030 已有）
 //	/api/v1/admin/dashboard/*                      → data-service（JWT 组，T033 聚合查询）
 //	/api/v1/devices|install-records|baselines/*    → device-service （JWT 组：T030 列表 + T032 注册/绑定/基线）
@@ -21,6 +21,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
+
+	"github.com/bracesync/bracesync/services/gateway/internal/auth"
 )
 
 // deviceManageRoutes device-service 注册/绑定/基线/安装端点（T032 补全；
@@ -84,14 +86,19 @@ func registerDeviceReportRoutes(r *gin.Engine, agt *gatewayAuth) {
 
 	registerServiceRoutes(dev, envOrURL("DATA_SERVICE_URL", defaultDataServiceURL), "data-service", deviceReportRoutes)
 
-	// 协议 §4.3 校时：gateway 本地应答（data-service 无此端点；签名已由中间件校验）
-	dev.GET("/device/time", func(c *gin.Context) {
+	// 协议 §4.3 校时：gateway 本地应答（data-service 无此端点）。
+	// T550：单独成组、时间窗放宽到 DeviceTimeSyncWindow —— 挂在默认窗那一组里时，
+	// 时钟已超 ±5min 的设备会被 20402 挡在校时门外，拿不到校时就永远修不准时钟（死锁）。
+	// 放宽的只有窗口：签名与设备注册状态仍逐项校验（取舍与防重放评估见 T550 报告）。
+	timeG := r.Group("/api/v1")
+	timeG.Use(deviceSigAuthWindow(agt, auth.DeviceTimeSyncWindow))
+	timeG.GET("/device/time", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"code": 0, "message": "success",
 			"data": gin.H{"server_time": time.Now().Unix()},
 		})
 	})
-	log.Info().Msg("device report routes registered (device-signature auth)")
+	log.Info().Msg("device report routes registered (device-signature auth, time endpoint on widened window)")
 }
 
 // loadGatewayAuth 组装鉴权依赖：JWT_SECRET + 设备密钥提供器。
