@@ -116,9 +116,15 @@ func jwtAuth(agt *gatewayAuth) gin.HandlerFunc {
 // maxDeviceBodyBytes 设备上报请求体上限：批量补传 ≤100 帧 × ~600B + 冗余（4MB 足够）
 const maxDeviceBodyBytes = 4 << 20
 
-// deviceSigAuth 设备验签中间件：挂载于设备域路由组（单帧上报/批量补传/校时）。
+// deviceSigAuth 设备验签中间件（默认 ±SignatureTimeWindow 时间窗）：挂载于上报路由组。
 // 失败统一 HTTP 401，body code 区分 20401（签名）/20402（时间窗）/20404（未注册，协议 §4.4）。
 func deviceSigAuth(agt *gatewayAuth) gin.HandlerFunc {
+	return deviceSigAuthWindow(agt, auth.SignatureTimeWindow)
+}
+
+// deviceSigAuthWindow 设备验签中间件，时间窗按分钟数入参（T550：校时端点用更宽的窗）。
+// 只有窗口这一维可变——密钥查询、body 上限、HMAC 比对与注入逻辑全部同一条路径。
+func deviceSigAuthWindow(agt *gatewayAuth, windowMinutes int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		deviceID := c.GetHeader("X-Device-Id")
 		if deviceID == "" {
@@ -149,8 +155,8 @@ func deviceSigAuth(agt *gatewayAuth) gin.HandlerFunc {
 
 		// T067：X-Nonce 参与 6 行签名串（硬件清单 §2.2）；缺失则 nonce=""，与客户端不一致 → 20401。
 		// VerifyNonce 防重放仍恒放行（TODO：Redis 接入后实现）。
-		res := agt.verifier.VerifySignature(c.Request.Method, c.Request.URL.Path, string(body),
-			c.GetHeader("X-Timestamp"), c.GetHeader("X-Signature"), deviceID, secret, c.GetHeader("X-Nonce"), agt.now())
+		res := agt.verifier.VerifySignatureWindowed(c.Request.Method, c.Request.URL.Path, string(body),
+			c.GetHeader("X-Timestamp"), c.GetHeader("X-Signature"), deviceID, secret, c.GetHeader("X-Nonce"), agt.now(), windowMinutes)
 		if res == nil || !res.Valid {
 			code := 20401
 			if res != nil && res.ErrorCode != "" {

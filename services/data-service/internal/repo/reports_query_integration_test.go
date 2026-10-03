@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -43,10 +44,30 @@ func runRepoAndDashboardIT(m *testing.M, dbURL string) int {
 	defer pool.Close()
 
 	applyReportsMigrations(ctx)
+	ensureITPartitions(ctx)
 	seedReportsData(ctx)
 	// Dashboard 集成测试复用同一 PG 容器：执行 dashboard seed
 	seedDashboardData(ctx)
 	return m.Run()
+}
+
+// ensureITPartitions 预建 CI 时钟所需的月分区。
+// 迁移 000001 只静态建 202607-202609，之后由 data-service 每月 25 日的 cron 续建，
+// 而 CI 容器不跑 cron；dashboard seed 的 ts 是 now() 相对量 ⇒ 时钟跨月即 SQLSTATE 23514。
+// 只建 seed 真正落得进去的那两格（当月与上月；每月 1 号 now()-1day 会退到上月），
+// 不建未来月 —— 未来月是 TestITT498PartitionInheritance 自己占的范围，抢了会撞 42P17。
+// 同形状见 internal/service/integration_test.go 的 ensurePartitions。
+func ensureITPartitions(ctx context.Context) {
+	now := time.Now().UTC()
+	for i := -1; i <= 0; i++ {
+		start := time.Date(now.Year(), now.Month()+time.Month(i), 1, 0, 0, 0, 0, time.UTC)
+		ddl := fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS pressure_records_%s PARTITION OF pressure_records FOR VALUES FROM ('%s') TO ('%s')`,
+			start.Format("200601"), start.Format("2006-01-02"), start.AddDate(0, 1, 0).Format("2006-01-02"))
+		if _, err := rqPool.Exec(ctx, ddl); err != nil {
+			panic("it: ensure partition " + start.Format("200601") + ": " + err.Error())
+		}
+	}
 }
 
 // migrationsDir 定位 scripts/db/migrations（相对本文件 4 级上）
