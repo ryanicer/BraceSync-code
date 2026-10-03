@@ -145,7 +145,7 @@ TEST_RC=0
 | 判据 | 状态 | 说明 |
 |---|---|---|
 | D1 部署 staging 后设备上报返回 200 | **未做** | 我不自行部署。需 PM 派 Andy，并与 T395（第七轮部署）协调窗口，不单起轮。 |
-| D2 设备上报成功入库的实测读数（200 计数 > 0、库内最新 ts 推进） | **未做** | 同 D1，需 staging 库凭据与真机/模拟器；我没有这两样。不许只报 CI 绿这条我照办，因此本卡交件**不含**任何「已入库」结论。 |
+| D2 设备上报成功入库的实测读数（200 计数 > 0、库内最新 ts 推进） | **未做** | 同 D1，需 staging 库凭据与真机/模拟器；我没有这两样。不许只报 CI 绿这条我照办，因此本卡交件**不含**任何「已入库」结论。**前置条件见 §九**：staging 若缺 `pressure_records_202610` 分区，即使死锁已解，入库仍会被 data-service 以 400/20402 拒。 |
 | D3 防复发监控可运行且断流时真报警 | **已给** | `data-freshness-guard-test.sh` 15/15；其中 72 小时夹具回 rc=1（模拟断流的报警读数）。 |
 | D4 报告含死锁成因闭环图 | **已给** | 本文 §一。 |
 
@@ -157,3 +157,37 @@ TEST_RC=0
 4. 新鲜度守卫接进 crontab：**等值班席**执行（脚本只读，不动 crontab）。
 5. 本机没有 staging 库凭据，`--psql` 那一条腿只在有凭据的机器上可跑；测试与 CI 走夹具。
    这条不是我这次绕过的限制，是这条判据本身要在部署轮里做。
+6. staging 库的 `pressure_records_202610` 分区在不在场（§九）：**需 Andy 在 D1 部署轮里跑那条只读 SQL 现读**。
+   不在场则 D2 会被 data-service 侧的 20402 二次拦，与网关死锁无关但是同一条链路。
+
+## 九、CI 撞出的既有缺陷：月分区时间炸弹（与本卡死锁无关，但卡住本卡交付）
+
+本 PR 首次跑 CI-Go 的 `Go Integration Tests (testcontainers)` 回红，红点不在我改的 gateway：
+
+```
+panic: it: seed: ERROR: no partition of relation "pressure_records" found for row (SQLSTATE 23514)
+  repo.seedDashboardData(...) dashboard_repo_integration_test.go:68
+FAIL github.com/bracesync/bracesync/services/data-service/internal/repo 2.292s
+```
+
+成因是日历，不是代码改动（三处现读同向）：
+
+1. `scripts/db/migrations/000001_init_schema.up.sql:165-170` 只**静态**预建 `pressure_records_202607/202608/202609`，上界 `TO ('2026-10-01')`；
+2. 该文件自己的注释写「此后由 data-service cron 每月 25 日预建」（同文件 164 行），实现在 `services/data-service/internal/service/partition.go` + `cmd/server/main.go:197`（`PARTITION_CRON` 默认 `0 0 25 * *`）——**CI 的临时容器不跑这个 cron**；
+3. dashboard seed 的 ts 是相对量 `now() - INTERVAL '1 day'`（`dashboard_repo_integration_test.go:54`），钟一进 10 月就落进没有分区的区间。
+
+旁证：CI-Go 只在 `pull_request` 且改动命中 `services/**` 等路径时触发（`.github/workflows/ci-go.yml:6-16`）。`gh run list --workflow ci-go.yml --limit 14`（最近 14 笔覆盖 09-29T03:52 → 10-03T16:39）显示 09-30T19:07（t508，绿）之后、我这一笔之前**没有任何 CI-Go 运行**，所以我这笔是十月第一个跑到这把尺的 —— 换任何人、任何碰 services/ 的 PR 在 10 月跑集成都会同样红。
+
+修法（只动测试引导，不动生产 DDL，也不给父表加 DEFAULT 分区）：在 `reports_query_integration_test.go` 的 TestMain 引导里、迁移之后 seed 之前调 `ensureITPartitions`，预建 `[当月-1, 当月+2]` 四个月的分区。同形状仓库里已有两处先例（`internal/service/integration_test.go:128 ensurePartitions`、`internal/repo/mock_t498_integration_test.go:245`），本笔只是把 dashboard 这条漏掉的路径补齐。取 `当月-1` 是因为 seed 是 `now()-1day`，每月 1 号会退到上月。
+
+为什么不选另两种：
+- 加迁移预建 202610/202611 —— 只把炸弹往后推两个月，日历问题没解决，且给 trunk 加一份与 cron 重复的 DDL；
+- 给父表加 DEFAULT 分区 —— 会让「分区没建好」从**响亮失败**变成静默落 default，而写路径 `records.go:305 mapPGError` 就是靠 `no partition of relation` 这句话把它映射成业务错误给告警用的。
+
+**对本卡验收的连带影响（要提前拦）**：`services/data-service/internal/service/record.go:697` 把 `ErrNoPartition` 映射成 `model.ErrBadTimestamp`，而 `model.go:71` 写死 `CodeBadTimestamp = 20402` —— 与网关验签时间窗拒的是**同一个业务码**（`middleware.go:120` 注释自陈 20402=时间窗）。两者靠 HTTP 状态与文案可分：网关 401 `timestamp outside ±5min window`，data-service 400 `timestamp outside existing partitions`。也就是说：网关死锁解开后，若 staging 库没建好 10 月分区，设备上报会**换个理由再吃一次 20402**（401 变 400、文案变成分区那句），D2 依然过不了。所以 D1 部署时请 Andy 顺手跑一条只读尺：
+
+```sql
+SELECT tablename FROM pg_tables WHERE tablename LIKE 'pressure_records_%' ORDER BY 1;
+```
+
+`202610` 在场 ⇒ 死锁修完就能直接观察入库；不在场 ⇒ 先让 cron 补（或手工 `EnsurePartition` 同形 DDL），再看 D2。这条同时是「同一错误码两种成因」的可观测性缺陷登记，是否立卡归 PM。
