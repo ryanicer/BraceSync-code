@@ -39,6 +39,8 @@ coverage/
 # Playwright E2E
 test-results/
 playwright-report/
+# T555 出网观测落盘（断言读完即弃，不进仓）
+egress/
 
 # Miniapp
 project.private.config.json
