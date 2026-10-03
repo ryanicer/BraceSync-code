@@ -5,6 +5,42 @@ import {
   E2E_TOKEN_KEY, E2E_PATIENT_ID_KEY, E2E_TOKEN, E2E_PATIENT_ID, E2E_DEVICE_ID,
 } from '../apps/patient-miniapp/tests/e2e/fixtures/patient'
 import { URL } from 'node:url'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname, resolve as resolvePath } from 'node:path'
+
+/**
+ * T555 格二（出网观测）：把页面发出的每一个 http(s) 请求按网络层落一行 JSONL。
+ * 落盘路径由 env E2E_EGRESS_LOG 决定（CI 里每个 job 各给一份），没配就不落盘、零副作用。
+ * 判据不在这里，在 e2e/assert-no-external-egress.mjs（读这份日志，非本机 origin 判失败）。
+ * 口径底线：只认真网络层事件（page.on('request')），不用源码里的字符串计数冒充请求数。
+ */
+const EGRESS_LOG = process.env.E2E_EGRESS_LOG ? resolvePath(process.env.E2E_EGRESS_LOG) : null
+if (EGRESS_LOG) {
+  try {
+    mkdirSync(dirname(EGRESS_LOG), { recursive: true })
+  } catch {/* 目录已存在或不可建 —— 观测面失败不该弄挂用例，落不到盘由断言腿自己报「日志不存在」 */}
+}
+
+function attachEgressRecorder(page: Page) {
+  if (!EGRESS_LOG) return
+  page.on('request', (req) => {
+    try {
+      const u = new URL(req.url())
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return
+      let title = ''
+      try { title = test.info().title } catch {/* 不在 test 上下文（例如 setup 之前）*/ }
+      appendFileSync(EGRESS_LOG, JSON.stringify({
+        worker: process.env.TEST_WORKER_INDEX ?? '',
+        test: title,
+        method: req.method(),
+        origin: `${u.protocol}//${u.host}`,
+        host: u.host,
+        hostname: u.hostname,
+        path: u.pathname,
+      }) + '\n')
+    } catch {/* 同上：观测腿自身不许影响用例 */}
+  })
+}
 
 /**
  * 患者端 e2e 公共工具（T016 mock 数据基线 + T074 真实模式 API 拦截基建）
@@ -14,7 +50,8 @@ import { URL } from 'node:url'
  *
  * T074 基建新增：setupPatientE2E(page, { withLogin })
  *  - 页面初始化前注入 bracesync_token / bracesync_patient_id（H5 uni.storage = localStorage）
- *  - page.route 拦截 api/v1 全路径请求返回契约 fixture（realtime/records/alerts/daily-wear/unbind/wx-login）
+ *  - page.route 拦截 api/v1 全路径请求：命中显式白名单（realtime/records/alerts/daily-wear/unbind/wx-login）
+ *    返回契约 fixture；【T555 起】未命中一律 abort（旧形态是 fallback 走真实网络，见下面拦截处注释）
  *  - 属于"测试基建 setup"，不触碰任何断言（断言归 Ella）
  */
 
@@ -147,8 +184,9 @@ test.afterEach(async () => {
 // ---------------------------------------------------------------------
 // T080 R12：wx-login 路由覆盖基建
 // ---------------------------------------------------------------------
-/** wx-login 专用路由匹配模式：请求实际发往 https://api.hbksd.com.cn（request.ts 绝对地址），
- *  path-only glob 会与 baseURL(localhost:5173) 合并后永远匹配不到跨域请求。
+/** wx-login 专用路由匹配模式：request.ts 用的是 `${API_BASE_URL}/api/v1/...` 绝对地址
+ *  （T555 起 dev/CI 缺省 = 不可路由占位，历史缺省 = 线上域名），它本来就与 baseURL(localhost:5173)
+ *  不同源；path-only glob 会与 baseURL 合并后永远匹配不到这类跨源请求。
  *  spec 在 setupPatientE2E 之后用本 pattern 注册（Playwright LIFO：后注册先咨询），
  *  即可覆盖 helpers 默认成功 mock。 */
 export const WX_LOGIN_ROUTE = /\/api\/v1\/patient\/wx-login$/
@@ -164,6 +202,7 @@ export async function setupPatientE2E(page: Page, opts: { withLogin?: boolean } 
     console.log('[page-console]', `[${m.type()}]`, m.text())
   })
   registerObsDump(page)
+  attachEgressRecorder(page)
 
   // 1. storage 注入（在页面任何脚本前执行，保证 authStore 初始化已读登录态）
   await page.addInitScript(
@@ -242,8 +281,14 @@ export async function setupPatientE2E(page: Page, opts: { withLogin?: boolean } 
       return route.fulfill({ json: unbindOk() })
     }
 
-    // 其它端点继续（走网络或 404 —— 符合"只 mock E2E 用到的端点"原则）
-    await route.fallback()
+    // T555 格一（止血）：默认全拦。上面那批显式白名单（wx-login / realtime / records /
+    // daily-wear / alerts / unbind）之外的 /api/v1/ 请求，一律 abort，绝不再 fallback。
+    // 旧形态是 `await route.fallback()` —— 未命中的请求会走真实网络，而患者端 request.ts 用的是
+    // 绝对地址（当时 dev 缺省还是线上域名），于是两条 POST 写腿真发到生产 API 域名，
+    // 只被对方 CORS 挡下、套件仍全绿（见 T555 证据三条）。要让某条端点走网络，必须由
+    // spec 自己显式注册路由覆盖，不靠默认放行。
+    console.log(`[t555-abort] 未白名单，已拦截：${method} ${url.origin}${url.pathname}`)
+    await route.abort('failed')
   })
 }
 
