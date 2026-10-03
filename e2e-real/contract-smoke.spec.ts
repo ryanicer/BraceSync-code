@@ -32,6 +32,20 @@ function smokePassword(): string {
   return realPassword('contract-smoke')
 }
 
+/**
+ * 目标地址门（T549）：CI 里缺 E2E_STAGING_URL 判红，不许回落到 localhost:2080 报「通过」。
+ * 判据放在用例运行时而不是 playwright.config.ts 的模块加载期 —— ci-e2e-real-static.yml
+ * 会在 CI 里对那份配置跑 `--list`（那个 job 不注入 E2E_STAGING_URL），加载期一抛就变成
+ * 「静态门禁红」，把缺变量这件事报到了错误的 job 上。
+ */
+function assertStagingTarget(): void {
+  if (IN_CI && !process.env.E2E_STAGING_URL) {
+    throw new Error(
+      '[e2e-real][contract-smoke] 缺 E2E_STAGING_URL：CI 不允许回落到本地地址，判红而不是跳过（口径见 e2e.yml 的 E2E_STAGING_URL env 块）',
+    )
+  }
+}
+
 /** admin-web 真实登录（对应用户名/密码双输入，按钮文案含空格的「登 录」） */
 async function adminLoginReal(page: Page): Promise<void> {
   // T336：前端以 /admin/ 为 base 构建，登录页在挂载点内（根路径 /login 会被 nginx 302 到 /admin/）
@@ -53,6 +67,9 @@ test.skip(!IN_CI && !process.env.ADMIN_USERNAME && !process.env.ADMIN_PASSWORD &
   '本地未设任何凭据变量（ADMIN_USERNAME/ADMIN_PASSWORD/E2E_REAL_PASSWORD），本用例跳过；CI 不适用本回退')
 
 test('真实后端冒烟：登录→列表接口返回非空→页面渲染≥1条', async ({ page }) => {
+  // 0) 地址门先于凭据门：CI 缺 E2E_STAGING_URL 时不许打本地回落地址报绿
+  assertStagingTarget()
+
   // 1) 真实后端登录
   await adminLoginReal(page)
 

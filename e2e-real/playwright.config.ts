@@ -1,10 +1,9 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// CI 下缺 E2E_STAGING_URL 就直接抛：宁可 job 立刻红，也不要冒烟悄悄打到 localhost 回落地址
-// 上报「通过」（与 playwright.real.config.ts 第 22-26 行同口径，T549 补上）。
-if (!process.env.E2E_STAGING_URL && process.env.CI === 'true') {
-  throw new Error('e2e-real 契约冒烟缺 E2E_STAGING_URL（CI 不允许回落本地地址）')
-}
+// ⚠️ 这里不能在模块加载期校验 E2E_STAGING_URL：ci-e2e-real-static.yml 第 54 行在 CI 里跑
+// `--list`（该 workflow 不注入 E2E_STAGING_URL），配置一抛就是「静态门禁红」而不是「缺变量红」。
+// 同一判据搬到用例运行时（contract-smoke.spec.ts 的 stagingTarget()）：真跑缺变量照样判红，
+// 只是红在用例上、并写明缺哪个变量。
 
 /**
  * T144 交付② P1：真实后端冒烟（contract-smoke）
