@@ -42,10 +42,13 @@ function readEnvFile(filename: string): Record<string, string> {
 // - 构建（uni build，mode=production）：按显式 TARGET（staging|prod）选择目标源文件。
 //   缺省 = staging（安全默认，绝不静默落到生产）；TARGET 缺失但构建时打印自证。
 //   .env.local 始终最高优先（官方出包脚本 / 临时注入用）。
-// - development：默认沿用患者端原硬编码值（API_BASE_URL=生产、USE_MOCK=false），
-//   保证「不配置任何 env 时行为与现状完全一致」；.env.local 仍可覆盖
-// 改自 apps/tech-miniapp/vite.config.ts：仅把开发默认回退值由「mock/空地址」改为患者端
-// 原始硬编码值（技师端页面走 mock 函数，患者端页面直接调 request()，故患者端默认必须非 mock）。
+// - development：【T555 起】缺省不再沿用生产地址，而是回落到不可路由占位（见下方
+//   NON_ROUTABLE_DEFAULT）；本机要联调后端就在 .env.local 显式写 VITE_API_BASE_URL。
+//   改前形态（dev 默认 = 生产域名 + USE_MOCK=false）是 T555 止血的靶子：CI 的 mock 套件
+//   里未白名单的写腿会因此真发到线上域名。
+// 改自 apps/tech-miniapp/vite.config.ts：原「开发默认回退值 = 患者端硬编码生产地址」已由
+// T555 改为不可路由占位（技师端页面走 mock 函数，患者端页面直接调 request()，
+// 故 USE_MOCK 仍缺省 false，只换地址缺省）。
 //
 // 注意：这里读取 process.env.TARGET 是刻意的「显式目标」开关（非 VITE_* 值，系统环境里
 // 不会存在），不会像普通 VITE_* 那样被系统环境变量意外覆盖入库值。
@@ -63,9 +66,21 @@ export default defineConfig(({ mode }) => {
   const envTarget = isProd ? readEnvFile(envTargetFile) : {}
   const envLocal = readEnvFile('.env.local')
 
-  // 优先级：.env.local > 目标源文件（仅构建模式）> 患者端原有硬编码默认值
-  const apiBaseUrl = envLocal.VITE_API_BASE_URL ?? envTarget.VITE_API_BASE_URL ?? 'https://api.hbksd.com.cn'
+  // 优先级：.env.local > 目标源文件（仅构建模式）> 缺省值
+  //
+  // T555 格一（止血）：缺省值必须是【不可路由地址】。历史缺省 = 线上 API 域名，于是
+  // 「什么都不配」的 dev/CI 直接把写腿（POST/PUT）真发到生产域名——CI 的 mock 套件因此
+  // 在生产域名上留下真实请求，只被对方 CORS 挡下，套件还全绿。现在生产/staging 地址
+  // 只能由显式 env 注入：.env.local（本机）或构建目标的 .env.staging/.env.production。
+  // 127.0.0.1:1 不监听任何服务 ⇒ 误用立刻是连接拒绝，不会被静默放行。
+  const NON_ROUTABLE_DEFAULT = 'http://127.0.0.1:1'
+  const apiBaseUrl = isProd
+    ? (envLocal.VITE_API_BASE_URL ?? envTarget.VITE_API_BASE_URL ?? NON_ROUTABLE_DEFAULT)
+    : (envLocal.VITE_API_BASE_URL ?? NON_ROUTABLE_DEFAULT)
   const useMock = (envLocal.VITE_USE_MOCK ?? envTarget.VITE_USE_MOCK ?? 'false') !== 'false'
+  if (apiBaseUrl === NON_ROUTABLE_DEFAULT) {
+    console.warn(`[build] T555：未显式注入 VITE_API_BASE_URL，回落不可路由占位 ${NON_ROUTABLE_DEFAULT}（mode=${mode} target=${chosen}）；要打后端请在 .env.local 或目标 .env.* 显式配置`)
+  }
 
   // 构建期打印本次解析结果，自证 target（产物注入校验见 scripts/wechat/smoke-*.js）
   if (isProd) {
