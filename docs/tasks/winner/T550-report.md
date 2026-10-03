@@ -178,7 +178,16 @@ FAIL github.com/bracesync/bracesync/services/data-service/internal/repo 2.292s
 
 旁证：CI-Go 只在 `pull_request` 且改动命中 `services/**` 等路径时触发（`.github/workflows/ci-go.yml:6-16`）。`gh run list --workflow ci-go.yml --limit 14`（最近 14 笔覆盖 09-29T03:52 → 10-03T16:39）显示 09-30T19:07（t508，绿）之后、我这一笔之前**没有任何 CI-Go 运行**，所以我这笔是十月第一个跑到这把尺的 —— 换任何人、任何碰 services/ 的 PR 在 10 月跑集成都会同样红。
 
-修法（只动测试引导，不动生产 DDL，也不给父表加 DEFAULT 分区）：在 `reports_query_integration_test.go` 的 TestMain 引导里、迁移之后 seed 之前调 `ensureITPartitions`，预建 `[当月-1, 当月+2]` 四个月的分区。同形状仓库里已有两处先例（`internal/service/integration_test.go:128 ensurePartitions`、`internal/repo/mock_t498_integration_test.go:245`），本笔只是把 dashboard 这条漏掉的路径补齐。取 `当月-1` 是因为 seed 是 `now()-1day`，每月 1 号会退到上月。
+修法（只动测试引导，不动生产 DDL，也不给父表加 DEFAULT 分区）：在 `reports_query_integration_test.go` 的 TestMain 引导里、迁移之后 seed 之前调 `ensureITPartitions`，预建 seed 真正需要的**两个月**（`当月-1` 与 `当月`；取 -1 是因为每月 1 号 `now()-1day` 会退到上月）。同形状仓库里已有先例（`internal/service/integration_test.go:128 ensurePartitions`）。
+
+这一腿第一次不是绿的，读数在这里（不美化）：我最初把窗口写成 `[当月-1, 当月+2]`，集成确实过了 TestMain，但把红推后了一格 ——
+
+```
+--- FAIL: TestITT498PartitionInheritance (0.01s)
+    ERROR: partition "pressure_records_it_t498_202612" would overlap partition "pressure_records_202612" (SQLSTATE 42P17)
+```
+
+原因是 `mock_t498_integration_test.go` 那条「后建分区要继承印章列」的用例**写死**占用 2026-12 那一段范围，而我的 `+2` 在十月正好把它占了。两处都改：引导只建 seed 需要的两个月（未来月留给该用例自己占），该用例的月份改成由 `time.Now()` 取「当月+2」而不再写死 —— 否则钟走到 12 月时它和引导会抢同一段，今天的红只是换个时间再出现。改完它建的子表名跟着月份走（`pressure_records_it_t498_<YYYYMM>`），用例内其余三处引用本来就是从这两个变量取的。
 
 为什么不选另两种：
 - 加迁移预建 202610/202611 —— 只把炸弹往后推两个月，日历问题没解决，且给 trunk 加一份与 cron 重复的 DDL；

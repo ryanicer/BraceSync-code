@@ -51,13 +51,15 @@ func runRepoAndDashboardIT(m *testing.M, dbURL string) int {
 	return m.Run()
 }
 
-// ensureITPartitions 预建覆盖 CI 时钟前后的月分区。
+// ensureITPartitions 预建 CI 时钟所需的月分区。
 // 迁移 000001 只静态建 202607-202609，之后由 data-service 每月 25 日的 cron 续建，
 // 而 CI 容器不跑 cron；dashboard seed 的 ts 是 now() 相对量 ⇒ 时钟跨月即 SQLSTATE 23514。
-// 同形状见 services/data-service/internal/service/integration_test.go 的 ensurePartitions。
+// 只建 seed 真正落得进去的那两格（当月与上月；每月 1 号 now()-1day 会退到上月），
+// 不建未来月 —— 未来月是 TestITT498PartitionInheritance 自己占的范围，抢了会撞 42P17。
+// 同形状见 internal/service/integration_test.go 的 ensurePartitions。
 func ensureITPartitions(ctx context.Context) {
 	now := time.Now().UTC()
-	for i := -1; i <= 2; i++ {
+	for i := -1; i <= 0; i++ {
 		start := time.Date(now.Year(), now.Month()+time.Month(i), 1, 0, 0, 0, 0, time.UTC)
 		ddl := fmt.Sprintf(
 			`CREATE TABLE IF NOT EXISTS pressure_records_%s PARTITION OF pressure_records FOR VALUES FROM ('%s') TO ('%s')`,
