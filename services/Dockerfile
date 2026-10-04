@@ -8,10 +8,12 @@ ARG GO_VERSION=1.22
 
 FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /src
-# build context = 仓库根：COPY go.work + services/，go.work 接管 module 解析
+# build context = 仓库根：COPY go.work + services/ + scripts/dev/device-simulator，go.work 接管 module 解析
 # （gateway 依赖 services/testhelper 的 replace 指令在 go.work 下正常解析）
+# use 块里列了的模块必须一起进镜像，否则 go 在容器里报 cannot load module（T566 格五）
 COPY go.work ./
 COPY services/ ./services/
+COPY scripts/dev/device-simulator/ ./scripts/dev/device-simulator/
 ARG SERVICE
 RUN test -n "$SERVICE" && \
     cd services/${SERVICE} && \
