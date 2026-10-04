@@ -108,7 +108,15 @@ jobs:
       # dev server 由 playwright.config.ts 的 webServer 拉起（uni --port ${E2E_PORT:-5173}）
       - name: Run Playwright E2E
         if: steps.check.outputs.present == 'true'
+        # E2E_EGRESS_LOG 是 e2e/helpers.ts:17 那根观测腿的落盘开关，不给就没有 JSONL 可断
+        env:
+          E2E_EGRESS_LOG: e2e-egress/patient.jsonl
         run: npx playwright test
+      - name: Assert no external egress (T555 格二)
+        if: steps.check.outputs.present == 'true'
+        env:
+          E2E_EGRESS_LOG: e2e-egress/patient.jsonl
+        run: node e2e/assert-no-external-egress.mjs --log "$E2E_EGRESS_LOG"
       - name: Upload Playwright report
         if: failure() && steps.check.outputs.present == 'true'
         uses: actions/upload-artifact@v4
