@@ -8,7 +8,7 @@
 //	{METHOD}\n{path}\n{device_id}\n{timestamp_unix_sec}\n{nonce}\n{body_sha256_hex}
 //
 // 验证流程（verifier.go）：
-//  1. 校验 X-Timestamp 时间窗（±5min）
+//  1. 校验 X-Timestamp 时间窗（默认档 ±5min；上报组与校时组各用专用档，见下方三个常量）
 //  2. HMAC-SHA256 签名比对（常量时间）
 //  3. Nonce 防重放待 gateway 接入 Redis 后实现（10min TTL，架构 §4.7）
 //  4. 设备注册/绑定状态由 gateway 中间件依据密钥查询结果判定
@@ -22,12 +22,25 @@ import (
 	"time"
 )
 
-// SignatureTimeWindow 签名有效时间窗（分钟）
+// SignatureTimeWindow 签名有效时间窗（分钟）—— VerifySignature 的默认档，
+// 上报组与校时组都不再用它（各自有专用档），保留它是为了让包内单测与
+// 任何「默认档」调用点仍有一个未放宽的基准可比。
 const SignatureTimeWindow = 5
 
+// DeviceReportWindow 上报端点（POST /device/records 与 /records/batch）专用时间窗（分钟，T570）。
+// T570 临时：设备时钟偏 681s（见 T564），2 天后复核，治本在设备侧校时。
+// 取 30 分钟（1800 秒）的理由：现网单点偏差 681 秒（x_timestamp=1791126964、
+// time=1791127645，差正好 681），300 秒的默认档必然拒；1800 秒在 681 秒之外
+// 还留 1119 秒余量。下游 data-service 对 body 里的 timestamp 只卡
+// 「不早于 2026-01-01、不晚于 now+1 小时」，两头都比这一档宽，
+// 所以上报侧真正生效的界就是这里，放宽不会被下游另一道界挡回来。
+// 只放宽窗口这一维：HMAC 比对、常量时间比较、body 上限、设备注册状态一律不变。
+const DeviceReportWindow = 30
+
 // DeviceTimeSyncWindow 校时端点专用时间窗（分钟，T550）。
-// 上报组用 ±SignatureTimeWindow 拒时钟超差的设备；若 /device/time 同窗，
-// 时钟已经超差的设备就被锁在门外、拿不到校时，形成「越不准越进不来」的死锁。
+// 上报组用 ±DeviceReportWindow（T570 临时档）；/device/time 需要更宽的窗，
+// 因为时钟已经超差的设备若与上报同窗，就被锁在校时门外、拿不到校时，
+// 形成「越不准越进不来」的死锁。
 // 只放宽这一个端点的时间窗：HMAC 比对、设备注册状态、body 上限一律不变。
 const DeviceTimeSyncWindow = 24 * 60
 

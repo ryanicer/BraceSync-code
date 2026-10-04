@@ -152,13 +152,9 @@ func timestampForLog(raw string) string {
 	return raw
 }
 
-// deviceSigAuth 设备验签中间件（默认 ±SignatureTimeWindow 时间窗）：挂载于上报路由组。
+// deviceSigAuthWindow 设备验签中间件，时间窗按分钟数入参（T550 校时档 DeviceTimeSyncWindow、
+// T570 上报档 DeviceReportWindow；默认档 SignatureTimeWindow 只留给包内基准）。
 // 失败统一 HTTP 401，body code 区分 20401（签名）/20402（时间窗）/20404（未注册，协议 §4.4）。
-func deviceSigAuth(agt *gatewayAuth) gin.HandlerFunc {
-	return deviceSigAuthWindow(agt, auth.SignatureTimeWindow)
-}
-
-// deviceSigAuthWindow 设备验签中间件，时间窗按分钟数入参（T550：校时端点用更宽的窗）。
 // 只有窗口这一维可变——密钥查询、body 上限、HMAC 比对与注入逻辑全部同一条路径。
 func deviceSigAuthWindow(agt *gatewayAuth, windowMinutes int) gin.HandlerFunc {
 	return func(c *gin.Context) {
