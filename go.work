@@ -1,5 +1,7 @@
 go 1.22
 
+// ./scripts/dev/device-simulator 挂进 workspace（T566 格 1）：不挂时向 go vet/test
+// 传 ./scripts/dev/device-simulator/... 会回 setup failed（use 块内不许注释，故记在块外）
 use (
 	./services/gateway
 	./services/user-service
@@ -9,4 +11,5 @@ use (
 	./services/file-service
 	./services/msg-service
 	./services/testhelper
+	./scripts/dev/device-simulator
 )
