@@ -1,9 +1,10 @@
 // BraceSync k6 压测 — 场景 2：补传风暴（500 rps 突发）
 // 对齐：docs/ §6 场景 2
-// 用法：k6 run backfill-storm.js -e BASE_URL=http://localhost:8080
+// 用法：k6 run backfill-storm.js -e BASE_URL=http://localhost:8080 -e DEVICE_SECRET=<设备密钥>
 
 import http from 'k6/http';
 import { check } from 'k6';
+import { PATH_BATCH, DEFAULT_FIRMWARE, normalPoints, randomNonceHex, reportHeaders } from './device-sign.js';
 
 export const options = {
   scenarios: {
@@ -28,27 +29,26 @@ export const options = {
 };
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
+const DEVICE_ID = __ENV.DEVICE_ID || 'DEV_LOAD_TEST';
+const FRAMES_PER_REQUEST = 50; // 整批 >100 帧会被云端按 model.MaxBatchFrames 以 20400 拒
 
-// 模拟设备批量补传（7 天 × 48 帧/天 = 336 帧）
+// 批量补传请求体，对齐 data-service 的 BatchRequest/BatchFrame：
+// 帧内不带 device_id、不带 firmware（批次顶层各一颗）、无 wearing（佩戴由云端推导），
+// timestamp 为 Unix 秒（旧脚本这里是 ISO 串 + pressures 字段名，整批进不了库）
 const batchPayload = JSON.stringify({
-  device_id: 'DEV_LOAD_TEST',
-  frames: Array.from({ length: 50 }, (_, i) => ({
-    device_id: 'DEV_LOAD_TEST',
-    timestamp: new Date(Date.now() - i * 30 * 60 * 1000).toISOString(),
-    pressures: Array.from({ length: 20 }, () => Math.floor(Math.random() * 30) + 5),
+  device_id: DEVICE_ID,
+  firmware: DEFAULT_FIRMWARE,
+  frames: Array.from({ length: FRAMES_PER_REQUEST }, (_, i) => ({
+    timestamp: Math.floor((Date.now() - i * 30 * 60 * 1000) / 1000),
+    points: normalPoints(),
     battery: 80,
-    wearing: true,
   })),
 });
 
 export default function () {
-  const res = http.post(`${BASE_URL}/api/v1/device/report/batch`, batchPayload, {
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Device-Id': 'DEV_LOAD_TEST',
-      'X-Timestamp': `${Math.floor(Date.now() / 1000)}`,
-      'X-Signature': 'test_signature_placeholder',
-    },
+  const tsUnix = Math.floor(Date.now() / 1000);
+  const res = http.post(`${BASE_URL}${PATH_BATCH}`, batchPayload, {
+    headers: reportHeaders(DEVICE_ID, PATH_BATCH, batchPayload, tsUnix, randomNonceHex()),
   });
   check(res, {
     'status is 200 or 201': (r) => r.status === 200 || r.status === 201,
