@@ -198,6 +198,37 @@ export function startLoginSegmentTimer(label: string): LoginSegmentTimer {
 }
 
 /**
+ * goto 登录页，并把这一段再拆成「服务器首字节 / 到 DOMContentLoaded / 最后一个资源结束」三格。
+ * 为什么还要拆：两次真机 run 的分段读数都把长尾全落在 goto 这一格（p50 约 2s，长尾 17s 与 25s 各一发），
+ * 而 DOM 就绪之后的 login-card 最长只有几百毫秒 ⇒ 必须把「等 staging 回包」和「跑前端代码」分开定量，
+ * 否则「goto 慢」这一句既能被读成「前端包太大」也能被读成「服务器慢」，两种结论要派给不同的人。
+ * 口径：读数取自浏览器自己的 Navigation Timing，相对本次导航起点；只读，不改 waitUntil、不改任何等待语义。
+ * 取不到不许拖垮用例：无条目打 navnone、evaluate 抛错打 naverr，goto 这一格照常落下。
+ */
+async function gotoLoginWithNavTiming(page: Page, timer: LoginSegmentTimer): Promise<void> {
+  await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
+  let extra = ''
+  try {
+    extra = await page.evaluate(() => {
+      const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+      if (!nav) return 'navnone'
+      const res = performance.getEntriesByType('resource') as PerformanceResourceTiming[]
+      const ms = (v: number) => Math.round(Math.max(0, v))
+      let lastEnd = 0
+      for (const r of res) lastEnd = Math.max(lastEnd, r.responseEnd)
+      return (
+        `ttfb${ms(nav.responseStart - nav.requestStart)}` +
+        `_dcl${ms(nav.domContentLoadedEventStart - nav.startTime)}` +
+        `_res${res.length}_resEnd${ms(lastEnd - nav.startTime)}`
+      )
+    })
+  } catch {
+    extra = 'naverr'
+  }
+  timer.seg('goto', extra)
+}
+
+/**
  * 真实模式登录（USE_MOCK=false 下的 login 页表单）。
  * 对齐 apps/admin-web/src/pages/login/index.vue 「v-else 真实模式」结构：
  *   - 用户名框：.login-form 下第一个非 password input（el-input 包装 input）
@@ -220,8 +251,7 @@ async function realLoginBody(
   timer: LoginSegmentTimer,
 ): Promise<void> {
   logRealRequests(page, 'login')
-  await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
-  timer.seg('goto')
+  await gotoLoginWithNavTiming(page, timer)
   // 等待登录卡片渲染
   await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
   timer.seg('login-card')
