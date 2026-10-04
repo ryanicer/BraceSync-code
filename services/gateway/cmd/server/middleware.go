@@ -116,6 +116,42 @@ func jwtAuth(agt *gatewayAuth) gin.HandlerFunc {
 // maxDeviceBodyBytes 设备上报请求体上限：批量补传 ≤100 帧 × ~600B + 冗余（4MB 足够）
 const maxDeviceBodyBytes = 4 << 20
 
+// deviceForensics T564 取证面：20402（时钟异常）拒签时挂在 gin 上下文上的读数。
+//
+// 现网被拒的那批请求，X-Timestamp 原值在边缘面（nginx combined 无 $http_*）与网关
+// 既有日志行里都取不到，所以这一格只能由网关在拒签那一刻自己写出来（详见 T564 报告）。
+// 记 X-Timestamp 原值，加上 X-Timestamp / X-Nonce / X-Signature 三个头名的在场与否；
+// 签名与 nonce 的值本身是凭据形状，一律不落日志面。
+type deviceForensics struct {
+	deviceID         string
+	timestamp        string // X-Timestamp 原值（经 timestampForLog 过一道形状闸）
+	skewSec          int64
+	skewKnown        bool // false = 没测出来（戳不可解析），此时日志行不出 skew_sec
+	timestampPresent bool
+	noncePresent     bool
+	signaturePresent bool
+}
+
+const ctxKeyDeviceForensics = "t564_device_forensics"
+
+// maxRawTimestampLogLen X-Timestamp 原值可整段入日志的长度上限（正常是 10 位 Unix 秒）。
+const maxRawTimestampLogLen = 32
+
+// timestampForLog 原值入日志前的一道形状闸：可打印 ASCII 且不长才原样落，
+// 否则只报长度——既挡住超长头值灌日志面，也挡住把非法字节截进 JSON 日志行
+// （那会破坏整条日志行，比少一个读数糟得多）。
+func timestampForLog(raw string) string {
+	if len(raw) > maxRawTimestampLogLen {
+		return "<len=" + strconv.Itoa(len(raw)) + ">"
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] < 0x20 || raw[i] == 0x7f {
+			return "<unprintable len=" + strconv.Itoa(len(raw)) + ">"
+		}
+	}
+	return raw
+}
+
 // deviceSigAuth 设备验签中间件（默认 ±SignatureTimeWindow 时间窗）：挂载于上报路由组。
 // 失败统一 HTTP 401，body code 区分 20401（签名）/20402（时间窗）/20404（未注册，协议 §4.4）。
 func deviceSigAuth(agt *gatewayAuth) gin.HandlerFunc {
@@ -167,6 +203,21 @@ func deviceSigAuthWindow(agt *gatewayAuth, windowMinutes int) gin.HandlerFunc {
 			msg := "signature verification failed"
 			if res != nil && res.ErrorMessage != "" {
 				msg = res.ErrorMessage
+			}
+			// T564：只有超窗那一支补取证面——这一支的拒签理由本身就是「设备说的时刻
+			// 对不上」，把那条时刻与偏差写进同一条日志行，才谈得上判它是阶跃还是漂移。
+			// 挂在上下文上由 logTechnical 统一出，响应体一侧的形状不变（见 T464 双通道）。
+			if code == 20402 {
+				rawTS := c.GetHeader("X-Timestamp")
+				c.Set(ctxKeyDeviceForensics, deviceForensics{
+					deviceID:         deviceID,
+					timestamp:        timestampForLog(rawTS),
+					skewSec:          res.SkewSec,
+					skewKnown:        res.SkewMeasured,
+					timestampPresent: rawTS != "",
+					noncePresent:     c.GetHeader("X-Nonce") != "",
+					signaturePresent: c.GetHeader("X-Signature") != "",
+				})
 			}
 			abortJSON(c, http.StatusUnauthorized, code, msg)
 			return

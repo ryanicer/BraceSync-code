@@ -36,8 +36,15 @@ func (v *DeviceSigVerifier) VerifySignatureWindowed(method, path, body, timestam
 	}
 	deviceTime := time.Unix(ts, 0)
 	if !IsTimestampInWindow(deviceTime, serverTime, windowMinutes) {
-		return &VerifyResult{Valid: false, ErrorCode: "20402",
-			ErrorMessage: "timestamp outside ±" + strconv.Itoa(windowMinutes) + "min window"}
+		// T564 取证：这一支是现网被拒的主形态，除了「超窗」还要带出它比服务端早/晚几秒，
+		// 否则拒签日志定位不了阶跃 / 漂移 / 没带戳三种真因（原值由调用方按头落日志）。
+		return &VerifyResult{
+			Valid:        false,
+			ErrorCode:    "20402",
+			ErrorMessage: "timestamp outside ±" + strconv.Itoa(windowMinutes) + "min window",
+			SkewSec:      int64(deviceTime.Sub(serverTime) / time.Second),
+			SkewMeasured: true,
+		}
 	}
 
 	want := HMACSHA256(deviceSecret, BuildSignString(method, path, deviceID, nonce, body, deviceTime))

@@ -76,6 +76,33 @@ func TestVerifySignature_TimestampOutOfWindow_20402(t *testing.T) {
 	res := v.VerifySignature("POST", "/api/v1/device/records", "body", tsStr, sig, "D1", "dev-secret", testNonce, now)
 	assert.False(t, res.Valid)
 	assert.Equal(t, "20402", res.ErrorCode, "±5min 时间窗外 → 20402")
+
+	// T564 取证：超窗那一支要带出设备声明时刻与服务端的带符号偏差，否则日志只证明「超窗」，
+	// 分不出阶跃 / 漂移 / 没带戳三种真因。
+	assert.True(t, res.SkewMeasured, "超窗（戳可解析）= 偏差测出来了")
+	assert.InDelta(t, -360, res.SkewSec, 2, "设备落后服务端 6min → 负偏差，秒")
+}
+
+func TestVerifySignature_FutureTimestamp_SkewIsPositive(t *testing.T) {
+	v := &DeviceSigVerifier{}
+	now := time.Now()
+	ahead := now.Add(20 * time.Minute)
+	tsStr, sig := signedHeaders("dev-secret", "POST", "/api/v1/device/records", "body", ahead)
+
+	res := v.VerifySignature("POST", "/api/v1/device/records", "body", tsStr, sig, "D1", "dev-secret", testNonce, now)
+	assert.Equal(t, "20402", res.ErrorCode)
+	assert.True(t, res.SkewMeasured)
+	assert.InDelta(t, 1200, res.SkewSec, 2, "设备超前 → 正偏差（符号反了就会把快钟读成慢钟）")
+}
+
+func TestVerifySignature_BadTimestamp_ForensicsStayUnmeasured(t *testing.T) {
+	v := &DeviceSigVerifier{}
+	res := v.VerifySignature("POST", "/api/v1/device/records", "body", "not-a-number", "sig", "D1", "secret", testNonce, time.Now())
+	assert.Equal(t, "20402", res.ErrorCode)
+
+	// T564：解析不出偏差就必须标成「未测」——留一个 0 在 skew 位上，下游会读成「时钟正好」。
+	assert.False(t, res.SkewMeasured)
+	assert.Zero(t, res.SkewSec)
 }
 
 func TestVerifySignature_WindowBoundary_Pass(t *testing.T) {
