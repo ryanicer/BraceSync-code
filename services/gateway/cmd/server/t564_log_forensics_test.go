@@ -210,7 +210,7 @@ func TestT564_ResponseShapeUnchanged(t *testing.T) {
 func TestTimestampForLog_GuardsLogFace(t *testing.T) {
 	assert.Equal(t, "1759478400", timestampForLog("1759478400"))
 	assert.Equal(t, "", timestampForLog(""))
-	assert.Equal(t, "<len=33>", timestampForLog("123456789012345678901234567890123"))
+	assert.Equal(t, "<len=33>", timestampForLog("1234567890-1234567890-12345678901"))
 	assert.Equal(t, "<unprintable len=11>", timestampForLog("12345678\n90"))
 	assert.Equal(t, "2026-10-03T12:00:00Z", timestampForLog("2026-10-03T12:00:00Z"), "32 位内的可打印 ASCII 原样落")
 }
