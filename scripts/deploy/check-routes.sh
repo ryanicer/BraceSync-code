@@ -16,7 +16,69 @@ GW_DEV_ROUTES="$TMPDIR/check-routes-gwdev-$$.txt"
 SIM_ROUTES="$TMPDIR/check-routes-sim-$$.txt"
 trap 'rm -f "$GW_ROUTES" "$US_ROUTES" "$GW_DEV_ROUTES" "$SIM_ROUTES"' EXIT
 
-echo "=== BraceSync 路由比对检查 ==="
+# 0. 自证有牙（T562）：一条比对腿如果没有注入过缺陷并真的判红过，它和恒真表达式在读数上不可区分。
+#    所以本脚本默认先在自己的副本上跑三形：合规(期望 rc=0) / 路径漂移(期望 1) / 恒 0 空面(期望 2)，
+#    三形任一不符就退 2 —— 宁可对业务面判不出结论，也不放一条自己已经失效的腿过去。
+#    关掉只有一条路：CHECK_ROUTES_NO_SELFTEST=1（CI 与本仓约定是默认必跑；内部递归就是这么断的）。
+SELFTEST_SCRATCH=""
+run_selftest() {
+  local sim_rel gs rel rc_drift rc_clean rc_empty hits scratch
+  scratch="$(mktemp -d "${TMPDIR%/}/check-routes-selftest-XXXXXX")" || {
+    echo "  ❌ 自证腿建不出临时树（读不到就是读不到，不当通过）"; exit 2; }
+  # 必须是全局名：trap 在脚本退出时才展开执行，那时函数内的 local 早就不在了
+  # （写成本地名的实测后果：比对已经跑完并打出结论，退出时 trap 报 unbound variable 污染出口码）。
+  SELFTEST_SCRATCH="$scratch"
+  trap 'rm -rf "$SELFTEST_SCRATCH"; rm -f "$GW_ROUTES" "$US_ROUTES" "$GW_DEV_ROUTES" "$SIM_ROUTES"' EXIT
+  for rel in scripts/deploy/check-routes.sh \
+             services/gateway/cmd/server/proxy_admin.go \
+             services/gateway/cmd/server/proxy_services.go \
+             services/user-service/internal/handler/handler.go \
+             scripts/dev/device-simulator/cmd/simulator.go; do
+    if [ ! -f "$REPO_ROOT/$rel" ]; then
+      echo "  ❌ 自证腿缺输入：$rel（0 命中是「没扫到面」，不是「一致」）"; exit 2;
+    fi
+    mkdir -p "$scratch/$(dirname "$rel")"
+    cp "$REPO_ROOT/$rel" "$scratch/$rel"
+  done
+  sim_rel="scripts/dev/device-simulator/cmd/simulator.go"
+  gs="$scratch/$sim_rel"
+  cp "$gs" "$gs.orig"
+
+  # 形一：原样（合规面）—— 期望 0
+  rc_clean=0
+  ( cd "$scratch" && CHECK_ROUTES_NO_SELFTEST=1 bash scripts/deploy/check-routes.sh >/dev/null 2>&1 ) || rc_clean=$?
+
+  # 形二：把两条常量改回历史上的 404 路径 —— 期望 1（有差异）
+  sed -i 's#"/api/v1/device/records"#"/api/v1/device/report"#; s#"/api/v1/device/records/batch"#"/api/v1/device/report/batch"#' "$gs"
+  # 注入必须落在常量行上，否则这一形测的是空气
+  hits=$(grep -cE '^[[:space:]]*Path(Single|Batch)[[:space:]]*=[[:space:]]*"/api/v1/device/report' "$gs" || true)
+  if [ "$hits" -ne 2 ]; then
+    echo "  ❌ 自证腿的注入没落到常量行上（命中 $hits 颗，期望 2 颗）—— 常量行形变了，请同步改本自证"; exit 2;
+  fi
+  rc_drift=0
+  ( cd "$scratch" && CHECK_ROUTES_NO_SELFTEST=1 bash scripts/deploy/check-routes.sh >/dev/null 2>&1 ) || rc_drift=$?
+
+  # 形三：常量整块删掉 —— 期望 2（恒 0 的空面不能当通过）
+  cp "$gs.orig" "$gs"
+  sed -i '/Path[A-Za-z]*[ \t]*=[ \t]*"\/api/d' "$gs"
+  rc_empty=0
+  ( cd "$scratch" && CHECK_ROUTES_NO_SELFTEST=1 bash scripts/deploy/check-routes.sh >/dev/null 2>&1 ) || rc_empty=$?
+
+  if [ "$rc_clean" -ne 0 ] || [ "$rc_drift" -ne 1 ] || [ "$rc_empty" -ne 2 ]; then
+    echo "  ❌ 自证腿判红：三形实读 rc 为 合规=$rc_clean(期望0) 漂移=$rc_drift(期望1) 空面=$rc_empty(期望2)"
+    echo "     这说明比对腿本身已失效（或它的输入面形状变了），此时的「通过」不可信"; exit 2;
+  fi
+  echo "  自证有牙：合规=$rc_clean 漂移=$rc_drift 空面=$rc_empty（三形与期望一致，注入颗数=$hits）"
+}
+
+if [ "${CHECK_ROUTES_NO_SELFTEST:-0}" = "1" ]; then
+  echo "=== BraceSync 路由比对检查（自证腿已由 CHECK_ROUTES_NO_SELFTEST=1 关闭）==="
+else
+  echo "=== BraceSync 路由比对检查 ==="
+  echo ""
+  echo "[0/4] 自证有牙（注入三形）..."
+  run_selftest
+fi
 echo ""
 
 # 1. 从 gateway 提取 user-service 路由（proxy_admin.go 中的 userServiceRoutes）
