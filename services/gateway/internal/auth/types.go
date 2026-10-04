@@ -39,6 +39,12 @@ type VerifyResult struct {
 	Valid        bool
 	ErrorCode    string // 20401=签名错误, 20402=时钟异常, 20404=设备未注册, 20409=未绑定患者
 	ErrorMessage string
+	// T564 取证：超窗那一支带出「设备声明的时刻比服务端早/晚几秒」（带符号，设备−服务端；
+	// 原值本身由调用方按 X-Timestamp 头落日志）。
+	// SkewMeasured=false 表示这个数没测出来（X-Timestamp 解析失败），
+	// 此时零值是占位，不许被读成「偏差 0 秒」。
+	SkewSec      int64
+	SkewMeasured bool
 }
 
 // DeviceSigVerifier 设备签名验证器（实现见 verifier.go，T032 转绿）

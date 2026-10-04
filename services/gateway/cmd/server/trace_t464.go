@@ -94,14 +94,30 @@ func userText(code int) string {
 }
 
 // logTechnical 把原始技术文本写进服务端日志（响应体里给用户的则是同码的中文短句）。
+//
+// T564：设备域 20402 拒签时，中间件把取证读数挂在同一个上下文上，这里并进同一条日志行
+// （一条请求仍是一行，不增行量；不挂则字段整个缺席，不会给非设备域请求添噪音）。
 func logTechnical(c *gin.Context, code, httpStatus int, detail, requestID string) {
-	log.Warn().
+	event := log.Warn().
 		Str("request_id", requestID).
 		Int("code", code).
 		Int("http_status", httpStatus).
 		Str("method", c.Request.Method).
-		Str("path", c.Request.URL.Path).
-		Msg(detail)
+		Str("path", c.Request.URL.Path)
+	if value, exists := c.Get(ctxKeyDeviceForensics); exists {
+		if d, isForensics := value.(deviceForensics); isForensics {
+			event = event.
+				Str("device_id", d.deviceID).
+				Str("x_timestamp", d.timestamp).
+				Bool("ts_present", d.timestampPresent).
+				Bool("nonce_present", d.noncePresent).
+				Bool("sig_present", d.signaturePresent)
+			if d.skewKnown {
+				event = event.Int64("skew_sec", d.skewSec)
+			}
+		}
+	}
+	event.Msg(detail)
 }
 
 // requestIDFromRequest 反向代理 ErrorHandler 一侧的取号（那边只有 *http.Request，无 gin 上下文）。
