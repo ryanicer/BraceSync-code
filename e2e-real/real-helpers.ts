@@ -161,32 +161,91 @@ export function logRealRequests(page: Page, tag: string): void {
 }
 
 /**
+ * T565 D1：登录分段计时（只打点，不改等待语义）。
+ *
+ * 为什么要有：timedLogin 只给「整次登录多少毫秒」，拆不出这几十秒花在哪一步。
+ * CI 实跑日志里 POST /api/v1/auth/login 之前已经耗掉 ~25s，接口本身只占 ~1.3s，
+ * 所以嫌疑在 goto / 渲染 / 表单可交互这一段，而那段此前没有任何逐段读数。
+ * 口径：每个 await 完成后记一格，收尾打一行；`+` = 本段耗时，`@` = 自 t0 累计。
+ * 派发单第四节明令：不许靠调大 E2E_LOGIN_BUDGET_MS 过关，故此处不碰预算、不碰判据。
+ * 失败也要有数：report() 挂在 finally 上，抛错的运行同样留下一整行分段读数。
+ */
+export interface LoginSegmentTimer {
+  seg: (name: string, extra?: string) => void
+  report: () => void
+}
+
+export function startLoginSegmentTimer(label: string): LoginSegmentTimer {
+  const t0 = Date.now()
+  const marks: Array<{ name: string; cum: number; extra?: string }> = []
+  let reported = false
+  return {
+    seg(name, extra) {
+      marks.push({ name, cum: Date.now() - t0, extra })
+    },
+    report() {
+      if (reported || marks.length === 0) return
+      reported = true
+      let prev = 0
+      const parts = marks.map((m) => {
+        const delta = m.cum - prev
+        prev = m.cum
+        return `${m.name}=+${delta}@${m.cum}${m.extra ? `:${m.extra}` : ''}`
+      })
+      console.log(`[login-timing][segments] ${label} ${parts.join(' ')}（ms）`)
+    },
+  }
+}
+
+/**
  * 真实模式登录（USE_MOCK=false 下的 login 页表单）。
  * 对齐 apps/admin-web/src/pages/login/index.vue 「v-else 真实模式」结构：
  *   - 用户名框：.login-form 下第一个非 password input（el-input 包装 input）
  *   - 密码框：.login-form input[type="password"]
  *   - 登录按钮：文案「登 录」（中间有空格，对齐 T052 实跑成功案例）
  */
-export async function realLogin(
+export function realLogin(
   page: Page,
   username: string = DEFAULT_REAL_USERNAME,
   password: string = realPassword('realLogin'),
 ): Promise<void> {
+  const timer = startLoginSegmentTimer(`realLogin(${username})`)
+  return realLoginBody(page, username, password, timer).finally(() => timer.report())
+}
+
+async function realLoginBody(
+  page: Page,
+  username: string,
+  password: string,
+  timer: LoginSegmentTimer,
+): Promise<void> {
   logRealRequests(page, 'login')
   await page.goto(realRoutes.login, { waitUntil: 'domcontentloaded' })
+  timer.seg('goto')
   // 等待登录卡片渲染
   await expect(page.locator('.login-card')).toBeVisible({ timeout: 15_000 })
-  await submitRealLoginForm(page, username, password)
+  timer.seg('login-card')
+  await submitRealLoginFormBody(page, username, password, timer)
 }
 
 /**
  * 在「已经停在登录页」的表单上填凭据并提交（不 goto —— T336 深链用例要保住
  * 登录页 URL 上的 redirect 参数，重新 goto 就等于换了个目标页，回填验不准）。
  */
-export async function submitRealLoginForm(
+export function submitRealLoginForm(
   page: Page,
   username: string = DEFAULT_REAL_USERNAME,
   password: string = realPassword('submitRealLoginForm'),
+  timer: LoginSegmentTimer = startLoginSegmentTimer(`submitRealLoginForm(${username})`),
+): Promise<void> {
+  return submitRealLoginFormBody(page, username, password, timer).finally(() => timer.report())
+}
+
+async function submitRealLoginFormBody(
+  page: Page,
+  username: string,
+  password: string,
+  timer: LoginSegmentTimer,
 ): Promise<void> {
   // 用户名：.login-form 下「未带 type=password」的第一个可输入 input
   const usernameInput = page.locator('.login-form input:not([type="password"])').first()
@@ -196,17 +255,26 @@ export async function submitRealLoginForm(
     .getByRole('button', { name: '登 录' })
 
   await expect(usernameInput).toBeVisible()
+  timer.seg('user-visible')
   await expect(passwordInput).toBeVisible()
+  timer.seg('pass-visible')
   await expect(loginBtn).toBeVisible()
+  timer.seg('btn-visible')
 
   // 清空前先点击聚焦，再 fill（避免 el-input 残留 value）
   await usernameInput.click()
+  timer.seg('user-click')
   await usernameInput.fill('')
+  timer.seg('user-clear')
   await usernameInput.fill(username)
+  timer.seg('user-fill')
 
   await passwordInput.click()
+  timer.seg('pass-click')
   await passwordInput.fill('')
+  timer.seg('pass-clear')
   await passwordInput.fill(password)
+  timer.seg('pass-fill')
 
   // T506：先把登录接口的响应挂上观察，再点提交。登录非 200 时当场定性成「凭据漂移」——
   // 否则上层只会看到「应拿到 xxx 的 JWT」「侧栏元素未找到」这类下游噪音（T502 在 CI 里实测过三种面貌）。
@@ -216,10 +284,13 @@ export async function submitRealLoginForm(
       { timeout: 20_000 },
     )
     .catch(() => null)
+  timer.seg('post-armed')
 
   await loginBtn.click()
+  timer.seg('submit-click')
 
   const resp = await loginResponse
+  timer.seg('post-response', resp ? `http${resp.status()}` : 'none')
   if (resp && resp.status() !== 200) {
     throw new Error(credentialDriftMessage(username, resp.status(), password))
   }
@@ -229,8 +300,10 @@ export async function submitRealLoginForm(
   // 失败也会变 URL，但这里用 waitForURL 非登录页路径 + 同时用 ElMessage 兜底）
   try {
     await page.waitForURL((url) => !isLoginPath(url.pathname), { timeout: 20_000 })
+    timer.seg('left-login')
   } catch {
     // 兜底：如果被 redirect 回 /login（账号异常），不抛，由上层断言判断
+    timer.seg('left-login-timeout')
   }
 }
 
