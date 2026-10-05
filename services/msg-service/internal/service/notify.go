@@ -13,7 +13,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -86,6 +88,62 @@ func (s *NotifyService) SetWearTargetMinutes(m int) {
 	if m > 0 {
 		s.wearTargetMinutes = m
 	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 佩戴目标同源（T576，承接 T563 裁定乙：真源是 sys_configs.wear_target_hours）
+// ─────────────────────────────────────────────────────────────
+
+// WearTargetConfigKey 每日佩戴目标的真源键（scripts/db/seed/seed.sql 现值 22）
+const WearTargetConfigKey = "wear_target_hours"
+
+// DefaultWearTargetHours 读不到配置时的兜底小时数；派发单硬判据：兜底必须等于后端现值口径 22
+const DefaultWearTargetHours = 22
+
+// MaxWearTargetHours 合法上限，与 admin-web 设置页那一条 :max=24 同口径；超出按非法值降级
+const MaxWearTargetHours = 24
+
+// WearTargetSource 佩戴目标最终落在哪一档（启动日志与单测共用）
+type WearTargetSource string
+
+const (
+	WearTargetFromConfig  WearTargetSource = "sys_configs"
+	WearTargetFromEnv     WearTargetSource = "env"
+	WearTargetFromDefault WearTargetSource = "default"
+)
+
+// parseWearTargetHours 折算 sys_configs 的字符串值：空串、非数字、不大于 0、超过上限都不成立
+func parseWearTargetHours(raw string) (int, bool) {
+	h, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || h <= 0 || h > MaxWearTargetHours {
+		return 0, false
+	}
+	return h, true
+}
+
+// SyncWearTarget 装配每日佩戴目标：sys_configs 那一列是真源，读不到（键缺失或查询失败）或值非法时
+// 依次退到 WEAR_TARGET_HOURS 环境变量、默认 22。三条路都不会把目标写成 0 或空值（T576 判据 3）。
+// 返回最终小时数与来源，调用方（cmd/server/main）据此打启动日志。
+func (s *NotifyService) SyncWearTarget(ctx context.Context, envRaw string) (int, WearTargetSource) {
+	raw, err := s.store.GetSysConfigValue(ctx, WearTargetConfigKey)
+	switch {
+	case err == nil:
+		if h, ok := parseWearTargetHours(raw); ok {
+			s.SetWearTargetMinutes(h * 60)
+			return h, WearTargetFromConfig
+		}
+		s.log.Warn().Str("key", WearTargetConfigKey).Str("value", raw).Msg("invalid wear_target_hours, degrading")
+	case errors.Is(err, repo.ErrConfigMissing):
+		s.log.Warn().Str("key", WearTargetConfigKey).Msg("sys_configs key missing, degrading")
+	default:
+		s.log.Error().Err(err).Str("key", WearTargetConfigKey).Msg("sys_configs read failed, degrading")
+	}
+	if h, ok := parseWearTargetHours(envRaw); ok {
+		s.SetWearTargetMinutes(h * 60)
+		return h, WearTargetFromEnv
+	}
+	s.SetWearTargetMinutes(DefaultWearTargetHours * 60)
+	return DefaultWearTargetHours, WearTargetFromDefault
 }
 
 func contains(list []string, v string) bool {
