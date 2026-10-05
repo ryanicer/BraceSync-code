@@ -29,12 +29,15 @@ beforeEach(() => {
 })
 
 describe('T579 — 合法域', () => {
-  it('1..24 的整数（含纯数字串）认，其余算「后端没给」', () => {
+  it('1..24 的数值（含小数与纯数字串）认，其余算「后端没给」', () => {
     expect(normalizeTargetHours(22)).toBe(22)
     expect(normalizeTargetHours('22')).toBe(22)
     expect(normalizeTargetHours(1)).toBe(1)
     expect(normalizeTargetHours(24)).toBe(24)
-    for (const raw of [0, -1, 25, 2.5, '', 'abc', null, undefined, NaN, {}, []]) {
+    // 后端 validateSettings 收 1..24 的 float64（handler.go），小数是合法配置，不许被前端当脏值丢掉
+    expect(normalizeTargetHours(16.5)).toBe(16.5)
+    expect(normalizeTargetHours('16.5')).toBe(16.5)
+    for (const raw of [0, -1, 25, 0.5, '', 'abc', null, undefined, NaN, Infinity, -Infinity, {}, []]) {
       expect(normalizeTargetHours(raw)).toBeNull()
     }
   })
@@ -46,6 +49,12 @@ describe('T579 — 从 profile 只读面取下发值', () => {
     expect(await loadWearTarget()).toBe(20)
     expect(wearTargetHours.value).toBe(20)
     expect(requestMock).toHaveBeenCalledWith({ url: '/api/v1/patient/profile', method: 'GET' })
+  })
+
+  it('下发的是小数也原样用（后端 float64，前端不取整）', async () => {
+    requestMock.mockResolvedValue({ dailyWearTargetHours: 16.5 })
+    expect(await loadWearTarget()).toBe(16.5)
+    expect(wearTargetHours.value).toBe(16.5)
   })
 
   it('字段缺席（Winner 那一笔还没落地时）退回 22', async () => {

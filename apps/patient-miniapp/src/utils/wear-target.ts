@@ -16,10 +16,10 @@ const MAX_TARGET_HOURS = 24
 
 export const wearTargetHours = ref(FALLBACK_TARGET_HOURS)
 
-/** 合法域：1..24 的整数（number 或纯数字串）；其余一律算「后端没给」 */
+/** 合法域与后端同宽（validateSettings 收 1..24 的 float64，允许小数）；其余一律算「后端没给」 */
 export function normalizeTargetHours(raw: unknown): number | null {
   const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : Number.NaN
-  if (!Number.isInteger(n) || n < MIN_TARGET_HOURS || n > MAX_TARGET_HOURS) return null
+  if (!Number.isFinite(n) || n < MIN_TARGET_HOURS || n > MAX_TARGET_HOURS) return null
   return n
 }
 
