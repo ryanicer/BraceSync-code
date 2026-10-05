@@ -37,9 +37,11 @@ if [ -n "${FRESHNESS_LATEST_FILE:-}" ]; then
 else
   [ -n "${FRESHNESS_DB:-}" ] || die "既没给 FRESHNESS_LATEST_FILE 也没给 FRESHNESS_DB ⇒ 无读数，判红不判绿"
   command -v psql >/dev/null 2>&1 || die "FRESHNESS_DB 给了但 psql 不在 PATH ⇒ 取不到读数"
-  latest=$(psql "$FRESHNESS_DB" -At -F'|' -c \
-    "SELECT coalesce(max(ts) AT TIME ZONE 'UTC'), 'EMPTY'), count(*) FILTER (WHERE ingest_source = 'mock') FROM $TABLE" 2>/dev/null) \
-    || die "psql 查询失败（连接/权限/表不存在都算取不到读数）"
+  # 时间那一格取 epoch 秒（不是 date 认得的串）：真库实测「AT TIME ZONE 'UTC'」出来的是不带零时区的
+  #   裸串，宿主机时区一非 UTC 就会把「距今多久」整档算偏（实测偏 8 小时）。
+  SQL="SELECT coalesce(floor(extract(epoch from max(ts)))::text, 'EMPTY'), count(*) FILTER (WHERE ingest_source = 'mock') FROM $TABLE"
+  latest=$(psql "$FRESHNESS_DB" -At -F'|' -c "$SQL") \
+    || die "psql 查询失败（连接/权限/表不存在/SQL 语法错都算取不到读数）；上一条 psql 报错原文就在本行上面（不再丢进 null）；若那句写着 syntax error，先数 $SQL 引号内 SQL 自身的左右括号是否配平"
 fi
 
 [ -n "$latest" ] || die "读数为空串：区分不了「查询失败」和「库里真没行」，不判绿"
