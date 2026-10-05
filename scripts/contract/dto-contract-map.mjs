@@ -11,6 +11,11 @@
 export const CONTRACT_MAP = {
   // ===== user-service：医生 / 技师 / 团队 / 患者 / 反馈 / 复查 =====
   AdminPatientDTO: { ts: 'AdminPatient' },
+  // T576 甲案：患者自助档案 = 整行 AdminPatientDTO（匿名内嵌）+ 后端下发的 dailyWearTargetHours。
+  // 实测（本卡取证）：若映射到 extends AdminPatient 的契约接口，对拍尺的 Go 侧不展平匿名嵌入，
+  // 20 枚继承键会全数报 C2「契约有 Go 无」——那不是漂移而是尺的口径，故按 DoctorAccountCreateDTO /
+  // TechnicianCreateDTO（同样匿名内嵌的信封）口径登记不比对，不用 20 行 ignore 把这一片整块关掉。
+  PatientProfileDTO: { ts: null, reason: '读响应信封：匿名内嵌 AdminPatientDTO + 自有键 dailyWearTargetHours；对拍尺 Go 侧不展平匿名嵌入（映射成 extends 契约实测报 20 枚继承键 C2），同 DoctorAccountCreateDTO 口径' },
   TeamDTO: { ts: 'Team' },
   TeamDetailDTO: { ts: 'TeamDetail' },
   TeamStatsDTO: { ts: 'TeamStats' },
