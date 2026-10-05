@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Locator } from '@playwright/test'
 import {
   ok, wxLoginResp, realtimeSnapshot, pressureRecords, wearing15,
+  wearTargetProfileStub,
   pressureAlerts7groups, alertsPage, unbindOk,
   E2E_TOKEN_KEY, E2E_PATIENT_ID_KEY, E2E_TOKEN, E2E_PATIENT_ID, E2E_DEVICE_ID,
 } from '../apps/patient-miniapp/tests/e2e/fixtures/patient'
@@ -50,8 +51,9 @@ function attachEgressRecorder(page: Page) {
  *
  * T074 基建新增：setupPatientE2E(page, { withLogin })
  *  - 页面初始化前注入 bracesync_token / bracesync_patient_id（H5 uni.storage = localStorage）
- *  - page.route 拦截 api/v1 全路径请求：命中显式白名单（realtime/records/alerts/daily-wear/unbind/wx-login）
+ *  - page.route 拦截 api/v1 全路径请求：命中显式白名单（realtime/records/alerts/daily-wear/unbind/wx-login/profile）
  *    返回契约 fixture；【T555 起】未命中一律 abort（旧形态是 fallback 走真实网络，见下面拦截处注释）
+ *    【T579】profile 这一格只回期望时长那一枚标量（wearTargetProfileStub），full profile 由 profile.spec 自己覆盖
  *  - 属于"测试基建 setup"，不触碰任何断言（断言归 Ella）
  */
 
@@ -281,8 +283,14 @@ export async function setupPatientE2E(page: Page, opts: { withLogin?: boolean } 
       return route.fulfill({ json: unbindOk() })
     }
 
+    // ——— GET /api/v1/patient/profile（T579：wearing / anomaly 两页取期望时长）
+    //  只给 data.dailyWearTargetHours 这一枚，full profile 面由 profile.spec 自己注册覆盖（LIFO：后注册先咨询）
+    if (method === 'GET' && url.pathname === '/api/v1/patient/profile') {
+      return route.fulfill({ json: ok(wearTargetProfileStub()) })
+    }
+
     // T555 格一（止血）：默认全拦。上面那批显式白名单（wx-login / realtime / records /
-    // daily-wear / alerts / unbind）之外的 /api/v1/ 请求，一律 abort，绝不再 fallback。
+    // daily-wear / alerts / unbind / profile）之外的 /api/v1/ 请求，一律 abort，绝不再 fallback。
     // 旧形态是 `await route.fallback()` —— 未命中的请求会走真实网络，而患者端 request.ts 用的是
     // 绝对地址（当时 dev 缺省还是线上域名），于是两条 POST 写腿真发到生产 API 域名，
     // 只被对方 CORS 挡下、套件仍全绿（见 T555 证据三条）。要让某条端点走网络，必须由

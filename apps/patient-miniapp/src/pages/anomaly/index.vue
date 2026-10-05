@@ -92,7 +92,7 @@ import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
 import { alertsToPressureMap, type PressureAnomalyItem } from '../../utils/anomaly'
-import { applyTargetHours, wearTargetHours } from '../../utils/wear-target'
+import { loadWearTarget, wearTargetHours } from '../../utils/wear-target'
 
 // 佩戴记录：后端 data-service DailyWearDayDTO（GET /patients/:patientId/daily-wear，T076）
 // 真机教训：DTO 只有 wearMinutes，hours/status 必须前端派生，不可直接消费
@@ -109,8 +109,6 @@ export interface DailyWearDay {
   detailFrameCount?: number | null
   aggregatedAt?: string | null
   wearingThresholdN?: number | null
-  /** T576 甲案下发、本页读取的期望时长（小时）；未到齐时由 utils/wear-target 落兜底 */
-  dailyWearTargetHours?: number | null
 }
 
 export interface WearingRecord {
@@ -148,7 +146,10 @@ const now = new Date()
 const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 
 // 数据
-const wearingData = ref<WearingRecord[]>([])
+// 佩戴行存原始值、status 走 computed：期望时长来自 profile，与 daily-wear 是两条腿，
+// 晚到的目标必须让日历圆点重算，不能在第一趟映射时定死
+const wearRows = ref<DailyWearDay[]>([])
+const wearingData = computed<WearingRecord[]>(() => wearRows.value.map(toWearingRecord))
 const activeTab = ref<'wearing' | 'pressure'>('wearing')
 const wearingError = ref('')
 const pressureError = ref('')
@@ -280,7 +281,7 @@ async function loadWearing() {
   const patientId = authStore.patientId
   if (!patientId) {
     wearingError.value = '请先登录'
-    wearingData.value = []
+    wearRows.value = []
     return
   }
   try {
@@ -298,17 +299,15 @@ async function loadWearing() {
       method: 'GET',
       data: { start: `${sY}-${sM}-${sD}`, end: `${endY}-${endM}-${endD}` },
     })
-    const rows = Array.isArray(list) ? list : []
-    // 目标时长先落到共用读数，再派生 status（同一响应面既是数据也是口径来源）
-    applyTargetHours(rows)
-    wearingData.value = rows.map(toWearingRecord)
+    wearRows.value = Array.isArray(list) ? list : []
   } catch {
-    applyTargetHours(null)
-    wearingData.value = []
+    wearRows.value = []
   }
 }
 
 onMounted(() => {
+  // 期望时长（profile 只读面，T576 甲案）与本页两腿数据并行取，谁先到都不影响另一腿
+  void loadWearTarget()
   void loadPressure()
   void loadWearing()
 })

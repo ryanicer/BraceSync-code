@@ -106,7 +106,7 @@
 import { ref, computed, watch, onMounted, getCurrentInstance } from 'vue'
 import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
-import { applyTargetHours, wearTargetHours } from '../../utils/wear-target'
+import { loadWearTarget, wearTargetHours } from '../../utils/wear-target'
 
 // data-service DailyWearDayDTO（T076；T366 可解释性四字段为可选镜像，本页不消费）
 interface DailyWearDay {
@@ -121,8 +121,6 @@ interface DailyWearDay {
   detailFrameCount?: number | null
   aggregatedAt?: string | null
   wearingThresholdN?: number | null
-  /** T576 甲案下发、T579 本页读取的期望时长（小时）；未到齐时由 utils/wear-target 落兜底 */
-  dailyWearTargetHours?: number | null
 }
 
 const auth = useAuthStore()
@@ -196,10 +194,8 @@ async function loadDailyWear() {
       },
     })
     days.value = Array.isArray(list) ? list : []
-    applyTargetHours(days.value)
   } catch {
     days.value = []
-    applyTargetHours(null)
   }
 }
 
@@ -325,11 +321,13 @@ function drawAll() {
 }
 
 onMounted(() => {
+  // 期望时长与佩戴数据两腿并行：profile 晚到也要重画环形图与柱状图的阈值色
+  void loadWearTarget()
   void loadDailyWear().then(drawAll)
   drawAll()
 })
 
-watch(days, () => drawAll())
+watch([days, wearTargetHours], () => drawAll())
 </script>
 
 <style scoped>
