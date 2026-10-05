@@ -56,7 +56,7 @@
           <view class="detail-bar-wrap">
             <view class="detail-bar" :style="{ width: barWidth + '%', background: detailColor }"></view>
           </view>
-          <view class="detail-bar-labels"><text>0h</text><text>目标 16h</text><text>18h</text></view>
+          <view class="detail-bar-labels"><text>0h</text><text>目标 {{ wearTargetHours }}h</text><text>{{ DAY_SCALE_H }}h</text></view>
           <view :class="['detail-hint', { 'detail-hint-warn': wearingDetail.status !== 'ok' }]"><text>{{ wearingDetail.hintText }}</text></view>
         </view>
         <view v-else class="detail-empty"><text>该日期无佩戴记录</text></view>
@@ -92,6 +92,7 @@ import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
 import { alertsToPressureMap, type PressureAnomalyItem } from '../../utils/anomaly'
+import { applyTargetHours, wearTargetHours } from '../../utils/wear-target'
 
 // 佩戴记录：后端 data-service DailyWearDayDTO（GET /patients/:patientId/daily-wear，T076）
 // 真机教训：DTO 只有 wearMinutes，hours/status 必须前端派生，不可直接消费
@@ -108,6 +109,8 @@ export interface DailyWearDay {
   detailFrameCount?: number | null
   aggregatedAt?: string | null
   wearingThresholdN?: number | null
+  /** T576 甲案下发、本页读取的期望时长（小时）；未到齐时由 utils/wear-target 落兜底 */
+  dailyWearTargetHours?: number | null
 }
 
 export interface WearingRecord {
@@ -116,13 +119,16 @@ export interface WearingRecord {
   status: 'ok' | 'warn' | 'error'
 }
 
-// 派生口径：目标 16h（设计稿 detail-bar-labels「目标 16h」）
-// ok ≥16h；warn ≥4h（目标的 25%）；error <4h（严重不足）
-const WEAR_TARGET_H = 16
+// 派生口径：目标时长读后端下发字段（唯一入口 utils/wear-target），本页不再自带常量
+// ok ≥ 目标时长；warn ≥4h；error <4h（严重不足）
+const SEVERE_SHORTFALL_H = 4
+// 详情卡进度条量程：一天 24h（目标时长上限即 24，刻度不随配置漂移）
+const DAY_SCALE_H = 24
 
 function toWearingRecord(d: DailyWearDay): WearingRecord {
   const hours = Math.round(d.wearMinutes / 6) / 10
-  const status: WearingRecord['status'] = hours >= WEAR_TARGET_H ? 'ok' : hours >= 4 ? 'warn' : 'error'
+  const status: WearingRecord['status'] =
+    hours >= wearTargetHours.value ? 'ok' : hours >= SEVERE_SHORTFALL_H ? 'warn' : 'error'
   return { date: d.date, hours, status }
 }
 
@@ -217,14 +223,15 @@ function pickDate(dateKey: string) {
 const wearingDetail = computed(() => {
   const d = wearingMap.value.get(selectedDate.value)
   if (!d) return null
+  const target = wearTargetHours.value
   return {
     hours: d.hours,
     status: d.status,
     statusText: d.status === 'error' ? '严重不足' : d.status === 'warn' ? '佩戴不足' : '佩戴达标',
     hintText:
       d.status === 'ok'
-        ? '当日佩戴时长达到医生建议的 16h 目标'
-        : '当日佩戴时长低于医生建议的 16h 目标，请关注佩戴习惯',
+        ? `当日佩戴时长达到医生建议的 ${target}h 目标`
+        : `当日佩戴时长低于医生建议的 ${target}h 目标，请关注佩戴习惯`,
   }
 })
 
@@ -235,7 +242,7 @@ const detailColor = computed(() => {
   return '#2563EB'
 })
 
-const barWidth = computed(() => Math.round((wearingDetail.value?.hours ?? 0) / 18 * 100))
+const barWidth = computed(() => Math.round((wearingDetail.value?.hours ?? 0) / DAY_SCALE_H * 100))
 
 // —— 压力详情卡 ——
 const pressureDetail = computed(() => pressureByDate.value.get(selectedDate.value) ?? [])
@@ -291,8 +298,12 @@ async function loadWearing() {
       method: 'GET',
       data: { start: `${sY}-${sM}-${sD}`, end: `${endY}-${endM}-${endD}` },
     })
-    wearingData.value = Array.isArray(list) ? list.map(toWearingRecord) : []
+    const rows = Array.isArray(list) ? list : []
+    // 目标时长先落到共用读数，再派生 status（同一响应面既是数据也是口径来源）
+    applyTargetHours(rows)
+    wearingData.value = rows.map(toWearingRecord)
   } catch {
+    applyTargetHours(null)
     wearingData.value = []
   }
 }

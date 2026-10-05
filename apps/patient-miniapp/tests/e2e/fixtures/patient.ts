@@ -146,7 +146,9 @@ export function pressureRecords(period: string, _date: string) {
 //                 点 07-08 详情卡 3.1h/严重不足、压力页签 07-12 3 条异常
 // 形状对齐后端 DailyWearDayDTO（data-service model.go）：date/wearMinutes/avgPressure/
 // maxPressure/maxPoint/frameCount/abnormalCount。hours/status 由页面派生
-// （≥16h ok / ≥4h warn / <4h error），夹具不再自带前端字段（真机曾因形状错位全空）。
+// （≥目标时长 ok / ≥4h warn / <4h error），夹具不再自带前端派生字段（真机曾因形状错位全空）。
+// T579：目标时长改由后端下发，夹具这一格显式给 16（= 本文件既有断言的口径），
+//       用来证明页面确实在消费下发字段；「字段缺席退回 22」那一格由 tests/unit 覆盖。
 export interface WearingFixtureRow {
   date: string
   wearMinutes: number
@@ -155,6 +157,7 @@ export interface WearingFixtureRow {
   maxPoint: string
   frameCount: number
   abnormalCount: number
+  dailyWearTargetHours?: number
 }
 /** 按小时数生成 DTO 行（wearMinutes = hours*60，页面派生回同一 hours） */
 function wearDay(date: string, hours: number): WearingFixtureRow {
@@ -166,6 +169,7 @@ function wearDay(date: string, hours: number): WearingFixtureRow {
     maxPoint: 'P12',
     frameCount: 1728,
     abnormalCount: 0,
+    dailyWearTargetHours: 16,
   }
 }
 export function wearing15(): WearingFixtureRow[] {

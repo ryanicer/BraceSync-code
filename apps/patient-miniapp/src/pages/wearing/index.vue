@@ -1,6 +1,6 @@
 <!--
   佩戴管理（T224，设计稿 wearing.html 唯一基准）。
-  - PT-18 统计：今日佩戴时长环形图 + 目标 18h/天 达标率；本周柱状图 + 日均/最高单日/累计。
+  - PT-18 统计：今日佩戴时长环形图 + 目标时长达标率（目标读后端下发字段，见 utils/wear-target）；本周柱状图 + 日均/最高单日/累计。
   - 数据源：GET /patients/:patientId/daily-wear（T076，患者自查）。DTO 只有 wearMinutes，
     hours/status 均为前端派生（T221 真机教训：不可直接消费不存在的字段）。
   - PT-19 提醒：后端零端点（T098-Q4 §2），本轮仅按设计呈现 UI，开关禁用 +「待开放」，
@@ -23,7 +23,7 @@
             <text class="ring-unit">小时</text>
           </view>
         </view>
-        <text class="ring-target">目标: 18小时/天 · 达标率 {{ rateText }}%</text>
+        <text class="ring-target">目标: {{ wearTargetHours }}小时/天 · 达标率 {{ rateText }}%</text>
       </view>
     </view>
 
@@ -106,9 +106,7 @@
 import { ref, computed, watch, onMounted, getCurrentInstance } from 'vue'
 import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
-
-// 目标 18h/天：wearing.html PT-18「目标: 18小时/天」；与 T221 异常监测页的 16h 口径不同源，勿混用
-const WEAR_TARGET_H = 18
+import { applyTargetHours, wearTargetHours } from '../../utils/wear-target'
 
 // data-service DailyWearDayDTO（T076；T366 可解释性四字段为可选镜像，本页不消费）
 interface DailyWearDay {
@@ -123,6 +121,8 @@ interface DailyWearDay {
   detailFrameCount?: number | null
   aggregatedAt?: string | null
   wearingThresholdN?: number | null
+  /** T576 甲案下发、T579 本页读取的期望时长（小时）；未到齐时由 utils/wear-target 落兜底 */
+  dailyWearTargetHours?: number | null
 }
 
 const auth = useAuthStore()
@@ -146,7 +146,7 @@ const todayHours = computed(() => {
 })
 
 const todayHoursText = computed(() => todayHours.value.toFixed(1))
-const rateText = computed(() => String(Math.round((todayHours.value / WEAR_TARGET_H) * 100)))
+const rateText = computed(() => String(Math.round((todayHours.value / wearTargetHours.value) * 100)))
 
 // 本周（周一起）逐日：无记录/未到 → null
 const weekHours = computed<(number | null)[]>(() => {
@@ -196,8 +196,10 @@ async function loadDailyWear() {
       },
     })
     days.value = Array.isArray(list) ? list : []
+    applyTargetHours(days.value)
   } catch {
     days.value = []
+    applyTargetHours(null)
   }
 }
 
@@ -223,7 +225,7 @@ function renderRing(ctx: any, w: number, h: number) {
   ctx.strokeStyle = '#e2e8f0'
   ctx.lineWidth = stroke
   ctx.stroke()
-  const frac = Math.max(0, Math.min(1, todayHours.value / WEAR_TARGET_H))
+  const frac = Math.max(0, Math.min(1, todayHours.value / wearTargetHours.value))
   if (frac > 0) {
     ctx.beginPath()
     ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2)
@@ -234,7 +236,7 @@ function renderRing(ctx: any, w: number, h: number) {
   }
 }
 
-// 柱状图口径同设计稿 weekChart：0–24h 网格，≥18h 蓝 / ≥12h 琥珀 / 其余红
+// 柱状图口径同设计稿 weekChart：0–24h 网格，≥目标时长 蓝 / ≥12h 琥珀 / 其余红
 function renderWeekChart(ctx: any, w: number, h: number) {
   ctx.clearRect(0, 0, w, h)
   const pad = { top: 12, right: 16, bottom: 28, left: 36 }
@@ -264,7 +266,7 @@ function renderWeekChart(ctx: any, w: number, h: number) {
     if (v == null) return
     const barH = (v / maxVal) * ch
     const y = pad.top + ch - barH
-    ctx.fillStyle = v >= 18 ? '#2563EB' : v >= 12 ? '#f59e0b' : '#ef4444'
+    ctx.fillStyle = v >= wearTargetHours.value ? '#2563EB' : v >= 12 ? '#f59e0b' : '#ef4444'
     ctx.fillRect(x, y, barW, barH)
     ctx.fillStyle = '#1e293b'
     ctx.font = '10px sans-serif'
