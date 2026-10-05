@@ -250,6 +250,11 @@ jobs:
     #   2) 它每 run 往 staging 写造数行（见下方清单），push 触发等于把写频次绑到合并次数；
     #   3) STRICT 口径（第 325 行 env）只认「非 pull_request」，push 会被误当成定时轮判红。
     # 真实模式回归的触发面保持：PR（改动命中 paths）+ 每日 12:00 UTC + 手动。
+    # T582 格二（2026-10-06 书面裁定，执行人 joe）：上一句就是裁定本体 —— e2e-real 的触发面是三面
+    #   （PR 命中 paths / schedule / 手动 dispatch），main push 面有意不跑，且「择一」里选的是书面裁定、
+    #   不是补一条 main 上的最小回归路径。判据要求的那半「别处不缺覆盖」的实证（三面 paths 覆盖清单 +
+    #   逐条执行行 + 两档清单集合差）已升格成可检索的流程条款：docs 仓 docs/tasks/_board/流程规范.md
+    #   「真实模式（e2e-real）的触发面是三面不是四面」一节（2026-10-05 第 59 轮补裁，待 PM 复核）。
     if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     # T304：真实模式过去在 CI 里只有 tsc + --list，从未真跑过一条用例。
     # 现在 PR（改动命中 paths）+ 每日 20:00 北京时间 + 手动都真跑；失败即判红，
