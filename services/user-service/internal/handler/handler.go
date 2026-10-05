@@ -890,7 +890,12 @@ func (h *Handler) getPatientProfile(c *gin.Context) {
 		fail(c, model.ErrNotFound("patient not found: %s", patientID))
 		return
 	}
-	ok(c, toPatientDTO(*row))
+	// T576 甲案：佩戴目标时长由后端下发（真源 sys_configs.wear_target_hours），
+	// 小程序两页不再各写一枚本地硬编码常量。读不到按默认 22 降级并记 Warn。
+	ok(c, model.PatientProfileDTO{
+		AdminPatientDTO:      toPatientDTO(*row),
+		DailyWearTargetHours: h.wearTargetHours(c.Request.Context(), ctxLogger(c)),
+	})
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2053,6 +2058,33 @@ func numOr(raw string, def float64) float64 {
 	}
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
+		return def
+	}
+	return v
+}
+
+// wearTargetHours T576 甲案：患者端档案出参的每日佩戴目标时长，真源 sys_configs.wear_target_hours。
+// 恒有值 —— 查询失败 / 键缺失 / 值不可解析都退 settingsDefaults.DailyWearTargetHours（22），
+// 不回 0 也不回 null（小程序 wearing / anomaly 两页同源后直接读这一枚，不再各写一枚本地常量）。
+// 降级这一格与 T570 的时间窗降级同族，按验收口径必须留痕，所以走 Warn 而不是静默兜底。
+func (h *Handler) wearTargetHours(ctx context.Context, l *zerolog.Logger) float64 {
+	def := settingsDefaults.DailyWearTargetHours
+	kvs, err := h.store.GetConfigs(ctx, []string{keyWearTarget})
+	if err != nil {
+		l.Warn().Err(err).Str("config", keyWearTarget).Float64("fallback", def).
+			Msg("wear_target_hours unreadable, degrade to default")
+		return def
+	}
+	raw := strings.TrimSpace(kvs[keyWearTarget])
+	if raw == "" {
+		l.Warn().Str("config", keyWearTarget).Float64("fallback", def).
+			Msg("wear_target_hours missing, degrade to default")
+		return def
+	}
+	v, perr := strconv.ParseFloat(raw, 64)
+	if perr != nil {
+		l.Warn().Err(perr).Str("config", keyWearTarget).Str("raw", raw).Float64("fallback", def).
+			Msg("wear_target_hours not a number, degrade to default")
 		return def
 	}
 	return v
