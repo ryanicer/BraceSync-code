@@ -4,7 +4,8 @@
 //
 //	PORT                  监听端口，默认 8086
 //	DB_URL                PostgreSQL DSN
-//	WEAR_TARGET_HOURS     每日佩戴目标小时数，默认 22（sys_configs wear_target_hours 同值）
+//	WEAR_TARGET_HOURS     每日佩戴目标兜底小时数（T576 起真源是 sys_configs.wear_target_hours，
+//	                      只在它读不到或值非法时生效；两者都不成立则 22）
 //	REMINDER_SCAN_INTERVAL 佩戴提醒扫描间隔（Go duration），默认 15m（架构 §7）
 //	RETRY_DRAIN_INTERVAL   重试队列排空间隔（Go duration），默认 1m
 //	GIN_MODE              release 关闭 Gin 调试日志
@@ -15,7 +16,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -70,9 +70,9 @@ func main() {
 	wechat := service.NewMockWechatSender(log.With().Str("sender", "wechat").Logger())
 	sms := service.NewMockSMSSender(log.With().Str("sender", "sms").Logger())
 	svc := service.NewNotifyService(store, wechat, sms, log.Logger)
-	if hours, err := strconv.Atoi(envOr("WEAR_TARGET_HOURS", "22")); err == nil {
-		svc.SetWearTargetMinutes(hours * 60)
-	}
+	// 佩戴目标同源（T576）：真源是 sys_configs.wear_target_hours，读不到或非法才退环境变量、再退默认 22
+	hours, source := svc.SyncWearTarget(ctx, os.Getenv("WEAR_TARGET_HOURS"))
+	log.Info().Int("wear_target_hours", hours).Str("source", string(source)).Msg("wear target resolved")
 
 	// 常驻任务：佩戴提醒定时扫描（架构 §7 每 15min）+ 重试队列排空 worker
 	go svc.RunReminderScheduler(ctx, envDuration("REMINDER_SCAN_INTERVAL", service.DefaultReminderScanInterval))
