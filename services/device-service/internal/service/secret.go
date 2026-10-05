@@ -23,7 +23,12 @@ func (s *DeviceService) GetDeviceSecret(ctx context.Context, deviceID string) (s
 	}
 	secret, err := s.enc.Decrypt(dev.DeviceSecretEnc)
 	if err != nil {
-		return "", model.ErrInternal("decrypt device secret: %v", err)
+		// T573：密文不成立是这一行的数据状态（seed 里那批设备密钥列是 1 字节占位，
+		// 短于 GCM 的 12 字节 nonce 就永远解不出来），不是服务不可用；码仍走 90001，
+		// 但在结构化附带数据上留 reason，让网关把这一支从 502 里分出去。
+		appErr := model.ErrInternal("decrypt device secret: %v", err)
+		appErr.Data = map[string]any{model.ReasonKey: model.ReasonDeviceSecretUnusable}
+		return "", appErr
 	}
 	return string(secret), nil
 }
