@@ -404,10 +404,13 @@ jobs:
           # 不再 npm ci / 装 playwright —— 占位 job 不占用 runner 分钟
 
   # T144 P1：真实后端冒烟（登录→列表接口非空→页面渲染≥1条）。
-  # 不进 PR 门禁（独立 job）；nightly / 手动触发。凭证由 ADMIN_USERNAME/ADMIN_PASSWORD 注入，缺失则用例自动 skip。
-  # T304 实况：本仓 Actions secrets 目前为空 ⇒ 这条 nightly 恒定「0 通过 / 1 skip」，
+  # 不进 PR 门禁（独立 job）；nightly / 手动触发。凭证由 ADMIN_USERNAME/ADMIN_PASSWORD/E2E_REAL_PASSWORD 注入。
+  # T304 实况：当时本仓 Actions secrets 为空 ⇒ 这条 nightly 恒定「0 通过 / 1 skip」，
   # 它证明不了真实后端（真正打 staging 的是上面的 e2e-real-staging）。补一行 warning 把
   # 「skip ≠ 验过」写进日志，避免又有人拿它的绿当联调证据；要不要配凭证由 PM 定。
+  # T549 把用例侧的静默 skip 改成缺凭证判红（contract-smoke.spec.ts 的凭据门与地址门），
+  # 但「进程 rc=0 而 0 执行 / 全 skip」那一形当时只有一把没接线的尺在管
+  # （e2e-real/assert-smoke-executed.mjs 在场、tracked 文件引用 0 颗）⇒ 第 73 轮接进本 job。
   real-backend-smoke:
     name: Real Backend Smoke（真实后端冒烟，T144 P1）
     runs-on: ubuntu-latest
@@ -425,9 +428,13 @@ jobs:
       - name: Note missing credentials
         env:
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          # 与 e2e-real-staging job（本文件 366 行）同一把凭据注入名：spec 里 ADMIN_PASSWORD
+          # 缺失时经 realPassword 读它。本 job 过去不注入这颗，等于两级里只有一级能生效。
+          E2E_REAL_PASSWORD: ${{ secrets.E2E_REAL_PASSWORD }}
         run: |
-          if [ -z "$ADMIN_USERNAME" ]; then
-            echo "::warning::未配 ADMIN_USERNAME/ADMIN_PASSWORD —— 本 job 的用例会整体 skip，green 不代表真实后端已验（T304）"
+          if [ -z "$ADMIN_USERNAME" ] || { [ -z "$ADMIN_PASSWORD" ] && [ -z "$E2E_REAL_PASSWORD" ]; }; then
+            echo "::warning::ADMIN_USERNAME 缺失，或 ADMIN_PASSWORD 与 E2E_REAL_PASSWORD 均缺失 —— 按 T549 口径下一步会判红而不是 skip（缺凭证不许再靠静默跳过保绿，T304 那句旧文案已订正）"
           fi
       - name: Run real backend smoke
         run: npx playwright test --config=./e2e-real/playwright.config.ts
@@ -435,6 +442,16 @@ jobs:
           E2E_STAGING_URL: ${{ env.E2E_STAGING_URL }}
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          E2E_REAL_PASSWORD: ${{ secrets.E2E_REAL_PASSWORD }}
+      - name: Assert smoke really executed（T549 遗留一接线）
+        # json reporter 只在整跑结束后落盘 ⇒ 本步排在 playwright 那一步之后且不加 if: always()，
+        # 判据取自报告 stats：skipped 必须为 0，且 passed+flaky >= 1。
+        # 钉的是「job success 但一条用例没跑」这一形：尺本体早在（e2e-real/assert-smoke-executed.mjs），
+        # 是没人喂它 —— Joe 的四发注入证它有牙，本席第 73 轮在本机把八腿（缺报告 / 全 0 / skip /
+        # 缺 stats 键 / 真绿 / 两把候选路径各一面）复跑一遍，逐腿带 rc 与首行，bad=0。
+        # 报告落盘面本机实测在 configDir 相对那一面（e2e-real/test-results/smoke-result.json），
+        # 尺本身两把候选都试并打印真正读到的那条，路径没对准不会静默放行。
+        run: node e2e-real/assert-smoke-executed.mjs
       - name: Upload report
         if: failure()
         uses: actions/upload-artifact@v4
