@@ -21,6 +21,27 @@ import (
 // ErrDeviceNotRegistered device-service 返回 20404（设备未注册，协议 §4.4）
 var ErrDeviceNotRegistered = errors.New("device not registered")
 
+// reasonDeviceSecretUnusable 与 device-service model.ReasonDeviceSecretUnusable 同值：
+// 跨服务边界靠响应体 data.reason 传信（T573），两处必须一起改，改法见那条注释。
+const reasonDeviceSecretUnusable = "device_secret_unusable"
+
+// SecretRefusedError 上游**答了**、但这一台设备的密钥拿不出来（业务码非 0，或 0 码空密钥）。
+//
+// T573：它与「没答上」（不可达 / 超时 / 回执读不懂）必须分成两支——前者按设备、永久、复跑不变，
+// 客户端该做的是重新扫描配网；后者才是网关兜底的 502。旧写法两支并成一支 502，
+// 于是告警产生链上的单点数据问题长成「device-service unavailable」。
+// SecretUnusable 只在上游明确给了 reason 时为真；其余「答了但拒绝」仍按 502 处理，
+// 因为设备服务自己的 90001 也可能来自数据库故障（那是全站状态，不能替它宣布这是设备问题）。
+type SecretRefusedError struct {
+	Code           int
+	Message        string
+	SecretUnusable bool
+}
+
+func (e *SecretRefusedError) Error() string {
+	return fmt.Sprintf("device-service secret query failed: code=%d message=%s", e.Code, e.Message)
+}
+
 // SecretProvider 设备验签密钥查询抽象（测试可注入内存实现）
 type SecretProvider interface {
 	GetDeviceSecret(ctx context.Context, deviceID string) (string, error)
@@ -63,6 +84,9 @@ type secretEnvelope struct {
 	Message string `json:"message"`
 	Data    struct {
 		Secret string `json:"secret"`
+		// Reason 错误响应那一支的结构化附带数据（handler.fail 把 AppError.Data 放进同一个 data 字段）；
+		// 成功响应里恒为空。T573 的分支判据就挂在这里。
+		Reason string `json:"reason"`
 	} `json:"data"`
 }
 
@@ -102,7 +126,11 @@ func (p *deviceServiceSecretProvider) GetDeviceSecret(ctx context.Context, devic
 		return "", ErrDeviceNotRegistered
 	}
 	if env.Code != 0 || env.Data.Secret == "" {
-		return "", fmt.Errorf("device-service secret query failed: code=%d message=%s", env.Code, env.Message)
+		return "", &SecretRefusedError{
+			Code:           env.Code,
+			Message:        env.Message,
+			SecretUnusable: env.Data.Reason == reasonDeviceSecretUnusable,
+		}
 	}
 
 	p.mu.Lock()
