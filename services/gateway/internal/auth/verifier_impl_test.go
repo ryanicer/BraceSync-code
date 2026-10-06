@@ -137,8 +137,8 @@ func TestVerifySignature_NonceMismatch_20401(t *testing.T) {
 	assert.Equal(t, "20401", res.ErrorCode, "nonce 不一致 → 20401")
 }
 
-func TestVerifyNonce_Placeholder_Pass(t *testing.T) {
+func TestVerifyNonce_UnwiredStore_Pass(t *testing.T) {
 	v := &DeviceSigVerifier{}
-	res := v.VerifyNonce("D1", "nonce-abc", time.Now())
-	assert.True(t, res.Valid, "Redis 接入前 Nonce 恒放行（TODO 已标注）")
+	res := v.VerifyNonce("D1", "nonce-abc", "1700000000", time.Now())
+	assert.True(t, res.Valid, "存储未接线（零值 verifier）恒放行；接线由 gateway newGatewayAuth 完成")
 }

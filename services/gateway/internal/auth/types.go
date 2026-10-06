@@ -44,13 +44,15 @@ const DeviceReportWindow = 30
 // 只放宽这一个端点的时间窗：HMAC 比对、设备注册状态、body 上限一律不变。
 const DeviceTimeSyncWindow = 24 * 60
 
-// NonceDedupTTL Nonce 去重 TTL（分钟）
-const NonceDedupTTL = 10
+// NonceDedupTTL Nonce 去重 TTL（分钟）。T606：10 → 60，取上报时间窗
+// DeviceReportWindow（30min）的 2 倍上限（卡面建议 TTL 取窗口值的 1~2 倍）：
+// 重放者在整个签名有效窗内重发都命中同一登记，窗口闭合后签名本身也已过期。
+const NonceDedupTTL = 60
 
 // VerifyResult 验签结果
 type VerifyResult struct {
 	Valid        bool
-	ErrorCode    string // 20401=签名错误, 20402=时钟异常, 20404=设备未注册, 20409=未绑定患者
+	ErrorCode    string // 20401=签名错误, 20402=时钟异常, 20403=nonce 重放(T606), 20404=设备未注册, 20409=未绑定患者
 	ErrorMessage string
 	// T564 取证：超窗那一支带出「设备声明的时刻比服务端早/晚几秒」（带符号，设备−服务端；
 	// 原值本身由调用方按 X-Timestamp 头落日志）。
@@ -58,10 +60,27 @@ type VerifyResult struct {
 	// 此时零值是占位，不许被读成「偏差 0 秒」。
 	SkewSec      int64
 	SkewMeasured bool
+	// T606 nonce 防重放读数：NonceReplay=true 表示同设备同 nonce 在 TTL 内
+	// 第二次及以后的出现被检出；NonceOccurrences 是该 nonce 的累计出现次数。
+	// enforce 模式下 Valid=false 且 ErrorCode=20403；影子模式下 Valid=true
+	// （放行），两个字段仍置位，由调用方落观测日志。
+	NonceReplay      bool
+	NonceOccurrences int64
 }
 
-// DeviceSigVerifier 设备签名验证器（实现见 verifier.go，T032 转绿）
-type DeviceSigVerifier struct{}
+// DeviceSigVerifier 设备签名验证器（实现见 verifier.go，T032 转绿）。
+// 零值可用（nonce 存储未接线时 VerifyNonce 恒放行）；经 WithNonceStore
+// 接线后 nonce 去重生效，EnforceNonce 决定拒（20403）还是影子放行。
+type DeviceSigVerifier struct {
+	nonces       *NonceStore // T606 接线的去重存储；nil = 未接线
+	EnforceNonce bool        // true = 重放拒 20403；false = 影子观测（检出但不拒）
+}
+
+// WithNonceStore 接线 nonce 去重存储（返回 v 以便链式构造）。
+func (v *DeviceSigVerifier) WithNonceStore(s *NonceStore) *DeviceSigVerifier {
+	v.nonces = s
+	return v
+}
 
 // BodySHA256Hex 返回请求 body 的 SHA256 hex（硬件清单 §2.2）。
 // 空 body = hex(sha256("")) = e3b0c442...（空字符串的哈希，非空串）。
