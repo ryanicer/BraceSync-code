@@ -1,9 +1,16 @@
 # BraceSync E2E-Real Static Check
 # T282 F-4: e2e-real CI static check
 # PR gate (informational): static checks only, no secrets needed
+# T598: add push on main (same paths as the PR gate) — e2e-real/** had zero main-side
+#   coverage before; the static checks need no secrets, so the cost is one extra short run.
 name: E2E-Real Static
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'e2e-real/**'
+      - '.github/workflows/ci-e2e-real-static.yml'
   pull_request:
     branches: [main, develop]
     paths:
