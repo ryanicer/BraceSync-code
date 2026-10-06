@@ -1,9 +1,19 @@
-# BraceSync CI-FE — PR 门禁（前端侧）
+# BraceSync CI-FE — PR 门禁（前端侧）+ main push 回归（T604）
 # 对齐：docs/ §6.2/§6.3 · docs/ §7
 # 成本优化（T038）：仅 apps/ packages/ 或前端依赖/CI 配置变更时触发；纯 docs/ 改动不跑前端检查
+# T604：此前只有 pull_request 段，apps/**、packages/** 合并进 main 后 CI-FE 一次都不跑
+#   （主干面零回归）。现补 push:branches:[main]，paths 与 PR 面同串；不删、只加。
 name: CI-FE
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ci-fe.yml'
   pull_request:
     branches: [main, develop]
     paths:
