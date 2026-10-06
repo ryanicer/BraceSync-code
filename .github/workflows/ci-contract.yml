@@ -14,9 +14,19 @@
 #   C3 可选性：契约必填却带 omitempty（零值时前端拿不到键）
 #
 # 反向自证见交付评论：E1（改契约键名）/E2（加 omitempty）/E3（新增未登记 DTO）三组注入均判红。
+#
+# T604：此前只有 pull_request 段 —— 后端改契约只在 PR 阶段被对拍，多个 PR 各自绿、
+#   合起来的 main 从未跑过这条线。现补 push:branches:[main]，paths 与 PR 面同串；不删、只加。
 name: CI-Contract
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'packages/shared-types/**'
+      - 'scripts/contract/**'
+      - '.github/workflows/ci-contract.yml'
   pull_request:
     branches: [main, develop]
     paths:
