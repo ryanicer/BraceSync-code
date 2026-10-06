@@ -13,7 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// T550 死锁读数用的时钟偏差：6 小时（远超上报侧 ±5min，落在宽窗 ±24h 之内）
+// T550 死锁读数用的时钟偏差：6 小时（远超上报侧那一档——T550 时是 ±5min，T570 后是 ±30min，
+// 两档下 6 小时都在门外；同时落在校时侧宽窗 ±24h 之内）
 const t550ClockSkew = 6 * time.Hour
 
 func t550Secrets() *fakeSecretsCtx {
@@ -33,7 +34,7 @@ func TestT550_TimeEndpoint_WorksForClockSkewedDevice(t *testing.T) {
 	assert.Empty(t, *received, "校时仍由 gateway 本地应答，不打 data-service")
 }
 
-func TestT550_ReportRoute_StillRejectsBeyondFiveMinutes(t *testing.T) {
+func TestT550_ReportRoute_StillRejectsBeyondReportWindow(t *testing.T) {
 	backend, received := captureBackend(t)
 	gw := startDeviceGateway(t, backend.URL, t550Secrets())
 
@@ -41,8 +42,8 @@ func TestT550_ReportRoute_StillRejectsBeyondFiveMinutes(t *testing.T) {
 	hdrs := deviceHeaders("dev-secret-abc", http.MethodPost, "/api/v1/device/records", body, time.Now().Add(-t550ClockSkew))
 	code, respBody := httpDoFull(t, http.MethodPost, gw.URL+"/api/v1/device/records", body, hdrs)
 
-	assert.Equal(t, http.StatusUnauthorized, code, "宽窗只给校时端点，上报侧不得跟着放宽")
-	assert.Contains(t, respBody, `"code":20402`, "上报侧仍按默认窗拒（窗口档位差异在 auth 包单测里断，网关对外文案已被 T-error-copy 统一洗成中文）")
+	assert.Equal(t, http.StatusUnauthorized, code, "上报档与校时档是两个独立的界：6 小时只在校时档之内，不在上报档之内")
+	assert.Contains(t, respBody, `"code":20402`, "上报侧按上报档拒（T550 时 ±5min，T570 后 ±30min，6 小时两档都在门外；窗口档位差异在 auth 包单测里断，网关对外文案已被 T-error-copy 统一洗成中文）")
 	assert.Empty(t, *received, "被拒的上报不得触达后端")
 }
 

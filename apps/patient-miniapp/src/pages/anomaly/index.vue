@@ -56,7 +56,7 @@
           <view class="detail-bar-wrap">
             <view class="detail-bar" :style="{ width: barWidth + '%', background: detailColor }"></view>
           </view>
-          <view class="detail-bar-labels"><text>0h</text><text>目标 16h</text><text>18h</text></view>
+          <view class="detail-bar-labels"><text>0h</text><text>目标 {{ wearTargetHours }}h</text><text>{{ DAY_SCALE_H }}h</text></view>
           <view :class="['detail-hint', { 'detail-hint-warn': wearingDetail.status !== 'ok' }]"><text>{{ wearingDetail.hintText }}</text></view>
         </view>
         <view v-else class="detail-empty"><text>该日期无佩戴记录</text></view>
@@ -92,6 +92,7 @@ import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import type { Alert, PaginatedResponse } from '@bracesync/shared-types'
 import { alertsToPressureMap, type PressureAnomalyItem } from '../../utils/anomaly'
+import { loadWearTarget, wearTargetHours } from '../../utils/wear-target'
 
 // 佩戴记录：后端 data-service DailyWearDayDTO（GET /patients/:patientId/daily-wear，T076）
 // 真机教训：DTO 只有 wearMinutes，hours/status 必须前端派生，不可直接消费
@@ -116,13 +117,16 @@ export interface WearingRecord {
   status: 'ok' | 'warn' | 'error'
 }
 
-// 派生口径：目标 16h（设计稿 detail-bar-labels「目标 16h」）
-// ok ≥16h；warn ≥4h（目标的 25%）；error <4h（严重不足）
-const WEAR_TARGET_H = 16
+// 派生口径：目标时长读后端下发字段（唯一入口 utils/wear-target），本页不再自带常量
+// ok ≥ 目标时长；warn ≥4h；error <4h（严重不足）
+const SEVERE_SHORTFALL_H = 4
+// 详情卡进度条量程：一天 24h（目标时长上限即 24，刻度不随配置漂移）
+const DAY_SCALE_H = 24
 
 function toWearingRecord(d: DailyWearDay): WearingRecord {
   const hours = Math.round(d.wearMinutes / 6) / 10
-  const status: WearingRecord['status'] = hours >= WEAR_TARGET_H ? 'ok' : hours >= 4 ? 'warn' : 'error'
+  const status: WearingRecord['status'] =
+    hours >= wearTargetHours.value ? 'ok' : hours >= SEVERE_SHORTFALL_H ? 'warn' : 'error'
   return { date: d.date, hours, status }
 }
 
@@ -142,7 +146,10 @@ const now = new Date()
 const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 
 // 数据
-const wearingData = ref<WearingRecord[]>([])
+// 佩戴行存原始值、status 走 computed：期望时长来自 profile，与 daily-wear 是两条腿，
+// 晚到的目标必须让日历圆点重算，不能在第一趟映射时定死
+const wearRows = ref<DailyWearDay[]>([])
+const wearingData = computed<WearingRecord[]>(() => wearRows.value.map(toWearingRecord))
 const activeTab = ref<'wearing' | 'pressure'>('wearing')
 const wearingError = ref('')
 const pressureError = ref('')
@@ -217,14 +224,15 @@ function pickDate(dateKey: string) {
 const wearingDetail = computed(() => {
   const d = wearingMap.value.get(selectedDate.value)
   if (!d) return null
+  const target = wearTargetHours.value
   return {
     hours: d.hours,
     status: d.status,
     statusText: d.status === 'error' ? '严重不足' : d.status === 'warn' ? '佩戴不足' : '佩戴达标',
     hintText:
       d.status === 'ok'
-        ? '当日佩戴时长达到医生建议的 16h 目标'
-        : '当日佩戴时长低于医生建议的 16h 目标，请关注佩戴习惯',
+        ? `当日佩戴时长达到医生建议的 ${target}h 目标`
+        : `当日佩戴时长低于医生建议的 ${target}h 目标，请关注佩戴习惯`,
   }
 })
 
@@ -235,7 +243,7 @@ const detailColor = computed(() => {
   return '#2563EB'
 })
 
-const barWidth = computed(() => Math.round((wearingDetail.value?.hours ?? 0) / 18 * 100))
+const barWidth = computed(() => Math.round((wearingDetail.value?.hours ?? 0) / DAY_SCALE_H * 100))
 
 // —— 压力详情卡 ——
 const pressureDetail = computed(() => pressureByDate.value.get(selectedDate.value) ?? [])
@@ -273,7 +281,7 @@ async function loadWearing() {
   const patientId = authStore.patientId
   if (!patientId) {
     wearingError.value = '请先登录'
-    wearingData.value = []
+    wearRows.value = []
     return
   }
   try {
@@ -291,13 +299,15 @@ async function loadWearing() {
       method: 'GET',
       data: { start: `${sY}-${sM}-${sD}`, end: `${endY}-${endM}-${endD}` },
     })
-    wearingData.value = Array.isArray(list) ? list.map(toWearingRecord) : []
+    wearRows.value = Array.isArray(list) ? list : []
   } catch {
-    wearingData.value = []
+    wearRows.value = []
   }
 }
 
 onMounted(() => {
+  // 期望时长（profile 只读面，T576 甲案）与本页两腿数据并行取，谁先到都不影响另一腿
+  void loadWearTarget()
   void loadPressure()
   void loadWearing()
 })

@@ -115,7 +115,7 @@ func TestDeviceSig_StaleTimestamp_401_20402(t *testing.T) {
 		&fakeSecretsCtx{secrets: map[string]string{"DEV-SIG-001": "dev-secret-abc"}})
 
 	body := `{"pressures":[1]}`
-	stale := time.Now().Add(-10 * time.Minute)
+	stale := time.Now().Add(-40 * time.Minute) // T570 后上报档是 ±30min，40 分钟在档外
 	hdrs := deviceHeaders("dev-secret-abc", "POST", "/api/v1/device/records", body, stale)
 	code, respBody := httpDoFull(t, http.MethodPost, gw.URL+"/api/v1/device/records", body, hdrs)
 

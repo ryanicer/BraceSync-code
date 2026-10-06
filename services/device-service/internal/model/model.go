@@ -88,6 +88,17 @@ const (
 	CodeInternal        = 90001 // 系统内部错误
 )
 
+// ReasonDeviceSecretUnusable 「这台设备的密钥材料不可用」（行在、密文不成立）的机器可读判据。
+//
+// T573：这一支与「device-service 没答上」不是一种故障——前者按设备、永久、复跑不变，
+// 后者全站、临时。但两者在响应面上都只剩 code=90001，网关无从分辨，于是单点数据问题
+// 在告警链上长成网关不可用（502）。这里在错误的结构化附带数据（AppError.Data，T299 那条腿）
+// 上留一个 reason，让网关能把分开的两支各自归位；码表不动，客户端契约不动。
+const ReasonDeviceSecretUnusable = "device_secret_unusable"
+
+// ReasonKey AppError.Data 里放 reason 的那个键名（与网关侧解析处同名）
+const ReasonKey = "reason"
+
 // AppError 业务错误：携带统一响应 code 与建议 HTTP 状态
 type AppError struct {
 	Code       int    `json:"code"`

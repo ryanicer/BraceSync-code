@@ -146,7 +146,8 @@ export function pressureRecords(period: string, _date: string) {
 //                 点 07-08 详情卡 3.1h/严重不足、压力页签 07-12 3 条异常
 // 形状对齐后端 DailyWearDayDTO（data-service model.go）：date/wearMinutes/avgPressure/
 // maxPressure/maxPoint/frameCount/abnormalCount。hours/status 由页面派生
-// （≥16h ok / ≥4h warn / <4h error），夹具不再自带前端字段（真机曾因形状错位全空）。
+// （≥目标时长 ok / ≥4h warn / <4h error），夹具不再自带前端派生字段（真机曾因形状错位全空）。
+// T579：目标时长不再写死在页面里，改由 profile 只读面下发，见本文件 wearTargetProfileStub()。
 export interface WearingFixtureRow {
   date: string
   wearMinutes: number
@@ -186,6 +187,15 @@ export function wearing15(): WearingFixtureRow[] {
     wearDay('2026-06-29', 6.2),
     wearDay('2026-06-28', 18.5),
   ]
+}
+
+// ---------- profile 只读面的期望时长（T579，GET /api/v1/patient/profile） ----------
+//  wearing / anomaly 两页的目标时长从这个面的 data 顶层标量取。这里给 16 = anomaly.spec 既有断言口径，
+//  于是「页面在消费下发字段」由那条原断言直接证，不必改既有期望值；
+//  「字段缺席退回 22」那一格由 tests/unit 覆盖。
+export const E2E_TARGET_HOURS_FIXTURE = 16
+export function wearTargetProfileStub(): { dailyWearTargetHours: number } {
+  return { dailyWearTargetHours: E2E_TARGET_HOURS_FIXTURE }
 }
 
 // ---------- alerts 异常事件 7 组（date 降序，T298 起按后端 4 类口径造行） ----------

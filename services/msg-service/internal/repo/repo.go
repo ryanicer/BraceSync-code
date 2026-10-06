@@ -25,6 +25,9 @@ import (
 // ErrNotFound 行不存在（service 层映射为 50404）
 var ErrNotFound = errors.New("repo: row not found")
 
+// ErrConfigMissing sys_configs 里没有该键；调用方按「读不到」走降级口径，不是查询失败
+var ErrConfigMissing = errors.New("repo: sys_configs key missing")
+
 // RecordFilter 通知记录过滤条件（后台日志查询；零值字段不参与过滤）
 type RecordFilter struct {
 	PatientID string
@@ -91,6 +94,11 @@ type Store interface {
 	// PatientExists T353：区分「查无此人」与「有此人但无偏好/无记录行」。
 	// 查无此人返回 (false, nil)，不是 error。
 	PatientExists(ctx context.Context, patientID string) (bool, error)
+
+	// ── 系统配置只读（sys_configs，owner: user-service；T576 佩戴目标同源）──
+	// GetSysConfigValue 读单键原始值；键不存在返回 ("", ErrConfigMissing)（不是其它 error），
+	// 调用方据此走「读不到 ⇒ 兜底默认」那一档。
+	GetSysConfigValue(ctx context.Context, key string) (string, error)
 }
 
 // PGStore Store 的 pgxpool 实现
@@ -615,4 +623,19 @@ func (r *PGStore) PatientExists(ctx context.Context, patientID string) (bool, er
 		return false, fmt.Errorf("patient exists: %w", err)
 	}
 	return exists, nil
+}
+
+// GetSysConfigValue 见 Store.GetSysConfigValue（只读，sys_configs owner 是 user-service，本层不写）
+func (r *PGStore) GetSysConfigValue(ctx context.Context, key string) (string, error) {
+	var v string
+	err := r.pool.QueryRow(ctx,
+		`SELECT config_value FROM sys_configs WHERE config_key = $1`,
+		key).Scan(&v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrConfigMissing
+	}
+	if err != nil {
+		return "", fmt.Errorf("get sys config %q: %w", key, err)
+	}
+	return v, nil
 }

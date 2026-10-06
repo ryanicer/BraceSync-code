@@ -28,8 +28,10 @@ type FakeStore struct {
 	nextID      int64
 	queue       map[int64]model.RetryQueueItem
 	nextQueueID int64
-	wearMinutes map[string]int  // patientID:bizDate → 佩戴分钟数
-	patientGone map[string]bool // T353：显式声明「patients 表无此行」的患者集合（默认视为存在，见 PatientExists）
+	wearMinutes map[string]int    // patientID:bizDate → 佩戴分钟数
+	patientGone map[string]bool   // T353：显式声明「patients 表无此行」的患者集合（默认视为存在，见 PatientExists）
+	sysConfigs  map[string]string // T576：sys_configs 只读面（config_key → config_value）
+	sysCfgErr   map[string]error  // T576：按键注入读取错误（非 nil 才生效）
 }
 
 // 编译期断言：FakeStore 实现 repo.Store
@@ -50,6 +52,8 @@ func NewFakeStore() *FakeStore {
 		nextQueueID: 1,
 		wearMinutes: map[string]int{},
 		patientGone: map[string]bool{},
+		sysConfigs:  map[string]string{},
+		sysCfgErr:   map[string]error{},
 	}
 }
 
@@ -415,4 +419,37 @@ func (s *FakeStore) PatientExists(_ context.Context, patientID string) (bool, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return !s.patientGone[patientID], nil
+}
+
+// SeedSysConfig T576：预置一枚 sys_configs 键值
+func (s *FakeStore) SeedSysConfig(key, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sysConfigs[key] = value
+	delete(s.sysCfgErr, key)
+}
+
+// SeedSysConfigError T576：注入某键的读取失败（repo.ErrConfigMissing = 键不存在；其它 error = 查询失败）
+func (s *FakeStore) SeedSysConfigError(key string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err == nil {
+		delete(s.sysCfgErr, key)
+		return
+	}
+	s.sysCfgErr[key] = err
+}
+
+// GetSysConfigValue 见 repo.Store.GetSysConfigValue（T576）；未预置的键按「键不存在」回 ErrConfigMissing
+func (s *FakeStore) GetSysConfigValue(_ context.Context, key string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err, ok := s.sysCfgErr[key]; ok {
+		return "", err
+	}
+	v, ok := s.sysConfigs[key]
+	if !ok {
+		return "", repo.ErrConfigMissing
+	}
+	return v, nil
 }

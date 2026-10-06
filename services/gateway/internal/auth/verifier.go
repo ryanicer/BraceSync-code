@@ -26,9 +26,10 @@ func (v *DeviceSigVerifier) VerifySignature(method, path, body, timestampStr, si
 }
 
 // VerifySignatureWindowed 同 VerifySignature，只有时间窗按入参取（分钟）。
-// T550：校时端点用 DeviceTimeSyncWindow —— 设备时钟超 ±5min 时上报已被 20402 拒，
-// 若校时同窗则设备拿不到校时、永远出不了死锁。除窗口外（HMAC、常量时间比对、
-// 签名串格式）与 VerifySignature 一字不差，放宽只延长「这枚已签名请求」的有效期。
+// T550：校时端点用 DeviceTimeSyncWindow —— 设备时钟超出上报档时上报已被 20402 拒，
+// 若校时同窗则设备拿不到校时、永远出不了死锁。T570：上报端点改用 DeviceReportWindow。
+// 除窗口外（HMAC、常量时间比对、签名串格式）与 VerifySignature 一字不差，
+// 放宽只延长「这枚已签名请求」的有效期。
 func (v *DeviceSigVerifier) VerifySignatureWindowed(method, path, body, timestampStr, signature, deviceID, deviceSecret, nonce string, serverTime time.Time, windowMinutes int) *VerifyResult {
 	ts, err := strconv.ParseInt(timestampStr, 10, 64)
 	if err != nil {

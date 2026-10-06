@@ -161,6 +161,17 @@ type AdminPatientDTO struct {
 	EmergencyContactRelation *string  `json:"emergencyContactRelation"`
 }
 
+// PatientProfileDTO GET /api/v1/patient/profile 出参（T576 甲案，PM 裁定下发通道走甲）。
+// 内嵌 AdminPatientDTO ⇒ 既有扁平字段与 JSON 形状一字不变；只多加一枚后端下发的佩戴目标。
+// 🔴 不往 AdminPatientDTO 上加这一枚：那个 DTO 同时供后台患者列表与详情用，
+// 加上去会让列表每一行都携带一份系统配置值（改动面失控）。
+type PatientProfileDTO struct {
+	AdminPatientDTO
+	// DailyWearTargetHours 每日佩戴目标小时数，真源 sys_configs.wear_target_hours（与 §7D.12 同键，不另设）。
+	// 恒有值：键缺失 / 值非法 / 查询失败都退默认 22，不回 0 也不回 null（小程序两页直接读这一枚）。
+	DailyWearTargetHours float64 `json:"dailyWearTargetHours"`
+}
+
 // TeamDTO 团队概要（契约 getTeams，对齐 shared-types Team）
 type TeamDTO struct {
 	TeamID       string `json:"teamId"`

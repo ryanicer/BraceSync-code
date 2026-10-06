@@ -2,7 +2,7 @@
 //
 // 路由总表（代理模式沿用 T028：ReverseProxy + 环境变量 URL + 10s 超时 + 502 兜底）：
 //
-//	/api/v1/device/records · /records/batch        → data-service   （设备验签组，非 JWT）
+//	/api/v1/device/records · /records/batch        → data-service   （设备验签组，非 JWT · T570 时间窗 ±30min）
 //	/api/v1/device/time                            → gateway 本地   （协议 §4.3 校时，验签组 · T550 放宽时间窗）
 //	/api/v1/patients/:id/realtime|records|health-reports → data-service（JWT 组，T030 已有）
 //	/api/v1/admin/dashboard/*                      → data-service（JWT 组，T033 聚合查询）
@@ -82,7 +82,9 @@ func registerAPIProxies(r *gin.Engine, agt *gatewayAuth) {
 // 单帧上报/批量补传代理 data-service + 校时接口 gateway 本地应答（协议 §4.3）。
 func registerDeviceReportRoutes(r *gin.Engine, agt *gatewayAuth) {
 	dev := r.Group("/api/v1")
-	dev.Use(deviceSigAuth(agt))
+	// T570：上报组挂在 DeviceReportWindow（±30min，临时档）上——现网设备时钟慢 681 秒，
+	// 默认 ±5min 那一档把它们全挡在 20402（证据与取舍评估见 T570 报告）。
+	dev.Use(deviceSigAuthWindow(agt, auth.DeviceReportWindow))
 
 	registerServiceRoutes(dev, envOrURL("DATA_SERVICE_URL", defaultDataServiceURL), "data-service", deviceReportRoutes)
 
@@ -98,7 +100,7 @@ func registerDeviceReportRoutes(r *gin.Engine, agt *gatewayAuth) {
 			"data": gin.H{"server_time": time.Now().Unix()},
 		})
 	})
-	log.Info().Msg("device report routes registered (device-signature auth, time endpoint on widened window)")
+	log.Info().Msg("device report routes registered (device-signature auth: report group on T570 widened window, time endpoint on T550 window)")
 }
 
 // loadGatewayAuth 组装鉴权依赖：JWT_SECRET + 设备密钥提供器。

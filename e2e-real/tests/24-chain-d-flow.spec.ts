@@ -1,0 +1,989 @@
+import { test, expect, type Page } from '@playwright/test'
+import { appendFileSync } from 'node:fs'
+import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
+
+/**
+ * T574 · 链 D 流程图配置全链路（真实模式 / staging）
+ *
+ * 六格按派发单 A1-A6 逐格给读数，判据 D1-D5 对应到 24.1-24.7。口径来源（全部现读，不采信转述）：
+ *   路由表      services/user-service/internal/handler/handler.go:324-333
+ *   图校验      services/user-service/internal/handler/flow_t274.go:114-176（parseFlowGraph）
+ *   端点键名    flow_t274.go:86-91（LogicFlow 2.x 的 sourceNodeId / targetNodeId）
+ *   状态机      flow_t274.go:663-770（confirm 推进 / reject 置 skipped 不推进 / 无后继则 completed）
+ *   分流口径    flow_t274.go:820-842（nextNodeIds 给出则只走列出的，且必须是该节点真实出边，否则 400）
+ *   实例唯一    flow_t274.go:575-599（一条告警一个实例，重复启动回 409）
+ *   入边为 0 的节点才是入口（flow_t274.go:169-174）⇒ 启动后 current 落在 trigger
+ *   错误信封    handler.go:361-373（fail 出口）+ model/user_text.go:14-15 + model/model.go:17-27
+ *   模板在用    repo/flow.go:282-305（被实例引用的模板 DELETE 回 ErrFlowTemplateInUse → 409）
+ *
+ * 🔴 T464 双通道（本文件判据口径的直接来源，不是我的取舍）：错误响应体 message 只承载
+ *   model.UserText(code) 的中文用户面短句，handler 里的英文技术文本只写服务端日志
+ *   （handler.go:362-366 注释与 logTechnical 调用是原文），data 恒为 null（handler.go:370），
+ *   定位坐标改由 trace.errorCode + trace.requestId 回传（handler.go:353-354、371）。
+ *   ⇒ 所有负对照的承重判据 = HTTP status + 业务 code + trace 两枚 + 逐形配对正对照 + 零落地反证；
+ *     不许把「message 里能看到那一格」当判据（那会把设计好的双通道读成缺陷）。
+ *     实测到的 message 原文逐条打进 stdout，作为现象交（见 D2 与 PR 正文）。
+ *
+ * 为什么这几条要串成一条链，而不是各端点单测：
+ *   Go 侧 flow_t274_test.go 已把「建模板 / 坏边 / 403」按单元级别验过，但 e2e-real 侧对流程图
+ *   **一条写请求都没发过**（03-alerts.spec.ts:447、450、459 全是 GET）。骨架的「配进去 → 跑起来 →
+ *   回得来」这一段在真实环境里从没被走过 —— 本卡补的就是这一段。
+ *
+ * A2 是本卡的核心负对照：后端唯一的业务校验就是「节点 id 唯一 + 边端点必须指向存在的节点 + 禁自环」
+ *   （flow_t274.go:126-165）。这一格若被改坏，图会静默落库、运行期才炸，所以四形
+ *   （target 不存在 / source 不存在 / 自环 / 节点 id 重复）都要真的被拒，并且当场反证「没落库」
+ *   （列表 total 与那颗名都没多出来）。**逐形配对正对照**（不只文末来一发）：同一张图只把被拒
+ *   的那一处改对就必须收 —— 否则分不清「被这条业务校验拒了」与「这一形恰好还撞了别的锁」。
+ *
+ * 写纪律（快照-读数-还原-报备，四条都是断言不是承诺）：
+ *   快照  建模板前取 templates total 与本前缀名册，并现读「无实例引用」的告警号；
+ *   读数  每笔写后 GET 详情逐字段对平；
+ *   还原  afterAll 独立于用例结果逐颗 DELETE /admin/flow/templates/:id，并逐颗定性删除结果；
+ *   报备  删不掉的颗数、每颗的 HTTP/code/message 与 instanceCount 都打进 stdout。
+ *   🔴 两处「还原做不到」是契约事实，本文件把它们钉在证据面上而不是藏起来：
+ *      ① 实例侧没有删除端点（handler.go:324-333 只有模板 CRUD 有 DELETE）⇒ 对已知实例发 DELETE
+ *         应 404（24.7 断言），实例行只能推到终态、不能删行；
+ *      ② 被实例引用的模板不可删（repo/flow.go:284-291 先数 flow_instance 引用，cnt>0 直接
+ *         ErrFlowTemplateInUse → handler.go:507 转 409）⇒ 凡跑过实例的模板都留在架上。
+ *      ⇒ 因此本文件的守恒律写成「收尾 total = 基线 total + 本轮在用残留颗数」，而不是「total 回到基线」；
+ *        基线里本来就带着往轮的在用残留（跑过一次就永久留架，删不掉），所以 24.0 的基线判据不是
+ *        「本前缀 0 颗」而是「在册的每一颗详情 instanceCount≥1」——都在用 = 可以接着跑，
+ *        出现 instanceCount=0 的颗才是真漏删（要先把那几颗删掉再跑）。
+ *        残留的每一颗都要有 instanceCount≥1 的读数作背书（漏删与在用可区分），
+ *        而 instanceCount 只能取**详情面**：列表面那一列是 SQL 里的字面量 0
+ *        （repo/flow.go:178-180，与 nodes/edges 写死 '[]' 同一处投影；详情面才走 :148-150 的真 COUNT）。
+ *        实测背书：4 颗实例 + 两颗模板 DELETE 回 409「在用」，同一时刻名册里这两颗仍报 instanceCount=0。
+ *        ⇒ 这条写进现象交（PR 正文 §残留 与卡内 D5）：任何按名册 instanceCount 判「能不能删」的消费方都会读空。
+ *
+ * 生产零写：入口只读 E2E_STAGING_URL，命中生产域名/生产 IP 直接抛（同 22 号用例口径）。
+ * 不动既有面：不改 real-helpers.ts、不改 config、不动 03-alerts 的断言语义；callApi/callOk
+ *   有意在本文件内复制 21/22 号用例的写法而不提进 helper（提出去要动已交件的 helper）。
+ */
+
+const ENTRY = process.env.E2E_STAGING_URL ?? 'http://localhost:2080'
+if (/api\.hbksd\.com\.cn|49\.235\.137\.217/.test(ENTRY)) {
+  throw new Error(`T574 链 D 命中生产入口，红线拒绝：${ENTRY}`)
+}
+
+/** 造数名前缀（与真实数据区分；派发单 §五 的 T053 口径） */
+const FLOW_TPL_PREFIX = 'T053流程'
+/** 全仓未注册的路径：负对照用（缺了它，「JSON 信封 code=10400」分不清是路由在架还是网关兜底） */
+const NOT_REGISTERED_PATH = '/api/v1/zzz-t574-chain-d-flow-not-registered-9c2f'
+/** A6 的两个非 admin 角色账号（staging 既有测试账号，口径同 03-alerts.spec.ts 与 21 号用例） */
+const DOCTOR_ACCOUNT = 'doctor_li'
+const TECH_ACCOUNT = 'cs_wang'
+
+interface FlowNode {
+  id: string
+  type: string
+  x: number
+  y: number
+  text: { value: string }
+  properties: { kind: string }
+}
+interface FlowEdge {
+  id: string
+  type: string
+  sourceNodeId: string
+  targetNodeId: string
+}
+interface TemplateDTO {
+  templateId: string
+  name: string
+  nodes: FlowNode[]
+  edges: FlowEdge[]
+  version: number
+  instanceCount: number
+  createdAt: string
+  updatedAt: string
+}
+interface InstanceDTO {
+  instanceId: string
+  templateId: string
+  templateName: string
+  alertId: string
+  currentNodeId: string | null
+  status: string
+  startedAt: string
+  endedAt: string | null
+}
+interface NodeStateDTO {
+  nodeId: string
+  status: string
+  nextNodeIds: string[]
+  operator: string | null
+  remark: string | null
+  assignee: string | null
+}
+interface ActionDTO {
+  actionId: string
+  nodeId: string
+  nodeName: string | null
+  action: string
+  actionLabel: string
+}
+/** T464 定位通道：错误响应必带 trace{errorCode, requestId}，成功响应无该键 */
+interface ErrorTrace {
+  errorCode: number | null
+  requestId: string | null
+}
+interface Envelope {
+  status: number
+  contentType: string
+  code: number | null
+  message: string
+  data: unknown
+  trace: ErrorTrace | null
+  /** 原始响应体文本（非 JSON 时用它证明「不是业务信封」，负对照的第三枚坐标） */
+  rawHead: string
+}
+
+async function callApi(
+  p: Page,
+  method: string,
+  urlPath: string,
+  opts: { token?: string; body?: unknown } = {},
+): Promise<Envelope> {
+  const headers: Record<string, string> = {}
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`
+  if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
+  const res = await p.request.fetch(urlPath, {
+    method,
+    headers,
+    data: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+  })
+  const text = await res.text().catch(() => '')
+  let code: number | null = null
+  let message = ''
+  let data: unknown = null
+  let trace: ErrorTrace | null = null
+  try {
+    const env = JSON.parse(text) as {
+      code?: unknown
+      message?: unknown
+      data?: unknown
+      trace?: { errorCode?: unknown; requestId?: unknown } | null
+    }
+    if (typeof env.code === 'number') code = env.code
+    if (typeof env.message === 'string') message = env.message
+    data = env.data ?? null
+    if (env.trace !== null && typeof env.trace === 'object') {
+      trace = {
+        errorCode: typeof env.trace.errorCode === 'number' ? env.trace.errorCode : null,
+        requestId: typeof env.trace.requestId === 'string' ? env.trace.requestId : null,
+      }
+    }
+  } catch {
+    /* 非 JSON：code 留 null，正是负对照要的形态 */
+  }
+  return {
+    status: res.status(),
+    contentType: (res.headers()['content-type'] ?? '').split(';')[0],
+    code,
+    message,
+    data,
+    trace,
+    rawHead: text.slice(0, 120),
+  }
+}
+
+async function callOk<T>(
+  p: Page,
+  method: string,
+  urlPath: string,
+  opts: { token?: string; body?: unknown; why: string },
+): Promise<T> {
+  const r = await callApi(p, method, urlPath, opts)
+  expect(
+    r.code,
+    `${opts.why}：${method} ${urlPath} 应回 code=0，实得 status=${r.status} code=${r.code} message=${r.message}`,
+  ).toBe(0)
+  return r.data as T
+}
+
+/**
+ * T582 格一：把「只作自证、不作门禁」的快照送进 job summary。
+ * GITHUB_STEP_SUMMARY 由 runner 注入给每一步；本地跑没有它，此时只留 stdout（那句会当场说明，不留静默）。
+ * 写失败只登记、不判红：这一格是读数出口，不是被测行为。
+ */
+function appendJobSummary(text: string): void {
+  const file = process.env.GITHUB_STEP_SUMMARY ?? ''
+  if (!file) {
+    console.log('[t574-chain-d][快照] 未设 GITHUB_STEP_SUMMARY（本地跑）⇒ 快照只在 stdout，不进 job summary')
+    return
+  }
+  try {
+    appendFileSync(file, `- ${text}\n`, 'utf8')
+  } catch (e) {
+    console.log(`[t574-chain-d][快照] 写 job summary 失败（不影响用例结论）：${String(e)}`)
+  }
+}
+
+/** LogicFlow 2.x 图元：type 是画布形状，properties.kind 是 8 类节点（前端 kinds.ts 的口径，后端不校验） */
+const fn = (id: string, kind: string, shape: string, label: string, x: number): FlowNode => ({
+  id,
+  type: shape,
+  x,
+  y: 120,
+  text: { value: label },
+  properties: { kind },
+})
+const fe = (id: string, from: string, to: string): FlowEdge => ({
+  id,
+  type: 'polyline',
+  sourceNodeId: from,
+  targetNodeId: to,
+})
+
+/** 线性图：trigger → process → archive（派发单 A1 要求的最小三节点形状） */
+const LIN = {
+  n1: 't574-l-trigger',
+  n2: 't574-l-process',
+  n3: 't574-l-archive',
+  nodes: (): FlowNode[] => [
+    fn('t574-l-trigger', 'trigger', 'circle', '触发', 120),
+    fn('t574-l-process', 'process', 'rect', '处理', 320),
+    fn('t574-l-archive', 'archive', 'rect', '归档', 520),
+  ],
+  edges: (): FlowEdge[] => [fe('t574-l-e1', 't574-l-trigger', 't574-l-process'), fe('t574-l-e2', 't574-l-process', 't574-l-archive')],
+}
+
+/** 分叉图：trigger → condition →（通过 / 不通过），A4 的两组输入就是在这两个后继之间选 */
+const BR = {
+  nodes: (): FlowNode[] => [
+    fn('t574-b-trigger', 'trigger', 'circle', '触发', 120),
+    fn('t574-b-cond', 'condition', 'diamond', '判断', 320),
+    fn('t574-b-yes', 'process', 'rect', '通过分支', 520),
+    fn('t574-b-no', 'process', 'rect', '不通过分支', 520),
+  ],
+  edges: (): FlowEdge[] => [
+    fe('t574-b-e1', 't574-b-trigger', 't574-b-cond'),
+    fe('t574-b-e2', 't574-b-cond', 't574-b-yes'),
+    fe('t574-b-e3', 't574-b-cond', 't574-b-no'),
+  ],
+}
+
+test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
+  // 用例之间有真实依赖（24.1 建的模板给 24.3 跑实例，24.3 的实例给 24.5/24.7 对平）⇒ 显式串行。
+  // 首跑实测：非串行时 24.2 失败后 Playwright 换了 worker，模块级状态被清零，
+  // 24.3-24.7 全红在读到空串的自建守卫上（把「上一格没跑成」误报成契约问题）。
+  test.describe.configure({ mode: 'serial' })
+
+  let adminToken = ''
+  /** 本文件建过的模板号，afterAll 逐颗删并逐颗定性 */
+  const madeTemplates: string[] = []
+  /** 24.0 时已在册的本前缀模板号（往轮「在用不可删」的永久残留，见文件头②），守恒律要把它算进基线 */
+  let preexistingTplIds: string[] = []
+  let baselineTplTotal: number | null = null
+  /** 本文件成功起起来的实例颗数（实例行删不掉 ⇒ 残留量必须有个可对平的数字） */
+  let instancesStarted = 0
+  /** 已经用掉的告警号（一条告警一个实例，重复起会 409 ⇒ 每格现读一颗新的） */
+  const usedAlerts = new Set<string>()
+  let linTemplateId = ''
+  let linTemplateName = ''
+  let linAlertId = ''
+
+  /** 会话自愈：串行下通常复用 24.0 的令牌，一旦为空就重新登录，不把承重前提押在内存状态上 */
+  async function ensureAdmin(page: Page): Promise<string> {
+    if (adminToken === '') {
+      await realLogin(page)
+      adminToken = (await getAuthToken(page)) ?? ''
+      expect(adminToken, '管理端登录没回令牌（localStorage admin_token 缺失）').toBeTruthy()
+    }
+    return adminToken
+  }
+
+  /** 现读一颗「还没有流程实例」的告警号，跳过本文件已用掉的（返回的告警号即可安全起实例） */
+  async function takeFreeAlert(p: Page, token: string): Promise<string> {
+    const alerts = await callOk<{ list: { alertId: number | string }[]; total: number }>(
+      p,
+      'GET',
+      '/api/v1/alerts?page=1&pageSize=20',
+      { token, why: '告警列表读不通 ⇒ 拿不到可起实例的告警' },
+    )
+    for (const a of alerts.list) {
+      const id = String(a.alertId)
+      if (usedAlerts.has(id)) continue
+      const inst = await callOk<{ list: InstanceDTO[] }>(p, 'GET', `/api/v1/admin/flow/instances?alertId=${id}`, {
+        token,
+        why: '按告警取实例读不通',
+      })
+      if (inst.list.length === 0) {
+        usedAlerts.add(id)
+        return id
+      }
+    }
+    throw new Error(`前 ${alerts.list.length} 颗告警都已有流程实例（共 ${alerts.total} 颗），本文件不再猜号，直接停手报 PM`)
+  }
+
+  /**
+   * 模板详情（带真 instanceCount）。
+   * 🔴 对平必须走详情面，不能走列表面：列表面投影把 instanceCount 写死成 0
+   *   （repo/flow.go:178-180 的 SELECT 里那一列就是字面量 `0`，与 nodes/edges 写死 '[]' 同一处口径），
+   *   只有详情面走 flowTemplateCols 的子 SELECT 真 COUNT（repo/flow.go:148-150）。
+   *   实测背书：本轮 4 颗实例、2 颗模板 DELETE 回 409「在用」，而名册里这两颗的 instanceCount 仍报 0。
+   */
+  async function detailOf(p: Page, token: string, templateId: string): Promise<TemplateDTO> {
+    return callOk<TemplateDTO>(p, 'GET', `/api/v1/admin/flow/templates/${templateId}`, {
+      token,
+      why: `模板 ${templateId} 详情读不通（instanceCount 的对平腿就在这一面上）`,
+    })
+  }
+
+  test('24.0 前置：管理端会话在架、路由形状确认、基线快照与空闲告警面现读', async ({ page }) => {
+    const token = await ensureAdmin(page)
+
+    // 负对照前置：未注册路径必须回非 JSON 的 gin 404 —— 缺了它，后面「code=10400」分不清路由在不在架
+    for (const method of ['POST', 'DELETE'] as const) {
+      const r = await callApi(page, method, NOT_REGISTERED_PATH, { token })
+      expect(
+        r.code,
+        `前置探针失效：未注册路径 ${method} 应回非 JSON 的 404，实得 status=${r.status} code=${r.code} ct=${r.contentType} rawHead=${r.rawHead}`,
+      ).toBeNull()
+    }
+
+    const list = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+      token,
+      why: '模板列表读不通',
+    })
+    baselineTplTotal = list.total
+    const mine = list.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
+    expect(list.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${list.list.length}/${list.total}）`).toBe(list.total)
+    preexistingTplIds = mine.map((t) => t.templateId)
+    // 「在用不可删」的残留会永久留在架上（文件头②），所以基线不许写「本前缀 0 颗」，
+    // 要改成逐颗现读详情核「残留都在用」：instanceCount=0 却还在册 = 往轮漏删，那一类必须先清再跑。
+    const prevUnsupported: string[] = []
+    for (const t of mine) {
+      const d = await detailOf(page, token, t.templateId)
+      if (d.instanceCount < 1) prevUnsupported.push(`${d.name} instanceCount=${d.instanceCount}`)
+    }
+    expect(
+      prevUnsupported,
+      `往轮残留里有 ${prevUnsupported.length} 颗可删却没删（详情 instanceCount=0，这才是真漏删），先清掉再跑：${prevUnsupported.join(' ; ') || '无'}`,
+    ).toEqual([])
+    console.log(
+      `[t574-chain-d][快照] templates total=${baselineTplTotal} 本前缀在册颗数=${mine.length}（详情面 instanceCount 逐颗≥1 已核，都是「在用不可删」的往轮残留）`,
+    )
+
+    // 实例面基线（T582 格一改自证式）：现读**整页**每一颗告警各自的实例颗数，只作快照，不再对 free 作门禁断言。
+    // 为什么这一格不该当门禁（口径来自派发单 §四 格一 允许方向②，不是「放宽」）：
+    //   ① free 从来不是本文件的真实前置。真正取号的是 takeFreeAlert，它扫的是整页并按颗现读，
+    //      扫不到才抛「前 N 颗都已有实例（共 M 颗）」——那一红才是 A3/A4 起不了实例的真读数。
+    //      24.0 原先只看前 10 颗，是一把比自身用途更严的尺：它红的时候后面几条未必跑不动
+    //      （2026-10-06 02:12 只读实测：total=116、整页 20 颗里空闲=8、全库空闲=104、已起实例=12）。
+    //   ② 同时禁两条歪路：把断言改成 free >= 0（空断言，抹平症状）或往后翻页凑数（移动分母）。
+    //   ③ 数据面自检的实质留在断言里，且只断实质：告警面在架（total>0）、本页非空（list>0）、
+    //      逐颗读数按预期形态回（callOk 已把 HTTP/code 非绿的每一发当场判红并带坐标）。
+    // 出口三处：stdout（run 日志）+ annotation（HTML 报告）+ job summary（不得静默）。
+    const alerts = await callOk<{ list: { alertId: number | string }[]; total: number }>(page, 'GET', '/api/v1/alerts?page=1&pageSize=20', {
+      token,
+      why: '告警列表读不通',
+    })
+    expect(alerts.total, '告警面 total=0 ⇒ staging 没 seed 告警，本文件与所有链路都无从跑起（这是数据面缺口，不是本用例的判据）').toBeGreaterThan(0)
+    expect(alerts.list.length, '告警面 total>0 而本页回 0 颗 ⇒ 分页面读空，取数姿势有问题').toBeGreaterThan(0)
+
+    const faceRows: { alertId: string; instances: number }[] = []
+    for (const a of alerts.list) {
+      const id = String(a.alertId)
+      const inst = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${id}`, {
+        token,
+        why: '按告警取实例读不通',
+      })
+      faceRows.push({ alertId: id, instances: inst.list.length })
+    }
+    const free = faceRows.filter((r) => r.instances === 0).length
+    const freeIn10 = faceRows.slice(0, 10).filter((r) => r.instances === 0).length
+    const snapshotLine =
+      `[t574-chain-d][快照] 告警 total=${alerts.total} 本页=${faceRows.length} 空闲(整页)=${free} 空闲(前10)=${freeIn10} ` +
+      `逐颗=${faceRows.map((r) => `${r.alertId}:${r.instances}`).join(' ')}`
+    console.log(snapshotLine)
+    test.info().annotations.push({
+      type: 'chain-d-alert-face',
+      description: `实例面快照（自证式，非门禁）：${snapshotLine}`,
+    })
+    appendJobSummary(snapshotLine)
+  })
+
+  test('24.1 A1 建模板 → 详情逐字段值级回读（不是只断言「有 nodes 数组」）', async ({ page }) => {
+    const token = await ensureAdmin(page)
+    const name = uniqueName(FLOW_TPL_PREFIX)
+    const created = await callOk<TemplateDTO>(page, 'POST', '/api/v1/admin/flow/templates', {
+      token,
+      body: { name, nodes: LIN.nodes(), edges: LIN.edges() },
+      why: 'A1 建模板应 200',
+    })
+    madeTemplates.push(created.templateId)
+    linTemplateId = created.templateId
+    linTemplateName = name
+    expect(created.templateId, '建模板应回模板号').toBeTruthy()
+    expect(created.name, '回读的 name 应等于写入值').toBe(name)
+
+    const detail = await callOk<TemplateDTO>(page, 'GET', `/api/v1/admin/flow/templates/${created.templateId}`, {
+      token,
+      why: 'A1 详情读回应 200',
+    })
+    expect(detail.nodes.length, '节点数应等于写入的 3 颗').toBe(3)
+    expect(detail.nodes.map((n) => n.id), '节点 id 序列应逐项等于写入值').toEqual(LIN.nodes().map((n) => n.id))
+    expect(detail.nodes.map((n) => n.properties.kind), '每个节点的 kind 应逐项等于写入值').toEqual(['trigger', 'process', 'archive'])
+    expect(detail.nodes.map((n) => n.text.value), '节点展示名应逐项等于写入值').toEqual(['触发', '处理', '归档'])
+    expect(detail.edges.map((e) => [e.sourceNodeId, e.targetNodeId]), '边的端点对应逐项等于写入值').toEqual([
+      ['t574-l-trigger', 't574-l-process'],
+      ['t574-l-process', 't574-l-archive'],
+    ])
+    expect(detail.version, '首建版本应为 1').toBe(1)
+    expect(detail.instanceCount, '刚建的模板实例数应为 0').toBe(0)
+
+    const listAfter = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+      token,
+      why: 'A1 建后列表读不通',
+    })
+    expect(listAfter.total, `建一颗后 total 应等于基线 +1（基线 ${baselineTplTotal}，实得 ${listAfter.total}）`).toBe(baselineTplTotal! + 1)
+    expect(listAfter.list.map((t) => t.templateId)).toContain(created.templateId)
+    console.log(`[t574-chain-d][A1] templateId=${created.templateId} name=${name} 节点=${detail.nodes.length} 边=${detail.edges.length} version=${detail.version}`)
+  })
+
+  test('24.2 A2 坏图四形必须被拒（本卡核心负对照）＋ 逐形配对正对照 ＋ 零落地反证', async ({ page }) => {
+    const token = await ensureAdmin(page)
+    const readTemplates = async (): Promise<{ total: number; list: TemplateDTO[] }> => {
+      const r = await callOk<{ total: number; list: TemplateDTO[] }>(
+        page,
+        'GET',
+        '/api/v1/admin/flow/templates?pageSize=100',
+        { token, why: 'A2 的列表读不通（零落地反证要靠名册，读不通就不能定性）' },
+      )
+      expect(r.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${r.list.length}/${r.total}）`).toBe(r.total)
+      return r
+    }
+
+    // 每一形只让「被检的那一处」不合法，并给一处改对的配对：
+    // 负对照证明被拒，配对证明同一条请求改那一处就收 ⇒ 拒的是这条规则，不是别的锁抢先。
+    const shapes: {
+      why: string
+      rule: string
+      badNodes: FlowNode[]
+      badEdges: FlowEdge[]
+      fixedNodes: FlowNode[]
+      fixedEdges: FlowEdge[]
+    }[] = [
+      {
+        why: '边指向不存在的节点',
+        rule: 'flow_t274.go:160-162 targetNodeId',
+        badNodes: LIN.nodes(),
+        badEdges: [fe('t574-x-e1', 't574-l-trigger', 't574-no-such-node')],
+        fixedNodes: LIN.nodes(),
+        fixedEdges: [fe('t574-x-e1', 't574-l-trigger', 't574-l-archive')],
+      },
+      {
+        why: '边的起点不存在',
+        rule: 'flow_t274.go:157-159 sourceNodeId',
+        badNodes: LIN.nodes(),
+        badEdges: [fe('t574-x-e2', 't574-no-such-node', 't574-l-process')],
+        fixedNodes: LIN.nodes(),
+        fixedEdges: [fe('t574-x-e2', 't574-l-trigger', 't574-l-process')],
+      },
+      {
+        why: '边自环',
+        rule: 'flow_t274.go:163-165 self-loop',
+        badNodes: LIN.nodes(),
+        badEdges: [fe('t574-x-e3', 't574-l-process', 't574-l-process')],
+        fixedNodes: LIN.nodes(),
+        fixedEdges: [fe('t574-x-e3', 't574-l-process', 't574-l-archive')],
+      },
+      {
+        why: '节点 id 重复',
+        rule: 'flow_t274.go:135-137 duplicate node id',
+        badNodes: [LIN.nodes()[0], LIN.nodes()[0]],
+        badEdges: [],
+        fixedNodes: [LIN.nodes()[0]],
+        fixedEdges: [],
+      },
+    ]
+
+    let total = (await readTemplates()).total
+    const accepted: string[] = []
+    const messages: string[] = []
+    for (const shape of shapes) {
+      const badName = uniqueName(`${FLOW_TPL_PREFIX}坏形`)
+      const bad = await callApi(page, 'POST', '/api/v1/admin/flow/templates', {
+        token,
+        body: { name: badName, nodes: shape.badNodes, edges: shape.badEdges },
+      })
+      // 承重判据 = HTTP + 业务码 + trace 两枚（T464 双通道下 message 只有中文短句，见文件头）
+      expect(bad.status, `${shape.why}（${shape.rule}）：应被拒为 HTTP 400`).toBe(400)
+      expect(bad.code, `${shape.why}：业务码应是 10400 参数非法（0 就意味着静默落库）`).toBe(10400)
+      expect(bad.trace?.errorCode ?? null, `${shape.why}：trace.errorCode 应与 code 同值`).toBe(10400)
+      expect(bad.trace?.requestId ?? '', `${shape.why}：trace.requestId 应在场（服务端日志的反查坐标）`).not.toBe('')
+      messages.push(bad.message)
+      console.log(
+        `[t574-chain-d][A2] ${shape.why} ⇒ HTTP=${bad.status} code=${bad.code} trace.errorCode=${String(bad.trace?.errorCode)} message=${bad.message}`,
+      )
+
+      // 零落地反证（逐形，不等四条跑完再数）：那颗名不在架上，且 total 没动
+      const after = await readTemplates()
+      expect(after.list.filter((t) => t.name === badName).length, `${shape.why}：被拒的这颗名不许落库`).toBe(0)
+      expect(after.total, `${shape.why}：被拒后 total 不该变（前 ${total} 后 ${after.total}）`).toBe(total)
+
+      // 配对正对照：其余逐字相同、只把被拒那一处改对，必须收
+      const fixed = await callOk<TemplateDTO>(page, 'POST', '/api/v1/admin/flow/templates', {
+        token,
+        body: { name: uniqueName(`${FLOW_TPL_PREFIX}配对`), nodes: shape.fixedNodes, edges: shape.fixedEdges },
+        why: `${shape.why} 的配对正对照：只改那一处应收（${shape.rule}）`,
+      })
+      madeTemplates.push(fixed.templateId)
+      accepted.push(fixed.templateId)
+      total = (await readTemplates()).total
+      console.log(`[t574-chain-d][A2] ${shape.why} 配对正对照 ⇒ templateId=${fixed.templateId} 收单，total=${total}`)
+    }
+
+    expect(accepted.length, `四形各配 1 颗正对照收单（实得 ${accepted.length}）`).toBe(shapes.length)
+    // 现象登记（不断言，只把读数打全）：现契约的错误响应面 message 只有中文用户面短句，
+    // 四形是否可区分由 distinct 读数自己说话；后端若改成逐形可定位，这一行的读数会跟着变。
+    console.log(
+      `[t574-chain-d][A2-现象] 四形 message 逐形颗数=${messages.length} distinct=${new Set(messages).size} 值=${JSON.stringify(Array.from(new Set(messages)))}`,
+    )
+    expect(
+      (await readTemplates()).list.filter((t) => t.name.startsWith(`${FLOW_TPL_PREFIX}坏形`)).length,
+      '坏形一颗都不许落库',
+    ).toBe(0)
+  })
+
+  test('24.3 A3 起实例 → running → 逐节点 confirm → completed ＋ 重复启动回 409', async ({ page }) => {
+    const token = await ensureAdmin(page)
+    expect(linTemplateId, '依赖 24.1 建的线性模板（串行模式下 24.1 红则本条不跑）').toBeTruthy()
+    const alertId = await takeFreeAlert(page, token)
+    linAlertId = alertId
+    const inst = await callOk<InstanceDTO>(page, 'POST', '/api/v1/admin/flow/instances', {
+      token,
+      body: { templateId: linTemplateId, alertId },
+      why: 'A3 起实例应 200',
+    })
+    instancesStarted += 1
+    expect(inst.status, '新实例应为 running').toBe('running')
+    expect(inst.alertId, '实例回指的告警号应等于入参').toBe(alertId)
+    expect(inst.currentNodeId, '入口节点（入边为 0）应是 trigger').toBe(LIN.n1)
+    expect(inst.endedAt, 'running 实例不该有 endedAt').toBeNull()
+    console.log(`[t574-chain-d][A3] instanceId=${inst.instanceId} alertId=${alertId} status=${inst.status} current=${inst.currentNodeId}`)
+
+    const statesAt = async (): Promise<Record<string, string>> => {
+      const s = await callOk<{ list: NodeStateDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances/${inst.instanceId}/nodes`, {
+        token,
+        why: '节点状态读不通',
+      })
+      return Object.fromEntries(s.list.map((x) => [x.nodeId, x.status]))
+    }
+    const statusOf = async (): Promise<{ status: string; currentNodeId: string | null }> => {
+      const l = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${alertId}`, {
+        token,
+        why: '实例回读不通',
+      })
+      return { status: l.list[0].status, currentNodeId: l.list[0].currentNodeId }
+    }
+
+    expect(await statesAt(), '启动瞬间：入口 current，其余 todo').toEqual({ [LIN.n1]: 'current', [LIN.n2]: 'todo', [LIN.n3]: 'todo' })
+
+    // 非当前节点不许被 confirm（状态机的第二道锁）
+    const notCurrent = await callApi(page, 'POST', `/api/v1/admin/flow/instances/${inst.instanceId}/nodes/${LIN.n3}/actions`, {
+      token,
+      body: { action: 'confirm' },
+    })
+    expect(notCurrent.status, `confirm 非当前节点应被拒（HTTP=${notCurrent.status} message=${notCurrent.message}）`).toBe(409)
+    expect(notCurrent.code, '非当前节点的状态冲突业务码应是 10409').toBe(10409)
+    console.log(`[t574-chain-d][A3] 非当前节点 confirm ⇒ HTTP=${notCurrent.status} code=${notCurrent.code} message=${notCurrent.message}`)
+
+    for (const nodeId of [LIN.n1, LIN.n2, LIN.n3]) {
+      const act = await callOk<ActionDTO>(page, 'POST', `/api/v1/admin/flow/instances/${inst.instanceId}/nodes/${nodeId}/actions`, {
+        token,
+        body: { action: 'confirm', remark: `T574链D推进-${nodeId}` },
+        why: `A3 confirm ${nodeId} 应 200`,
+      })
+      expect(act.nodeId, `动作回读应落在 ${nodeId}`).toBe(nodeId)
+      expect(act.actionLabel, '标签由后端给（前端不硬编码映射）').toBe('确认处理')
+      const s = await statusOf()
+      console.log(`[t574-chain-d][A3] confirm ${nodeId} ⇒ 实例 status=${s.status} current=${s.currentNodeId} 节点态=${JSON.stringify(await statesAt())}`)
+      if (nodeId === LIN.n1) expect(s.currentNodeId, 'trigger 之后 current 应落在 process').toBe(LIN.n2)
+      if (nodeId === LIN.n2) expect(s.currentNodeId, 'process 之后 current 应落在 archive').toBe(LIN.n3)
+    }
+    const fin = await statusOf()
+    expect(fin.status, '最后一颗无后继 ⇒ 实例应 completed').toBe('completed')
+    expect(await statesAt(), '三颗节点都应 done').toEqual({ [LIN.n1]: 'done', [LIN.n2]: 'done', [LIN.n3]: 'done' })
+
+    // 幂等入口：同一条告警再起一次必须被拒，且不许起出第二颗实例。
+    // 现契约的 fail() 出口 data 恒为 null（handler.go:367-372），"已有实例号"不在响应体里
+    // （flow_t274.go:597 与 repo/flow.go:42 的注释口径与实测不同一面）⇒ 用 GET 反查做补偿读数，
+    // 并把响应体那一格原样打进 stdout 作为现象（只交现象，不判根因）。
+    const dup = await callApi(page, 'POST', '/api/v1/admin/flow/instances', {
+      token,
+      body: { templateId: linTemplateId, alertId },
+    })
+    expect(dup.status, '重复启动应 409').toBe(409)
+    expect(dup.code, '重复启动的业务码应是 10409 状态冲突').toBe(10409)
+    expect(dup.trace?.requestId ?? '', '重复启动的 trace.requestId 应在场').not.toBe('')
+    console.log(
+      `[t574-chain-d][A3-现象] 重复启动 ⇒ HTTP=${dup.status} code=${dup.code} data=${JSON.stringify(dup.data)} message=${dup.message}（响应体是否带已有实例号，以本行读数为准）`,
+    )
+    const dupBack = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${alertId}`, {
+      token,
+      why: '重复启动后的反查读不通',
+    })
+    expect(dupBack.list.length, '重复启动不许起出第二颗实例（按告警反查应恰好 1 颗）').toBe(1)
+    expect(dupBack.list[0].instanceId, '反查到的实例号应等于先前起的那颗').toBe(inst.instanceId)
+
+    // 时间线：三笔 confirm 都该在流水里
+    const tl = await callOk<{ list: ActionDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances/${inst.instanceId}/actions`, {
+      token,
+      why: '处理时间线读不通',
+    })
+    expect(tl.list.length, '时间线应有 3 笔（三颗节点各一笔 confirm）').toBe(3)
+    expect(tl.list.map((a) => a.nodeId), '时间线节点序列应等于推进序列').toEqual([LIN.n1, LIN.n2, LIN.n3])
+  })
+
+  test('24.4 A4 条件分流双输入对比 ＋ 越界收窄反证 ＋ reject 不推进 ＋ transfer 入参锁', async ({ page }) => {
+    const token = await ensureAdmin(page)
+    const condName = uniqueName(`${FLOW_TPL_PREFIX}分叉`)
+    const cond = await callOk<TemplateDTO>(page, 'POST', '/api/v1/admin/flow/templates', {
+      token,
+      body: { name: condName, nodes: BR.nodes(), edges: BR.edges() },
+      why: 'A4 建分叉模板应 200',
+    })
+    madeTemplates.push(cond.templateId)
+
+    const COND = 't574-b-cond'
+    const YES = 't574-b-yes'
+    const NO = 't574-b-no'
+    /** nodeId → 该节点状态行（assignee 也要读，转派那一格靠它回读） */
+    const nodesAt = async (instanceId: string): Promise<Record<string, NodeStateDTO>> => {
+      const s = await callOk<{ list: NodeStateDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances/${instanceId}/nodes`, {
+        token,
+        why: 'A4 节点态读不通',
+      })
+      return Object.fromEntries(s.list.map((x) => [x.nodeId, x]))
+    }
+    const statusOf = (states: Record<string, NodeStateDTO>): Record<string, string> =>
+      Object.fromEntries(Object.entries(states).map(([k, v]) => [k, v.status]))
+    const instOf = async (alertId: string): Promise<InstanceDTO> => {
+      const l = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${alertId}`, {
+        token,
+        why: 'A4 实例回读不通',
+      })
+      expect(l.list.length, `告警 ${alertId} 应恰好一颗实例（一条告警一个实例）`).toBe(1)
+      return l.list[0]
+    }
+    const actionCount = async (instanceId: string): Promise<number> => {
+      const tl = await callOk<{ list: ActionDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances/${instanceId}/actions`, {
+        token,
+        why: 'A4 时间线读不通',
+      })
+      return tl.list.length
+    }
+    /** 起一颗实例并推进到判断节点（三组各用一颗新告警，互不干扰） */
+    const startToCond = async (): Promise<{ inst: InstanceDTO; alertId: string }> => {
+      const alertId = await takeFreeAlert(page, token)
+      const started = await callOk<InstanceDTO>(page, 'POST', '/api/v1/admin/flow/instances', {
+        token,
+        body: { templateId: cond.templateId, alertId },
+        why: 'A4 起分叉实例应 200',
+      })
+      instancesStarted += 1
+      await callOk(page, 'POST', `/api/v1/admin/flow/instances/${started.instanceId}/nodes/t574-b-trigger/actions`, {
+        token,
+        body: { action: 'confirm' },
+        why: 'A4 trigger 推进应 200',
+      })
+      const back = await instOf(alertId)
+      expect(back.currentNodeId, `推进到判断节点后 current 应落在 ${COND}（入读不对，后面的分支读数就没有前提）`).toBe(COND)
+      return { inst: back, alertId }
+    }
+
+    // 两组不同条件输入（D3：必须是对比读数，不是只跑一组）
+    const g1 = await startToCond()
+    await callOk(page, 'POST', `/api/v1/admin/flow/instances/${g1.inst.instanceId}/nodes/${COND}/actions`, {
+      token,
+      body: { action: 'confirm', nextNodeIds: [YES] },
+      why: `A4 组一选 ${YES} 应 200`,
+    })
+    const g2 = await startToCond()
+    await callOk(page, 'POST', `/api/v1/admin/flow/instances/${g2.inst.instanceId}/nodes/${COND}/actions`, {
+      token,
+      body: { action: 'confirm', nextNodeIds: [NO] },
+      why: `A4 组二选 ${NO} 应 200`,
+    })
+    const g1Back = await instOf(g1.alertId)
+    const g2Back = await instOf(g2.alertId)
+    const g1States = statusOf(await nodesAt(g1.inst.instanceId))
+    const g2States = statusOf(await nodesAt(g2.inst.instanceId))
+    expect(g1Back.currentNodeId, `组一（选 ${YES}）应停在「通过分支」`).toBe(YES)
+    expect(g2Back.currentNodeId, `组二（选 ${NO}）应停在「不通过分支」`).toBe(NO)
+    expect(g1Back.currentNodeId, '两组输入的读数必须不同（同值就说明 nextNodeIds 收窄没生效）').not.toBe(g2Back.currentNodeId)
+    expect(g1States[NO], '组一没走的那一支该留 todo').toBe('todo')
+    expect(g2States[YES], '组二没走的那一支该留 todo').toBe('todo')
+    console.log(
+      `[t574-chain-d][A4] 双输入对比 组一 alert=${g1.alertId} current=${g1Back.currentNodeId} 态=${JSON.stringify(g1States)}｜组二 alert=${g2.alertId} current=${g2Back.currentNodeId} 态=${JSON.stringify(g2States)}`,
+    )
+
+    // 组三：越界收窄 —— nextNodeIds 指到「不是该节点出边」的号上必须被拒（flow_t274.go:832-840）
+    const g3 = await startToCond()
+    const g3ActionsBefore = await actionCount(g3.inst.instanceId)
+    const stray = await callApi(page, 'POST', `/api/v1/admin/flow/instances/${g3.inst.instanceId}/nodes/${COND}/actions`, {
+      token,
+      body: { action: 'confirm', nextNodeIds: [LIN.n3] },
+    })
+    expect(stray.status, '越界 nextNodeIds 应被拒为 HTTP 400').toBe(400)
+    expect(stray.code, '越界收窄的业务码应是 10400（回 0 就是按非法后继推进了流程）').toBe(10400)
+    expect(stray.trace?.requestId ?? '', '越界收窄的 trace.requestId 应在场').not.toBe('')
+    console.log(
+      `[t574-chain-d][A4] 越界 nextNodeIds ⇒ HTTP=${stray.status} code=${stray.code} trace.errorCode=${String(stray.trace?.errorCode)} message=${stray.message}`,
+    )
+    expect((await instOf(g3.alertId)).currentNodeId, '被拒的越界收窄不许推进流程').toBe(COND)
+    expect(await actionCount(g3.inst.instanceId), '被拒的越界收窄不许留下动作行').toBe(g3ActionsBefore)
+    // 配对正对照：同一颗判断节点只把 nextNodeIds 换成真实出边就收 ⇒ 拒的确实是「不是出边」这一条
+    await callOk(page, 'POST', `/api/v1/admin/flow/instances/${g3.inst.instanceId}/nodes/${COND}/actions`, {
+      token,
+      body: { action: 'confirm', nextNodeIds: [YES] },
+      why: 'A4 组三配对正对照：换成真实出边应收',
+    })
+    expect((await instOf(g3.alertId)).currentNodeId, '组三配对正对照后应停在通过分支').toBe(YES)
+
+    // reject：置 skipped 且不推进、不动实例指针（组二当前停在 NO）
+    const beforeReject = await instOf(g2.alertId)
+    const rej = await callOk<ActionDTO>(page, 'POST', `/api/v1/admin/flow/instances/${g2.inst.instanceId}/nodes/${NO}/actions`, {
+      token,
+      body: { action: 'reject', remark: 'T574链D驳回读数' },
+      why: 'reject 应 200',
+    })
+    expect(rej.actionLabel, '驳回标签由后端给').toBe('驳回')
+    const afterReject = await instOf(g2.alertId)
+    expect(afterReject.currentNodeId, 'reject 不该动实例指针').toBe(beforeReject.currentNodeId)
+    expect(afterReject.status, 'reject 不该把实例推到终态').toBe('running')
+    expect((await nodesAt(g2.inst.instanceId))[NO]?.status, '被驳回的节点应置 skipped').toBe('skipped')
+
+    // transfer 入参锁：缺 targetOperator 必须被拒（四枚动作各自的入参锁），给足就收并写回节点行
+    const tr = await callApi(page, 'POST', `/api/v1/admin/flow/instances/${g2.inst.instanceId}/nodes/${NO}/actions`, {
+      token,
+      body: { action: 'transfer' },
+    })
+    expect(tr.status, 'transfer 缺 targetOperator 应被拒为 HTTP 400').toBe(400)
+    expect(tr.code, 'transfer 缺入参的业务码应是 10400').toBe(10400)
+    expect(tr.trace?.requestId ?? '', 'transfer 缺入参的 trace.requestId 应在场').not.toBe('')
+    console.log(`[t574-chain-d][A4] transfer 缺入参 ⇒ HTTP=${tr.status} code=${tr.code} message=${tr.message}`)
+    const trOk = await callOk<ActionDTO>(page, 'POST', `/api/v1/admin/flow/instances/${g2.inst.instanceId}/nodes/${NO}/actions`, {
+      token,
+      body: { action: 'transfer', targetOperator: TECH_ACCOUNT },
+      why: 'A4 transfer 配对正对照：给足入参应收',
+    })
+    expect(trOk.actionLabel, '转派标签由后端给').toBe('转派')
+    const g2AfterTransfer = await nodesAt(g2.inst.instanceId)
+    expect(g2AfterTransfer[NO]?.assignee, '转派后被转派人应回读得到').toBe(TECH_ACCOUNT)
+    console.log(
+      `[t574-chain-d][A4] 转派配对正对照 ⇒ 节点 ${NO} assignee=${String(g2AfterTransfer[NO]?.assignee)} status=${String(g2AfterTransfer[NO]?.status)}（转派只改指派，不改节点状态）`,
+    )
+  })
+
+  test('24.5 A5 告警 ↔ 实例 ↔ 模板三点对平（值级，并证明按告警过滤真的生效）', async ({ page }) => {
+    const token = await ensureAdmin(page)
+    expect(linAlertId, '依赖 24.3 起过实例的那颗告警（串行模式下 24.3 红则本条不跑）').toBeTruthy()
+    // 正向：从告警查实例
+    const byAlert = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${linAlertId}`, {
+      token,
+      why: 'A5 从告警侧查实例应 200',
+    })
+    expect(byAlert.list.length, '一条告警只该有一颗实例').toBe(1)
+    const inst = byAlert.list[0]
+    // 反向：实例回指告警 + 模板
+    expect(inst.alertId, '实例应回指同一个告警号').toBe(linAlertId)
+    expect(inst.templateId, '实例应回指 A1 那颗模板').toBe(linTemplateId)
+    const tpl = await callOk<TemplateDTO>(page, 'GET', `/api/v1/admin/flow/templates/${inst.templateId}`, {
+      token,
+      why: 'A5 从实例反查模板应 200',
+    })
+    expect(tpl.name, '模板名应等于 24.1 写入的那个唯一名').toBe(linTemplateName)
+    expect(inst.templateName, '实例带的模板名应与模板详情同值').toBe(tpl.name)
+
+    // 过滤对照：另一颗告警读回来的必须是另一颗实例 —— 缺这条就分不清「过滤生效」与「回全量」
+    const others = Array.from(usedAlerts).filter((id) => id !== linAlertId)
+    expect(others.length, '需要至少一颗别的告警作过滤对照（24.4 应已起过实例）').toBeGreaterThan(0)
+    const otherInst = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${others[0]}`, {
+      token,
+      why: 'A5 过滤对照的实例读不通',
+    })
+    expect(otherInst.list.length, `对照告警 ${others[0]} 也应恰好一颗实例`).toBe(1)
+    expect(otherInst.list[0].instanceId, '按告警过滤必须返回不同实例（回全量就会在这一格露馅）').not.toBe(inst.instanceId)
+
+    // 缺 alertId 的读法必须被拒（flow_t274.go:607-612：alertId 是必填正整数）
+    const noQuery = await callApi(page, 'GET', '/api/v1/admin/flow/instances', { token })
+    expect(noQuery.status, '实例列表缺 alertId 应被拒为 HTTP 400').toBe(400)
+    expect(noQuery.code, '缺 alertId 的业务码应是 10400').toBe(10400)
+    console.log(
+      `[t574-chain-d][A5] 告警 ${linAlertId} ↔ 实例 ${inst.instanceId} ↔ 模板 ${tpl.templateId} 三点对平，status=${inst.status}｜对照告警 ${others[0]} 的实例=${otherInst.list[0].instanceId}（不同颗）`,
+    )
+  })
+
+  test('24.6 A6 权限正反两面（读放开给 staff、写锁在 admin；正面已由 24.1-24.5 走通）', async ({ page, browser }) => {
+    const token = await ensureAdmin(page)
+    expect(linTemplateId, '依赖 24.1 那颗模板作越权靶子（串行模式下 24.1 红则本条不跑）').toBeTruthy()
+    // 反面一：医护读模板 / 读实例 = 放行（T359 放宽的那一面，与 03-alerts.spec.ts:450 同口径）
+    const ctxDoc = await browser.newContext()
+    const pDoc = await ctxDoc.newPage()
+    await realLogin(pDoc, DOCTOR_ACCOUNT)
+    const docTok = (await getAuthToken(pDoc)) ?? ''
+    expect(docTok, `${DOCTOR_ACCOUNT} 会话应建得起来`).toBeTruthy()
+    const docRead = await callApi(pDoc, 'GET', '/api/v1/admin/flow/templates?pageSize=1', { token: docTok })
+    expect(docRead.code, `医护读模板应放行（HTTP=${docRead.status} message=${docRead.message}）`).toBe(0)
+    const docReadInst = await callApi(pDoc, 'GET', `/api/v1/admin/flow/instances?alertId=${linAlertId}`, { token: docTok })
+    expect(docReadInst.code, `医护读实例应放行（HTTP=${docReadInst.status} message=${docReadInst.message}）`).toBe(0)
+    // 反面二：医护写模板必须 403（gateway 的 adminOnly 那一格；图给合法图，确保拒的是权限而不是入参）
+    const docWrite = await callApi(pDoc, 'POST', '/api/v1/admin/flow/templates', {
+      token: docTok,
+      body: { name: uniqueName(`${FLOW_TPL_PREFIX}医护越权`), nodes: LIN.nodes(), edges: LIN.edges() },
+    })
+    expect(docWrite.status, `医护写模板应 403，实得 HTTP=${docWrite.status} code=${String(docWrite.code)} message=${docWrite.message}`).toBe(403)
+    expect(docWrite.code, '医护越权的业务码不许是 0（回 0 就是真写进去了）；具体码值由哪一层给的不作定（只读不判）').not.toBe(0)
+    console.log(
+      `[t574-chain-d][A6] 医护读模板=${docRead.status}/code=${docRead.code} 读实例=${docReadInst.code} 写=${docWrite.status}/code=${String(docWrite.code)} message=${docWrite.message}`,
+    )
+    // 反面三：医护删 admin 建的模板也要 403，且删完那颗还在（零副作用反证）
+    const docDel = await callApi(pDoc, 'DELETE', `/api/v1/admin/flow/templates/${linTemplateId}`, { token: docTok })
+    expect(docDel.status, `医护删模板应 403，实得 HTTP=${docDel.status} code=${String(docDel.code)}`).toBe(403)
+    const stillThere = await callApi(pDoc, 'GET', `/api/v1/admin/flow/templates/${linTemplateId}`, { token })
+    expect(stillThere.code, '越权删除后那颗模板应仍在架（403 不许有副作用）').toBe(0)
+    // 反面四：无令牌写 = 401（与 403 分开，否则分不清「没登录」与「没权限」）
+    const anon = await callApi(pDoc, 'POST', '/api/v1/admin/flow/templates', {
+      body: { name: uniqueName(`${FLOW_TPL_PREFIX}无令牌`), nodes: LIN.nodes(), edges: LIN.edges() },
+    })
+    expect(anon.status, `无令牌写应 401，实得 HTTP=${anon.status} code=${String(anon.code)} message=${anon.message}`).toBe(401)
+    // 反面五：技师角色同样写不进（第二个非 admin 角色，防「只对 doctor 单点放行」）
+    const ctxTech = await browser.newContext()
+    const pTech = await ctxTech.newPage()
+    await realLogin(pTech, TECH_ACCOUNT)
+    const techTok = (await getAuthToken(pTech)) ?? ''
+    expect(techTok, `${TECH_ACCOUNT} 会话应建得起来`).toBeTruthy()
+    const techWrite = await callApi(pTech, 'POST', '/api/v1/admin/flow/templates', {
+      token: techTok,
+      body: { name: uniqueName(`${FLOW_TPL_PREFIX}技师越权`), nodes: LIN.nodes(), edges: LIN.edges() },
+    })
+    expect(techWrite.status, `技师写模板应 403，实得 HTTP=${techWrite.status} code=${String(techWrite.code)} message=${techWrite.message}`).toBe(403)
+    // 三发越权都不许落库（否则「拒了但也写了」）；名册现读，不靠响应推断
+    const afterForbidden = await callOk<{ list: TemplateDTO[] }>(pTech, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+      token,
+      why: '越权三发后的名册读不通',
+    })
+    const forbiddenLanded = afterForbidden.list.filter((t) => /医护越权|技师越权|无令牌/.test(t.name)).map((t) => t.name)
+    expect(forbiddenLanded, `越权三发都不许落库，实得：${forbiddenLanded.join(' ; ') || '无'}`).toEqual([])
+    console.log(`[t574-chain-d][A6] 技师写=${techWrite.status}/code=${String(techWrite.code)} 无令牌写=${anon.status}/code=${String(anon.code)}｜越权三发落库颗数=${forbiddenLanded.length}（名册现读）`)
+    await ctxDoc.close()
+    await ctxTech.close()
+  })
+
+  test('24.7 残留与守恒：实例无删除端点钉在证据面，模板颗数与实例颗数互相对平', async ({ page }) => {
+    const token = await ensureAdmin(page)
+    expect(linAlertId, '依赖 24.3 的实例作「发 DELETE」靶子（串行模式下 24.3 红则本条不跑）').toBeTruthy()
+    // 实例侧：路由表没有 DELETE /admin/flow/instances/:id（handler.go:324-333）⇒ 对已知实例发 DELETE 应 404
+    const known = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${linAlertId}`, {
+      token,
+      why: '守恒腿读实例不通',
+    })
+    const instId = known.list[0].instanceId
+    const delInst = await callApi(page, 'DELETE', `/api/v1/admin/flow/instances/${instId}`, { token })
+    expect(
+      delInst.status,
+      `实例删除端点若变成 ${delInst.status} 说明契约已加删除口，本文件的「实例残留」那条要改口径（现读 code=${String(delInst.code)} message=${delInst.message}）`,
+    ).toBe(404)
+    console.log(
+      `[t574-chain-d][残留] 实例 ${instId} 发 DELETE ⇒ HTTP=${delInst.status} code=${String(delInst.code)}（无删除端点，实例行删不掉，如实登记）`,
+    )
+
+    const rest = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+      token,
+      why: '守恒腿读模板不通',
+    })
+    const mine = rest.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
+    expect(rest.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${rest.list.length}/${rest.total}）`).toBe(rest.total)
+    expect(
+      mine.length,
+      `名册里本前缀颗数应等于「往轮在用残留 ${preexistingTplIds.length} + 本轮登记 ${madeTemplates.length}」（实得 ${mine.length}）`,
+    ).toBe(preexistingTplIds.length + madeTemplates.length)
+
+    // instanceCount 的对平走详情面（列表面那一列是 SQL 字面量 0，见 detailOf 注释与文件头）
+    const detailCounts: string[] = []
+    let sumDetail = 0
+    for (const id of madeTemplates) {
+      const d = await detailOf(page, token, id)
+      sumDetail += d.instanceCount
+      detailCounts.push(`${id}:${d.instanceCount}`)
+    }
+    const sumListFace = mine.reduce((acc, t) => acc + t.instanceCount, 0)
+    console.log(
+      `[t574-chain-d][残留] 模板：本前缀在册颗数=${mine.length}（往轮残留 ${preexistingTplIds.length} + 本轮 ${madeTemplates.length}，afterAll 逐颗删并定性）｜起成功的实例颗数=${instancesStarted}｜详情面 instanceCount 合计=${sumDetail} 逐颗=${detailCounts.join(' ; ')}`,
+    )
+    console.log(
+      `[t574-chain-d][残留-现象] 列表面 instanceCount 合计=${sumListFace}（现契约该列写死 0，repo/flow.go:178-180）｜详情面合计=${sumDetail}｜total=${rest.total} 基线=${baselineTplTotal}`,
+    )
+    expect(sumDetail, `详情面 instanceCount 合计应等于本文件起成功的实例颗数（${sumDetail} vs ${instancesStarted}）`).toBe(instancesStarted)
+  })
+
+  test.afterAll(async ({ browser }) => {
+    const page = await browser.newPage()
+    try {
+      await realLogin(page)
+      const token = (await getAuthToken(page)) ?? ''
+      expect(token, 'afterAll 管理端会话建不起来 ⇒ 清场没法做').toBeTruthy()
+      let deleted = 0
+      const refusedInUse: string[] = []
+      const unexpected: string[] = []
+      for (const id of madeTemplates) {
+        const r = await callApi(page, 'DELETE', `/api/v1/admin/flow/templates/${id}`, { token })
+        if (r.code === 0) {
+          deleted += 1
+          console.log(`[t574-chain-d][还原] 模板 ${id} 已删`)
+        } else if (r.status === 409 && r.code === 10409) {
+          refusedInUse.push(id)
+          console.log(
+            `[t574-chain-d][残留报备] 模板 ${id} 在用不可删 ⇒ HTTP=${r.status} code=${r.code} message=${r.message}（先数引用再删，repo/flow.go:284-291）`,
+          )
+        } else {
+          unexpected.push(`${id}: HTTP=${r.status} code=${String(r.code)} message=${r.message}`)
+        }
+      }
+      expect(
+        unexpected,
+        `删除结果只该有两种（删成 / 在用 409），出现第三种就是漏删或端点变化：${unexpected.join(' ; ') || '无'}`,
+      ).toEqual([])
+      const after = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+        token,
+        why: '还原后的模板列表读不通',
+      })
+      const leftovers = after.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
+      expect(after.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${after.list.length}/${after.total}）`).toBe(after.total)
+      const leftoverNames = leftovers.map((t) => t.templateId)
+      console.log(
+        `[t574-chain-d][守恒] 模板 total=${after.total} 基线=${baselineTplTotal} 删成=${deleted} 在用残留=${leftovers.length}（其中往轮 ${preexistingTplIds.length} + 本轮 ${refusedInUse.length}）｜实例残留颗数=${instancesStarted}（契约无删除端点，只能推到终态不能删行）`,
+      )
+      console.log(`[t574-chain-d][守恒] 残留名册=${leftoverNames.join(' ; ') || '无'}`)
+      if (madeTemplates.length === 0) {
+        // 本轮一笔写都没做成（前置红或被跳过）⇒ 没有守恒可验，只登记名册读数，不把往轮残留判成本轮的错
+        console.log(`[t574-chain-d][守恒] 本轮登记颗数=0 ⇒ 跳过守恒断言（只留上面两行读数）`)
+        return
+      }
+      // 残留集合按号对平，不靠颗数：往轮在用残留 + 本轮「在用不可删」= 收尾在册的每一颗
+      const sorted = (ids: string[]) => [...ids].sort()
+      expect(
+        sorted(leftoverNames),
+        `收尾在册的本前缀号集应等于「往轮残留 ${preexistingTplIds.length} 颗 + 本轮在用 ${refusedInUse.length} 颗」，本轮登记 ${madeTemplates.length} 颗、删成 ${deleted} 颗`,
+      ).toEqual(sorted([...preexistingTplIds, ...refusedInUse]))
+      // 残留的每一颗都要真的带实例引用（详情面读数）：漏删与「在用不可删」必须能区分
+      const unsupported: string[] = []
+      for (const t of leftovers) {
+        const d = await detailOf(page, token, t.templateId)
+        if (d.instanceCount < 1) unsupported.push(`${d.name}(${d.templateId}) instanceCount=${d.instanceCount}`)
+      }
+      expect(unsupported, `残留却不带实例引用的颗数=${unsupported.length}（这一类就是漏删）：${unsupported.join(' ; ') || '无'}`).toEqual([])
+      if (baselineTplTotal !== null) {
+        expect(
+          after.total,
+          `行数守恒：收尾 total=${after.total} 应等于基线 ${baselineTplTotal} + 本轮在用残留 ${refusedInUse.length}（往轮 ${preexistingTplIds.length} 颗已在基线里，不重复计）`,
+        ).toBe(baselineTplTotal + refusedInUse.length)
+      }
+    } finally {
+      await page.close()
+    }
+  })
+})

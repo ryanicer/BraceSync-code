@@ -60,6 +60,21 @@ func abortJSON(c *gin.Context, status, code int, message string) {
 	})
 }
 
+// abortDeviceSecretRefused T573：上游答了、并明确这台设备密钥材料不可用。
+// 对外仍是 20401（既有码表、既有中文文案，客户端动作＝重新扫描配网），
+// data 里带机器可读判据；日志腿与 abortJSON 同一条（技术文本只进日志，T464 双通道）。
+func abortDeviceSecretRefused(c *gin.Context, refused *SecretRefusedError) {
+	const code = 20401
+	requestID := requestIDOf(c)
+	logTechnical(c, code, http.StatusUnauthorized, refused.Error(), requestID)
+	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+		"code":    code,
+		"message": userText(code),
+		"data":    gin.H{"device_auth": "secret_unusable", "upstream_code": refused.Code},
+		"trace":   errorTrace{ErrorCode: code, RequestID: requestID},
+	})
+}
+
 // authWhitelisted JWT 免鉴权白名单（方法 + 完整路径）
 // T030 admin 登录 + T037 技师/患者登录接口本身免 JWT
 func authWhitelisted(method, path string) bool {
@@ -152,13 +167,9 @@ func timestampForLog(raw string) string {
 	return raw
 }
 
-// deviceSigAuth 设备验签中间件（默认 ±SignatureTimeWindow 时间窗）：挂载于上报路由组。
+// deviceSigAuthWindow 设备验签中间件，时间窗按分钟数入参（T550 校时档 DeviceTimeSyncWindow、
+// T570 上报档 DeviceReportWindow；默认档 SignatureTimeWindow 只留给包内基准）。
 // 失败统一 HTTP 401，body code 区分 20401（签名）/20402（时间窗）/20404（未注册，协议 §4.4）。
-func deviceSigAuth(agt *gatewayAuth) gin.HandlerFunc {
-	return deviceSigAuthWindow(agt, auth.SignatureTimeWindow)
-}
-
-// deviceSigAuthWindow 设备验签中间件，时间窗按分钟数入参（T550：校时端点用更宽的窗）。
 // 只有窗口这一维可变——密钥查询、body 上限、HMAC 比对与注入逻辑全部同一条路径。
 func deviceSigAuthWindow(agt *gatewayAuth, windowMinutes int) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -174,6 +185,15 @@ func deviceSigAuthWindow(agt *gatewayAuth, windowMinutes int) gin.HandlerFunc {
 			return
 		}
 		if err != nil {
+			// T573：答了、且明确说这台设备的密钥材料不可用 —— 按设备的永久状态，复跑不变。
+			// 对外回到既有的 20401（客户端动作就是重新扫描配网），不再冒充网关兜底的 502；
+			// 判据留在 data 里，值班席不必进日志也能分叉（与 writeProxy502Body 的 data.upstream 同族）。
+			var refused *SecretRefusedError
+			if errors.As(err, &refused) && refused.SecretUnusable {
+				log.Warn().Err(err).Str("device", deviceID).Int("upstream_code", refused.Code).Msg("device secret unusable")
+				abortDeviceSecretRefused(c, refused)
+				return
+			}
 			log.Warn().Err(err).Str("device", deviceID).Msg("device secret lookup failed")
 			abortJSON(c, http.StatusBadGateway, 502, "device-service unavailable")
 			return
