@@ -20,9 +20,17 @@
 #   「这块还在不在收尾」由 N1 那一格的 W14/W15 管。
 #   步骤口径始终是两问：脚本自己行为对不对（各行为测试步）+ 收口还接不接在部署链上（N1 的 W 格）。
 # 未在分支保护里设为 required check ⇒ 不阻塞合并。
+# T607：此前只有 pull_request 段 —— 部署脚本改动只在 PR 阶段被本线门一遍，多个 PR 各自绿、
+#   合起来的 main 从未跑过这条线（部署脚本落 main 只起 Release 一条线，而它推镜像、不含本套
+#   文法门禁）。现补 push:branches:[main]，paths 与 PR 面同串；不删、只加。
 name: Deploy Scripts Static Check
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/deploy/**'
+      - '.github/workflows/ci-deploy-scripts.yml'
   pull_request:
     branches: [main, develop]
     paths:
