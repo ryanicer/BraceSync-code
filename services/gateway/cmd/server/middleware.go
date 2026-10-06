@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -36,11 +37,23 @@ type gatewayAuth struct {
 	now       func() time.Time
 }
 
-// newGatewayAuth 组装鉴权依赖（secrets 为 nil 时设备验签路由组不可用）
+// newGatewayAuth 组装鉴权依赖（secrets 为 nil 时设备验签路由组不可用）。
+// T606 nonce 去重接线：DEVICE_NONCE_ENFORCE 三档——
+//   - 未设/off（默认）：影子观测。严格档（键=device+nonce）计数，重放被检出
+//     但放行，只落 Warn 日志——先证固件确实每次换新 nonce，再考虑收紧。
+//   - on：强制档。同设备同 nonce 在 TTL 内第二次出现拒 20403。
+//   - on-ts：强制兼容档。X-Timestamp 纳入键——固件不换 nonce 时的平台侧
+//     兼容（真重放原样重发时间戳不变仍拒；带新时间戳的正常上报不受累）。
 func newGatewayAuth(jwtSecret string, secrets SecretProvider) *gatewayAuth {
+	verifier := &auth.DeviceSigVerifier{}
+	store := auth.NewNonceStore(auth.NonceDedupTTL*time.Minute, os.Getenv("DEVICE_NONCE_ENFORCE") == "on-ts")
+	verifier.WithNonceStore(store)
+	if os.Getenv("DEVICE_NONCE_ENFORCE") == "on" || os.Getenv("DEVICE_NONCE_ENFORCE") == "on-ts" {
+		verifier.EnforceNonce = true
+	}
 	return &gatewayAuth{
 		jwtSecret: jwtSecret,
-		verifier:  &auth.DeviceSigVerifier{},
+		verifier:  verifier,
 		secrets:   secrets,
 		now:       time.Now,
 	}
@@ -210,7 +223,6 @@ func deviceSigAuthWindow(agt *gatewayAuth, windowMinutes int) gin.HandlerFunc {
 		}
 
 		// T067：X-Nonce 参与 6 行签名串（硬件清单 §2.2）；缺失则 nonce=""，与客户端不一致 → 20401。
-		// VerifyNonce 防重放仍恒放行（TODO：Redis 接入后实现）。
 		res := agt.verifier.VerifySignatureWindowed(c.Request.Method, c.Request.URL.Path, string(body),
 			c.GetHeader("X-Timestamp"), c.GetHeader("X-Signature"), deviceID, secret, c.GetHeader("X-Nonce"), agt.now(), windowMinutes)
 		if res == nil || !res.Valid {
@@ -241,6 +253,20 @@ func deviceSigAuthWindow(agt *gatewayAuth, windowMinutes int) gin.HandlerFunc {
 			}
 			abortJSON(c, http.StatusUnauthorized, code, msg)
 			return
+		}
+
+		// T606：时间窗 + nonce 双条件——签名与时间窗已过，这里补 nonce 一次性消费。
+		// 错误码区分：20403（nonce 重放）与 20401（签名）/20402（时间窗）各自独立。
+		nonce := c.GetHeader("X-Nonce")
+		nonceRes := agt.verifier.VerifyNonce(deviceID, nonce, c.GetHeader("X-Timestamp"), agt.now())
+		if nonceRes != nil && !nonceRes.Valid {
+			abortJSON(c, http.StatusUnauthorized, 20403, nonceRes.ErrorMessage)
+			return
+		}
+		if nonceRes != nil && nonceRes.NonceReplay {
+			// 影子观测：重放被检出但不拒，重复计数进日志面（nonce 值本身不落日志）。
+			log.Warn().Str("device", deviceID).Int64("nonce_occurrences", nonceRes.NonceOccurrences).
+				Msg("nonce replay observed (shadow mode, allowed)")
 		}
 
 		// 验签通过：恢复请求体供反代转发，注入设备身份头（data-service 以此为准）

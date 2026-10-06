@@ -7,8 +7,8 @@
 //     HMAC-SHA256(device_secret) 常量时间比对 → 不一致 20401
 //
 // 设备注册状态（20404）/绑定状态（20409）不在本函数职责内——由调用方
-// （gateway 中间件）依据密钥查询结果判定；Nonce 防重放（VerifyNonce）
-// 待 gateway 接入 Redis 后实现（T032 留 TODO，架构 §4.7 sec:nonce:*）。
+// （gateway 中间件）依据密钥查询结果判定；Nonce 防重放（VerifyNonce）已由
+// NonceStore 真实现（T606，进程内存储，Redis 为 Phase 2，架构 §4.7）。
 package auth
 
 import (
@@ -55,10 +55,30 @@ func (v *DeviceSigVerifier) VerifySignatureWindowed(method, path, body, timestam
 	return &VerifyResult{Valid: true}
 }
 
-// VerifyNonce Nonce 防重放（T002 桩转绿——占位实现）。
-// TODO（后续任务）：gateway 接入 Redis 后按架构 §4.7 实现
-// SET NX sec:nonce:{device_id}:{nonce_hash} EX NonceDedupTTL*60，命中重复 → 20401。
-// 当前无 Redis 依赖，恒放行（nonce 为空亦放行，兼容未携带 X-Nonce 的既有模拟器）。
-func (v *DeviceSigVerifier) VerifyNonce(deviceID, nonce string, now time.Time) *VerifyResult {
-	return &VerifyResult{Valid: true}
+// VerifyNonce Nonce 防重放真实现（T606：替换 T002 占位）。
+// 语义：同设备同 nonce 在 NonceDedupTTL 内第二次出现 → 20403（nonce 重放），
+// 与 20401（签名错误）/20402（时钟异常）可区分（卡面判据 D2）。
+// nonce 为空不参与去重（兼容未携带 X-Nonce 的既有模拟器；签名串里以空串
+// 参与 HMAC，照常验）。存储未接线（零值 verifier）恒放行，接线由
+// gateway newGatewayAuth 按 DEVICE_NONCE_ENFORCE 完成。
+// 影子模式（EnforceNonce=false）：重放被检出但放行，NonceReplay 置位
+// 供调用方落观测日志；enforce 模式：拒，ErrorCode=20403。
+func (v *DeviceSigVerifier) VerifyNonce(deviceID, nonce, timestamp string, now time.Time) *VerifyResult {
+	if v.nonces == nil || nonce == "" {
+		return &VerifyResult{Valid: true}
+	}
+	replay, occurrences := v.nonces.Check(deviceID, nonce, timestamp, now)
+	if !replay {
+		return &VerifyResult{Valid: true}
+	}
+	if !v.EnforceNonce {
+		return &VerifyResult{Valid: true, NonceReplay: true, NonceOccurrences: occurrences}
+	}
+	return &VerifyResult{
+		Valid:            false,
+		ErrorCode:        "20403",
+		ErrorMessage:     "nonce replay detected",
+		NonceReplay:      true,
+		NonceOccurrences: occurrences,
+	}
 }
