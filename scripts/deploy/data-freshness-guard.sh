@@ -3,7 +3,7 @@
 # 用法：bash scripts/deploy/data-freshness-guard.sh
 #   环境变量（只为测试可注入）：
 #     FRESHNESS_LATEST_FILE      用这份夹具代替数据库（CI 里没有 staging 凭据，靠它喂读数）
-#     FRESHNESS_MAX_SILENT_HOURS 静默多少小时判红（默认 6）
+#     FRESHNESS_MAX_SILENT_HOURS 静默多少小时判红（默认 4，且不得低于 4：T562 C-3 裁定）
 #     FRESHNESS_NOW_EPOCH        把「现在」钉成给定 epoch（默认取 date +%s）
 #     FRESHNESS_DB               真实读数用 psql 连接串（未给且无夹具 ⇒ rc=3 判红不判绿）
 #   退出码：0 数据新鲜 / 1 断流（报警）/ 3 取不到读数（读不到不等于新鲜）
@@ -15,19 +15,31 @@
 #   接法：与 T393 那两条 cron 同一侧外置部署，报警走退出码（非 0 即由调度侧发通知）。
 set -uo pipefail
 
-MAX_SILENT_HOURS="${FRESHNESS_MAX_SILENT_HOURS:-6}"
+MAX_SILENT_INPUT="${FRESHNESS_MAX_SILENT_HOURS:-4}"
 NOW="${FRESHNESS_NOW_EPOCH:-$(date +%s)}"
 TABLE="pressure_records"
 
 say() { echo "[freshness] $*"; }
+warn() { echo "[freshness] WARN $*"; echo "[freshness] WARN $*" >&2; }
 die() { echo "[freshness] ERROR $*" >&2; exit 3; }
 
-case "$MAX_SILENT_HOURS" in
-  '' | *[!0-9]*) die "FRESHNESS_MAX_SILENT_HOURS 要非负整数，实得「$MAX_SILENT_HOURS」" ;;
+case "$MAX_SILENT_INPUT" in
+  '' | *[!0-9]*) die "FRESHNESS_MAX_SILENT_HOURS 要非负整数，实得「$MAX_SILENT_INPUT」" ;;
 esac
 case "$NOW" in
   '' | *[!0-9]*) die "FRESHNESS_NOW_EPOCH 要整数秒，实得「$NOW」" ;;
 esac
+
+# 强制下限 4 小时（T562 卡 C-3，值班 PM 2026-10-06 14:15 回全件第三节裁的那个数）：
+#   配置低于 4 时按 4 生效，并双流各打一行 WARN——只走单流的话，调度侧只收一路输出就会看不见这句。
+#   这一格只顶「低于下限」那一侧；高于 4 的配置值仍按配置生效（回全件那句「不静默接受更宽的值」
+#   与「<4 按 4 生效」方向相反，本席不替 PM 拍第二个数，等 duty 一句再补）。
+MIN_SILENT_HOURS=4
+MAX_SILENT_HOURS="$MAX_SILENT_INPUT"
+if [ "$MAX_SILENT_HOURS" -lt "$MIN_SILENT_HOURS" ]; then
+  warn "配置 FRESHNESS_MAX_SILENT_HOURS=${MAX_SILENT_INPUT} 低于裁定下限 ${MIN_SILENT_HOURS} 小时，按 ${MIN_SILENT_HOURS} 小时生效（不静默接受）"
+  MAX_SILENT_HOURS="$MIN_SILENT_HOURS"
+fi
 
 # 读数：夹具优先（测试/CI），其次 psql 只读查询
 if [ -n "${FRESHNESS_LATEST_FILE:-}" ]; then
