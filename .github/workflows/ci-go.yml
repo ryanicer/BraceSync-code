@@ -1,13 +1,28 @@
-# BraceSync CI-Go — PR 门禁（Go 侧）
+# BraceSync CI-Go — PR 门禁（Go 侧）+ main push 回归（T598）
 # 对齐：docs/ §6.2/§6.3 · docs/ §7
 # 成本优化（T038）：仅 services/ 或 Go 依赖/CI 配置变更时触发；纯 docs/ Go 检查
+# T598：此前只有 pull_request 段，后端 services/** 与 scripts/db/seed/** 合并进 main 后
+#   CI-Go 一次都不跑（main 面零回归）。现补 push:branches:[main]，paths 与 PR 面同串，
+#   另加 scripts/db/**（seed.sql 与 seed.go 双源漂移由本线的 seed 守卫用例覆盖）。
 name: CI-Go
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'scripts/db/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'go.work'
+      - 'go.work.sum'
+      - '.golangci.yml'
+      - '.github/workflows/ci-go.yml'
   pull_request:
     branches: [main, develop]
     paths:
       - 'services/**'
+      - 'scripts/db/**'
       - 'go.mod'
       - 'go.sum'
       - 'go.work'
