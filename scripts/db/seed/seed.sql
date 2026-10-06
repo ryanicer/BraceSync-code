@@ -1,6 +1,10 @@
 -- BraceSync 测试/开发种子数据（单测 / 集成 / E2E / 本地开发共用）
 -- 依赖：已执行 000001_init_schema.up.sql ~ 000006_file_service.up.sql
--- 说明：phone_enc 用占位 bytea（真实环境由服务 AES-GCM 加密写入）；phone_hash 用示例 SHA-256
+-- 说明：phone_enc 一律写空 bytea（0 字节，读侧判「无号码」；真实环境由服务 AES-GCM 加密写入）；phone_hash 用示例 SHA-256
+-- T586：device_secret_enc 用「可解夹具密文」（92 字节 = 12B nonce ‖ 密文 ‖ 16B tag），
+--   由 tests 内文档化的 fixture 派生钥产出，仅供 seed/演示/测试环境；
+--   🔴 这不是生产密钥，真设备必须走注册 + 配网通路由服务用 DEVICE_SECRET_ENC_KEY 写入。
+--   守卫：services/device-service/internal/seed（占位形状筛 + 干净库装载证伪）。
 -- 幂等：可重复执行（ON CONFLICT DO NOTHING）
 
 -- ===== 预置角色（PRD §7D.11）=====
@@ -48,23 +52,23 @@ ON CONFLICT (admin_id) DO NOTHING;
 
 -- ===== 医生（3+，覆盖医生管理页）=====
 INSERT INTO doctors (doctor_id, name, title, department, team_id, phone_enc, phone_hash, admin_id) VALUES
-  ('D0001', '李医师', '主任医师', '骨科', 'TEAM01', '\x00'::bytea,
+  ('D0001', '李医师', '主任医师', '骨科', 'TEAM01', ''::bytea,
    'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90', 'A0002'),
-  ('D0002', '王医师', '副主任医师', '骨科', 'TEAM02', '\x00'::bytea,
+  ('D0002', '王医师', '副主任医师', '骨科', 'TEAM02', ''::bytea,
    'a2b3c4d5e6f70819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f91', NULL),
-  ('D0003', '赵医师', '主治医师', '康复科', 'TEAM03', '\x00'::bytea,
+  ('D0003', '赵医师', '主治医师', '康复科', 'TEAM03', ''::bytea,
    'a3b4c5d6e7f80819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f92', NULL)
 ON CONFLICT (doctor_id) DO NOTHING;
 
 -- ===== 技师（3+，覆盖技师管理页，含启停状态）=====
 INSERT INTO technicians (tech_id, name, phone_enc, phone_hash, team_id, install_count, auth_status, password_hash) VALUES
-  ('T0001', '技师老陈', '\x00'::bytea,
+  ('T0001', '技师老陈', ''::bytea,
    'b1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90', 'TEAM01', 5, 'authorized',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe'),
-  ('T0002', '技师小刘', '\x00'::bytea,
+  ('T0002', '技师小刘', ''::bytea,
    'b2b3c4d5e6f70819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f91', 'TEAM02', 3, 'authorized',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe'),
-  ('T0003', '技师小周', '\x00'::bytea,
+  ('T0003', '技师小周', ''::bytea,
    'b3b4c5d6e7f80819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f92', 'TEAM03', 1, 'unauthorized',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe')
 ON CONFLICT (tech_id) DO NOTHING;
@@ -72,23 +76,23 @@ ON CONFLICT (tech_id) DO NOTHING;
 -- ===== 患者（5+，覆盖患者管理页，含团队/医生 join 字段）=====
 INSERT INTO patients (patient_id, name, phone_enc, phone_hash, gender, age, birth_date, diagnosis, cobb_angle,
                       device_id, team_id, primary_doctor_id, status, password_hash) VALUES
-  ('P20260001', '患者小明', '\x00'::bytea,
+  ('P20260001', '患者小明', ''::bytea,
    'c1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90',
    'male', 14, '2012-03-15', '胸椎右侧凸 28°', 28.00, 'PRS-ML05-RC-20260701001', 'TEAM01', 'D0001', 'active',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe'),
-  ('P20260002', '患者小红', '\x00'::bytea,
+  ('P20260002', '患者小红', ''::bytea,
    'd1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90',
    'female', 12, '2014-06-20', '腰椎左侧凸 22°', 22.00, NULL, 'TEAM01', 'D0001', 'pending',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe'),
-  ('P20260003', '患者小杰', '\x00'::bytea,
+  ('P20260003', '患者小杰', ''::bytea,
    'c2b3c4d5e6f70819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f91',
    'male', 13, '2013-09-10', '胸椎左侧凸 35°', 35.00, 'PRS-ML05-RC-20260701003', 'TEAM02', 'D0002', 'active',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe'),
-  ('P20260004', '患者小琳', '\x00'::bytea,
+  ('P20260004', '患者小琳', ''::bytea,
    'c3b4c5d6e7f80819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f92',
    'female', 15, '2011-04-25', '双弯型 40°', 40.00, 'PRS-ML05-RC-20260701004', 'TEAM02', 'D0002', 'active',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe'),
-  ('P20260005', '患者小宇', '\x00'::bytea,
+  ('P20260005', '患者小宇', ''::bytea,
    'c4b5c6d7e8f90819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f93',
    'male', 10, '2016-01-08', '胸椎右侧凸 18°', 18.00, NULL, 'TEAM03', 'D0003', 'pending',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe')
@@ -97,15 +101,15 @@ ON CONFLICT (patient_id) DO NOTHING;
 -- ===== 设备（5+，覆盖设备管理页，含患者姓名 join）=====
 INSERT INTO devices (device_id, model, firmware_version, device_secret_enc, patient_id,
                     wifi_ssid, bind_time, status, last_report_at) VALUES
-  ('PRS-ML05-RC-20260701001', 'PRS-ML05-RC', 'v1.2.0', '\x00'::bytea, 'P20260001',
+  ('PRS-ML05-RC-20260701001', 'PRS-ML05-RC', 'v1.2.0', '\x9005e71d65d1a0e6044845456cd00d13db59afc2e1b793b461351c5aaa0a2c1c3cfa0983508e42d7249e49c16105e2c149db81ead0172844774759bb53f20969a8dcad4ec5546f793879d40ad1d131a0c71dc65e464bc234dfaa0edd'::bytea, 'P20260001',
    'ClinicWiFi', now() - INTERVAL '10 days', 'online', now() - INTERVAL '20 minutes'),
-  ('PRS-ML05-RC-20260701002', 'PRS-ML05-RC', 'v1.2.0', '\x00'::bytea, NULL,
+  ('PRS-ML05-RC-20260701002', 'PRS-ML05-RC', 'v1.2.0', '\xdd1167fbc82fff9af49a67a415c7e4ca5a4eb3b6ba371b053b255ae5f4a2eaa371f172c758b13b9d4da273919ffec860408a66af59375c43666bda58a71f90dccca23484ac66133570feb8ca6fbfa7eedc150e8792251227c30f25b7'::bytea, NULL,
    NULL, NULL, 'unbound', NULL),
-  ('PRS-ML05-RC-20260701003', 'PRS-ML05-RC', 'v1.3.0', '\x00'::bytea, 'P20260003',
+  ('PRS-ML05-RC-20260701003', 'PRS-ML05-RC', 'v1.3.0', '\x2b0bcbbb0950a732f8af6365dce50723d77d37bb3d5fe24fe1b19a02fd454c943a170cca8d218d17210b7e40ca351c5bda53ca4f32368416bb241b956292db975ba9d65f95e99639709b9b7ce2fede9ed6727aa1a780381895c435fb'::bytea, 'P20260003',
    'ClinicWiFi', now() - INTERVAL '8 days', 'online', now() - INTERVAL '35 minutes'),
-  ('PRS-ML05-RC-20260701004', 'PRS-ML05-RC', 'v1.3.0', '\x00'::bytea, 'P20260004',
+  ('PRS-ML05-RC-20260701004', 'PRS-ML05-RC', 'v1.3.0', '\xa43044ed472d7f9422f66e6b603ef2f97424d7fa338c1e71c952e80bd2d0b5584ae3c9969aaa3f11fd7ce5e217c7eea6559d93b812236c4a025503b7bba09cbcd741861556b169d29983972ea2773206fc245fa1dc0b3e1bd1aa8f78'::bytea, 'P20260004',
    'HomeWiFi', now() - INTERVAL '5 days', 'offline', now() - INTERVAL '3 hours'),
-  ('PRS-ML05-RC-20260701005', 'PRS-ML05-RC', 'v1.2.0', '\x00'::bytea, NULL,
+  ('PRS-ML05-RC-20260701005', 'PRS-ML05-RC', 'v1.2.0', '\x02649f7eebb7f75eaa5be726e808f8a5a7ae2883f26b67f9d565824ed6ca655a048e9bff65cb0165f7eb18f062a073463ec328bb62166593ad5f82500c366eb74a4057103dd5482479d135a883a3f6a378b459301ae52571f7bd8f52'::bytea, NULL,
    NULL, NULL, 'unbound', NULL)
 ON CONFLICT (device_id) DO NOTHING;
 

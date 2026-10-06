@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { appendFileSync } from 'node:fs'
 import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
 
 /**
@@ -200,6 +201,24 @@ async function callOk<T>(
   return r.data as T
 }
 
+/**
+ * T582 格一：把「只作自证、不作门禁」的快照送进 job summary。
+ * GITHUB_STEP_SUMMARY 由 runner 注入给每一步；本地跑没有它，此时只留 stdout（那句会当场说明，不留静默）。
+ * 写失败只登记、不判红：这一格是读数出口，不是被测行为。
+ */
+function appendJobSummary(text: string): void {
+  const file = process.env.GITHUB_STEP_SUMMARY ?? ''
+  if (!file) {
+    console.log('[t574-chain-d][快照] 未设 GITHUB_STEP_SUMMARY（本地跑）⇒ 快照只在 stdout，不进 job summary')
+    return
+  }
+  try {
+    appendFileSync(file, `- ${text}\n`, 'utf8')
+  } catch (e) {
+    console.log(`[t574-chain-d][快照] 写 job summary 失败（不影响用例结论）：${String(e)}`)
+  }
+}
+
 /** LogicFlow 2.x 图元：type 是画布形状，properties.kind 是 8 类节点（前端 kinds.ts 的口径，后端不校验） */
 const fn = (id: string, kind: string, shape: string, label: string, x: number): FlowNode => ({
   id,
@@ -346,21 +365,43 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
       `[t574-chain-d][快照] templates total=${baselineTplTotal} 本前缀在册颗数=${mine.length}（详情面 instanceCount 逐颗≥1 已核，都是「在用不可删」的往轮残留）`,
     )
 
-    // 实例面基线：现读前 10 颗告警各自的实例颗数，只作快照打印（真正取号由 takeFreeAlert 逐颗现读）
+    // 实例面基线（T582 格一改自证式）：现读**整页**每一颗告警各自的实例颗数，只作快照，不再对 free 作门禁断言。
+    // 为什么这一格不该当门禁（口径来自派发单 §四 格一 允许方向②，不是「放宽」）：
+    //   ① free 从来不是本文件的真实前置。真正取号的是 takeFreeAlert，它扫的是整页并按颗现读，
+    //      扫不到才抛「前 N 颗都已有实例（共 M 颗）」——那一红才是 A3/A4 起不了实例的真读数。
+    //      24.0 原先只看前 10 颗，是一把比自身用途更严的尺：它红的时候后面几条未必跑不动
+    //      （2026-10-06 02:12 只读实测：total=116、整页 20 颗里空闲=8、全库空闲=104、已起实例=12）。
+    //   ② 同时禁两条歪路：把断言改成 free >= 0（空断言，抹平症状）或往后翻页凑数（移动分母）。
+    //   ③ 数据面自检的实质留在断言里，且只断实质：告警面在架（total>0）、本页非空（list>0）、
+    //      逐颗读数按预期形态回（callOk 已把 HTTP/code 非绿的每一发当场判红并带坐标）。
+    // 出口三处：stdout（run 日志）+ annotation（HTML 报告）+ job summary（不得静默）。
     const alerts = await callOk<{ list: { alertId: number | string }[]; total: number }>(page, 'GET', '/api/v1/alerts?page=1&pageSize=20', {
       token,
       why: '告警列表读不通',
     })
-    let free = 0
-    for (const a of alerts.list.slice(0, 10)) {
-      const inst = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${String(a.alertId)}`, {
+    expect(alerts.total, '告警面 total=0 ⇒ staging 没 seed 告警，本文件与所有链路都无从跑起（这是数据面缺口，不是本用例的判据）').toBeGreaterThan(0)
+    expect(alerts.list.length, '告警面 total>0 而本页回 0 颗 ⇒ 分页面读空，取数姿势有问题').toBeGreaterThan(0)
+
+    const faceRows: { alertId: string; instances: number }[] = []
+    for (const a of alerts.list) {
+      const id = String(a.alertId)
+      const inst = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${id}`, {
         token,
         why: '按告警取实例读不通',
       })
-      if (inst.list.length === 0) free += 1
+      faceRows.push({ alertId: id, instances: inst.list.length })
     }
-    expect(free, '至少要有 1 颗没有流程实例的告警，否则 A3/A4 起不了实例').toBeGreaterThan(0)
-    console.log(`[t574-chain-d][快照] 告警 total=${alerts.total} 前 10 颗里空闲=${free}`)
+    const free = faceRows.filter((r) => r.instances === 0).length
+    const freeIn10 = faceRows.slice(0, 10).filter((r) => r.instances === 0).length
+    const snapshotLine =
+      `[t574-chain-d][快照] 告警 total=${alerts.total} 本页=${faceRows.length} 空闲(整页)=${free} 空闲(前10)=${freeIn10} ` +
+      `逐颗=${faceRows.map((r) => `${r.alertId}:${r.instances}`).join(' ')}`
+    console.log(snapshotLine)
+    test.info().annotations.push({
+      type: 'chain-d-alert-face',
+      description: `实例面快照（自证式，非门禁）：${snapshotLine}`,
+    })
+    appendJobSummary(snapshotLine)
   })
 
   test('24.1 A1 建模板 → 详情逐字段值级回读（不是只断言「有 nodes 数组」）', async ({ page }) => {
