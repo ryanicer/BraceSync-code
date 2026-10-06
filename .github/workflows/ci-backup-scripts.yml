@@ -3,9 +3,16 @@
 # 定位 = 最小语法级检查。`bash -n` 失败即红（语法错的脚本 cron 必挂）；
 # shellcheck 结论只作注释呈现，不做门禁（既有告警面广，先建可见性）。
 # 未在分支保护里设为 required check ⇒ 不阻塞合并。
+# T607：此前只有 pull_request 段 —— 备份脚本改动合并进 main 后本线一次都不跑（与 ci-deploy-scripts
+#   同形，两支同族）。现补 push:branches:[main]，paths 与 PR 面同串；不删、只加。
 name: Backup Scripts Static Check
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/backup/**'
+      - '.github/workflows/ci-backup-scripts.yml'
   pull_request:
     branches: [main, develop]
     paths:
