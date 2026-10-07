@@ -1,11 +1,13 @@
 import { test, expect } from '@playwright/test'
 import { routes, setupPatientE2E } from '../helpers'
-import { wearing15 } from '../../apps/patient-miniapp/tests/e2e/fixtures/patient'
+import { wearing15, E2E_TARGET_HOURS_FIXTURE } from '../../apps/patient-miniapp/tests/e2e/fixtures/patient'
 
 /**
  * anomaly 页（T221 设计稿日历版）：日历月视图 + 佩戴/压力分段 + 点日期详情卡
  * mock 数据：15 条佩戴记录（2026-06-28 → 2026-07-12）、7 组压力异常
  * 合成圆点（佩戴+压力取严）：2026年7月 error=07-08/07-10/07-12（3 红），warn=02/04/05/07/09/11（6 橙）
+ * T614 第三项：目标线相关的期望值一律由下发桩值 E2E_TARGET_HOURS_FIXTURE 派生，不再在本文件写死数字
+ * （真源是 sys_configs.wear_target_hours，各环境现值不同 —— 配置面 9 / TST 22 —— 钉住数字的用例无法判读）
  */
 
 function todayKey(): string {
@@ -62,14 +64,16 @@ test('切到 2026年7月 显示 3 红 6 橙异常圆点', async ({ page }) => {
   await expect(page.locator('.cal-dot.warn')).toHaveCount(6)
 })
 
-test('点选日期展示佩戴详情卡（阈值线 0/16/18h）', async ({ page }) => {
+test('点选日期展示佩戴详情卡（目标线消费下发字段，期望值由桩值派生）', async ({ page }) => {
   await gotoJuly2026(page)
   await page.locator('.cal-cell', { has: page.locator('.cal-num', { hasText: /^8$/ }) }).click()
   const card = page.locator('.detail-card')
   await expect(card.locator('.detail-date-header')).toHaveText('2026-07-08 · 严重不足')
   await expect(card.locator('.dwh-value')).toHaveText('3.1')
-  await expect(card.locator('.detail-bar-labels')).toContainText('目标 16h')
-  await expect(card.locator('.detail-hint-warn')).toContainText('低于医生建议的 16h 目标')
+  await expect(card.locator('.detail-bar-labels')).toContainText(`目标 ${E2E_TARGET_HOURS_FIXTURE}h`)
+  await expect(card.locator('.detail-hint-warn')).toContainText(
+    `低于医生建议的 ${E2E_TARGET_HOURS_FIXTURE}h 目标`,
+  )
   // 选中态高亮
   await expect(page.locator('.cal-cell.cal-sel .cal-num')).toHaveText('8')
 })
