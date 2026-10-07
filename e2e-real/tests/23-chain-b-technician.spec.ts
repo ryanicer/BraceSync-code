@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Response } from '@playwright/test'
+import { resolveH5Origin } from '../h5-origin'
 
 /**
  * T462 S5 · 链 B 技师端（真实模式 / staging）
@@ -45,15 +46,8 @@ import { test, expect, type Page, type Response } from '@playwright/test'
  *   缺了那两行，值到不了用例，登录腿必红 —— 那是设计意图，不是偶发。
  */
 
-/** 技师端产物内写死的源（见文件头「同源约束」） */
-const H5_ORIGIN = (process.env.E2E_TECH_H5_URL ?? 'http://hbksd.com.cn:81').replace(/\/+$/, '')
-// 生产红线：链 B 只打 staging。生产是 80/443 与 api 子网、生产 IP，一律拒跑，不靠「我记得设对了」。
-if (!/^http:\/\/[^/]+:\d+$/.test(H5_ORIGIN)) {
-  throw new Error(`T462 链 B 技师端源应是 http + 显式端口的 staging 入口，实得 ${H5_ORIGIN}`)
-}
-if (/api\.hbksd\.com\.cn|49\.235\.137\.217/.test(H5_ORIGIN)) {
-  throw new Error(`T462 链 B 命中生产入口，红线拒绝：${H5_ORIGIN}`)
-}
+/** 技师端产物内写死的源（见文件头「同源约束」）；T614 起由 ../h5-origin 统一解析并点名缺失变量 */
+const H5_ORIGIN = resolveH5Origin('E2E_TECH_H5_URL', 'T462 链 B 技师端')
 
 /** uni-app H5 把 pages.json 首页（登录页）映射成 '#/'，深链走 hash（本轮实测） */
 const PAGE_LOGIN = `${H5_ORIGIN}/tech-h5/#/`

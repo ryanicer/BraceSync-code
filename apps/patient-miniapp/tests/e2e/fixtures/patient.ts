@@ -190,9 +190,11 @@ export function wearing15(): WearingFixtureRow[] {
 }
 
 // ---------- profile 只读面的期望时长（T579，GET /api/v1/patient/profile） ----------
-//  wearing / anomaly 两页的目标时长从这个面的 data 顶层标量取。这里给 16 = anomaly.spec 既有断言口径，
-//  于是「页面在消费下发字段」由那条原断言直接证，不必改既有期望值；
+//  wearing / anomaly 两页的目标时长从这个面的 data 顶层标量取。这一枚是本链唯一的期望值来源：
+//  anomaly.spec 的目标线断言由它派生（T614 第三项），不再在用例里各写一份数字；
 //  「字段缺席退回 22」那一格由 tests/unit 覆盖。
+//  🔴 它是 mock 桩值，不是环境配置：真源 sys_configs.wear_target_hours 各环境现值不同
+//  （配置面 9 / TST 22），真实环境的对平判据在 e2e-real/tests/26-wear-target-config.spec.ts。
 export const E2E_TARGET_HOURS_FIXTURE = 16
 export function wearTargetProfileStub(): { dailyWearTargetHours: number } {
   return { dailyWearTargetHours: E2E_TARGET_HOURS_FIXTURE }

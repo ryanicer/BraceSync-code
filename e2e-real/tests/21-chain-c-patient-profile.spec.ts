@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import { realLogin, getAuthToken, uniqueName, E2E_PATIENT_NAME_PREFIX } from '../real-helpers'
+import { resolveH5Origin } from '../h5-origin'
 
 /**
  * T462 S4 · 链 C 患者自助资料编辑（真实模式 / staging）
@@ -30,15 +31,8 @@ import { realLogin, getAuthToken, uniqueName, E2E_PATIENT_NAME_PREFIX } from '..
  *   那一轮 STRICT）。
  */
 
-/** 患者端产物内写死的源（见文件头「同源约束」） */
-const H5_ORIGIN = (process.env.E2E_PATIENT_H5_URL ?? 'http://hbksd.com.cn:81').replace(/\/+$/, '')
-// 生产红线：链 C 只打 staging。生产是 80/443 与 api 子网、生产 IP，一律拒跑，不靠「我记得设对了」。
-if (!/^http:\/\/[^/]+:\d+$/.test(H5_ORIGIN)) {
-  throw new Error(`T462 链 C 患者端源应是 http + 显式端口的 staging 入口，实得 ${H5_ORIGIN}`)
-}
-if (/api\.hbksd\.com\.cn|49\.235\.137\.217/.test(H5_ORIGIN)) {
-  throw new Error(`T462 链 C 命中生产入口，红线拒绝：${H5_ORIGIN}`)
-}
+/** 患者端产物内写死的源（见文件头「同源约束」）；T614 起由 ../h5-origin 统一解析并点名缺失变量 */
+const H5_ORIGIN = resolveH5Origin('E2E_PATIENT_H5_URL', 'T462 链 C 患者端')
 const H5_PROFILE_PATH = '/patient-h5/#/pages/profile/index'
 
 /** 患者端存储键（apps/patient-miniapp/src/utils/token.ts 的 TOKEN_KEY / PATIENT_ID_KEY） */
