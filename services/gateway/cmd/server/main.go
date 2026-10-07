@@ -30,6 +30,9 @@ func setupRouter() *gin.Engine {
 	agt := loadGatewayAuth()           // JWT_SECRET + 设备密钥提供器（环境变量注入，不入库）
 	registerAPIProxies(r, agt)         // T032：/api/v1 全量路由 + 统一 JWT 鉴权 + 端点级 RBAC（T039-H2）+ T091 provision-key 限流
 	registerDeviceReportRoutes(r, agt) // T032：设备域路由 + HMAC 验签
+	// T612：路由注册层的方法白名单校验 —— 必须在两组路由都注册完之后挂，兜底处理器
+	// 继承上面已注册的 requestIDMiddleware，日志行才带得上关联号
+	registerRouteMethodGuard(r)
 	return r
 }
 
