@@ -6,7 +6,7 @@ import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
  * T574 · 链 D 流程图配置全链路（真实模式 / staging）
  *
  * 六格按派发单 A1-A6 逐格给读数，判据 D1-D5 对应到 24.1-24.7。口径来源（全部现读，不采信转述）：
- *   路由表      services/user-service/internal/handler/handler.go:324-333
+ *   路由表      services/user-service/internal/handler/flow_t274.go:7-9（接口清单：模板有 DELETE / 实例无）
  *   图校验      services/user-service/internal/handler/flow_t274.go:114-176（parseFlowGraph）
  *   端点键名    flow_t274.go:86-91（LogicFlow 2.x 的 sourceNodeId / targetNodeId）
  *   状态机      flow_t274.go:663-770（confirm 推进 / reject 置 skipped 不推进 / 无后继则 completed）
@@ -41,7 +41,7 @@ import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
  *   还原  afterAll 独立于用例结果逐颗 DELETE /admin/flow/templates/:id，并逐颗定性删除结果；
  *   报备  删不掉的颗数、每颗的 HTTP/code/message 与 instanceCount 都打进 stdout。
  *   🔴 两处「还原做不到」是契约事实，本文件把它们钉在证据面上而不是藏起来：
- *      ① 实例侧没有删除端点（handler.go:324-333 只有模板 CRUD 有 DELETE）⇒ 对已知实例发 DELETE
+ *      ① 实例侧没有删除端点（flow_t274.go:7-9 的接口清单里 DELETE 只有 templates 一条，instances 三条都是读/操作）⇒ 对已知实例发 DELETE
  *         应 404（24.7 断言），实例行只能推到终态、不能删行；
  *      ② 被实例引用的模板不可删（repo/flow.go:284-291 先数 flow_instance 引用，cnt>0 直接
  *         ErrFlowTemplateInUse → handler.go:507 转 409）⇒ 凡跑过实例的模板都留在架上。
@@ -994,7 +994,7 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
   test('24.7 残留与守恒：实例无删除端点钉在证据面，模板颗数与实例颗数互相对平', async ({ page }) => {
     const token = await ensureAdmin(page)
     expect(linAlertId, '依赖 24.3 的实例作「发 DELETE」靶子（串行模式下 24.3 红则本条不跑）').toBeTruthy()
-    // 实例侧：路由表没有 DELETE /admin/flow/instances/:id（handler.go:324-333）⇒ 对已知实例发 DELETE 应 404
+    // 实例侧：路由表没有 DELETE /admin/flow/instances/:id（flow_t274.go:7-9 接口清单里 DELETE 只有 templates）⇒ 对已知实例发 DELETE 应 404
     const known = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${linAlertId}`, {
       token,
       why: '守恒腿读实例不通',
