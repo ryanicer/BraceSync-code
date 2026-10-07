@@ -155,9 +155,9 @@ func TestJWT_Whitelist_LoginWithoutToken(t *testing.T) {
 	require.Len(t, *received, 1)
 	assert.Contains(t, (*received)[0], "POST /api/v1/auth/login")
 
-	// GET /auth/login 未注册（仅 POST 登录入口）→ 404，且不触达后端
+	// GET /auth/login 方法不在白名单（登录入口只注册 POST）→ 405（T612 之前这一格吐 404）
 	code, _ = httpDoFull(t, http.MethodGet, gw.URL+"/api/v1/auth/login", "", nil)
-	assert.Equal(t, http.StatusNotFound, code)
+	assert.Equal(t, http.StatusMethodNotAllowed, code)
 }
 
 func TestJWT_Whitelist_TechPatientLogin(t *testing.T) {
@@ -178,9 +178,9 @@ func TestJWT_Whitelist_TechPatientLogin(t *testing.T) {
 	require.Len(t, *received, 2)
 	assert.Contains(t, (*received)[1], "POST /api/v1/patient/login")
 
-	// GET /tech/login 未注册 → 404
+	// GET /tech/login 方法不在白名单（只注册 POST）→ 405（T612 之前这一格吐 404）
 	code, _ = httpDoFull(t, http.MethodGet, gw.URL+"/api/v1/tech/login", "", nil)
-	assert.Equal(t, http.StatusNotFound, code)
+	assert.Equal(t, http.StatusMethodNotAllowed, code)
 }
 
 func TestJWT_HealthzPublic(t *testing.T) {
