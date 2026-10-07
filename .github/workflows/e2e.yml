@@ -79,7 +79,11 @@ env:
 
 jobs:
   patient-miniapp-e2e:
-    name: Patient MiniApp E2E (Playwright, H5)
+    # 📌 口径（Boss 2026-10-07 23:0x 明确）：本job 跑的是 **H5 版**（uni-app 编译出的网页）
+    #    用 Playwright + Chromium 打开，**不需要微信开发者工具**，跑在 GitHub 托管的 ubuntu-latest 上。
+    #    它覆盖「页面跳转 + 数据渲染 + 接口调用」这条前后端功能链——**功能层面前后走一遍由此 job 保证**。
+    #    ⚠️ **它不测真机小程序**（微信里的实际表现、扫码、wx 授权登录）——那一层见 miniapp-smoke。
+    name: Patient 小程序 H5 E2E (Playwright Chromium)
     runs-on: ubuntu-latest
     # T381：PR + push main 都跑（mock 本地 webServer，不打 staging、零外部写）
     if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -125,7 +129,9 @@ jobs:
           retention-days: 14
 
   tech-miniapp-e2e:
-    name: Tech MiniApp E2E (Playwright, H5)
+    # 📌 口径同上：H5 版（Playwright + Chromium，免开发者工具），覆盖功能链前后走一遍
+    #    ⚠️ 不测真机小程序；技师端真机那层由 Boss 侧 devtools 手工验证。
+    name: Tech 小程序 H5 E2E (Playwright Chromium)
     runs-on: ubuntu-latest
     # T381：PR + push main 都跑（mock 本地 webServer，不打 staging、零外部写）
     if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -400,7 +406,11 @@ jobs:
   #   真实小程序冒烟的验收权在 Boss 侧 devtools 实跑（e2e-miniapp/run-real-e2e.ps1）。
   # placeholder-ok: CI 无 devtools 环境，实跑需 Boss 侧 Windows + 微信开发者工具自动化端口
   miniapp-smoke:
-    name: 小程序冒烟（占位，未实跑；miniprogram-automator 需 devtools）
+    # 📌 口径（Boss 2026-10-07 23:0x 明确）：**真机小程序冒烟占位，CI 不执行任何断言。**
+    #    本job 的绿色**不代表小程序冒烟通过**——它只是占位。
+    #    真机验证的责任在人工侧（Boss 的 devtools 手工跑，见本job 步骤里的 warning 原文）。
+    #    功能层面前后走一遍已由上面三个 H5 job 覆盖，真机落后一点可接受。
+    name: 真机小程序冒烟（占位零断言·需 devtools·绿不代表通过）
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
