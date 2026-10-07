@@ -349,6 +349,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: 守时自记（T609 乙案，实测迟到分钟数进 job summary）
+        # 只读 API、只写 summary：不碰 cron / concurrency / schedule / workflow_dispatch，不打 staging。
+        # 名义触发时刻 GitHub 不给，只能由 github.event.schedule 的「分 时」两格推；形不支持就明写不判。
+        # PR 触发时本步照跑但判语是 NOT_SCHEDULE_EVENT —— 留的是「run 内取数通路跑通」这一格，
+        # 定时档的真读数要等下一次 schedule 真触发才出得来（本卡交付面 3 的三档实测窗）。
+        env:
+          SCHEDULE_CRON: ${{ github.event.schedule }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ci/e2e-real-lateness-summary.mjs >> "$GITHUB_STEP_SUMMARY"
       - name: Install dependencies
         run: npm ci
       - name: Install Playwright browsers
