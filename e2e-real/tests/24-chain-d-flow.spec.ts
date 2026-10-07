@@ -6,7 +6,7 @@ import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
  * T574 · 链 D 流程图配置全链路（真实模式 / staging）
  *
  * 六格按派发单 A1-A6 逐格给读数，判据 D1-D5 对应到 24.1-24.7。口径来源（全部现读，不采信转述）：
- *   路由表      services/user-service/internal/handler/handler.go:324-333
+ *   路由表      services/user-service/internal/handler/flow_t274.go:7-9（接口清单：模板有 DELETE / 实例无）
  *   图校验      services/user-service/internal/handler/flow_t274.go:114-176（parseFlowGraph）
  *   端点键名    flow_t274.go:86-91（LogicFlow 2.x 的 sourceNodeId / targetNodeId）
  *   状态机      flow_t274.go:663-770（confirm 推进 / reject 置 skipped 不推进 / 无后继则 completed）
@@ -41,7 +41,7 @@ import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
  *   还原  afterAll 独立于用例结果逐颗 DELETE /admin/flow/templates/:id，并逐颗定性删除结果；
  *   报备  删不掉的颗数、每颗的 HTTP/code/message 与 instanceCount 都打进 stdout。
  *   🔴 两处「还原做不到」是契约事实，本文件把它们钉在证据面上而不是藏起来：
- *      ① 实例侧没有删除端点（handler.go:324-333 只有模板 CRUD 有 DELETE）⇒ 对已知实例发 DELETE
+ *      ① 实例侧没有删除端点（flow_t274.go:7-9 的接口清单里 DELETE 只有 templates 一条，instances 三条都是读/操作）⇒ 对已知实例发 DELETE
  *         应 404（24.7 断言），实例行只能推到终态、不能删行；
  *      ② 被实例引用的模板不可删（repo/flow.go:284-291 先数 flow_instance 引用，cnt>0 直接
  *         ErrFlowTemplateInUse → handler.go:507 转 409）⇒ 凡跑过实例的模板都留在架上。
@@ -321,7 +321,11 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     const pool = scanTotal === null ? '未读' : String(Math.min(scanTotal, MAX_SCAN_ALERTS))
     return (
       `[t610-取号] 无实例条件全池建队｜池total=${scanTotal ?? '未读'} 扫描上限=${pool} 已消费=${scanCursor} ` +
-      `实探=${probedInstances.size} 翻页=${scanPages} 队列剩=${freeQueue.length}｜${suffix}`
+      `实探=${probedInstances.size} 翻页=${scanPages} 队列剩=${freeQueue.length}｜${suffix}` +
+      // 🔴 E-130（2026-10-07 16:2x）：本行四个数都不是「被占数」，逐个标名，
+      //   免得读的人拿其中一个当占用量（旧句「共 118 颗」就是这么被读成「池耗尽」的）。
+      `｜口径：池total=告警面声明总数｜扫描上限=本 run 最多扫几颗｜已消费=扫过几颗｜` +
+      `实探=逐颗现读实例数几颗｜队列剩=判为无实例、待取的颗数｜被占数不在本行，须按 alertId 反查实例面另取`
     )
   }
 
@@ -371,14 +375,29 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     return freeQueue.length - before
   }
 
-  /** 停手句（昨天那版保留：不再猜号、直接停手报 PM）＋ 可执行下一步指针 */
+  /**
+   * 停手句：不再猜号、直接停手报 PM ＋ 可执行下一步指针。
+   *
+   * 🔴 E-130（2026-10-07 16:2x，值班 PM 实测后改写）：本句旧版把「授权新建无实例告警」列成
+   *   待裁第②项，但那一格（造峰）已被 12:0x 裁定**不批** ——「为满足判据去造数据= 测试反过来
+   *  塑造被测系统」。留着它会让下一个跑红的人去请一个已被否的授权。
+   *   ⇒ ②改成「先读占用侧实况，不造数」；造峰与真清理都不再是本停手句的出口。
+   *
+   * 另一处已改：faceLine 里 `扫描上限` 与 `池total` 在池小于上限时**两数同值**，
+   *   与旧句「前 20 颗…（共 118 颗）」是同一类歧义（两个数并排、无标签 ⇒ 读的人会把总数读成被占数，
+   *   本席 15:2x 就真这么读错过一次，报了「池耗尽」而实际空闲 88）。现每个数都带名。
+   */
   function stopAndReport(): Error {
     return new Error(
       faceLine('空闲=0') +
         ' 本文件不再猜号，直接停手报 PM。下一步按可执行口径走（不是只留一句停手）：' +
         '① 把本行读数原样贴进 T610 卡评论并点名值班 PM；' +
-        '② 请 PM 裁的是甲案之外那一格——授权新建无实例告警（用例侧不自建，也不清在用的那几颗实例）；' +
-        '③ 裁完不动判据直接复跑：npx playwright test --config=e2e-real/playwright.real.config.ts -g "24.3"',
+        '② 先读占用侧实况再判：「实探」是本 run 逐颗现读的颗数，「已消费」是扫过的颗数，' +
+        '两者都不是被占数——被占数须按 alertId 逐颗反查实例面另取（QA 判据：资源结论只认总量/已占/空闲三颗数，' +
+        '不认任何一句报错文案里的数字）；' +
+        '③ 出口只有两条，**都不造数**：甲= 等真实告警事件流进来（本停手句默认走这条）；' +
+        '乙= 清理在用实例（须Boss 书面授权，本句不代请）；' +
+        '④ 判据不动，直接复跑：npx playwright test --config=e2e-real/playwright.real.config.ts -g "24.3"',
     )
   }
 
@@ -975,7 +994,7 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
   test('24.7 残留与守恒：实例无删除端点钉在证据面，模板颗数与实例颗数互相对平', async ({ page }) => {
     const token = await ensureAdmin(page)
     expect(linAlertId, '依赖 24.3 的实例作「发 DELETE」靶子（串行模式下 24.3 红则本条不跑）').toBeTruthy()
-    // 实例侧：路由表没有 DELETE /admin/flow/instances/:id（handler.go:324-333）⇒ 对已知实例发 DELETE 应 404
+    // 实例侧：路由表没有 DELETE /admin/flow/instances/:id（flow_t274.go:7-9 接口清单里 DELETE 只有 templates）⇒ 对已知实例发 DELETE 应 404
     const known = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${linAlertId}`, {
       token,
       why: '守恒腿读实例不通',
