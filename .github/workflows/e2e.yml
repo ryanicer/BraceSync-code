@@ -20,6 +20,9 @@
 #
 # ─── T304：staging 地址与变量名口径 ───────────────────────────────────────────
 # 唯一入口变量 = E2E_STAGING_URL（本文件 env 块定义，e2e-real 两个 config 只读它）。
+#   T614 补一格：链 B/链 C 的 H5 源是另外两颗（E2E_TECH_H5_URL / E2E_PATIENT_H5_URL，同在本文件
+#   env 块定义）—— 这两颗不跟着入口变量走，因为小程序 H5 产物把 API 基址在构建期写死，
+#   页面只能从那个源打开（详见 e2e-real/h5-origin.ts 顶部注释）。换环境时三颗一起换。
 #   历史遗留的 STAGING_URL / BASE_URL / E2E_BASE_URL 三种写法已废除，不留别名：
 #     · BASE_URL 曾在此传给 mock 用例，且根 config 根本不读它 ⇒ 死变量，已删
 #     · E2E_BASE_URL 曾同时被「mock 本地 dev server」和「真实模式」读取 ⇒ mock 侧改名
@@ -76,6 +79,14 @@ concurrency:
 env:
   NODE_VERSION: "20"
   E2E_STAGING_URL: http://106.52.39.208:81
+  # T614：链 B / 链 C 的 H5 源。两条 H5 腿不能跟着 E2E_STAGING_URL 走 —— 技师端/患者端产物把 API
+  #   基址在构建期写死（apps/*/.env.staging 经 define 注入 __API_BASE_URL__，全仓无 CORS 放行），
+  #   页面必须从那个源打开，否则应用自己的请求跨源被浏览器拦掉。此前这两颗只在用例里留了默认值、
+  #   CI 侧没有注入位 ⇒ 换环境时无从显式指定（2026-10-07 真打 TST 的 4 条红就是这么来的）。
+  #   口径：换目标环境时三颗一起改（E2E_STAGING_URL + 下面两颗）；只改第一颗而这两颗仍空着，
+  #   e2e-real/h5-origin.ts 会点名是哪一条链的哪一颗变量没设并判红，不会静默留在 staging。
+  E2E_TECH_H5_URL: http://hbksd.com.cn:81
+  E2E_PATIENT_H5_URL: http://hbksd.com.cn:81
 
 jobs:
   patient-miniapp-e2e:
