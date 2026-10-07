@@ -293,27 +293,116 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     return adminToken
   }
 
-  /** 现读一颗「还没有流程实例」的告警号，跳过本文件已用掉的（返回的告警号即可安全起实例） */
-  async function takeFreeAlert(p: Page, token: string): Promise<string> {
-    const alerts = await callOk<{ list: { alertId: number | string }[]; total: number }>(
-      p,
-      'GET',
-      '/api/v1/alerts?page=1&pageSize=20',
-      { token, why: '告警列表读不通 ⇒ 拿不到可起实例的告警' },
+  /* ───────── T610：取号口径（这一组替换掉原先只读最新一窗的那条腿） ─────────
+   *
+   * 病不在判据而在候选面：旧腿只读 `/api/v1/alerts?page=1&pageSize=20` 那一窗，而告警面是
+   * `ORDER BY ts DESC`（repo/query.go:164）——值班 PM 08:49 实测四条：告警共 118 颗、有流程实例的
+   * 只 22 颗、无实例 96 颗、按旧口径取的那 20 颗恰好全在「有实例」那 22 颗里。数据池够用，
+   * 是取号方式把候选面押死在最新一窗。甲案＝只改取号（不新建告警、不清数据、不动断言）。
+   *
+   * 后端没有「按无实例过滤」的入参（public.go:177-206 只认 patientId/type/status/page/pageSize，
+   * flow 实例面又必须带 alertId 单查，见 flow_t274.go:601-623），所以条件只能用例侧逐颗现读，
+   * 但候选面换成全池按页推进。告警面 pageSize 上限 100（repo/query.go:24），一次装下 100 颗。
+   */
+  const ALERT_PAGE_SIZE = 100
+  /** 一轮要用的颗数：24.3 一颗 + 24.4 三颗；队列按这个数建，够用即止，不整池探穿 */
+  const FREE_QUEUE_TARGET = 4
+  /** 扫描封顶（颗）：池再长也只消费到这里，扫到顶仍 0 空闲才停手 */
+  const MAX_SCAN_ALERTS = 300
+  let freeQueue: string[] = []
+  let scanPages = 0
+  let scanCursor = 0
+  let scanTotal: number | null = null
+  const idWindow: string[] = []
+  /** 实例面缓存（颗号→实例颗数）：24.0 快照腿与建队腿对同一颗不重复发读 */
+  const probedInstances = new Map<string, number>()
+
+  function faceLine(suffix: string): string {
+    const pool = scanTotal === null ? '未读' : String(Math.min(scanTotal, MAX_SCAN_ALERTS))
+    return (
+      `[t610-取号] 无实例条件全池建队｜池total=${scanTotal ?? '未读'} 扫描上限=${pool} 已消费=${scanCursor} ` +
+      `实探=${probedInstances.size} 翻页=${scanPages} 队列剩=${freeQueue.length}｜${suffix}`
     )
-    for (const a of alerts.list) {
-      const id = String(a.alertId)
-      if (usedAlerts.has(id)) continue
-      const inst = await callOk<{ list: InstanceDTO[] }>(p, 'GET', `/api/v1/admin/flow/instances?alertId=${id}`, {
+  }
+
+  /** 逐颗现读实例数（带缓存，缓存只为不重复发同一发读） */
+  async function instanceCountOf(p: Page, token: string, id: string): Promise<number> {
+    const hit = probedInstances.get(id)
+    if (hit !== undefined) return hit
+    const inst = await callOk<{ list: InstanceDTO[] }>(p, 'GET', `/api/v1/admin/flow/instances?alertId=${id}`, {
+      token,
+      why: `按告警取实例读不通（告警 ${id}）⇒「无流程实例」这一条件无法自证`,
+    })
+    probedInstances.set(id, inst.list.length)
+    return inst.list.length
+  }
+
+  /** 按「无流程实例」条件在全池按页推进，把候选告警号推进队列；返回本次新增颗数 */
+  async function fillFreeQueue(p: Page, token: string, need: number): Promise<number> {
+    if (scanTotal === null) {
+      const head = await callOk<{ total: number }>(p, 'GET', '/api/v1/alerts?page=1&pageSize=1', {
         token,
-        why: '按告警取实例读不通',
+        why: '告警面 total 读不通 ⇒ 全池边界无从落值',
       })
-      if (inst.list.length === 0) {
+      scanTotal = head.total
+    }
+    const before = freeQueue.length
+    while (freeQueue.length - before < need && scanCursor < Math.min(scanTotal, MAX_SCAN_ALERTS)) {
+      if (idWindow.length === 0) {
+        scanPages += 1
+        const pageOfIds = await callOk<{ list: { alertId: number | string }[] }>(
+          p,
+          'GET',
+          `/api/v1/alerts?page=${scanPages}&pageSize=${ALERT_PAGE_SIZE}`,
+          { token, why: '告警分页读不通 ⇒ 拿不到可起实例的告警' },
+        )
+        if (pageOfIds.list.length === 0) {
+          scanTotal = scanCursor // 翻到空页＝池比 total 声明的短，边界收到这里
+          break
+        }
+        for (const a of pageOfIds.list) idWindow.push(String(a.alertId))
+        if (idWindow.length < ALERT_PAGE_SIZE) scanTotal = scanCursor + idWindow.length // 末页：按实际颗数收边
+      }
+      const id = idWindow.shift() as string
+      scanCursor += 1
+      if (usedAlerts.has(id) || freeQueue.includes(id)) continue
+      if ((await instanceCountOf(p, token, id)) === 0) freeQueue.push(id)
+    }
+    return freeQueue.length - before
+  }
+
+  /** 停手句（昨天那版保留：不再猜号、直接停手报 PM）＋ 可执行下一步指针 */
+  function stopAndReport(): Error {
+    return new Error(
+      faceLine('空闲=0') +
+        ' 本文件不再猜号，直接停手报 PM。下一步按可执行口径走（不是只留一句停手）：' +
+        '① 把本行读数原样贴进 T610 卡评论并点名值班 PM；' +
+        '② 请 PM 裁的是甲案之外那一格——授权新建无实例告警（用例侧不自建，也不清在用的那几颗实例）；' +
+        '③ 裁完不动判据直接复跑：npx playwright test --config=e2e-real/playwright.real.config.ts -g "24.3"',
+    )
+  }
+
+  /** 取号：队列见底就按无实例条件补建；取用前再现读一次（实例数必须现读为 0，不吃建队那一面的旧账） */
+  async function takeFreeAlert(p: Page, token: string): Promise<string> {
+    for (let round = 0; round < 8; round++) {
+      if (freeQueue.length === 0 && (await fillFreeQueue(p, token, FREE_QUEUE_TARGET)) === 0) break
+      while (freeQueue.length > 0) {
+        const id = freeQueue.shift() as string
+        const now = await callOk<{ list: InstanceDTO[] }>(p, 'GET', `/api/v1/admin/flow/instances?alertId=${id}`, {
+          token,
+          why: `取号复现读不通（告警 ${id}）⇒ 用前那一面读不到就不起实例`,
+        })
+        probedInstances.set(id, now.list.length)
+        if (now.list.length === 0) {
+          usedAlerts.add(id)
+          console.log(faceLine(`取到号=${id} 用前现读实例=0`))
+          return id
+        }
+        // 建队之后被别的写腿占了：这颗不再算空闲，回队列看下一颗
         usedAlerts.add(id)
-        return id
       }
     }
-    throw new Error(`前 ${alerts.list.length} 颗告警都已有流程实例（共 ${alerts.total} 颗），本文件不再猜号，直接停手报 PM`)
+    throw stopAndReport()
   }
 
   /**
@@ -367,11 +456,12 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
 
     // 实例面基线（T582 格一改自证式）：现读**整页**每一颗告警各自的实例颗数，只作快照，不再对 free 作门禁断言。
     // 为什么这一格不该当门禁（口径来自派发单 §四 格一 允许方向②，不是「放宽」）：
-    //   ① free 从来不是本文件的真实前置。真正取号的是 takeFreeAlert，它扫的是整页并按颗现读，
-    //      扫不到才抛「前 N 颗都已有实例（共 M 颗）」——那一红才是 A3/A4 起不了实例的真读数。
+    //   ① free 从来不是本文件的真实前置。真正取号的是 takeFreeAlert，T610 起它按「无流程实例」条件
+    //      在全池按页推进并逐颗现读，扫到顶仍 0 空闲才抛停手句——那一红才是 A3/A4 起不了实例的真读数。
     //      24.0 原先只看前 10 颗，是一把比自身用途更严的尺：它红的时候后面几条未必跑不动
     //      （2026-10-06 02:12 只读实测：total=116、整页 20 颗里空闲=8、全库空闲=104、已起实例=12）。
-    //   ② 同时禁两条歪路：把断言改成 free >= 0（空断言，抹平症状）或往后翻页凑数（移动分母）。
+    //   ② 同时禁两条歪路：把断言改成 free >= 0（空断言，抹平症状）或把这一格自己的分母往后翻页凑数。
+    //      取号腿翻页不算这一条：它换的是候选面（最新一窗→全池），门禁的读数照旧是本页那一面。
     //   ③ 数据面自检的实质留在断言里，且只断实质：告警面在架（total>0）、本页非空（list>0）、
     //      逐颗读数按预期形态回（callOk 已把 HTTP/code 非绿的每一发当场判红并带坐标）。
     // 出口三处：stdout（run 日志）+ annotation（HTML 报告）+ job summary（不得静默）。
@@ -385,11 +475,7 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     const faceRows: { alertId: string; instances: number }[] = []
     for (const a of alerts.list) {
       const id = String(a.alertId)
-      const inst = await callOk<{ list: InstanceDTO[] }>(page, 'GET', `/api/v1/admin/flow/instances?alertId=${id}`, {
-        token,
-        why: '按告警取实例读不通',
-      })
-      faceRows.push({ alertId: id, instances: inst.list.length })
+      faceRows.push({ alertId: id, instances: await instanceCountOf(page, token, id) })
     }
     const free = faceRows.filter((r) => r.instances === 0).length
     const freeIn10 = faceRows.slice(0, 10).filter((r) => r.instances === 0).length
@@ -402,6 +488,19 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
       description: `实例面快照（自证式，非门禁）：${snapshotLine}`,
     })
     appendJobSummary(snapshotLine)
+
+    // T610 第二面（仍只读，零写腿）：按「无流程实例」条件在全池建队后，队首候选现读实例数必须为 0。
+    // 这一格是 A3/A4 的取号前提，放在 24.0 里先亮出来——今天那条红（24.4 起不到实例）在这一步就该看得见。
+    const queued = await fillFreeQueue(page, token, FREE_QUEUE_TARGET)
+    const peekId = freeQueue.length > 0 ? freeQueue[0] : ''
+    const peekCount = peekId === '' ? -1 : await instanceCountOf(page, token, peekId)
+    const faceOut = faceLine(`首窗空闲=${free}（本页 ${faceRows.length} 颗） 建队新增=${queued} 队首候选=${peekId || '无'} 队首现读实例=${peekCount}`)
+    console.log(faceOut)
+    test.info().annotations.push({ type: 't610-free-alert-face', description: `取号口径面（自证式）：${faceOut}` })
+    appendJobSummary(faceOut)
+    if (peekId !== '') {
+      expect(peekCount, `队首候选 ${peekId} 现读实例数应为 0，否则「无流程实例」这个条件名不副实`).toBe(0)
+    }
   })
 
   test('24.1 A1 建模板 → 详情逐字段值级回读（不是只断言「有 nodes 数组」）', async ({ page }) => {
