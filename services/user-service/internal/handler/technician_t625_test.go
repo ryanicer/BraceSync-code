@@ -312,9 +312,7 @@ func reflectJSONKeys(sample model.TechnicianCreateDTO) []string {
 		field := typ.Field(i)
 		if field.Anonymous {
 			inner := reflect.New(field.Type).Elem()
-			for _, k := range reflectJSONKeysOf(inner.Interface()) {
-				keys = append(keys, k)
-			}
+			keys = append(keys, reflectJSONKeysOf(inner.Interface())...)
 			continue
 		}
 		tag := strings.Split(field.Tag.Get("json"), ",")[0]
