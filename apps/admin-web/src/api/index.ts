@@ -682,12 +682,25 @@ export function techNameOf(techId: string): string {
 
 // ========== T130 复查报告（文件上传 + 复查记录） ==========
 
-/** file-service 预签名直传响应 */
+/** file-service 预签名直传响应（调用方侧口径，camelCase） */
 export interface PresignResult {
   fileId: string
   uploadUrl: string
   objectKey: string
   expiresAt: string
+}
+
+/**
+ * file-service 域的响应 JSON key 是 snake_case（docs/api/api-contracts.ts 现状口径：
+ * 改后端属破契约需另立卡），故本层负责把线上形状映射成调用方形状。
+ * T622：此前直接按 camelCase 读响应，presign.uploadUrl 恒 undefined。
+ */
+interface PresignWireResult {
+  file_id: string
+  object_key: string
+  signature_url: string
+  expires_at: string
+  expires_in_seconds: number
 }
 
 /** 申请预签名上传 URL（file-service T022） */
@@ -712,8 +725,8 @@ export async function presignFile(params: {
       expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
     }
   }
-  // 后端 JSON 字段为 snake_case（file_type / owner_type / owner_id / content_type / file_name / file_header）
-  return request<PresignResult>({
+  // 请求体与响应体都是 snake_case（api-contracts.ts presignUpload / completeUpload 条目）
+  const wire = await request<PresignWireResult>({
     url: '/api/v1/files/presign',
     method: 'POST',
     data: {
@@ -725,6 +738,12 @@ export async function presignFile(params: {
       file_header: params.fileHeader,
     },
   })
+  return {
+    fileId: wire.file_id,
+    uploadUrl: wire.signature_url,
+    objectKey: wire.object_key,
+    expiresAt: wire.expires_at,
+  }
 }
 
 /** 直传文件到 COS（使用预签名 URL，不走网关 request） */
@@ -735,6 +754,11 @@ export async function uploadFileDirect(uploadUrl: string, file: File, contentTyp
     // 故 mock 侧以分段延时模拟传输耗时后落一次 uploaded 状态，不伪造百分比。
     await reviewMock.mockDirectUpload(uploadUrl, file)
     return
+  }
+  // 空 URL 会被 fetch 当成相对路径「undefined」，PUT 落到本站 nginx 静态层回 405（T622 症状），
+  // 故在这一层就把它报成可读错误。
+  if (!uploadUrl) {
+    throw new Error('预签名地址缺失（presign 未返回 signature_url）')
   }
   const res = await fetch(uploadUrl, {
     method: 'PUT',
@@ -747,16 +771,18 @@ export async function uploadFileDirect(uploadUrl: string, file: File, contentTyp
 }
 
 /** 确认上传完成，返回 file_id */
-export async function completeUpload(fileId: string): Promise<{ fileId: string; status: string }> {
+export async function completeUpload(fileId: string): Promise<{ fileId: string }> {
   if (USE_MOCK) {
     await delay()
-    return { fileId, status: 'uploaded' }
+    return { fileId }
   }
-  return request<{ fileId: string; status: string }>({
+  // 后端绑定的是 file_id（binding required），响应也只有 file_id
+  await request<{ file_id: string }>({
     url: '/api/v1/files/upload-complete',
     method: 'POST',
-    data: { fileId },
+    data: { file_id: fileId },
   })
+  return { fileId }
 }
 
 /** 创建复查记录（医生/管理员） */

@@ -43,6 +43,9 @@ import {
   fetchWearDistribution,
   fetchWearTrend,
   fetchAlertTrend,
+  presignFile,
+  uploadFileDirect,
+  completeUpload,
 } from '../src/api'
 import {
   createMedicalAccountApi,
@@ -557,5 +560,66 @@ describe('T500 患者设登录口令真实模式守卫', () => {
     requestMock.mockResolvedValue({ patientId: 'P 001/x', password: 'Br7f3k2q#7' })
     await setPatientPasswordApi('P 001/x')
     expect(lastRequest().url).toBe('/api/v1/admin/patients/P%20001%2Fx/password')
+  })
+})
+
+// ===== T622 file-service 直传闭环 snake_case 线形守卫 =====
+// file-service 域响应 JSON key 是 snake_case（api-contracts.ts presignUpload 条目写明「现状口径，
+// 改后端属破契约需另立卡」），而 admin-web 调用方吃的是 camelCase。此前 presignFile 把响应原样
+// 当 PresignResult 返回 ⇒ presign.uploadUrl 恒 undefined ⇒ fetch 把它当成相对路径「undefined」
+// PUT 到本站 nginx 的静态 location ⇒ 全格式 405（复现：PUT http://<staging>/admin/undefined
+// 回 405 Not Allowed / nginx/1.25.5）。这一段把三枚助手的线上形状逐键钉死。
+const BACKEND_PRESIGN_KEYS = ['content_type', 'file_header', 'file_name', 'file_type', 'owner_id', 'owner_type']
+
+describe('T622 复查报告直传真实模式守卫', () => {
+  it('presignFile 消费 file_id/signature_url，请求体逐键 snake_case', async () => {
+    requestMock.mockResolvedValueOnce({
+      file_id: 'file_0f2a',
+      object_key: 'patient/P00001/1700000000_ab.pdf',
+      signature_url: 'https://cos.example.com/patient/P00001/1700000000_ab.pdf?q-sign-algorithm=1',
+      expires_at: '2026-10-08T09:00:00Z',
+      expires_in_seconds: 600,
+    })
+    const res = await presignFile({
+      fileName: 'ab.pdf',
+      contentType: 'application/pdf',
+      fileType: 'review_report',
+      ownerType: 'patient',
+      ownerId: 'P00001',
+      fileHeader: 'JVBGLTEuNA==',
+    })
+    const req = lastRequest()
+    expect(req.url).toBe('/api/v1/files/presign')
+    expect(req.method).toBe('POST')
+    expect(Object.keys(req.data ?? {}).sort()).toEqual(BACKEND_PRESIGN_KEYS)
+    expect(req.data?.file_type).toBe('review_report')
+    // 页面拿这两枚去 PUT 与回调登记 ⇒ 键名一错就是 undefined，而错形在本断言下直接报红
+    expect(res.uploadUrl).toContain('q-sign-algorithm=1')
+    expect(res.fileId).toBe('file_0f2a')
+    expect(res.objectKey).toBe('patient/P00001/1700000000_ab.pdf')
+    expect(res.expiresAt).toBe('2026-10-08T09:00:00Z')
+  })
+
+  it('uploadFileDirect 把 PUT 打到预签名绝对地址；地址缺失时报可读错误，不发相对请求', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchMock)
+    const file = new Blob(['%PDF-1.4'], { type: 'application/pdf' }) as unknown as File
+
+    await uploadFileDirect('https://cos.example.com/patient/P00001/x.pdf', file, 'application/pdf')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://cos.example.com/patient/P00001/x.pdf')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('PUT')
+
+    fetchMock.mockClear()
+    await expect(uploadFileDirect('', file, 'application/pdf')).rejects.toThrow('预签名地址缺失')
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('completeUpload 提交 file_id（后端 binding required 的那枚键），响应无 status 也不伪造', async () => {
+    requestMock.mockResolvedValueOnce({ file_id: 'file_0f2a' })
+    const res = await completeUpload('file_0f2a')
+    expect(lastRequest().url).toBe('/api/v1/files/upload-complete')
+    expect(lastRequest().data).toEqual({ file_id: 'file_0f2a' })
+    expect(res).toEqual({ fileId: 'file_0f2a' })
   })
 })
