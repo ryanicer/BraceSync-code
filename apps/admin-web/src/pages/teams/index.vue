@@ -4,6 +4,20 @@
     <div v-if="mode === 'list'">
       <div class="page-toolbar">
         <el-button type="success" @click="openCreate">新建团队</el-button>
+        <!-- T627 方案乙：?teamType= 由后端过滤（本端点不分页，handler 侧筛）。
+             筛选生效时下面四张统计卡仍是全量口径，这一格必须写在页面上，
+             否则又变回 T385 修过的那种「卡数与各行之和对不上」的同页打脸。 -->
+        <el-select
+          v-model="typeFilter"
+          clearable
+          placeholder="全部类型"
+          style="width: 130px; margin-left: 12px"
+          @change="loadTeams"
+        >
+          <el-option label="医护团队" value="medical" />
+          <el-option label="维护班组" value="maintenance" />
+        </el-select>
+        <span v-if="typeFilter" class="filter-hint">已按类型筛选，上方四张统计卡仍为全量口径</span>
       </div>
 
       <!-- T289 5.1：设计稿 团队管理.html:88-92 四张统计卡，数据源 GET /api/v1/admin/teams/stats（T256 #1） -->
@@ -37,6 +51,13 @@
         <el-table :data="teams" size="small" v-loading="loading">
           <el-table-column prop="teamId" label="团队编号" width="120" />
           <el-table-column prop="name" label="团队名称" min-width="160" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.teamType === 'maintenance' ? 'success' : 'info'" size="small">
+                {{ row.teamType === 'maintenance' ? '维护班组' : '医护团队' }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="负责人" width="110">
             <template #default="{ row }">{{ row.leaderName ?? '-' }}</template>
           </el-table-column>
@@ -125,6 +146,19 @@
             <el-option v-for="d in doctors" :key="d.doctorId" :label="d.name" :value="d.doctorId" />
           </el-select>
         </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="teamForm.teamType" :disabled="isTeamEdit" style="width: 100%">
+            <el-option label="医护团队" value="medical" />
+            <el-option label="维护班组" value="maintenance" />
+          </el-select>
+          <!-- 文案给的是页面上真实存在的那条约束：新建技师的下拉只出维护班组（技师页 teamOptions），
+               负责人一格仍是必填且候选只有医生（本弹窗的 leader 下拉）——服务端这条 T059 起就在，本卡没动它 -->
+          <div class="form-hint">
+            {{ isTeamEdit
+              ? '类型创建后不可改：改类型等于把整支团队的成员腿换边，属另一格动作'
+              : '医护团队放医生，维护班组放技师；新建技师时下拉只出维护班组。负责人仍必填且在医生里选（这条 T059 起就在，不随类型放宽）' }}
+          </div>
+        </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="teamForm.description" placeholder="请输入团队描述" maxlength="200" />
         </el-form-item>
@@ -185,7 +219,7 @@ import { ref, computed, onMounted } from 'vue'
 import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
-import type { Team, TeamMember, TeamStats, Doctor } from '@bracesync/shared-types'
+import type { Team, TeamMember, TeamStats, Doctor, TeamType } from '@bracesync/shared-types'
 import { phoneDisplay } from '../../utils/phoneField'
 import {
   fetchTeams, fetchDoctors, fetchTeamStats,
@@ -197,6 +231,8 @@ const ROLE_OPTIONS = ['主任医师', '副主任医师', '主治医师', '住院
 
 const mode = ref<'list' | 'members'>('list')
 const teams = ref<Team[]>([])
+/** T627：'' = 不过滤（api 层把空值剔出 query string）；筛选走后端 ?teamType=，统计卡不受它影响 */
+const typeFilter = ref<'' | TeamType>('')
 const doctors = ref<Doctor[]>([])
 const loading = ref(false)
 // T289 5.1：团队统计卡
@@ -224,10 +260,12 @@ const teamDialogVisible = ref(false)
 const teamDialogTitle = ref('新建团队')
 const teamSaving = ref(false)
 const teamFormRef = ref<FormInstance>()
-const teamForm = ref({ teamId: '', name: '', leader: '', description: '' })
+const teamForm = ref({ teamId: '', name: '', leader: '', description: '', teamType: 'medical' as TeamType })
 const teamRules = {
   name: [{ required: true, message: '请输入团队名称', trigger: 'blur' }],
 }
+/** 编辑态判据就是「有没有带 teamId」，与 confirmSaveTeam 走 PUT 还是 POST 同一枚条件 */
+const isTeamEdit = computed(() => !!teamForm.value.teamId)
 
 // 添加成员
 const addMemberVisible = ref(false)
@@ -246,7 +284,7 @@ function formatDate(iso: string): string {
 async function loadTeams() {
   loading.value = true
   try {
-    teams.value = await fetchTeams()
+    teams.value = await fetchTeams(typeFilter.value ? { teamType: typeFilter.value } : {})
   } catch (e: unknown) {
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
@@ -279,7 +317,7 @@ const candidateMembers = computed(() => {
 // 新建/编辑团队
 function openCreate() {
   teamDialogTitle.value = '新建团队'
-  teamForm.value = { teamId: '', name: '', leader: '', description: '' }
+  teamForm.value = { teamId: '', name: '', leader: '', description: '', teamType: 'medical' }
   teamFormRef.value?.clearValidate()
   teamDialogVisible.value = true
 }
@@ -291,6 +329,7 @@ function openEdit(row: Team) {
     name: row.name,
     leader: row.leader ?? '',
     description: row.description ?? '',
+    teamType: row.teamType,
   }
   teamFormRef.value?.clearValidate()
   teamDialogVisible.value = true
@@ -313,14 +352,15 @@ async function confirmSaveTeam() {
       description: teamForm.value.description || undefined,
     }
     if (teamForm.value.teamId) {
-      // 编辑：乐观更新本地行
+      // 编辑：乐观更新本地行。PUT 不发 teamType——类型创建后不可改（服务端 UpdateTeamRequestDTO 没这一枚，
+      // 改类型等于把整支团队的成员腿换边，属另一格动作，见 T627 卡内登记）
       const result = await updateTeamApi(teamForm.value.teamId, input)
       const idx = teams.value.findIndex((t) => t.teamId === teamForm.value.teamId)
       if (idx >= 0) teams.value[idx] = { ...teams.value[idx], ...result }
       ElMessage.success('更新成功')
     } else {
       // 新建：乐观 push 到列表首条
-      const result = await createTeamApi(input)
+      const result = await createTeamApi({ ...input, teamType: teamForm.value.teamType })
       teams.value.unshift(result)
       ElMessage.success('创建成功')
     }
@@ -476,6 +516,17 @@ onMounted(async () => {
 <style scoped>
 .page-toolbar {
   margin-bottom: 12px;
+}
+/* T627：筛选态提示与表单口径说明（两者都是「页面读数与另一处口径不同」时必须有的一句白话） */
+.filter-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: #909399;
+}
+.form-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
 }
 /* T289 5.1：统计卡样式取设计稿 团队管理.html:37-43 */
 .stats-grid {

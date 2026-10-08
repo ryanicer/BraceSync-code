@@ -910,8 +910,26 @@ func nilIfBlank(s string) *string {
 	return &s
 }
 
+// parseTeamTypeFilter T627 方案乙：GET /teams 与 GET /technicians 共用的 ?teamType= 筛子解析。
+// 空 = 不筛；非枚举值 400（不静默当「不筛」放过 —— 放过就是「筛了个空条件还以为筛过」）。
+func parseTeamTypeFilter(c *gin.Context) (string, *model.AppError) {
+	v := strings.TrimSpace(c.Query("teamType"))
+	if v == "" {
+		return "", nil
+	}
+	if !validTeamType(v) {
+		return "", model.ErrInvalidParam("invalid teamType: medical|maintenance")
+	}
+	return v, nil
+}
+
 // listTeams GET /api/v1/teams —— 团队概要
 func (h *Handler) listTeams(c *gin.Context) {
+	teamType, appErr := parseTeamTypeFilter(c)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
 	rows, err := h.store.ListTeams(c.Request.Context())
 	if err != nil {
 		fail(c, model.ErrInternal("list teams failed"))
@@ -919,6 +937,11 @@ func (h *Handler) listTeams(c *gin.Context) {
 	}
 	list := make([]model.TeamDTO, 0, len(rows))
 	for _, r := range rows {
+		// 筛在这里而不是 SQL 里：/teams 是不分页的全量投影，两种写法等价；
+		// 技师那张是分页接口，筛子必须下到 SQL（见 repo.ListTechnicians）。
+		if teamType != "" && r.TeamType != teamType {
+			continue
+		}
 		list = append(list, model.TeamDTO{
 			TeamID:       r.TeamID,
 			Name:         r.Name,
@@ -929,6 +952,7 @@ func (h *Handler) listTeams(c *gin.Context) {
 			CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			Description:  r.Description, // T337：契约已声明、详情已带，列表补齐
 			Status:       r.Status,
+			TeamType:     r.TeamType, // T627 方案乙
 		})
 	}
 	ok(c, list)
@@ -978,6 +1002,7 @@ func (h *Handler) toTechDTO(r repo.TechnicianRow) model.TechnicianDTO {
 		PhoneState:   string(v.State),
 		TeamID:       strOr(r.TeamID, ""),
 		TeamName:     r.TeamName,
+		TeamType:     r.TeamType,
 		InstallCount: r.InstallCount,
 		Status:       r.Status,
 		AuthStatus:   r.AuthStatus,
@@ -1059,14 +1084,19 @@ func (h *Handler) listDoctors(c *gin.Context) {
 // 技师（T030 #4：新建/编辑 + 列表/启停）
 // ─────────────────────────────────────────────────────────────
 
-// listTechnicians GET /api/v1/technicians —— 分页列表
+// listTechnicians GET /api/v1/technicians —— 分页列表（?teamType= 可按维护/医护侧筛，T627 方案乙）
 func (h *Handler) listTechnicians(c *gin.Context) {
 	page, pageSize, appErr := parsePaging(c)
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
-	rows, total, err := h.store.ListTechnicians(c.Request.Context(), page, pageSize)
+	teamType, appErr := parseTeamTypeFilter(c)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	rows, total, err := h.store.ListTechnicians(c.Request.Context(), page, pageSize, teamType)
 	if err != nil {
 		fail(c, model.ErrInternal("list technicians failed"))
 		return
@@ -1116,7 +1146,8 @@ func (h *Handler) preparePhone(plain string) (enc []byte, hash string, appErr *m
 	return enc, phone.Hash(plain), nil
 }
 
-// validateTechTeam teamId 传入时校验存在性（FK 前置，友好 400 替代 DB 违约）
+// validateTechTeam 团队存在性校验（FK 前置，友好 400 替代 DB 违约）。
+// 只问存在性 ⇒ 给医护账号腿复用；技师腿走 validateTechTeamType（存在性 + 侧别）。
 func (h *Handler) validateTechTeam(c *gin.Context, teamID *string) *model.AppError {
 	if teamID == nil || *teamID == "" {
 		return nil
@@ -1127,6 +1158,52 @@ func (h *Handler) validateTechTeam(c *gin.Context, teamID *string) *model.AppErr
 	}
 	if !exists {
 		return model.ErrInvalidParam("team not found: %s", *teamID)
+	}
+	return nil
+}
+
+// 团队类型两枚字面量（T627 方案乙；与迁移 000035 的 CHECK 逐字同串）
+const (
+	teamTypeMedical     = "medical"
+	teamTypeMaintenance = "maintenance"
+)
+
+// validTeamType 枚举判据（空串不算合法：由调用方先归一成 medical）
+func validTeamType(t string) bool {
+	return t == teamTypeMedical || t == teamTypeMaintenance
+}
+
+// validateTechTeamType T627 方案乙的写侧判据：技师（维护人员）不得进入医疗团队（不变式 I2）。
+//
+// 与 validateTechTeam 分开两枚函数是必要的，不是重复：后者被医护账号腿复用
+// （doctor_accounts_t314.go 的新建/编辑两处「复用技师侧同一校验器」只问存在性），
+// 把「必须 maintenance」塞进共用那一枚，等于把医护全体赶进维护班组 —— 判据方向整个反掉。
+//
+// 类型未知（空串）按拒绝处理，不放行：这一列在库里是 NOT NULL + CHECK 两值，
+// 读到第三值只可能是绕过迁移的建库，那种团队既不属医护侧也不属维护侧，
+// 放它过等于让「无归类」变成一个可以绕过分类机制的后门（fail-open）。
+func (h *Handler) validateTechTeamType(c *gin.Context, teamID *string) *model.AppError {
+	if teamID == nil || *teamID == "" {
+		return nil
+	}
+	return h.techTeamSideCheck(c, *teamID, model.ErrInvalidParam("team not found: %s", *teamID))
+}
+
+// techTeamSideCheck 侧别判据的共用内核：团队不存在时回哪一枚错由调用方给 ——
+// 技师创建/编辑那条腿既往回 400，成员那条腿既往由 store 的 ErrTeamNotFound 回 404，
+// 收成同一枚判据不该顺带改掉「查无此队」的状态码口径。
+func (h *Handler) techTeamSideCheck(c *gin.Context, teamID string, notFound *model.AppError) *model.AppError {
+	teamType, exists, err := h.store.TeamTypeOf(c.Request.Context(), teamID)
+	if err != nil {
+		return model.ErrInternal("query team failed")
+	}
+	if !exists {
+		return notFound
+	}
+	if teamType != teamTypeMaintenance {
+		return model.ErrInvalidParam(
+			"team %s is %s, technicians may only belong to %s teams",
+			teamID, teamType, teamTypeMaintenance)
 	}
 	return nil
 }
@@ -1146,7 +1223,7 @@ func (h *Handler) createTechnician(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid phone: must be 11 digits starting with 1"))
 		return
 	}
-	if appErr := h.validateTechTeam(c, req.TeamID); appErr != nil {
+	if appErr := h.validateTechTeamType(c, req.TeamID); appErr != nil {
 		fail(c, appErr)
 		return
 	}
@@ -1210,12 +1287,23 @@ func (h *Handler) updateTechnician(c *gin.Context) {
 		name = strings.TrimSpace(req.Name)
 	}
 	teamID := existing.TeamID
+	teamChanged := req.TeamID != nil && (existing.TeamID == nil || *req.TeamID != *existing.TeamID)
 	if req.TeamID != nil {
 		teamID = req.TeamID
 	}
 	if appErr := h.validateTechTeam(c, teamID); appErr != nil {
 		fail(c, appErr)
 		return
+	}
+	// T627 方案乙：侧别判据只在「这一次真的在改归属」时咬。
+	// 不这么切的话，存量那批还挂在医疗团队上的技师会被自己的旧值卡死 ——
+	// 编辑姓名/手机号也 400，而这正是刷数脚本执行前必须还能改的那一批。
+	// 旧值本身不改写（PUT 不带 teamId 时 teamID 仍是原团队），清理动作留给刷数脚本。
+	if teamChanged {
+		if appErr := h.validateTechTeamType(c, teamID); appErr != nil {
+			fail(c, appErr)
+			return
+		}
 	}
 
 	enc, hash := existing.PhoneEnc, existing.PhoneHash
@@ -2507,6 +2595,7 @@ func toTeamDetailDTO(r repo.TeamDetailRow) model.TeamDetailDTO {
 		PatientCount: r.PatientCount,
 		Description:  r.Description,
 		Status:       r.Status,
+		TeamType:     r.TeamType, // T627 方案乙：新建维护班组后弹窗要能回显自己刚提交的类型
 		CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
@@ -2552,10 +2641,20 @@ func (h *Handler) createTeam(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("description exceeds 200 chars"))
 		return
 	}
+	// T627 方案乙：缺省归 medical（与迁移 000035 的 DEFAULT 同口径），给了就必须是两值之一。
+	teamType := strings.TrimSpace(req.TeamType)
+	if teamType == "" {
+		teamType = teamTypeMedical
+	}
+	if !validTeamType(teamType) {
+		fail(c, model.ErrInvalidParam("invalid teamType: medical|maintenance"))
+		return
+	}
 	row, err := h.store.CreateTeam(c.Request.Context(), repo.TeamInput{
 		Name:        name,
 		Leader:      req.Leader,
 		Description: req.Description,
+		TeamType:    teamType,
 	})
 	if err != nil {
 		if errors.Is(err, repo.ErrTeamNameExists) {
@@ -2656,6 +2755,16 @@ func (h *Handler) addTeamMember(c *gin.Context) {
 	if req.MemberID == "" {
 		fail(c, model.ErrInvalidParam("memberId is required"))
 		return
+	}
+	// T627 方案乙：成员这条写通路同样受侧别约束 —— 只在新建技师/编辑技师那两条路上设判据，
+	// 「把技师加进医疗团队」就会成为绕过分类机制的侧门。
+	// 医护腿本卡只收口到「团队存在」：把医护赶出医疗团队属医护侧裁定，不在 T627 的派发面内（卡内已请裁）。
+	if req.MemberType == "technician" {
+		if appErr := h.techTeamSideCheck(c, teamID,
+			model.ErrNotFound("team not found: %s", teamID)); appErr != nil {
+			fail(c, appErr)
+			return
+		}
 	}
 	row, err := h.store.AddTeamMember(c.Request.Context(), teamID, repo.MemberInput{
 		MemberType: req.MemberType,
