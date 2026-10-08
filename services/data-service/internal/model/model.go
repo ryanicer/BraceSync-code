@@ -436,6 +436,8 @@ type PressureRecordDTO struct {
 	// T366：与 Points **不同层**——Points 是基线校准（减偏移）后的值，本列不做校准。
 	// 日聚合的佩戴帧判据用的正是这一列（rollup_repo.go aggregateDateSQL），
 	// 缺它则验收侧只能拿 max(points) 当代理，而代理与判据不是同一件东西（T352 交件 §三实测）。
+	// T620 桶行例外：带 interval 的降采样查询里本列与 Points 同为**桶内均值**（不是单帧最大值，
+	// 仍不做校准），此时 Timestamp 是桶起点、recordId 是桶起点秒。
 	MaxPressure float32 `json:"maxPressure"`
 }
 

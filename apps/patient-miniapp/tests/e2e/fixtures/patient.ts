@@ -114,23 +114,38 @@ export function realtimeSnapshot(opts: { areaCm2?: number | null } = {}) {
   })
 }
 
-// ---------- records?period={day|week|month}&date=YYYY-MM-DD → 48 点逐帧 maxPressure 趋势 ----------
-// 对齐后端 HistoryPage 分页契约：{ list: [...], total, page, pageSize }
-// （data-service GetHistory 返回 HistoryPage，前端 request 解包 envelope 后拿到此对象）
-export function pressureRecords(period: string, _date: string) {
-  const frames = period === 'day' ? 48 : period === 'week' ? 48 : 48
+// ---------- records?period={day|week|month}&date=YYYY-MM-DD[&interval=30m|1d] ----------
+// 两条读路面（T620 之后对齐 data-service GetHistory）：
+//  · 带 interval = 后端桶序列，桶界按东八区墙钟对齐（day=48 枚 30 分钟桶；week/month=逐日桶）
+//  · 不带 interval = 逐帧明细分页（历史页仍在用这条）
+// 分页信封仍是 HistoryPage：{ list, total, page, pageSize }
+// 🔴 base 必须是「北京的 0:00」：写成 new Date('YYYY-MM-DD') 会被解析成 UTC 午夜，
+// 与后端切日口径差 8 小时，页面窗口对不上——T620 的病根之一，夹具不能跟着一起错。
+export function pressureRecords(period: string, date: string, interval = '') {
+  const dayStr = /^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? date
+    : new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const base = new Date(`${dayStr}T00:00:00+08:00`)
+  const stepMs = interval === '1d' ? 24 * 60 * 60 * 1000 : 30 * 60 * 1000
+  let frames = 48
+  if (interval === '1d') {
+    if (period === 'week') frames = 7
+    else if (period === 'month') {
+      const [yy, mm] = dayStr.split('-').map(Number)
+      frames = new Date(Date.UTC(yy, mm, 0)).getUTCDate()
+    } else frames = 1
+  }
   const out: PressureRecord[] = []
-  const base = new Date(_date || new Date().toISOString().slice(0, 10))
   for (let i = 0; i < frames; i++) {
-    const ts = new Date(base.getTime() + i * 30 * 60 * 1000).toISOString()
+    const ts = new Date(base.getTime() + i * stepMs).toISOString()
     const pts = sensorPoints20().map(p => ({
       ...p,
       pressureValue: parseFloat((p.pressureValue + Math.sin(i * 0.3) * 4).toFixed(2)),
     })) as SensorPoint[]
-    // 保证至少有值（历史页 loadTrend 里 filter value>0 才保留）
+    // P12 抬到 40N 上下：趋势选中点位要有可分辨的幅度
     if (pts[11]) pts[11].pressureValue = parseFloat((42.18 + Math.sin(i * 0.2) * 5).toFixed(2))
     out.push({
-      recordId: `rec-e2e-${period}-${i + 1}`,
+      recordId: `rec-e2e-${period}-${interval || 'raw'}-${i + 1}`,
       deviceId: E2E_DEVICE_ID,
       patientId: E2E_PATIENT_ID,
       timestamp: ts,

@@ -111,6 +111,64 @@ func (f *fakeRecords) QueryHistory(_ context.Context, patientID string, from, to
 	return matched[start:end], total, nil
 }
 
+// QueryHistoryBuckets 桩：与 repo.historyBucketSQL 同口径的 Go 版（T620）——
+// 先把瞬时折成东八区墙钟、按桶宽取余，再折回瞬时，所以 6h/1d 档的桶界落在北京 0/6/12/18 点，
+// 不是 epoch 取余得到的北京 2/8/14/20 点。单测拿它证桶界与窗口口径，不证 SQL 文本。
+func (f *fakeRecords) QueryHistoryBuckets(_ context.Context, patientID string, from, to time.Time,
+	bucketSeconds int) ([]model.PressureRecord, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.historyErr != nil {
+		return nil, 0, f.historyErr
+	}
+	type bucketAgg struct {
+		sum    [model.PointCount]float64
+		sumMax float64
+		frames int
+		devID  string
+	}
+	byKey := map[int64]*bucketAgg{}
+	var order []int64
+	for _, r := range f.rows {
+		if r.PatientID != patientID || r.Ts.Before(from) || !r.Ts.Before(to) {
+			continue
+		}
+		local := r.Ts.In(model.CSTZone())
+		_, off := local.Zone()
+		wall := local.Unix() + int64(off)
+		key := wall - wall%int64(bucketSeconds)
+		b, ok := byKey[key]
+		if !ok {
+			b = &bucketAgg{devID: r.DeviceID}
+			byKey[key] = b
+			order = append(order, key)
+		}
+		for i := 0; i < model.PointCount; i++ {
+			b.sum[i] += float64(r.Points[i])
+		}
+		b.sumMax += float64(r.MaxPressure)
+		b.frames++
+	}
+	out := make([]model.PressureRecord, 0, len(order))
+	for _, key := range order {
+		b := byKey[key]
+		_, off := time.Unix(key, 0).In(model.CSTZone()).Zone()
+		rec := model.PressureRecord{
+			RecordID:    key,
+			DeviceID:    b.devID,
+			PatientID:   patientID,
+			Ts:          time.Unix(key-int64(off), 0).UTC(),
+			MaxPressure: float32(b.sumMax / float64(b.frames)),
+		}
+		for i := 0; i < model.PointCount; i++ {
+			rec.Points[i] = float32(b.sum[i] / float64(b.frames))
+		}
+		out = append(out, rec)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ts.Before(out[j].Ts) })
+	return out, int64(len(out)), nil
+}
+
 type fakeDevices struct {
 	bindings  map[string][2]string // deviceID → {patientID, status}
 	byPatient map[string][2]string // patientID → {deviceID, status}
@@ -839,7 +897,7 @@ func TestGetHistory_PaginationAndFilter(t *testing.T) {
 	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, outReq)
 	require.Nil(t, appErr)
 
-	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", 1, 2)
+	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "", 1, 2)
 	require.Nil(t, appErr)
 	assert.Equal(t, int64(3), page.Total)
 	assert.Len(t, page.List, 2)
@@ -851,23 +909,23 @@ func TestGetHistory_PaginationAndFilter(t *testing.T) {
 	require.Len(t, page.List[0].Points, model.PointCount)
 	assert.Equal(t, "P01", page.List[0].Points[0].PointID)
 
-	page2, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", 2, 2)
+	page2, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "", 2, 2)
 	require.Nil(t, appErr)
 	assert.Len(t, page2.List, 1)
 
 	// week 范围覆盖他日帧
-	pageW, appErr := env.svc.GetHistory(context.Background(), testPatient, "week", "2026-08-08", 1, 100)
+	pageW, appErr := env.svc.GetHistory(context.Background(), testPatient, "week", "2026-08-08", "", 1, 100)
 	require.Nil(t, appErr)
 	assert.Equal(t, int64(4), pageW.Total)
 
 	// 错误传播
 	env.records.historyErr = errors.New("query failed")
-	_, appErr = env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", 1, 20)
+	_, appErr = env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "", 1, 20)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeInternal, appErr.Code)
 
 	// 非法参数
-	_, appErr = env.svc.GetHistory(context.Background(), testPatient, "year", "2026-08-08", 1, 20)
+	_, appErr = env.svc.GetHistory(context.Background(), testPatient, "year", "2026-08-08", "", 1, 20)
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeQueryParam, appErr.Code)
 }

@@ -87,6 +87,7 @@ import { request } from '../../utils/request'
 import { logger } from '../../utils/logger'
 import { formatPressureValue } from '../../utils/format'
 import { trendSectionTitle } from '../../utils/monitor-copy'
+import { cstDateStr, trendInterval, trendWindow, toTrendSeries, type TrendSegment } from '../../utils/trend-window'
 import { readStoredUnit, persistUnit } from '../../utils/unit-pref'
 import { useAuthStore } from '../../stores/auth'
 
@@ -129,7 +130,7 @@ const sensorPoints = ref<SensorPoint[]>([])
 const activeIndex = ref(-1)
 // T173：最新帧是否已应用基线校准（null = 暂无数据，不展示角标）
 const calibratedFlag = ref<boolean | null>(null)
-const segment = ref<'day' | 'week' | 'month'>('day')
+const segment = ref<TrendSegment>('day')
 const loading = ref(false)
 const battery = ref(0)
 // T444 M-1：热力图详情行只在患者真正点选后显示数值，否则显示稿面默认句
@@ -170,88 +171,28 @@ const trendMaxValue = computed(() => {
   return Math.max(TREND_CURVE_MAX_N, Math.ceil(max / 15) * 15)
 })
 
+// T620：本页取样时刻。date 参数与 X 轴窗口必须由同一枚「现在」推出来，
+// 否则两次 Date.now() 跨分钟/跨日界时，查询窗口与坐标轴窗口会不是同一天。
+const nowMs = ref(Date.now())
+
 // 趋势图时间范围（毫秒），用于 PressureCurve 按真实时间定位 X 坐标
-const trendTimeRange = computed(() => {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = now.getMonth()
-  const d = now.getDate()
-  if (segment.value === 'day') {
-    const start = new Date(y, m, d, 0, 0, 0).getTime()
-    return { start, end: start + 24 * 60 * 60 * 1000 }
-  }
-  if (segment.value === 'week') {
-    const weekday = now.getDay() === 0 ? 7 : now.getDay()
-    const monday = new Date(y, m, d - (weekday - 1), 0, 0, 0)
-    return { start: monday.getTime(), end: monday.getTime() + 7 * 24 * 60 * 60 * 1000 }
-  }
-  const first = new Date(y, m, 1, 0, 0, 0)
-  const nextMonth = new Date(y, m + 1, 1, 0, 0, 0)
-  return { start: first.getTime(), end: nextMonth.getTime() }
-})
+// T620：窗口按东八区墙钟切（与后端 periodRange 同口径），不再读设备本地时区
+const trendTimeRange = computed(() => trendWindow(segment.value, nowMs.value))
 
-// 取某帧中指定点的压力值（找不到则返回最大值兜底）
-function getPointValue(r: PressureRecord, pointId?: string): number {
-  if (pointId) {
-    const p = (r.points || []).find(pt => pt.pointId === pointId)
-    if (p) return p.pressureValue
-  }
-  let maxP = 0
-  for (const p of r.points || []) {
-    if (p.pressureValue > maxP) maxP = p.pressureValue
-  }
-  return maxP
+// T620 趋势取数：桶宽与桶界由后端按东八区墙钟计算（records 端点新增 interval 参数），
+// 本页不再翻页拼明细、不再自己分桶、不再丢弃 0 值帧。
+// 为什么必须换：设备约 31 秒一帧，明细分页的 pageSize 上限是 100（架构 §3.5），
+// 「日」档一页只覆盖约 50 分钟 ⇒ 曲线必然只剩零星孤点；周/月档 5 页也只有约 4 小时。
+async function fetchTrendBuckets(patientId: string, period: TrendSegment, dateStr: string, interval: string): Promise<PressureRecord[]> {
+  const raw = await request<HistoryPage | PressureRecord[]>({
+    url: `/api/v1/patients/${patientId}/records`,
+    method: 'GET',
+    data: { period, date: dateStr, interval },
+  })
+  return Array.isArray(raw) ? raw : (raw?.list ?? [])
 }
 
-// 按 period 分桶聚合：day=30 分钟桶，week/month=1 天桶，取每桶平均值
-function aggregateByPeriod(records: PressureRecord[], pointId: string | undefined, period: 'day' | 'week' | 'month') {
-  if (records.length === 0) return []
-  const bucketMs = period === 'day' ? 30 * 60 * 1000 : 24 * 60 * 60 * 1000
-  const buckets = new Map<number, { sum: number; count: number }>()
-  for (const r of records) {
-    const ts = new Date(r.timestamp).getTime()
-    if (isNaN(ts)) continue
-    const key = Math.floor(ts / bucketMs) * bucketMs
-    const val = getPointValue(r, pointId)
-    if (val <= 0) continue
-    const b = buckets.get(key) || { sum: 0, count: 0 }
-    b.sum += val
-    b.count++
-    buckets.set(key, b)
-  }
-  return Array.from(buckets.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([ts, b]) => ({ timestamp: new Date(ts).toISOString(), value: parseFloat((b.sum / b.count).toFixed(2)) }))
-    .filter(x => x.value > 0)
-}
-
-// 分页采样：week/month 取多页覆盖全周期，day 一页足够
-async function fetchRecordsByPeriod(patientId: string, period: 'day' | 'week' | 'month', dateStr: string): Promise<PressureRecord[]> {
-  const PAGE_SIZE = 100
-  if (period === 'day') {
-    const raw = await request<HistoryPage | PressureRecord[]>({
-      url: `/api/v1/patients/${patientId}/records`,
-      method: 'GET',
-      data: { period, date: dateStr, pageSize: PAGE_SIZE },
-    })
-    return Array.isArray(raw) ? raw : (raw?.list ?? [])
-  }
-  // week/month：最多取 5 页（500 条），均匀采样覆盖时间段
-  const all: PressureRecord[] = []
-  for (let page = 1; page <= 5; page++) {
-    const raw = await request<HistoryPage | PressureRecord[]>({
-      url: `/api/v1/patients/${patientId}/records`,
-      method: 'GET',
-      data: { period, date: dateStr, page, pageSize: PAGE_SIZE },
-    })
-    const pageRecords = Array.isArray(raw) ? raw : (raw?.list ?? [])
-    all.push(...pageRecords)
-    if (pageRecords.length < PAGE_SIZE) break
-  }
-  return all
-}
-
-// 根据 period 参数调用 records 端点，按选中点 + 分桶聚合生成趋势
+// 按当前档 + 选中点位取趋势序列（数据面 = 后端桶，渲染面 = PressureCurve）
 async function loadTrend(baseVal: number) {
   const patientId = authStore.patientId
   const pointId = activePoint.value?.pointId
@@ -259,25 +200,25 @@ async function loadTrend(baseVal: number) {
     trendData.value = []
     return
   }
-  const today = new Date()
-  const yyyy = today.getFullYear()
-  const mm = String(today.getMonth() + 1).padStart(2, '0')
-  const dd = String(today.getDate()).padStart(2, '0')
-  const dateStr = `${yyyy}-${mm}-${dd}`
+  const at = Date.now()
+  nowMs.value = at
+  const period = segment.value
+  const dateStr = cstDateStr(at)
+  const interval = trendInterval(period)
   try {
-    const records = await fetchRecordsByPeriod(patientId, segment.value, dateStr)
-    logger.info('[T178] loadTrend', { period: segment.value, pointId, recordCount: records.length })
-    if (records.length > 0) {
-      trendData.value = aggregateByPeriod(records, pointId, segment.value)
-      logger.info('[T178] trend 聚合后', { 点数: trendData.value.length, 首条: trendData.value[0], 末条: trendData.value[trendData.value.length - 1] })
+    const buckets = await fetchTrendBuckets(patientId, period, dateStr, interval)
+    logger.info('[T620] loadTrend', { period, interval, dateStr, pointId, bucketCount: buckets.length })
+    if (buckets.length > 0) {
+      trendData.value = toTrendSeries(buckets, pointId)
+      logger.info('[T620] trend 桶序列', { 点数: trendData.value.length, 首条: trendData.value[0], 末条: trendData.value[trendData.value.length - 1] })
       if (trendData.value.length > 0) return
     }
-    // 空记录或聚合后空：fallback 给当前单点避免图表空
-    trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
-    logger.warn('[T178] loadTrend: records 为空或聚合后无点, fallback', { baseVal, pointId })
+    // 空窗口：fallback 给当前单点避免图表空（时刻取本页同一枚 nowMs，落进窗口内）
+    trendData.value = [{ timestamp: new Date(at).toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
+    logger.warn('[T620] loadTrend: 桶为空, fallback 单点', { baseVal, pointId, dateStr, interval })
   } catch (e: unknown) {
     const msg = logErrorText(e)
-    logger.error('[T178] loadTrend catch', { msg, pointId })
+    logger.error('[T620] loadTrend catch', { msg, pointId })
     trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
   }
 }

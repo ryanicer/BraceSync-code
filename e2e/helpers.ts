@@ -258,10 +258,11 @@ export async function setupPatientE2E(page: Page, opts: { withLogin?: boolean } 
       return route.fulfill({ json: realtimeSnapshot() })
     }
 
-    // ——— GET /api/v1/patients/:patientId/records?period=day|week|month&date=YYYY-MM-DD
+    // ——— GET /api/v1/patients/:patientId/records?period=day|week|month&date=YYYY-MM-DD[&interval=30m|1d]
+    //  T620：interval 决定夹具出「后端桶序列」还是「逐帧明细」，不透传就等于夹具永远只演旧形状
     const mRecords = url.pathname.match(/^\/api\/v1\/patients\/([^/]+)\/records$/)
     if (method === 'GET' && mRecords) {
-      return route.fulfill({ json: ok(pressureRecords(q.get('period') || 'day', q.get('date') || '')) })
+      return route.fulfill({ json: ok(pressureRecords(q.get('period') || 'day', q.get('date') || '', q.get('interval') || '')) })
     }
 
     // ——— GET /api/v1/patients/:patientId/daily-wear（history 佩戴）
