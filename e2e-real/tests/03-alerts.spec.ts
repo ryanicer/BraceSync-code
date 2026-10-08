@@ -13,6 +13,7 @@ import {
   getAuthToken,
 } from '../real-helpers'
 import { requireDeployedBuild } from '../deploy-guard'
+import { isHiddenAlertType } from '@bracesync/shared-utils'
 
 /**
  * T053 - 03 告警管理（真实模式）
@@ -195,7 +196,11 @@ test.describe('03-告警管理', () => {
  * 处置：把「本页自己发出的 GET /api/v1/alerts 回包」抓下来当分支依据 —— 有行走原来的
  * 正向判据，0 行走空态判据（表格 0 行 + 「暂无数据」+ 分页「共 0 条」+ Tab3 的引导文案），
  * 两条分支都保留 T351/T359 真正的判据（零 4xx、不发 admin 域那两枪、不发名录、无红条）。
- * 顺带补一项字段级对账：UI 行数必须等于该次回包的 list 长度，且 list 长度 = min(total, pageSize)。
+ * 顺带补一项字段级对账：UI 行数必须等于该次回包 list 里「展示侧未被隐藏」的那几行，且
+ * list 长度 = min(total, pageSize)。隐藏判据与页面同源（T618 甲）：本用例只准调
+ * shared-utils 的 isHiddenAlertType，不得在此另立一份类型清单 —— 页面在渲染前就把隐藏型
+ * 滤掉（pages/alerts/index.vue 的 loadData），拿裸 list 长度当期望值会在任何含隐藏型行的
+ * 基线上恒红（T616 在 TST 实测 total=16 / list=10 / 行=9）。
  *
  * 不在这里验「医护本该看到哪些行」—— 那是 T350 的收窄口径，另有卡在册。
  */
@@ -203,6 +208,8 @@ interface AlertsEcho {
   status: number
   total: number
   listLen: number
+  /** 回包 list 里未被展示侧隐藏规则滤掉的行数（判据 = shared-utils isHiddenAlertType，与页面同一处） */
+  visibleLen: number
   pageSize: number
 }
 
@@ -221,10 +228,12 @@ function armAlertsEcho(page: Page) {
     const u = new URL(res.url())
     if (u.pathname !== '/api/v1/alerts') return
     const body = await res.json().catch(() => null)
+    const list: Array<{ type?: string | null }> | null = Array.isArray(body?.data?.list) ? body.data.list : null
     echoes.push({
       status: res.status(),
       total: Number(body?.data?.total ?? Number.NaN),
-      listLen: Array.isArray(body?.data?.list) ? body.data.list.length : Number.NaN,
+      listLen: list ? list.length : Number.NaN,
+      visibleLen: list ? list.filter((row) => !isHiddenAlertType(row?.type)).length : Number.NaN,
       pageSize: Number(u.searchParams.get('pageSize') ?? Number.NaN),
     })
   })
@@ -302,8 +311,13 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
       console.log('[e2e-real][t369] 3b.1 走「0 行」分支：医护团队无可见告警，判空态')
     } else {
       await expect(tableRows(page).first()).toBeVisible({ timeout: 20_000 })
-      expect(await tableRows(page).count(), '表格行数应等于本页回包的 list 长度').toBe(echo.listLen)
-      console.log(`[e2e-real][t369] 3b.1 走「有数据」分支：total=${echo.total} list=${echo.listLen}`)
+      const rowsShown = await tableRows(page).count()
+      // T618 甲：期望值与页面隐藏规则同源（都走 shared-utils isHiddenAlertType），不再押裸 list 长度。
+      expect(rowsShown, '表格行数应等于本页回包 list 里未被展示侧隐藏的可见行数').toBe(echo.visibleLen)
+      console.log(
+        `[e2e-real][t369] 3b.1 走「有数据」分支：total=${echo.total} list=${echo.listLen} ` +
+          `visible=${echo.visibleLen} rows=${rowsShown}`,
+      )
     }
 
     await expect(page.getByRole('tab', { name: '告警列表' })).toHaveCount(1)

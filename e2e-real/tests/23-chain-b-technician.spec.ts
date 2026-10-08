@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Response } from '@playwright/test'
+import { isHiddenAlertType } from '@bracesync/shared-utils'
 import { resolveH5Origin } from '../h5-origin'
 
 /**
@@ -17,7 +18,7 @@ import { resolveH5Origin } from '../h5-origin'
  *
  * 三态现况（本轮实测，2026-09-29 只读预检 .tmp-verify/t462-s5-shape-probe.txt）：
  *   告警 total=93，其中 processStatus=pending 89 / processed 3 / processing 1，另有 1 行
- *   type=pressure_fluctuation 属展示侧隐藏（packages/shared-utils/src/index.ts:109，界面不展示、数据不删）。
+ *   type=pressure_fluctuation 属展示侧隐藏（判据真源 packages/shared-utils 的 isHiddenAlertType，界面不展示、数据不删）。
  *   于是「待处理 + 已处理 = 全部」这个二态直觉在现网不成立：processing 那行落在两个 chip 之外，
  *   而卡片脚注又按 `processStatus === 'pending' ? '待处理' : '已处理'` 把它显示成「已处理」。
  *   这是 T433 已登记的三态映射遗留（pages/alerts/index.vue:57 的三元式 + utils/alertDisplay.ts:51 的注），
@@ -67,9 +68,6 @@ const BOGUS_PHONE = '13900000009'
 const BOGUS_PASSWORD = 'zzProbe1'
 /** 失败腿的唯一合法出口（本轮本机真跑：http=401 code=10401，页面 toast 同句，storage 不写） */
 const LOGIN_FAIL_TOAST = '手机号或密码错误'
-
-/** 展示侧隐藏的告警类型镜像（真源 packages/shared-utils/src/index.ts:109）——只用于把可见行数算对，不改数据 */
-const HIDDEN_ALERT_TYPES = ['pressure_fluctuation']
 
 /** 两页各自写死的单页大小（pages/records/index.vue:89、pages/alerts/index.vue:91） */
 const RECORDS_PAGE_SIZE = 20
@@ -437,7 +435,7 @@ test.describe('23-链 B 技师端（T462 S5）', () => {
     const counts = parseCountSubtitle(await page.locator('.page-subtitle').innerText())
     expect(counts.loaded, '页头出现「已加载」= 取数触到 maxPages 闸门，本轮判据按取满写').toBeNull()
 
-    const visible = captured.rows.filter((r) => !HIDDEN_ALERT_TYPES.includes(r.type))
+    const visible = captured.rows.filter((r) => !isHiddenAlertType(r.type))
     const hiddenRows = captured.rows.length - visible.length
     const pending = visible.filter((r) => r.processStatus === 'pending')
     const processed = visible.filter((r) => r.processStatus === 'processed')
@@ -528,7 +526,7 @@ test.describe('23-链 B 技师端（T462 S5）', () => {
       )
       .toBeGreaterThan(0)
     const captured2 = await capturePaged<AlertRow>(net, '/api/v1/alerts', '23.3 回页')
-    const visible2 = captured2.rows.filter((r) => !HIDDEN_ALERT_TYPES.includes(r.type))
+    const visible2 = captured2.rows.filter((r) => !isHiddenAlertType(r.type))
     const counts2 = parseCountSubtitle(await page.locator('.page-subtitle').innerText())
     const cardsBack = await readAlertCards(page)
     expect(cardsBack.map((c) => c.detail), '重新进入告警页后应仍是同一份取满数据（页头数与列表不许分叉）').toEqual(
