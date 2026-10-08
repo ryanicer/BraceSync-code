@@ -199,7 +199,7 @@ export function mockUpdateTechnician(techId: string, input: Partial<{ name: stri
   if (idx === -1) throw new Error('技师不存在')
   if (input.name) TECHNICIANS[idx].name = input.name
   if (input.teamId) TECHNICIANS[idx].teamId = input.teamId
-  // 与真实端点一致：PUT 的 phone 为空 = 不改（技师页编辑态该输入框本就 disabled，不下发该键）
+  // 与真实端点一致：PUT 的 phone 为空 = 不改（T624 起技师页编辑态可填新号；留空时该键不下发）
   if (input.phone) {
     TECHNICIANS[idx].phoneMasked = maskPhoneLocal(input.phone)
     TECHNICIANS[idx].phoneState = 'masked'
