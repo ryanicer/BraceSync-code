@@ -216,23 +216,24 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     expect((await cellTexts(row))[5], '重置口令不得改动启停状态').toBe('启用')
   })
 
-  test('A-TECH-05 编辑技师：标题/回填/手机号锁定 → 改名保存 → 强制还原', async ({ page }) => {
+  test('A-TECH-05 编辑技师：标题/回填/手机号可编辑 → 留空不改号 → 改号落库 → 强制还原', async ({ page }) => {
     const row = rowByName(page, '周师傅')
     await expect(row).toHaveCount(1)
     const teamBefore = (await cellTexts(row))[2]
     expect(teamBefore, '目标行应有可辨识的所属团队').toBeTruthy()
+    const phoneBefore = (await cellTexts(row))[1]
+    expect(phoneBefore, '基线行的手机号列应为脱敏形态').toBe('138****5678')
 
     await row.getByRole('button', { name: '编辑' }).click()
     const dialog = page.locator('.el-dialog:visible')
     await expect(dialog).toContainText('编辑技师') // 标题不是「新建技师」
     const name = dialog.locator('input[placeholder="技师姓名"]')
-    // T361：编辑态的占位文案由服务端 phoneState 决定（不再是固定的「11 位手机号」）
-    // ⇒ 按表单项 label 定位。锁定/回显口径不变：disabled + masked 态只读展示脱敏号。
+    // T624：编辑态手机号放开为可见可编辑 ⇒ 按表单项 label 定位（占位文案随 phoneState 变，不当选择器用）
     const phone = dialog.locator('.el-form-item').filter({ hasText: '手机号' }).locator('input')
     await expect(name).toHaveValue('周师傅') // 姓名回填
-    await expect(phone).toBeDisabled() // 编辑态手机号锁定（实现口径：改号不在本期）
-    await expect(phone).toHaveValue('138****5678') // phoneState=masked ⇒ 回显的是脱敏号
-    await expect(phone).toHaveAttribute('placeholder', '编辑时不可修改手机号')
+    await expect(phone).toBeEnabled() // T624：不再禁用
+    await expect(phone).toHaveValue('') // T361：脱敏串不是原值，编辑框永不预填
+    await expect(phone).toHaveAttribute('placeholder', '已绑定手机号，留空即不修改')
     await expect(dialog.locator('.el-select')).toContainText(teamBefore) // 团队回填=列表同列值
     await expect(dialog.getByRole('button', { name: '保存修改' })).toBeVisible()
     await expect(dialog.getByRole('button', { name: '确认创建' })).toHaveCount(0)
@@ -248,16 +249,38 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     const renamed = rowByName(page, marker)
     await expect(renamed).toHaveCount(1)
     expect((await cellTexts(renamed))[2], '仅改名，团队保持不变').toBe(teamBefore)
+    // T361 的另一半：输入框留空时该键根本不下发，库内号码不能被动
+    expect((await cellTexts(renamed))[1], '手机号留空＝不改号，列表列仍是原脱敏值').toBe(phoneBefore)
     await expect(rowByName(page, '周师傅')).toHaveCount(0) // 同名行确已被改写，而非新增了一份
 
-    // 🔴 强制还原
+    // 填非法号 → 前端拦下、弹窗不关、列表没被改写
     await renamed.getByRole('button', { name: '编辑' }).click()
+    await phone.fill('123')
+    await dialog.getByRole('button', { name: '保存修改' }).click()
+    await expect(adminMessage(page)).toContainText('手机号需为 11 位号码，或留空')
+    await expect(dialog).toBeVisible()
+    expect((await cellTexts(rowByName(page, marker)))[1], '非法号被拦下后号码不变').toBe(phoneBefore)
+
+    // 填 11 位新号 → 保存后列表那一列翻新（确认真实落库，不是前端假改）。
+    // submitForm 里 loadData() 未 await ⇒ 这里必须用轮询断言等刷新落地，不能同步读一次单元格。
+    await phone.fill('13800002468')
+    await dialog.getByRole('button', { name: '保存修改' }).click()
+    await expect(page.locator('.el-dialog:visible')).toHaveCount(0)
+    const edited = rowByName(page, marker)
+    await expect(edited.locator('td').nth(1), '改号后列表按脱敏形态展示新号').toHaveText('138****2468')
+    expect((await cellTexts(edited))[2], '改号不动团队列').toBe(teamBefore)
+
+    // 🔴 强制还原：姓名与手机号都回到基线（改号会动技师的登录账号，不留痕）
+    await edited.getByRole('button', { name: '编辑' }).click()
     await expect(dialog.locator('input[placeholder="技师姓名"]')).toHaveValue(marker)
     await dialog.locator('input[placeholder="技师姓名"]').fill('周师傅')
+    await phone.fill('13800005678')
     await dialog.getByRole('button', { name: '保存修改' }).click()
     await expect(adminMessage(page)).toContainText('修改成功')
     await expect(rowByName(page, marker)).toHaveCount(0)
-    await expect(rowByName(page, '周师傅')).toHaveCount(1)
+    const restored = rowByName(page, '周师傅')
+    await expect(restored).toHaveCount(1)
+    await expect(restored.locator('td').nth(1), '还原后手机号列回到基线脱敏值').toHaveText(phoneBefore)
   })
 
   test('A-TECH-07 团队下拉数据来源：占位文案 + 选项与「团队管理」页名单一致 + 列表列取自同一来源', async ({ page }) => {

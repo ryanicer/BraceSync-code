@@ -71,13 +71,8 @@
         <el-form-item label="姓名" required>
           <el-input v-model="form.name" placeholder="技师姓名" maxlength="20" />
         </el-form-item>
-        <el-form-item label="手机号" required>
-          <el-input
-            v-model="form.phone"
-            :placeholder="phoneHint"
-            maxlength="11"
-            :disabled="editing"
-          />
+        <el-form-item label="手机号" :required="!editing">
+          <el-input v-model="form.phone" :placeholder="phoneHint" maxlength="11" />
         </el-form-item>
         <el-form-item label="所属团队" required>
           <el-select v-model="form.teamId" placeholder="请选择团队" style="width: 100%">
@@ -105,7 +100,7 @@ import { ref, computed, h, onMounted } from 'vue'
 import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PhoneState, Technician, Team } from '@bracesync/shared-types'
-import { PHONE_PLACEHOLDER, PHONE_RE, phoneDisplay } from '../../utils/phoneField'
+import { PHONE_RE, phoneDisplay, phonePatch, phonePlaceholder } from '../../utils/phoneField'
 import {
   fetchTechnicians, toggleTechnicianApi, teamNameOf,
   createTechnicianApi, updateTechnicianApi, resetTechnicianPasswordApi, fetchTeams,
@@ -124,16 +119,10 @@ const editing = ref(false)
 const submitting = ref(false)
 const editingId = ref('')
 const form = ref({ name: '', phone: '', teamId: '' })
-/** 编辑态手机号的读侧状态（T361）：决定这格禁用输入框显示什么，而不是把脱敏串当可编辑原值 */
-const editingPhoneState = ref<PhoneState>('masked')
-// 技师编辑态的手机号是禁用框（设计稿 技师管理.html:245 编辑流程不改号码），
-// 所以文案不能复用医护账号页那句「留空即不修改」—— 这里根本没有可填的入口。
-const phoneHint = computed(() => {
-  if (!editing.value) return '11 位手机号'
-  if (editingPhoneState.value === 'unreadable') return `号码读取失败（${PHONE_PLACEHOLDER}）`
-  if (editingPhoneState.value === 'absent') return '未登记手机号'
-  return '编辑时不可修改手机号'
-})
+/** 编辑态手机号的读侧状态（T361）：只决定占位文案，号码本身仍由列表列展示 */
+const editingPhoneState = ref<PhoneState>('absent')
+// T624：编辑态手机号可见且可编辑，占位文案沿用医护账号页那把共用尺（留空即不改）。
+const phoneHint = computed(() => (editing.value ? phonePlaceholder(editingPhoneState.value) : '11 位手机号'))
 
 async function loadData() {
   loading.value = true
@@ -183,13 +172,9 @@ function openEdit(row: Technician) {
   editing.value = true
   editingId.value = row.techId
   editingPhoneState.value = row.phoneState
-  // T361：脱敏串不是「原值」。只在服务端确实读得到号码（masked）时把它作为只读展示回填；
-  // absent/unreadable 一律空串，避免星号串被当成号码再次写回。
-  form.value = {
-    name: row.name,
-    phone: row.phoneState === 'masked' ? row.phoneMasked : '',
-    teamId: row.teamId,
-  }
+  // T361 / T624：脱敏串不是「原值」，编辑框永不预填它——预填会让星号串有机会被当成号码写回。
+  // 当前号码在列表行里展示；要换号必须在这里填 11 位新号，留空即保持库内号码不变。
+  form.value = { name: row.name, phone: '', teamId: row.teamId }
   formVisible.value = true
 }
 
@@ -198,12 +183,20 @@ async function submitForm() {
   if (!editing.value && !PHONE_RE.test(form.value.phone)) {
     ElMessage.warning('请填写正确的 11 位手机号'); return
   }
+  // 编辑态手机号选填：留空 = 不改库内号码（T361），填了就必须是合法新号。
+  if (editing.value && form.value.phone && !PHONE_RE.test(form.value.phone)) {
+    ElMessage.warning('手机号需为 11 位号码，或留空'); return
+  }
   if (!form.value.teamId) { ElMessage.warning('请选择所属团队'); return }
 
   submitting.value = true
   try {
     if (editing.value) {
-      await updateTechnicianApi(editingId.value, { name: form.value.name.trim(), teamId: form.value.teamId })
+      await updateTechnicianApi(editingId.value, {
+        name: form.value.name.trim(),
+        phone: phonePatch(form.value.phone),
+        teamId: form.value.teamId,
+      })
       ElMessage.success('修改成功')
       formVisible.value = false
       loadData()
