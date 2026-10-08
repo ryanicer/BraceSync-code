@@ -241,7 +241,8 @@ jobs:
   playwright-e2e:
     name: Playwright E2E (mock，本地 webServer，不打 staging)
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # T609 甲案：定时臂加 cron 字面量判别 —— 本 job 只认领 02:00Z 那档，12:00Z（打 staging 那档）不再放行它。
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 2 * * *') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -277,7 +278,9 @@ jobs:
     #   不是补一条 main 上的最小回归路径。判据要求的那半「别处不缺覆盖」的实证（三面 paths 覆盖清单 +
     #   逐条执行行 + 两档清单集合差）已升格成可检索的流程条款：docs 仓 docs/tasks/_board/流程规范.md
     #   「真实模式（e2e-real）的触发面是三面不是四面」一节（2026-10-05 第 59 轮补裁，待 PM 复核）。
-    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # T609 甲案（duty 2026-10-08 17:18 裁定，执行腿 winner）：schedule 臂加 cron 字面量判别，本 job 只认领
+    #   12:00Z 档；pull_request 与 workflow_dispatch 两臂原样不动。三面承诺不变，只是 schedule 那一面变窄。
+    if: github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.event.schedule == '0 12 * * *') || github.event_name == 'workflow_dispatch'
     # T304：真实模式过去在 CI 里只有 tsc + --list，从未真跑过一条用例。
     # 现在 PR（改动命中 paths）+ 每日 20:00 北京时间 + 手动都真跑；失败即判红，
     # 不加 continue-on-error / `|| true`，以免又变成「CI 绿但真环境没人验」。
@@ -424,7 +427,8 @@ jobs:
   miniapp-smoke:
     name: 小程序冒烟（占位，未实跑；miniprogram-automator 需 devtools）
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # T609 甲案：占位 job 随两枚真实 job 归 12:00Z 档（承接笔 4491 第三节第 4 条的倾向，duty 未单列；要归 02:00Z 请回一句即改）。
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 12 * * *') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - name: 自曝：本 job 未执行任何断言
@@ -450,7 +454,8 @@ jobs:
   real-backend-smoke:
     name: Real Backend Smoke（真实后端冒烟，T144 P1）
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # T609 甲案：本 job 打 staging，定时臂只认领 12:00Z 档（02:00Z 那档不得再放行它）。
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 12 * * *') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -495,3 +500,42 @@ jobs:
           name: playwright-real-report
           path: e2e-real/playwright-report/
           retention-days: 14
+
+  # T609 甲案的守卫腿（duty 2026-10-08 17:18 裁定第四节：硬条件，不是建议）。
+  # 为什么是一枚独立 job 而不是塞进上面某枚 job 的第一步：四枚 if 现在逐字比较 cron 串，
+  #   将来谁把两档合并（如 "0 2,14 * * *"）或改了空格数，比较静默不命中 ⇒「该跑的没跑」而不是报错，
+  #   而守卫步若挂在那些 job 里，job 被 skip 时守卫步一起不跑 ⇒ 报警面为零。
+  #   本 job 的 if 只判事件名不含 cron 字面量，所以任何定时事件它都出场，能把原值打进步面摘要并自曝名册不符。
+  # 零写动作：不 checkout、不 npm ci、不打 staging，只读 github 上下文并写 $GITHUB_STEP_SUMMARY。
+  cron-attribution-guard:
+    name: Cron 归属守卫（T609 只读，零 staging 动作）
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Print event attribution and check cron roster
+        env:
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          SCHED="$GH_EVENT_SCHEDULE"
+          [ -z "$SCHED" ] && SCHED="(non-schedule-event, no such key)"
+          {
+            echo "## T609 cron 归属守卫（只读）"
+            echo ""
+            echo "- github.event_name：$GH_EVENT_NAME"
+            echo "- github.event.schedule：$SCHED"
+            echo "- 名册：02:00Z 档 \"0 2 * * *\" 归 playwright-e2e；12:00Z 档 \"0 12 * * *\" 归 e2e-real-staging / miniapp-smoke / real-backend-smoke"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$GH_EVENT_NAME" = "schedule" ]; then
+            case "$SCHED" in
+              "0 2 * * *"|"0 12 * * *")
+                echo "GUARD_MATCH cron=$SCHED"
+                ;;
+              *)
+                echo "::warning::T609 守卫不命中：定时事件收到的 cron 原值是 [$SCHED]，不在名册两枚字面量之内 —— 若主册 schedule 段被合并档或改了空格数，打 staging 的 job 会静默不跑（该跑的没跑）。请核对 e2e.yml 的 schedule 段与四枚 job 级 if。"
+                echo "GUARD_MISMATCH cron=$SCHED"
+                ;;
+            esac
+          else
+            echo "GUARD_NOT_SCHEDULE event_name=$GH_EVENT_NAME"
+          fi
