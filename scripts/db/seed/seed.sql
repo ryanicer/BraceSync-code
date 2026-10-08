@@ -95,6 +95,11 @@ INSERT INTO patients (patient_id, name, phone_enc, phone_hash, gender, age, birt
   ('P20260005', '患者小宇', ''::bytea,
    'c4b5c6d7e8f90819293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f93',
    'male', 10, '2016-01-08', '胸椎右侧凸 18°', 18.00, NULL, 'TEAM03', 'D0003', 'pending',
+   '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe'),
+  -- T619：未分配基线行，team_id 与 primary_doctor_id 双 NULL ⇒ e2e-real 用例 5.6「-」分支的分母
+  ('P20260006', '患者小未', ''::bytea,
+   'e5f6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091b',
+   'female', 11, '2015-07-02', '胸椎右侧凸 20°', 20.00, NULL, NULL, NULL, 'pending',
    '$2a$10$1CSYb.nghdJ77L1BKVefheXct/R3K5js8SBqYaC.2XFPpk4CtRjAe')
 ON CONFLICT (patient_id) DO NOTHING;
 
