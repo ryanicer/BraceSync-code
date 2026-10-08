@@ -214,12 +214,12 @@ type DoctorDTO struct {
 // teamName：T278-② 后端 join 带出（/technicians 是分页接口，前端建不出全量团队字典 ⇒
 // 团队列此前回落成 TEAM01 编号）；NULL = 该技师未入队，前端回落显示 teamId。
 type TechnicianDTO struct {
-	TechID       string  `json:"techId"`
-	Name         string  `json:"name"`
-	PhoneMasked  string  `json:"phoneMasked"`
-	PhoneState   string  `json:"phoneState"` // T361：absent|masked|unreadable
-	TeamID       string  `json:"teamId"`
-	TeamName     *string `json:"teamName"`
+	TechID      string  `json:"techId"`
+	Name        string  `json:"name"`
+	PhoneMasked string  `json:"phoneMasked"`
+	PhoneState  string  `json:"phoneState"` // T361：absent|masked|unreadable
+	TeamID      string  `json:"teamId"`
+	TeamName    *string `json:"teamName"`
 	// TeamType T627 方案乙：所在团队的类型；NULL = 该技师未挂团队（LEFT JOIN 带不出）。
 	// 技师列表的「归属侧」列与「维护类技师不误归医护」那条验收判据读的就是这一枚。
 	TeamType     *string `json:"teamType"`

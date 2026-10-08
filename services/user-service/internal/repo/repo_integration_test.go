@@ -252,6 +252,8 @@ func TestITTechnicianLifecycle(t *testing.T) {
 	assert.Empty(t, teamTechs)
 
 	// ── T627 方案乙：列表的侧别筛（WHERE 落在 SQL 侧，total 与页同源才不塌分页语义）──
+	// 两枚团队名册是常量 ⇒ 取地址要先落成局部变量（与上面 teamID := itTeam 同一形）。
+	maintID, medID := itMaintTeam, itTeam
 	// 这一枚技师此刻未入队（上面刚编辑成 NULL）：两侧筛都不出，不筛仍列 ⇒ 存量可见性不塌
 	medRows, medTotal, err := itStore.ListTechnicians(ctx, 1, 10, "medical")
 	require.NoError(t, err)
@@ -259,7 +261,7 @@ func TestITTechnicianLifecycle(t *testing.T) {
 	assert.Empty(t, medRows)
 
 	_, err = itStore.UpdateTechnician(ctx, "TECH-USR-IT-1", TechInput{
-		Name: "集成技师改", PhoneEnc: []byte("enc2"), PhoneHash: "hash-it-2", TeamID: &itMaintTeam,
+		Name: "集成技师改", PhoneEnc: []byte("enc2"), PhoneHash: "hash-it-2", TeamID: &maintID,
 	})
 	require.NoError(t, err)
 	mntRows, mntTotal, err := itStore.ListTechnicians(ctx, 1, 10, "maintenance")
@@ -273,7 +275,7 @@ func TestITTechnicianLifecycle(t *testing.T) {
 
 	// 同一枚技师换回医疗团队：筛子跟着团队走，不跟着人走
 	_, err = itStore.UpdateTechnician(ctx, "TECH-USR-IT-1", TechInput{
-		Name: "集成技师改", PhoneEnc: []byte("enc2"), PhoneHash: "hash-it-2", TeamID: &itTeam,
+		Name: "集成技师改", PhoneEnc: []byte("enc2"), PhoneHash: "hash-it-2", TeamID: &medID,
 	})
 	require.NoError(t, err)
 	mntAgain, mntAgainTotal, err := itStore.ListTechnicians(ctx, 1, 10, "maintenance")

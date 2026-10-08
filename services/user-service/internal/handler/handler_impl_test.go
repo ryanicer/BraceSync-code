@@ -81,29 +81,29 @@ type fakeStore struct {
 	// 零值是空串 = 「无类型」，判据按拒绝处理 ⇒ 想测通路的用例必须显式给一侧。
 	teamType          string
 	lastTeamTypeQuery string
-	doctors            []repo.DoctorRow
-	doctorsErr         error
-	techs              []repo.TechnicianRow
-	techTotal          int64
-	techsErr           error
-	lastTechTeamType   string
-	teamTechs          []repo.TechnicianRow
-	teamTechsErr       error
-	tech               *repo.TechnicianRow
-	techErr            error
-	createdTech        *repo.TechnicianRow
-	createErr          error
-	updatedTech        *repo.TechnicianRow
-	updateErr          error
-	toggleExists       bool
-	toggleErr          error
-	phoneTaken         bool
-	takenErr           error
-	feedbacks          []repo.FeedbackRow
-	feedbacksErr       error
-	feedbackIn         repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
-	feedbackID         int64                    // T311：CreateFeedback 返回的自增 id
-	feedbackErr        error                    // T311：CreateFeedback 注入错误
+	doctors           []repo.DoctorRow
+	doctorsErr        error
+	techs             []repo.TechnicianRow
+	techTotal         int64
+	techsErr          error
+	lastTechTeamType  string
+	teamTechs         []repo.TechnicianRow
+	teamTechsErr      error
+	tech              *repo.TechnicianRow
+	techErr           error
+	createdTech       *repo.TechnicianRow
+	createErr         error
+	updatedTech       *repo.TechnicianRow
+	updateErr         error
+	toggleExists      bool
+	toggleErr         error
+	phoneTaken        bool
+	takenErr          error
+	feedbacks         []repo.FeedbackRow
+	feedbacksErr      error
+	feedbackIn        repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
+	feedbackID        int64                    // T311：CreateFeedback 返回的自增 id
+	feedbackErr       error                    // T311：CreateFeedback 注入错误
 	// T378 反馈域读写归属：列表/统计条收到的团队范围、写前的只读探测计数、写调用计数
 	lastFeedbackListScope  repo.FeedbackScope
 	lastFeedbackStatsScope repo.FeedbackScope
