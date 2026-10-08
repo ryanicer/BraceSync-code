@@ -122,7 +122,7 @@ func TestCalibration_GetHistory_CalibratedDTO(t *testing.T) {
 	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(12.3)))
 	require.Nil(t, appErr)
 
-	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", 1, 20)
+	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "", 1, 20)
 	require.Nil(t, appErr)
 	require.Len(t, page.List, 1)
 	assert.True(t, page.List[0].Calibrated)

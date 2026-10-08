@@ -34,6 +34,10 @@ type RecordStore interface {
 	BatchInsert(ctx context.Context, deviceID, patientID string, frames []PendingFrame) (acceptedTS []time.Time, err error)
 	// QueryHistory 按 patient_id + 时间范围分页读分区表，返回行与总数。
 	QueryHistory(ctx context.Context, patientID string, from, to time.Time, page, pageSize int) ([]model.PressureRecord, int64, error)
+	// QueryHistoryBuckets 按东八区墙钟对齐的时间桶降采样读明细（T620）。
+	// 每个桶出一行（Points/MaxPressure 是桶内均值），返回桶行与桶数；
+	// 走它是为了让日/周/月趋势一次请求就能覆盖整个窗口，而不是被 pageSize 上限截断。
+	QueryHistoryBuckets(ctx context.Context, patientID string, from, to time.Time, bucketSeconds int) ([]model.PressureRecord, int64, error)
 }
 
 // RecordRepo RecordStore 的 pgx 实现
@@ -189,6 +193,74 @@ func (r *RecordRepo) QueryHistory(ctx context.Context, patientID string, from, t
 		list = append(list, rec)
 	}
 	return list, total, rows.Err()
+}
+
+// historyBucketSQL T620：按「东八区墙钟」对齐的桶降采样。
+// 取余前先 ts AT TIME ZONE 'Asia/Shanghai' 折成 CST 墙钟（同 wearDetailByCSTDaySQL 的切日坑：
+// 直接对 epoch 取余，6h/1d 档的桶界会落在北京 02:00/08:00，日/周视图的点位与 x 轴标签整体错位），
+// 取余后再 AT TIME ZONE 把 CST 墙钟折回真实瞬时。
+// 桶行的 Points 与 max_pressure 都是 AVG（降采样口径），不是单帧原值 ——
+// 消费侧的口径说明见 model.PressureRecordDTO。
+const historyBucketSQL = `
+WITH bucketed AS (
+  SELECT ((ts AT TIME ZONE 'Asia/Shanghai')
+          - (extract(epoch FROM (ts AT TIME ZONE 'Asia/Shanghai'))::bigint % $4) * interval '1 second'
+         ) AT TIME ZONE 'Asia/Shanghai' AS bucket_ts,
+         device_id, patient_id, upload_time,
+         p01,p02,p03,p04,p05,p06,p07,p08,p09,p10,
+         p11,p12,p13,p14,p15,p16,p17,p18,p19,p20, max_pressure
+  FROM pressure_records
+  WHERE patient_id = $1 AND ts >= $2 AND ts < $3
+)
+SELECT bucket_ts,
+       floor(extract(epoch FROM bucket_ts))::bigint AS bucket_key,
+       MIN(device_id), MIN(patient_id), COUNT(*)::bigint,
+       AVG(p01)::float8, AVG(p02)::float8, AVG(p03)::float8, AVG(p04)::float8, AVG(p05)::float8,
+       AVG(p06)::float8, AVG(p07)::float8, AVG(p08)::float8, AVG(p09)::float8, AVG(p10)::float8,
+       AVG(p11)::float8, AVG(p12)::float8, AVG(p13)::float8, AVG(p14)::float8, AVG(p15)::float8,
+       AVG(p16)::float8, AVG(p17)::float8, AVG(p18)::float8, AVG(p19)::float8, AVG(p20)::float8,
+       AVG(max_pressure)::float8,
+       MAX(upload_time)
+FROM bucketed
+GROUP BY bucket_ts
+ORDER BY bucket_ts`
+
+// QueryHistoryBuckets 实现 RecordStore
+func (r *RecordRepo) QueryHistoryBuckets(ctx context.Context, patientID string, from, to time.Time,
+	bucketSeconds int) ([]model.PressureRecord, int64, error) {
+	rows, err := r.pool.Query(ctx, historyBucketSQL, patientID, from, to, bucketSeconds)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read pressure_records buckets: %w", err)
+	}
+	defer rows.Close()
+
+	var list []model.PressureRecord
+	for rows.Next() {
+		rec := model.PressureRecord{}
+		var frames int64
+		avg := make([]float64, model.PointCount)
+		var avgMax float64
+		// 第 2 列 bucket_key（桶起点秒）扫进 RecordID：桶行没有单一 pressure_records.record_id，
+		// 但消费侧需要一个可稳定排序/去重的标识，桶起点秒同时就是这行的时间键。
+		dest := make([]any, 0, model.PointCount+9)
+		dest = append(dest, &rec.Ts, &rec.RecordID, &rec.DeviceID, &rec.PatientID, &frames)
+		for i := range avg {
+			dest = append(dest, &avg[i])
+		}
+		dest = append(dest, &avgMax, &rec.UploadTime)
+		if err := rows.Scan(dest...); err != nil {
+			return nil, 0, err
+		}
+		for i, v := range avg {
+			rec.Points[i] = float32(v)
+		}
+		rec.MaxPressure = float32(avgMax)
+		list = append(list, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return list, int64(len(list)), nil
 }
 
 const latestRecordSQL = `

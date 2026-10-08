@@ -32,6 +32,9 @@ func (m *mockRecordStore) BatchInsert(_ context.Context, _, _ string, _ []repo.P
 func (m *mockRecordStore) QueryHistory(_ context.Context, _ string, _, _ time.Time, _, _ int) ([]model.PressureRecord, int64, error) {
 	return nil, 0, nil
 }
+func (m *mockRecordStore) QueryHistoryBuckets(_ context.Context, _ string, _, _ time.Time, _ int) ([]model.PressureRecord, int64, error) {
+	return nil, 0, nil
+}
 func (m *mockRecordStore) GetLatestRecord(_ context.Context, _ string) (model.PressureRecord, bool, error) {
 	return m.latestRec, m.latestExist, m.latestErr
 }

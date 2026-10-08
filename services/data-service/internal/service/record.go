@@ -8,7 +8,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -433,12 +435,69 @@ func (s *RecordService) enqueueRollup(ctx context.Context, patientID string, acc
 // 3/4. 历史查询 + 实时快照
 // ─────────────────────────────────────────────────────────────
 
+// historyIntervals T620：趋势降采样档（对外 interval 取值 → 桶宽秒数）。
+// 只收能整除 CST 日界的档：东八区偏移是整小时且这些档整除一天，桶界才与北京墙钟对齐
+// （6h 若按 epoch 取余会落在北京 02:00/08:00/14:00/20:00，切桶表达式见 repo.historyBucketSQL）。
+var historyIntervals = map[string]int{
+	"30m": 30 * 60,
+	"1h":  60 * 60,
+	"6h":  6 * 60 * 60,
+	"1d":  24 * 60 * 60,
+}
+
+// maxHistoryBuckets 单次降采样查询允许的桶数上限。超出即判参数错（让调用方改粗档），
+// 不把整窗的明细桶灌进一次响应。
+const maxHistoryBuckets = 400
+
+// parseHistoryInterval interval 取值 → 桶宽秒；非法时错误消息按字典序列出可用档（可复现）
+func parseHistoryInterval(interval string) (int, *model.AppError) {
+	if sec, ok := historyIntervals[interval]; ok {
+		return sec, nil
+	}
+	allowed := make([]string, 0, len(historyIntervals))
+	for k := range historyIntervals {
+		allowed = append(allowed, k)
+	}
+	sort.Strings(allowed)
+	return 0, model.ErrQueryParam("invalid interval %q, expect %s", interval, strings.Join(allowed, "|"))
+}
+
+// getHistoryBuckets 桶降采样读路：整窗一次取回，每桶一行（Points/MaxPressure 为桶内均值）。
+// 明细分页（架构 §3.5 的 pageSize 上限 100）在这里不适用：30 秒上报一天的帧数远超一页，
+// 客户端逐页翻到整窗会把趋势查询变成几十次请求 —— 这正是 T620「趋势只剩零星孤点」的取数面根因。
+func (s *RecordService) getHistoryBuckets(ctx context.Context, patientID, interval string, from, to time.Time) (*model.HistoryPage, *model.AppError) {
+	sec, appErr := parseHistoryInterval(interval)
+	if appErr != nil {
+		return nil, appErr
+	}
+	// 窗口上界 + 1：桶数按整窗向上取整，避免「刚好等于上限」的窗被 off-by-one 放过
+	if buckets := int(to.Sub(from).Seconds())/sec + 1; buckets > maxHistoryBuckets {
+		return nil, model.ErrQueryParam("interval %s yields about %d buckets over the window, max %d",
+			interval, buckets, maxHistoryBuckets)
+	}
+	records, total, err := s.records.QueryHistoryBuckets(ctx, patientID, from, to, sec)
+	if err != nil {
+		return nil, model.ErrInternal("query history buckets: %v", err)
+	}
+	th := s.pressureThresholds(ctx)
+	list := make([]model.PressureRecordDTO, 0, len(records))
+	for i := range records {
+		list = append(list, s.calibratedRecordDTO(ctx, th, records[i]))
+	}
+	// 桶模式不分页：page 恒 1、pageSize 恒桶数，total 是桶数（不是帧数）
+	return &model.HistoryPage{List: list, Total: total, Page: 1, PageSize: len(list)}, nil
+}
+
 // GetHistory 压力历史查询（period+date 决定时间范围，Asia/Shanghai 切日，分页）
 // T173：逐条按其设备当前基线减偏移（读侧校准，与 realtime 同源）
-func (s *RecordService) GetHistory(ctx context.Context, patientID, period, date string, page, pageSize int) (*model.HistoryPage, *model.AppError) {
+// T620：interval 非空时改走桶降采样读路（见 historyIntervals），一次覆盖整窗，不再受 pageSize 上限截断
+func (s *RecordService) GetHistory(ctx context.Context, patientID, period, date, interval string, page, pageSize int) (*model.HistoryPage, *model.AppError) {
 	from, to, appErr := periodRange(period, date)
 	if appErr != nil {
 		return nil, appErr
+	}
+	if interval != "" {
+		return s.getHistoryBuckets(ctx, patientID, interval, from, to)
 	}
 	records, total, err := s.records.QueryHistory(ctx, patientID, from, to, page, pageSize)
 	if err != nil {

@@ -343,14 +343,14 @@ func TestIT_HistoryAndRealtime(t *testing.T) {
 	}
 
 	today := now.In(model.CSTZone()).Format("2006-01-02")
-	page, appErr := svc.GetHistory(ctx, itPatient, "day", today, 1, 2)
+	page, appErr := svc.GetHistory(ctx, itPatient, "day", today, "", 1, 2)
 	require.Nil(t, appErr)
 	assert.Equal(t, int64(3), page.Total)
 	assert.Len(t, page.List, 2)
 	assert.Equal(t, 2, page.PageSize)
 	require.Len(t, page.List[0].Points, model.PointCount)
 
-	page2, appErr := svc.GetHistory(ctx, itPatient, "day", today, 2, 2)
+	page2, appErr := svc.GetHistory(ctx, itPatient, "day", today, "", 2, 2)
 	require.Nil(t, appErr)
 	assert.Len(t, page2.List, 1)
 

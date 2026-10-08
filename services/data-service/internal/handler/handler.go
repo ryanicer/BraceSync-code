@@ -215,6 +215,7 @@ func (h *Handler) injectMock(c *gin.Context) {
 }
 
 // getHistory 压力历史查询（period=day|week|month，date=YYYY-MM-DD，分页默认 20 上限 100）
+// T620：可选 interval（30m|1h|6h|1d）走桶降采样，此时 page/pageSize 不参与（整窗一次返回）
 func (h *Handler) getHistory(c *gin.Context) {
 	patientID := c.Param("patientId")
 	if !assertAdminOrSelf(c, patientID) { // T264：水平鉴权
@@ -228,6 +229,9 @@ func (h *Handler) getHistory(c *gin.Context) {
 	}
 	period := c.DefaultQuery("period", "day")
 	date := c.DefaultQuery("date", "")
+	// T620：interval 非空（30m|1h|6h|1d）时走桶降采样读路，一次覆盖整窗；
+	// 缺席时保持原明细分页语义不变（admin-web 与其他消费方不受影响）。
+	interval := c.Query("interval")
 	if date == "" {
 		fail(c, model.ErrQueryParam("date is required (YYYY-MM-DD)"))
 		return
@@ -254,7 +258,7 @@ func (h *Handler) getHistory(c *gin.Context) {
 		pageSize = 100 // 架构 §3.5：pageSize 默认 20，上限 100
 	}
 
-	resp, appErr := h.svc.GetHistory(c.Request.Context(), patientID, period, date, page, pageSize)
+	resp, appErr := h.svc.GetHistory(c.Request.Context(), patientID, period, date, interval, page, pageSize)
 	if appErr != nil {
 		fail(c, appErr)
 		return

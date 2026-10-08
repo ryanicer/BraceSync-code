@@ -25,9 +25,10 @@ import (
 // ─────────────────────────────────────────────────────────────
 
 type stubRecords struct {
-	lastPageSize int
-	lastPage     int
-	rows         []model.PressureRecord
+	lastPageSize      int
+	lastPage          int
+	lastBucketSeconds int
+	rows              []model.PressureRecord
 }
 
 func (s *stubRecords) InsertRecord(_ context.Context, deviceID, patientID string, f repo.PendingFrame) (int64, bool, error) {
@@ -44,6 +45,12 @@ func (s *stubRecords) BatchInsert(_ context.Context, _, _ string, frames []repo.
 
 func (s *stubRecords) QueryHistory(_ context.Context, patientID string, from, to time.Time, page, pageSize int) ([]model.PressureRecord, int64, error) {
 	s.lastPage, s.lastPageSize = page, pageSize
+	return s.rows, int64(len(s.rows)), nil
+}
+
+func (s *stubRecords) QueryHistoryBuckets(_ context.Context, _ string, _, _ time.Time,
+	bucketSeconds int) ([]model.PressureRecord, int64, error) {
+	s.lastBucketSeconds = bucketSeconds
 	return s.rows, int64(len(s.rows)), nil
 }
 
@@ -328,5 +335,8 @@ func (errRecords) BatchInsert(context.Context, string, string, []repo.PendingFra
 	return nil, errors.New("db down")
 }
 func (errRecords) QueryHistory(context.Context, string, time.Time, time.Time, int, int) ([]model.PressureRecord, int64, error) {
+	return nil, 0, errors.New("db down")
+}
+func (errRecords) QueryHistoryBuckets(context.Context, string, time.Time, time.Time, int) ([]model.PressureRecord, int64, error) {
 	return nil, 0, errors.New("db down")
 }
