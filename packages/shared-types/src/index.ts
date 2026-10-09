@@ -284,6 +284,29 @@ export interface OrthosisPlan {
   createdAt: string;
 }
 
+/**
+ * 康复建议（T641 / PRD §7A.12）：医护对患者的单向留言，留言板模式（无推送、无已读、患者零交互）。
+ * 🔴 字段名集合是隐私契约的一部分：本接口不得出现 name / doctorName / teamName / username / phone*
+ * （设计稿 §八；后端组 DTO 时就不 SELECT 姓名列，不是组完再丢）。
+ * title = 职称，回落链 doctors.title → department →「医护团队」，技师侧固定「技术支撑」，绝不用姓名兜底。
+ * editable = 这一行是否当前调用人所写（R7 甲「仅作者本人可编辑/删除」）；患者端恒 false。
+ */
+export interface Advice {
+  adviceId: string;
+  patientId: string;
+  title: string;
+  content: string;
+  createdAt: string;             // ISO（写侧一次定形）
+  updatedAt: string;             // 编辑时应用层刷新（000035 头注：不带 DB ON UPDATE）
+  editable: boolean;
+}
+
+/** 患者端「你的医护团队」的一行（T641）：memberType 是「角色」维，title 是「职称」维 */
+export interface CareTeamMember {
+  memberType: 'doctor' | 'technician';
+  title: string;
+}
+
 export interface Feedback {
   feedbackId: string;
   patientId: string;

@@ -333,6 +333,33 @@ type OrthosisPlanRow struct {
 	CreatedAt time.Time
 }
 
+// AdviceRow advice_logs 表投影（T641）
+//
+// AuthorTitle / AuthorDepartment 是读时 JOIN doctors 带出的两列（R5 甲：库里只存 author_doctor_id，
+// 职称不作快照），回落链 title → department →「医护团队」在 handler 组 DTO 时走，不在 SQL 里 COALESCE
+// 成固定词 —— 那样会把「回落用了哪一档」这一格在库里抹平，测试也就断不出回落链有没有生效。
+// 两列都可空：doctors.title 建表未带 NOT NULL（000001:42），technicians 表根本没有 title 列（:53-65）。
+type AdviceRow struct {
+	AdviceID         int64
+	PatientID        string
+	AuthorDoctorID   string
+	Content          string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	AuthorTitle      *string
+	AuthorDepartment *string
+}
+
+// CareTeamRow 患者所绑定团队的成员行（T641 患者端「你的医护团队」）。
+// 只带展示需要的两列：MemberType（doctor | technician，对应成员落在哪张表 = 「角色」那一维）
+// 与 Title / Department（doctors 才有，technicians 恒 nil）。
+// 🔴 结构里不出现 name / phone / username 任何一列 —— 组 SQL 时就不 SELECT，隐私不靠 handler 记得丢字段。
+type CareTeamRow struct {
+	MemberType string
+	Title      *string
+	Department *string
+}
+
 // FeelingLogRow feeling_logs 表投影
 type FeelingLogRow struct {
 	LogID           int64
@@ -595,6 +622,21 @@ type Store interface {
 	ListPlans(ctx context.Context, patientID string) ([]OrthosisPlanRow, error)
 	LatestPlanVersion(ctx context.Context, patientID string) (string, bool, error)
 	CreatePlan(ctx context.Context, patientID, doctorID, content, version string) (*OrthosisPlanRow, error)
+
+	// 康复建议（T641，留言板模式：写一次成一行，编辑覆盖同一行，删除为硬删 R3 甲）
+	CreateAdvice(ctx context.Context, patientID, doctorID, content string) (*AdviceRow, error)
+	// ListAdvice 按患者取建议流（created_at 倒序，走 idx_advice_patient）。
+	// 只出未删的整表行 —— 本表无软删列，「删除」在库里就是行不在。
+	ListAdvice(ctx context.Context, patientID string) ([]AdviceRow, error)
+	// UpdateAdvice T641 / R7 甲：作者谓词必须在 SQL 里（WHERE advice_id AND author_doctor_id），
+	// 不能只靠前端藏按钮。返回 nil 表示「这条不是他写的 / 这条不存在」，由 handler 统一 403，
+	// 不给存在性留 oracle（口径同 FeelingLogInTeam 的「四格合一」）。
+	UpdateAdvice(ctx context.Context, adviceID int64, doctorID, content string) (*AdviceRow, error)
+	// DeleteAdvice R3 甲硬删 + R7 甲作者谓词；返回 false = 行不存在或非本人所写（handler 侧统一 403）。
+	DeleteAdvice(ctx context.Context, adviceID int64, doctorID string) (bool, error)
+	// CareTeamByPatient T641 患者端团队展示：patients.team_id → doctors(title/department) + technicians。
+	// 出参不含任何姓名列（隐私裁定 §八：患者端此后不应拿到医护姓名），SQL 的列清单里就不选 name。
+	CareTeamByPatient(ctx context.Context, patientID string) ([]CareTeamRow, error)
 
 	// 感受日志
 	ListFeelingLogs(ctx context.Context, patientID string) ([]FeelingLogRow, error)

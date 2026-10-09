@@ -28,6 +28,10 @@ export const CONTRACT_MAP = {
   TechnicianDTO: { ts: 'Technician' },
   FeedbackDTO: { ts: 'Feedback' },
   OrthosisPlanDTO: { ts: 'OrthosisPlan' },
+  // T641 康复建议：两侧键集合必须逐枚相等（AdviceDTO ↔ Advice / CareTeamMemberDTO ↔ CareTeamMember）。
+  // 这两行同时是隐私断言的一部分 —— 一旦有人在 DTO 上加 name，对拍不报错但 §八 的字段名断言用例会红。
+  AdviceDTO: { ts: 'Advice' },
+  CareTeamMemberDTO: { ts: 'CareTeamMember' },
   FeelingLogDTO: { ts: 'FeelingLog' },
   ReviewRecordDTO: { ts: 'ReviewRecord' },
   ReviewTemplateDTO: { ts: 'ReviewTemplate' },

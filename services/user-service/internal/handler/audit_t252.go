@@ -182,6 +182,11 @@ var auditRoutes = map[string]auditRoute{
 	http.MethodPost + " /api/v1/feeling-logs/:logId/reply":          {auditActionDataModify, "feeling_log", "logId", "回复佩戴感受日志 %s"},
 	http.MethodPost + " /api/v1/feedbacks/:feedbackId/process":      {auditActionDataModify, "feedback", "feedbackId", "处理反馈 %s"},
 	http.MethodPost + " /api/v1/admin/review-records":               {auditActionDataModify, "review_record", "", "创建复查记录"},
+
+	// T641 医护建议三枚写端点。R3 甲硬删也留痕：可追溯性靠这三行，不在业务表上开全仓没有的 deleted_at。
+	http.MethodPost + " /api/v1/patients/:patientId/advice": {auditActionDataModify, "advice_log", "patientId", "为患者 %s 发送医护建议"},
+	http.MethodPut + " /api/v1/advice/:adviceId":            {auditActionDataModify, "advice_log", "adviceId", "编辑医护建议 %s"},
+	http.MethodDelete + " /api/v1/advice/:adviceId":         {auditActionDataModify, "advice_log", "adviceId", "删除医护建议 %s"},
 }
 
 // auditTrail 表驱动审计中间件（挂在 /api/v1 组、scopeGuard 之后）：

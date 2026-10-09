@@ -184,6 +184,12 @@ var doctorAdminOnlyPatterns = []rbacPattern{
 	// T260-B：医生回复患者感受日志 + 保存矫形方案（admin-web orthosis-log 页，doctor/admin）
 	rbacOf(http.MethodPost, "/api/v1/feeling-logs/:logId/reply"),
 	rbacOf(http.MethodPost, "/api/v1/patients/:patientId/orthosis-plans"),
+	// T641 医护建议三枚写通道（发送 / 编辑 / 删除）。收这张矩阵而非 adminOnly：
+	// 建议是医护写给患者的话，运营管理员没有 doctors 行、发不出「谁说的」这一格；
+	// 作者判定（R7 甲）在 user-service 的 SQL WHERE 里再收一层，网关这层只管角色。
+	rbacOf(http.MethodPost, "/api/v1/patients/:patientId/advice"),
+	rbacOf(http.MethodPut, "/api/v1/advice/:adviceId"),
+	rbacOf(http.MethodDelete, "/api/v1/advice/:adviceId"),
 	// T135 复查报告模板管理（合同运营后台「复查报告模板管理」；admin+doctor 均需：
 	//   admin 后台上传/替换/列表/下载；doctor 列表/下载空白模板线下填写）
 	rbacOf(http.MethodPost, "/api/v1/admin/review-templates"),                  // 上传/创建模板
@@ -309,6 +315,9 @@ var staffRoles = []string{roleAdmin, roleDoctor, roleCS, roleTech}
 var publicPatterns = []rbacPattern{
 	// 患者本人域（user-service 按 X-User-Id 取本人，天然 self-scope）
 	rbacOf(http.MethodGet, "/api/v1/patient/profile"),
+	// T641 患者端「你的医护团队」：患者 ID 只取 X-User-Id（天然 self-scope），
+	// 出参两列（角色 + 职称回落）—— 无姓名/手机号/账号，见 user-service CareTeamMemberDTO 注释。
+	rbacOf(http.MethodGet, "/api/v1/patient/care-team"),
 	// bind-scope JWT 专属，gateway scopeAuthz 中间件限 scope=bind，非 bind 令牌一律 403
 	rbacOf(http.MethodPost, "/api/v1/patient/bind-phone"),
 	// T226 患者自助改本人资料：user-service 校验 X-User-Id == :patientId
@@ -324,6 +333,9 @@ var publicPatterns = []rbacPattern{
 	// T188 患者端录入佩戴感受：user-service createFeelingLog 走 assertAdminOrSelf
 	// （患者仅能为本人写，staff 可代录）。同日重复提交按覆盖更新，非新建。
 	rbacOf(http.MethodPost, "/api/v1/patients/:patientId/feeling-logs"),
+	// T641 建议流：后台 staff 与患者端共用这一条 GET（不另开 /patient/advice，避免两枚面各写一套判定）。
+	// 服务层 listAdvice = assertAdminOrSelf（患者仅本人）+ assertPatientInScope（医护仅本团队）。
+	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/advice"),
 	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/review-records"),     // user-service listReviewRecords
 	rbacOf(http.MethodGet, "/api/v1/patients/:patientId/wear-reminder"),      // msg-service requireSelfScope
 	rbacOf(http.MethodPut, "/api/v1/patients/:patientId/wear-reminder"),      // msg-service requireSelfScope

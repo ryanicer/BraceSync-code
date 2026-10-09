@@ -159,7 +159,15 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/patients/:patientId/feeling-logs"}, // T188 患者端录入佩戴感受
 	{http.MethodPost, "/feeling-logs/:logId/reply"},        // T030 #6 医生回复
 	{http.MethodGet, "/admin/feeling-logs"},                // T256 #2 跨患者感受日志流
-	{http.MethodGet, "/admin/roles"},                       // T030 #7
+
+	// T641 医护建议：一枚写 + 两枚读（患者端与 staff 共用同一 GET 路径）+ 患者团队读。
+	// 🔴 PUT/DELETE 必须在代理注册面与授权矩阵同时登记（rbac.go:93 那条教训：只登记一处＝另一面空转）。
+	{http.MethodPost, "/patients/:patientId/advice"},
+	{http.MethodGet, "/patients/:patientId/advice"},
+	{http.MethodPut, "/advice/:adviceId"},
+	{http.MethodDelete, "/advice/:adviceId"},
+	{http.MethodGet, "/patient/care-team"},
+	{http.MethodGet, "/admin/roles"}, // T030 #7
 	{http.MethodGet, "/admin/roles/:roleId/permissions"},
 	{http.MethodPut, "/admin/roles/:roleId/permissions"},
 	// T252 11.2/11.4 角色增删改 + 角色模板下拉

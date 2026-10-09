@@ -283,6 +283,31 @@ type OrthosisPlanDTO struct {
 	CreatedAt string `json:"createdAt"`
 }
 
+// AdviceDTO 康复建议（T641，契约 getPatientAdvice / listAdvice，对齐 shared-types Advice）。
+//
+// 🔴 隐私（设计稿 §八）：本 DTO 的字段名集合里不得出现 name / doctorName / teamName / username / phone*，
+// 患者端与后台端共用这一枚 DTO —— 医护姓名压根不在结构里，而不是「组完之后删字段」。
+// Title 是回落链的结果（doctors.title → department →「医护团队」，见 handler 侧 adviceTitleOrFallback），
+// 技师成员没有 title 列，走的是固定标签那一档 —— 两档都不回落姓名。
+// Editable = 「这一行是不是当前调用人写的」（R7 甲），后台据此出编辑/删除；患者端恒 false。
+type AdviceDTO struct {
+	AdviceID  string `json:"adviceId"`
+	PatientID string `json:"patientId"`
+	Title     string `json:"title"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+	Editable  bool   `json:"editable"`
+}
+
+// CareTeamMemberDTO 患者端「你的医护团队」的一行（T641，契约 getPatientCareTeam，对齐 shared-types CareTeamMember）。
+// MemberType = 这一维的「角色」（成员行落在哪张表：doctors=医护 / technicians=技术支撑）；
+// Title = 这一维的「职称」（doctors.title 回落结果；technicians 无该列，恒为固定标签）。
+type CareTeamMemberDTO struct {
+	MemberType string `json:"memberType"`
+	Title      string `json:"title"`
+}
+
 // FeelingLogDTO 佩戴感受日志（契约 getFeelingLogs，对齐 shared-types FeelingLog）
 // T256 #3：comfort_level 两档（fitted=贴合 / discomfort=不适），由 000015 迁移新增列；
 // comfort_score 保留为历史星级口径（PRD §8.2），写入口径以 comfort_level 为准。

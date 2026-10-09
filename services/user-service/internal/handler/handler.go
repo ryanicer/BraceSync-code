@@ -23,6 +23,11 @@
 //	GET  /api/v1/patients/:patientId/feeling-logs        佩戴感受日志
 //	POST /api/v1/patients/:patientId/feeling-logs        患者端录入佩戴感受（T188，同日覆盖）
 //	POST /api/v1/feeling-logs/:logId/reply               医生回复感受日志
+//	POST /api/v1/patients/:patientId/advice              医护写一条建议（T641）
+//	GET  /api/v1/patients/:patientId/advice              建议流（staff 与患者端同一条路径、两枚 token）
+//	PUT  /api/v1/advice/:adviceId                        作者本人编辑（同行 UPDATE）
+//	DELETE /api/v1/advice/:adviceId                      作者本人删除（硬删 + 审计留痕）
+//	GET  /api/v1/patient/care-team                      患者端「你的医护团队」（只出角色与职称）
 //	GET  /api/v1/admin/roles                             RBAC 角色列表
 //	GET  /api/v1/admin/roles/:roleId/permissions         权限矩阵读
 //	PUT  /api/v1/admin/roles/:roleId/permissions         权限矩阵写
@@ -294,6 +299,13 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/patients/:patientId/feeling-logs", h.createFeelingLog)
 		v1.POST("/feeling-logs/:logId/reply", h.replyFeelingLog)
 		v1.GET("/admin/feeling-logs", h.listFeelingLogsAdmin) // T256 #2 跨患者感受日志流
+
+		// T641 医护建议（留言板：写走 staff token，读两枚 token 共用同一路径；授权矩阵在 gateway rbac.go）
+		v1.POST("/patients/:patientId/advice", h.createAdvice)
+		v1.GET("/patients/:patientId/advice", h.listAdvice)
+		v1.PUT("/advice/:adviceId", h.updateAdvice)
+		v1.DELETE("/advice/:adviceId", h.deleteAdvice)
+		v1.GET("/patient/care-team", h.getCareTeam)
 
 		v1.GET("/admin/roles", h.listRoles)
 		v1.GET("/admin/roles/:roleId/permissions", h.getPermissions)
@@ -1799,6 +1811,256 @@ func (h *Handler) replyFeelingLog(c *gin.Context) {
 		return
 	}
 	ok(c, nil)
+}
+
+// ─────────────────────────────────────────────────────────────
+// T641 医护建议（advice_logs）
+// ─────────────────────────────────────────────────────────────
+
+// adviceContentMaxRunes 正文上限（R2 甲 500，与 feedbacks.content VARCHAR(500) 同档）。
+// 口径走 rune，不抄本文件 savePlan 那处 len() 字节口径：字节口径下 500 只放得下约 166 个汉字，
+// 而患者端摘要按字符切，服务端与展示两把尺不同尺。
+const adviceContentMaxRunes = 500
+
+// adviceTeamLabel / adviceTechLabel 回落链末档与技师固定标签（R6 甲：不编造职称、绝不用姓名兜底）。
+const (
+	adviceTeamLabel = "医护团队"
+	adviceTechLabel = "技术支撑"
+)
+
+// adviceDisplayTitle R5 甲回落链：title → department → 固定词。
+// 三档都在 handler 侧算（库里不 COALESCE 成固定词），否则「回落走了哪一档」在 SQL 面被抹平，
+// 断言就退化成只看最终字符串。
+func adviceDisplayTitle(title, department *string) string {
+	if title != nil && strings.TrimSpace(*title) != "" {
+		return strings.TrimSpace(*title)
+	}
+	if department != nil && strings.TrimSpace(*department) != "" {
+		return strings.TrimSpace(*department)
+	}
+	return adviceTeamLabel
+}
+
+func toAdviceDTO(r repo.AdviceRow, editorDoctorID string) model.AdviceDTO {
+	return model.AdviceDTO{
+		AdviceID:  strconv.FormatInt(r.AdviceID, 10),
+		PatientID: r.PatientID,
+		Title:     adviceDisplayTitle(r.AuthorTitle, r.AuthorDepartment),
+		Content:   r.Content,
+		CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt: r.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Editable:  editorDoctorID != "" && r.AuthorDoctorID == editorDoctorID,
+	}
+}
+
+func toCareTeamDTO(r repo.CareTeamRow) model.CareTeamMemberDTO {
+	// technicians 表没有 title 列（000001:53-65），这一行恒给固定标签；医生行走回落链。
+	if r.MemberType == "technician" {
+		return model.CareTeamMemberDTO{MemberType: r.MemberType, Title: adviceTechLabel}
+	}
+	return model.CareTeamMemberDTO{MemberType: r.MemberType, Title: adviceDisplayTitle(r.Title, r.Department)}
+}
+
+type adviceContentRequest struct {
+	Content string `json:"content"`
+}
+
+// validateAdviceContent 必填 + rune 上限两关；通过时回去空白后的正文。
+func validateAdviceContent(raw string) (string, *model.AppError) {
+	content := trimStr(raw)
+	if content == "" {
+		return "", model.ErrInvalidParam("content is required")
+	}
+	if runeLen(content) > adviceContentMaxRunes {
+		return "", model.ErrInvalidParam("content exceeds %d chars", adviceContentMaxRunes)
+	}
+	return content, nil
+}
+
+// adviceWriteIdentity 写三腿的作者身份：author_doctor_id 只从这里取，不信客户端。
+//
+// 两道各自必要，缺一不可：
+//   - 非 staff 先拒。assertAdminOrSelf 对「患者本人」是放行的（那是本人档案域的语义），
+//     而建议的写域按裁定只属于医护 —— 患者给自己发一条不该落到库。
+//     网关那层 doctorAdminOnly 已经拦过一次，服务层这层是 T491 一族「只收紧不放宽」的兜底：
+//     写替身不校验角色，一旦身份解析被更宽的路径喂到，直接产生的是一次库写。
+//   - 无 doctors 行（客服 / 运营管理员令牌）⇒ 403，发不出「谁说的」这一格。
+//
+// 返回 false 时响应已写出。
+func (h *Handler) adviceWriteIdentity(c *gin.Context) (string, bool) {
+	if !isStaffRole(c.GetHeader(headerRole)) {
+		fail(c, model.ErrForbidden("advice must be written by care staff"))
+		return "", false
+	}
+	doctorID, found, err := h.store.DoctorIDByAdmin(c.Request.Context(), operatorID(c, ""))
+	if err != nil {
+		fail(c, model.ErrInternal("resolve doctor identity failed"))
+		return "", false
+	}
+	if !found {
+		fail(c, model.ErrForbidden("doctor identity required to write advice"))
+		return "", false
+	}
+	return doctorID, true
+}
+
+// callerDoctorID 读端点算 editable 用。非 staff、库里无 doctors 行、解析失败三形都回空串：
+// 这三种身份本来就一条都改不了（editable 恒 false 是正确读数），不该把一页建议流打成 500。
+func (h *Handler) callerDoctorID(c *gin.Context) string {
+	if !isStaffRole(c.GetHeader(headerRole)) {
+		return ""
+	}
+	doctorID, found, err := h.store.DoctorIDByAdmin(c.Request.Context(), operatorID(c, ""))
+	if err != nil || !found {
+		return ""
+	}
+	return doctorID
+}
+
+// createAdvice POST /api/v1/patients/:patientId/advice —— 医护写一条建议
+func (h *Handler) createAdvice(c *gin.Context) {
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+	var req adviceContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	content, appErr := validateAdviceContent(req.Content)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	// 归属判定排在任何库写之前（口径同 savePlan D2）：跨团队时一次 INSERT 都不许发生。
+	if !assertAdminOrSelf(c, patientID) {
+		return
+	}
+	if !h.assertPatientInScope(c, patientID) {
+		return
+	}
+	doctorID, pass := h.adviceWriteIdentity(c)
+	if !pass {
+		return
+	}
+	row, err := h.store.CreateAdvice(c.Request.Context(), patientID, doctorID, content)
+	if err != nil {
+		fail(c, model.ErrInternal("create advice failed"))
+		return
+	}
+	ok(c, toAdviceDTO(*row, doctorID))
+}
+
+// listAdvice GET /api/v1/patients/:patientId/advice —— 建议流，created_at 倒序。
+// 后台 staff 与患者端走同一条路径：assertAdminOrSelf 放行 staff / 拦患者跨本人，
+// 再由 assertPatientInScope 收窄到本团队（照抄 listPlans 的两行式，不另造判定）。
+func (h *Handler) listAdvice(c *gin.Context) {
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+	if !assertAdminOrSelf(c, patientID) {
+		return
+	}
+	if !h.assertPatientInScope(c, patientID) {
+		return
+	}
+	rows, err := h.store.ListAdvice(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("list advice failed"))
+		return
+	}
+	editorDoctorID := h.callerDoctorID(c)
+	list := make([]model.AdviceDTO, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, toAdviceDTO(r, editorDoctorID))
+	}
+	ok(c, list)
+}
+
+// updateAdvice PUT /api/v1/advice/:adviceId —— R4 甲同行 UPDATE（updated_at 由 SQL 刷新）。
+// R7 甲的作者谓词在 SQL 的 WHERE 里（store.UpdateAdvice），此处不另查归属：能改的只有「我写的那一行」，
+// 跨团队改他人建议需要以他人身份命中谓词，结构上不成立。
+func (h *Handler) updateAdvice(c *gin.Context) {
+	adviceID, err := strconv.ParseInt(c.Param("adviceId"), 10, 64)
+	if err != nil || adviceID < 1 {
+		fail(c, model.ErrInvalidParam("invalid adviceId: %s", c.Param("adviceId")))
+		return
+	}
+	var req adviceContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	content, appErr := validateAdviceContent(req.Content)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	doctorID, pass := h.adviceWriteIdentity(c)
+	if !pass {
+		return
+	}
+	row, err := h.store.UpdateAdvice(c.Request.Context(), adviceID, doctorID, content)
+	if err != nil {
+		fail(c, model.ErrInternal("update advice failed"))
+		return
+	}
+	if row == nil {
+		// 「行不存在」与「存在但非本人所写」两格同码：受限身份在这一端点永不出 404，
+		// adviceId 存在性不可辨（口径同 replyFeelingLog 的四格合一 403）。
+		fail(c, model.ErrForbidden("advice %d is not editable by you", adviceID))
+		return
+	}
+	ok(c, toAdviceDTO(*row, doctorID))
+}
+
+// deleteAdvice DELETE /api/v1/advice/:adviceId —— R3 甲硬删；可追溯性由审计行提供
+// （audit_t252.go 登记表，target_type=advice_log），业务表不开全仓没有的 deleted_at 列。
+func (h *Handler) deleteAdvice(c *gin.Context) {
+	adviceID, err := strconv.ParseInt(c.Param("adviceId"), 10, 64)
+	if err != nil || adviceID < 1 {
+		fail(c, model.ErrInvalidParam("invalid adviceId: %s", c.Param("adviceId")))
+		return
+	}
+	doctorID, pass := h.adviceWriteIdentity(c)
+	if !pass {
+		return
+	}
+	deleted, err := h.store.DeleteAdvice(c.Request.Context(), adviceID, doctorID)
+	if err != nil {
+		fail(c, model.ErrInternal("delete advice failed"))
+		return
+	}
+	if !deleted {
+		fail(c, model.ErrForbidden("advice %d is not deletable by you", adviceID))
+		return
+	}
+	ok(c, nil)
+}
+
+// getCareTeam GET /api/v1/patient/care-team —— 患者端「你的医护团队」，只出角色 + 职称。
+// self-scope：患者 ID 只取网关注入的 X-User-Id，路径不带 ID（口径同 getPatientProfile），
+// 结构上无法请求他人团队，因此不需要存在性判 404（令牌本身已锁人）。
+func (h *Handler) getCareTeam(c *gin.Context) {
+	patientID := c.GetHeader(headerUserID)
+	if patientID == "" {
+		fail(c, model.ErrForbidden("patient identity required"))
+		return
+	}
+	rows, err := h.store.CareTeamByPatient(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("list care team failed"))
+		return
+	}
+	list := make([]model.CareTeamMemberDTO, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, toCareTeamDTO(r))
+	}
+	ok(c, list)
 }
 
 // ─────────────────────────────────────────────────────────────
