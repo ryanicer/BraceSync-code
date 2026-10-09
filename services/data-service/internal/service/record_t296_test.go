@@ -173,7 +173,7 @@ func TestT296_RealtimeSnapshot_CarriesDisplayScale(t *testing.T) {
 	env.useDBPath()
 	env.svc.configs = &t296ThresholdConfigs{
 		fakeConfigs: env.configs,
-		th:          model.PressureThresholds{HeatmapMaxN: 8, PressureHighN: 4},
+		th:          model.PressureThresholds{HeatmapMaxN: 8, PressureHighN: 4, PressureLowN: 1},
 	}
 	uploadT296(t, env)
 
@@ -181,6 +181,7 @@ func TestT296_RealtimeSnapshot_CarriesDisplayScale(t *testing.T) {
 	require.Nil(t, appErr)
 	assert.InDelta(t, 8.0, snap.HeatmapMaxN, 1e-9, "色阶上界取 sys_configs 当前值")
 	assert.InDelta(t, 4.0, snap.PressureHighN, 1e-9, "偏高分界与告警引擎同源")
+	assert.InDelta(t, 1.0, snap.PressureLowN, 1e-9, "低压边界同链下发（T601：hero 正常范围文案的下边界）")
 
 	// 未绑定设备分支同样要带口径（前端首屏即渲染色阶）
 	orphan := newTestEnv()
@@ -189,6 +190,7 @@ func TestT296_RealtimeSnapshot_CarriesDisplayScale(t *testing.T) {
 	require.Nil(t, appErr)
 	assert.InDelta(t, model.HeatmapMaxN, none.HeatmapMaxN, 1e-9)
 	assert.InDelta(t, 5.0, none.PressureHighN, 1e-9)
+	assert.InDelta(t, 1.0, none.PressureLowN, 1e-9, "默认低压边界 = 迁移 000021 / seed 同值")
 }
 
 func maxPointID(t *testing.T, hm []model.HeatmapPoint) string {

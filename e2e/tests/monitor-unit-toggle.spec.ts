@@ -40,9 +40,10 @@ test('默认 N 档：二档分段落在 N，格子读数与改动前同形（PRD
   const vals = await cellValues(page).allTextContents()
   expect(vals).toHaveLength(20)
   for (const v of vals) expect(v).toMatch(/^\d+\.\d{2}$/)
-  // 副文案「20-60N 正常范围」在 N 档出现（它在 kPa 档会被整块隐藏，见下一条）
+  // 副文案在 N 档出现（kPa 档整块隐藏，见下一条）；
+  // T601：文案由配置派生 —— 夹具下发 1/5，页面须逐字渲染注入值（不再是写死的 20-60）
   await expect(page.locator('.hero-meta-left')).toBeVisible()
-  await expect(page.locator('.hero-meta-left .meta-text')).toHaveText('20-60N 正常范围')
+  await expect(page.locator('.hero-meta-left .meta-text')).toHaveText('1-5N 正常范围')
 })
 
 test('切到 kPa：数字与单位字母同时换，配色与判档不跟着换（四.9②③）', async ({ page }) => {
@@ -64,7 +65,7 @@ test('切到 kPa：数字与单位字母同时换，配色与判档不跟着换�
   ).toHaveText('659')
   // 判档恒 N：20 格配色逐格不变
   expect(await cellStyles(page)).toEqual(colorsBefore)
-  // 裁定 c：kPa 档不再出现「20-60N 正常范围」
+  // 裁定 c：kPa 档不出现正常范围副文案
   await expect(page.locator('.hero-meta-left')).toBeHidden()
 
   await unitSegBtn(page, 'N').click()
