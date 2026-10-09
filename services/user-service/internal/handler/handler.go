@@ -806,34 +806,6 @@ func toPatientDTO(r repo.PatientRow) model.AdminPatientDTO {
 	}
 }
 
-// toPatientSelfDTO 把同一行档案装配成患者侧载荷（T646）。
-//
-// 逐字段显式列出、不吃 AdminPatientDTO 的整体：漏拷一枚字段是「少发一格数据」，
-// 而「顺手内嵌整个 AdminPatientDTO」是「多发一枚医护姓名」—— 后者的代价是隐私面的，
-// 所以这里宁可让编译器替我盯住新增字段（新增时这一处不会自动带上，需要显式决定）。
-func toPatientSelfDTO(d model.AdminPatientDTO) model.PatientSelfDTO {
-	return model.PatientSelfDTO{
-		PatientID:                d.PatientID,
-		Name:                     d.Name,
-		Gender:                   d.Gender,
-		Age:                      d.Age,
-		Diagnosis:                d.Diagnosis,
-		CobbAngle:                d.CobbAngle,
-		DeviceID:                 d.DeviceID,
-		TeamID:                   d.TeamID,
-		DoctorID:                 d.DoctorID,
-		Phone:                    d.Phone,
-		Status:                   d.Status,
-		CreatedAt:                d.CreatedAt,
-		UpdatedAt:                d.UpdatedAt,
-		HeightCm:                 d.HeightCm,
-		WeightKg:                 d.WeightKg,
-		EmergencyContactName:     d.EmergencyContactName,
-		EmergencyContactPhone:    d.EmergencyContactPhone,
-		EmergencyContactRelation: d.EmergencyContactRelation,
-	}
-}
-
 // listPatients GET /api/v1/admin/patients —— 分页 + keyword/teamId 筛选（姓名 join）
 //
 // T350 数据范围（PRD §7D.11）：teamId 查询参数只对不受团队限制的角色（运营 / 客服）生效；
@@ -920,9 +892,8 @@ func (h *Handler) getPatientProfile(c *gin.Context) {
 	}
 	// T576 甲案：佩戴目标时长由后端下发（真源 sys_configs.wear_target_hours），
 	// 小程序两页不再各写一枚本地硬编码常量。读不到按默认 22 降级并记 Warn。
-	// T646：载荷换成 PatientSelfDTO —— 医护姓名两枚键不再出现在患者端响应体的字段名集合里。
 	ok(c, model.PatientProfileDTO{
-		PatientSelfDTO:       toPatientSelfDTO(toPatientDTO(*row)),
+		AdminPatientDTO:      toPatientDTO(*row),
 		DailyWearTargetHours: h.wearTargetHours(c.Request.Context(), ctxLogger(c)),
 	})
 }

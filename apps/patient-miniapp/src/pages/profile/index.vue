@@ -177,10 +177,13 @@ const metaText = computed(() => {
   return parts.join(' · ')
 })
 
-// 我的医生菜单副文案（T646，依 T637 设计稿 §八）：患者侧载荷不再下发医生名与团队名，
-// 这一行从此只说绑定状态，不许再组出任何医护姓名。
-// 设计稿要的是把这一整行入口换成「康复建议」（T641 那一格）；入口换掉之前，副文案按本形状退场。
-const doctorSubText = computed(() => (profile.value?.teamId ? '已绑定' : '未绑定'))
+// 我的医生菜单副文案：医生名 + 团队名（原信息卡的医生/团队信息在此保留）
+const doctorSubText = computed(() => {
+  const name = profile.value?.doctorName
+  const team = profile.value?.teamName
+  if (name && team) return `${name} · ${team}`
+  return name || team || (profile.value?.teamId ? '已绑定' : '未绑定')
+})
 
 const editSheetVisible = ref(false)
 const editNickname = ref('')
@@ -282,9 +285,8 @@ async function loadProfile() {
     profile.value = await getPatientProfile()
     logger.info('[T187] profile loaded', {
       patientId: profile.value.patientId,
-      // T646：这两个布尔原来读的是姓名两枚键，现改读同源的标识（绑定态不变，姓名字面不再进日志）
-      hasTeam: !!profile.value.teamId,
-      hasDoctor: !!profile.value.doctorId,
+      hasTeam: !!profile.value.teamName,
+      hasDoctor: !!profile.value.doctorName,
       hasDevice: !!profile.value.deviceId,
     })
   } catch (e: unknown) {
