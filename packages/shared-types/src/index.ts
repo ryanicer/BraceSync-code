@@ -145,6 +145,9 @@ export interface SensorPoint {
   label: string;        // e.g. "R3C2"
   pressureValue: number;
   status: 'normal' | 'warning' | 'critical';
+  /** T643 A 路（PRD §7A.2.1 三）：与 pressureValue 同响应内派生的 kPa 展示档，不落库。
+   *  null = 面积未配置或非法 ⇒ 显示「--」；🔴 前端不得自持第二套换算口径，也不得用 0.64 补位。 */
+  pressureKpa: number | null;
 }
 
 /** 设备配置（采集间隔等），随设备上报响应下发（设备协议 §4.1） */

@@ -111,9 +111,10 @@ func main() {
 
 	// 组装
 	recordRepo := repo.NewRecordRepo(pool)
+	deviceRepo := repo.NewDeviceRepo(pool) // T643 A 路：realtime / 历史 / 日佩戴三读路共用同一枚面积只读源
 	svc := service.NewRecordService(
 		recordRepo,
-		repo.NewDeviceRepo(pool),
+		deviceRepo,
 		repo.NewConfigRepo(pool),
 		repo.NewRedisCache(rdbClient),
 		evaluator,
@@ -173,6 +174,8 @@ func main() {
 	// T366：第二参数注入 pressure_records 明细佐证源，用于给无聚合印章的行判 corroborated / unsupported
 	// T411：第三参数注入 sys_configs 假设值（佩戴阈值 + 采集间隔），供口径代次复算使用
 	dailyWearSvc := service.NewDailyWearService(rollupRepo, repo.NewRecordRepo(pool), configRepo)
+	// T643 A 路：逐行 avg/max 的 kPa 展示档同源派生（分母 devices.contact_area_cm2，只读、不落库）
+	dailyWearSvc.SetDeviceStore(deviceRepo)
 	h.SetDailyWearQuerier(dailyWearSvc)
 
 	router := h.Router()
