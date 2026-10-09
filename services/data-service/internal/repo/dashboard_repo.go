@@ -37,11 +37,11 @@ type KPIRow struct {
 // 窗口 = 与当前 period 等长、紧邻在前的一段（[prevFromDate, fromDate)）。
 // 🔴 不含设备在线率：devices.status 为当前态快照、无历史表，昨日在线率无从取（见 service 层注释）。
 type KPICompareRow struct {
-	ActiveWear           int64   // 上一周期有佩戴的去重患者数
-	AlertCount           int64   // 上一周期告警数
+	ActiveWear           int64    // 上一周期有佩戴的去重患者数
+	AlertCount           int64    // 上一周期告警数
 	AvgWearMinutes       *float64 // 上一周期平均佩戴分钟；nil = 前窗无聚合行（T636，与当前窗同口径）
-	TotalPatientsAtMonth int64   // 上月末累计患者（created_at < 本月起点）
-	PrevMonthNewPatients int64   // 上月新增患者
+	TotalPatientsAtMonth int64    // 上月末累计患者（created_at < 本月起点）
+	PrevMonthNewPatients int64    // 上月新增患者
 }
 
 // TrendRow 日趋势投影（wear：平均佩戴分钟；alert：告警条数）
