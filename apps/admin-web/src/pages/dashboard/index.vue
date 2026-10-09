@@ -15,26 +15,30 @@
       <div v-for="card in kpiCards" :key="card.label" :class="['kpi-card', 'kpi-' + card.color]">
         <div class="kpi-value">{{ card.value }}</div>
         <div class="kpi-label">{{ card.label }}</div>
+        <div v-if="card.empty" class="kpi-note">暂无数据</div>
       </div>
     </div>
 
+    <!-- 图表缺数据时走 el-empty「暂无数据」，空态口径同 orthosis-log:206-225 -->
     <!-- 趋势图表行：自适应双列/单列 -->
     <div class="chart-row">
       <div class="page-card chart-card">
         <el-tooltip :content="wearTrendTitle" placement="top" :show-after="300">
           <div class="page-card-title card-title-ellipsis">{{ wearTrendTitle }}</div>
         </el-tooltip>
-        <div class="chart-container">
-          <Line v-if="wearTrendData" :data="wearTrendData" :options="lineOptions" />
+        <div v-if="wearTrendData" class="chart-container">
+          <Line :data="wearTrendData" :options="lineOptions" />
         </div>
+        <el-empty v-else description="暂无数据" :image-size="60" />
       </div>
       <div class="page-card chart-card">
         <el-tooltip :content="alertTrendTitle" placement="top" :show-after="300">
           <div class="page-card-title card-title-ellipsis">{{ alertTrendTitle }}</div>
         </el-tooltip>
-        <div class="chart-container">
-          <Bar v-if="alertTrendData" :data="alertTrendData" :options="barOptions" />
+        <div v-if="alertTrendData" class="chart-container">
+          <Bar :data="alertTrendData" :options="barOptions" />
         </div>
+        <el-empty v-else description="暂无数据" :image-size="60" />
       </div>
     </div>
 
@@ -44,17 +48,19 @@
         <el-tooltip content="各团队管理患者数" placement="top" :show-after="300">
           <div class="page-card-title card-title-ellipsis">各团队管理患者数</div>
         </el-tooltip>
-        <div class="chart-container">
-          <Bar v-if="teamChartData" :data="teamChartData" :options="barOptions" />
+        <div v-if="teamChartData" class="chart-container">
+          <Bar :data="teamChartData" :options="barOptions" />
         </div>
+        <el-empty v-else description="暂无数据" :image-size="60" />
       </div>
       <div class="page-card chart-card">
         <el-tooltip content="佩戴时长分布" placement="top" :show-after="300">
           <div class="page-card-title card-title-ellipsis">佩戴时长分布</div>
         </el-tooltip>
-        <div class="chart-container">
-          <Doughnut v-if="distributionData" :data="distributionData" :options="doughnutOptions" />
+        <div v-if="distributionData" class="chart-container">
+          <Doughnut :data="distributionData" :options="doughnutOptions" />
         </div>
+        <el-empty v-else description="暂无数据" :image-size="60" />
       </div>
     </div>
 
@@ -135,7 +141,7 @@ const wearTrendTitle = computed(() => `近${trendDaysParam.value}天日均佩戴
 const alertTrendTitle = computed(() => `近${trendDaysParam.value}天告警趋势`)
 
 const kpi = ref<DashboardKPI | null>(null)
-const wearTrend = ref<{ date: string; avgHours: number }[]>([])
+const wearTrend = ref<{ date: string; avgHours: number | null }[]>([])
 const alertTrend = ref<{ date: string; count: number }[]>([])
 const teamRanking = ref<TeamRanking[]>([])
 const doctorRanking = ref<DoctorRanking[]>([])
@@ -145,22 +151,42 @@ interface KpiCard {
   label: string
   value: string
   color: string
+  empty?: boolean
 }
+
+// 🔴 T636：后端把「窗口内查不到」回成 null（不再 COALESCE 成 0），这里只负责把它渲染成空态。
+// 单位跟着消失：0h / 0% 是「有人在戴但时长为零」的读数，null 只能是「—」+「暂无数据」。
+const NO_DATA = '—'
 
 const kpiCards = computed<KpiCard[]>(() => {
   if (!kpi.value) return []
+  const avgWearHours = kpi.value.avgWearHours
+  const deviceOnlineRate = kpi.value.deviceOnlineRate
   return [
     { label: '累计患者', value: String(kpi.value.totalPatients), color: 'primary' },
     { label: '今日活跃佩戴', value: String(kpi.value.todayActiveWear), color: 'success' },
     { label: '今日告警次数', value: String(kpi.value.todayAlerts), color: 'warning' },
-    { label: '平均佩戴时长', value: `${kpi.value.avgWearHours}h`, color: 'info' },
-    { label: '设备在线率', value: `${kpi.value.deviceOnlineRate}%`, color: 'accent' },
+    {
+      label: '平均佩戴时长',
+      value: avgWearHours === null ? NO_DATA : `${avgWearHours}h`,
+      color: 'info',
+      empty: avgWearHours === null,
+    },
+    {
+      label: '设备在线率',
+      value: deviceOnlineRate === null ? NO_DATA : `${deviceOnlineRate}%`,
+      color: 'accent',
+      empty: deviceOnlineRate === null,
+    },
     { label: '本月新增患者', value: String(kpi.value.monthNewPatients), color: 'secondary' },
   ]
 })
 
+// 全 null ⇒ 这张图没有任何真实数据可画，画出来是一条贴着 0 的假线；整块换成「暂无数据」占位。
+// 有行有 null 混排时仍出图，缺行日由 null 断线（spanGaps: false）。
 const wearTrendData = computed(() => {
   if (wearTrend.value.length === 0) return null
+  if (wearTrend.value.every((d) => d.avgHours === null)) return null
   return {
     labels: wearTrend.value.map((d) => d.date),
     datasets: [{
@@ -169,7 +195,7 @@ const wearTrendData = computed(() => {
       borderColor: BLUE,
       backgroundColor: BLUE_ALPHA,
       fill: true,
-      tension: 0.4,
+      spanGaps: false,
     }],
   }
 })
@@ -292,6 +318,13 @@ onMounted(loadData)
   font-size: 13px;
   color: #999;
   margin-top: 4px;
+}
+
+/* T636 空态副文案：值为「—」时补一句「暂无数据」，避免只留符号被读成 0 */
+.kpi-note {
+  font-size: 12px;
+  color: #bbb;
+  margin-top: 2px;
 }
 
 .kpi-primary { border-left: 4px solid #1a6db5; }

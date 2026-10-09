@@ -78,9 +78,10 @@ export async function fetchDashboardKPI(period: 'today' | 'week' | 'month'): Pro
   return request<DashboardKPI>({ url: '/api/v1/admin/dashboard/kpi', data: { period } })
 }
 
-export async function fetchWearTrend(days = 7): Promise<{ date: string; avgHours: number }[]> {
+// 🔴 T636：avgHours 两态 —— 该日无 daily_wear_stats 行 ⇒ null（不再补 0），前端断线 + 空态。
+export async function fetchWearTrend(days = 7): Promise<{ date: string; avgHours: number | null }[]> {
   if (USE_MOCK) { await delay(); return dashboardMock.mockWearTrend(days) }
-  return request<{ date: string; avgHours: number }[]>({ url: '/api/v1/admin/dashboard/wear-trend', data: { days } })
+  return request<{ date: string; avgHours: number | null }[]>({ url: '/api/v1/admin/dashboard/wear-trend', data: { days } })
 }
 
 export async function fetchAlertTrend(days = 7): Promise<{ date: string; count: number }[]> {
