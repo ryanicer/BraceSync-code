@@ -1593,13 +1593,13 @@ func (e *ErrPatientInUse) Error() string {
 
 // patientRefTables 患者关联面全集（scripts/db/migrations 逐条实测，非推断）：
 //
-//	有外键 12 张：000001:97/123/189/219/229/243/258/272/284、000003:13/48、000009:10
+//	有外键 13 张：000001:97/123/189/219/229/243/258/272/284、000003:13/48、000009:10、000035:26
 //	无外键 3 张：pressure_records(000001:147)、daily_wear_stats(000001:173)、device_bindings(000002:14)
 //
 // 🔴 后三张必须一起数：它们只有 patient_id 列、没有 REFERENCES patients，数据库不会拦删除，
 // 少数一张就等于「删患者顺手留下一堆无主体的佩戴明细/日聚合/绑定历史」——
 // 派发单「禁止级联误删业务数据」点名的正是这一面。
-// 前十二张有外键，靠数据库拦会直接 23503 变 500，所以在服务端先判成 409。
+// 前十三张有外键，靠数据库拦会直接 23503 变 500，所以在服务端先判成 409。
 var patientRefTables = []patientRefTable{
 	{name: "devices", hasFK: true},
 	{name: "install_records", hasFK: true},
@@ -1613,6 +1613,7 @@ var patientRefTables = []patientRefTable{
 	{name: "notification_records", hasFK: true},
 	{name: "quota_grants", hasFK: true},
 	{name: "review_records", hasFK: true},
+	{name: "advice_logs", hasFK: true},
 	{name: "pressure_records", hasFK: false},
 	{name: "daily_wear_stats", hasFK: false},
 	{name: "device_bindings", hasFK: false},
