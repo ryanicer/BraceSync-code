@@ -159,18 +159,6 @@ test.describe('08-系统配置（真实模式）', () => {
     const normalUpperUi = await numberField(page, '正常上限（N）', '.pressure-tier-form').inputValue()
     const derived = (api.pressureHighThresholdN + (api.pressureLowThresholdN ?? 0)) / 2
     expect(Number(normalUpperUi), `正常上限应等于推导值 ${derived}`).toBe(derived)
-
-    // T633（Boss 2026-10-09 报单）：「WiFi 预设列表」与「医生默认阈值」两张卡整体不挂载 ⇒
-    // 原来那条「接口有 seed 就必须渲染出 ssid」的正向判据作废，换成反向断言。
-    // 现网 staging 换上带该改动的构建之后才成立 ⇒ 挂 T633 部署守卫（缺标记 ⇒ 显式 post-deploy 跳过；
-    // 定时/手动 strict 阶段仍缺标记 ⇒ 判红）。probe 只做存在性反证：旧包有卡 ⇒ false，新包无卡 ⇒ true。
-    await requireDeployedBuild(page, {
-      marker: 'T633-settings-hide-low-value',
-      why: 'WiFi 预设列表与医生默认阈值两张卡已按 T633 隐藏',
-      probe: async (p) => (await p.locator('.page-card').filter({ hasText: 'WiFi 预设列表' }).count()) === 0,
-    })
-    await expect(page.locator('.page-card').filter({ hasText: 'WiFi 预设列表' })).toHaveCount(0)
-    await expect(page.locator('.default-threshold-card')).toHaveCount(0)
   })
 
   test('8.2 保存配置 → 真发 PUT → GET 回读值确实变了 → 还原回改前值', async ({ page }) => {
@@ -247,5 +235,19 @@ test.describe('08-系统配置（真实模式）', () => {
         }
       }
     }
+  })
+
+  test('8.3 低价值两块按 T633 整体不挂载（反向断言；staging 未部署时走显式 post-deploy 跳过）', async ({ page }) => {
+    // T633（Boss 2026-10-09 报单）：「WiFi 预设列表」与「医生默认阈值」两张卡整体不挂载 ⇒
+    // 原来那条「接口有 seed 就必须渲染出 ssid」的正向判据作废，换成反向断言。
+    // 现网 staging 换上带该改动的构建之后才成立 ⇒ 挂 T633 部署守卫（缺标记 ⇒ 显式 post-deploy 跳过；
+    // 定时/手动 strict 阶段仍缺标记 ⇒ 判红）。probe 只做存在性反证：旧包有卡 ⇒ false，新包无卡 ⇒ true。
+    await requireDeployedBuild(page, {
+      marker: 'T633-settings-hide-low-value',
+      why: 'WiFi 预设列表与医生默认阈值两张卡已按 T633 隐藏',
+      probe: async (p) => (await p.locator('.page-card').filter({ hasText: 'WiFi 预设列表' }).count()) === 0,
+    })
+    await expect(page.locator('.page-card').filter({ hasText: 'WiFi 预设列表' })).toHaveCount(0)
+    await expect(page.locator('.default-threshold-card')).toHaveCount(0)
   })
 })
