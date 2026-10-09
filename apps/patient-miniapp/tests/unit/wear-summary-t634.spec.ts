@@ -1,9 +1,11 @@
 /**
  * T634 — 佩戴统计按日/按周汇总视图的派生层尺
  *
- * 三类判据：① 换算式与周界锚点未变（与本页改造前的内联实现逐日对平）
- *          ② 按日/按周两视图读的是同一份 days（无第二处口径）
- *          ③ 仓内机械尺：切档不重新取数、周界与时长换算在页面里只剩一处
+ * 四类判据：① 换算式未变（与本页改造前的内联实现对平，夹具限于两钟同日的瞬时）
+ *          ② 周界按裁定明文＝东八区（Asia/Shanghai）+ 周一起算，与 utils/trend-window.ts 同源
+ *             ⇒ 单列一节用绝对瞬时钉住时区轴，并在夹具里显式两钟同日/异日
+ *          ③ 按日/按周两视图读的是同一份 days（无第二处口径）
+ *          ④ 仓内机械尺：切档不重新取数、周界与时长换算在页面里只剩一处
  */
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
@@ -13,14 +15,16 @@ import { fileURLToPath } from 'node:url'
 import {
   WEEK_LABELS,
   buildDaySummary,
+  cstTodayKey,
   dateKey,
-  mondayOf,
+  summaryWindowKeys,
   visibleDayKeys,
   weekAggregate,
   weekDayKeys,
   weekSlots,
   toHours,
 } from '../../src/utils/wear-summary'
+import { cstDateStr, trendWindow } from '../../src/utils/trend-window'
 
 const SRC = fileURLToPath(new URL('../../src', import.meta.url))
 const PAGE = 'pages/wearing/index.vue'
@@ -87,16 +91,16 @@ describe('T634 — 换算式与日期键', () => {
   })
 })
 
-describe('T634 — 周界锚点：周一起算', () => {
+describe('T634 — 周界锚点：东八区、周一起算（裁定第 115 轮第四节明文）', () => {
   it('本周七天里每一天（含周日）锚点都是 10-05 周一', () => {
     for (const d of WEEK_DAYS) {
-      expect(dateKey(mondayOf(new Date(2026, 9, d))), `10-${d}`).toBe('2026-10-05')
+      expect(weekDayKeys(new Date(2026, 9, d))[0], `10-${d}`).toBe('2026-10-05')
     }
   })
 
   it('跨周两枚对照：上周日归上一周，下周一自成一周边', () => {
-    expect(dateKey(mondayOf(new Date(2026, 9, 4)))).toBe('2026-09-28')
-    expect(dateKey(mondayOf(new Date(2026, 9, 12)))).toBe('2026-10-12')
+    expect(weekDayKeys(new Date(2026, 9, 4))[0]).toBe('2026-09-28')
+    expect(weekDayKeys(new Date(2026, 9, 12))[0]).toBe('2026-10-12')
   })
 
   it('weekDayKeys 首枚周一、末枚周日', () => {
@@ -114,10 +118,52 @@ describe('T634 — 周界锚点：周一起算', () => {
   })
 })
 
+describe('T634 — 时区轴：周界跟东八区，不跟运行设备的钟', () => {
+  // 夹具都按绝对瞬时（Date.UTC）构造，因此期望值与 runner 所在时区无关。
+  // 17:30Z 这一枚：UTC 还看得到前一天，东八区已跨到新的一天。
+  const INTO_MONDAY_CST = new Date(Date.UTC(2026, 9, 4, 17, 30)) // 东八区 2026-10-05 01:30 周一
+  const INTO_MONDAY_NEXT = new Date(Date.UTC(2026, 9, 11, 16, 30)) // 东八区 2026-10-12 01:30 下周一
+
+  it('夹具自证：这两枚瞬时按 UTC 读还是前一天（正对照有货，不是空转）', () => {
+    expect(INTO_MONDAY_CST.toISOString().slice(0, 10)).toBe('2026-10-04')
+    expect(INTO_MONDAY_NEXT.toISOString().slice(0, 10)).toBe('2026-10-11')
+    expect(cstTodayKey(INTO_MONDAY_CST)).toBe('2026-10-05')
+    expect(cstTodayKey(INTO_MONDAY_NEXT)).toBe('2026-10-12')
+  })
+
+  it('东八区已进新一周时，周界与按日窗口都换到周边，不沿用设备那一边', () => {
+    expect(weekDayKeys(INTO_MONDAY_CST)).toEqual([
+      '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11',
+    ])
+    expect(visibleDayKeys(INTO_MONDAY_CST)).toEqual(['2026-10-05'])
+    expect(summaryWindowKeys(INTO_MONDAY_CST)).toEqual({ start: '2026-10-05', end: '2026-10-05' })
+    expect(visibleDayKeys(INTO_MONDAY_NEXT)).toEqual(['2026-10-12'])
+    expect(summaryWindowKeys(INTO_MONDAY_NEXT)).toEqual({ start: '2026-10-12', end: '2026-10-12' })
+  })
+
+  it('与 trend-window 的 week 档同源：同一个 start 反算回同一枚周一', () => {
+    expect(cstDateStr(trendWindow('week', INTO_MONDAY_CST.getTime()).start)).toBe('2026-10-05')
+    expect(cstDateStr(trendWindow('week', INTO_MONDAY_NEXT.getTime()).start)).toBe('2026-10-12')
+    expect(weekDayKeys(INTO_MONDAY_CST)[0]).toBe(cstDateStr(trendWindow('week', INTO_MONDAY_CST.getTime()).start))
+  })
+})
+
 describe('T634 — 口径未变：与改造前内联实现对平', () => {
+  /**
+   * 旧实现读设备本地钟，新实现读东八区 ⇒ 对平只在「两钟同日」的瞬时成立。
+   * 本机 +8 与 CI runner 的 UTC 下，本地午夜的这两枚夹具都与东八区同日；换到别的 runner 时区
+   * 这一格会红，那是夹具失效的读数，不是口径回归（时区轴由上面那一节单独钉）。
+   */
+  function assertFixtureSameDay(now: Date, label: string) {
+    if (cstTodayKey(now) !== dateKey(now)) {
+      throw new Error(`${label} 夹具失效：设备本地 ${dateKey(now)} 与东八区 ${cstTodayKey(now)} 不同日`)
+    }
+  }
+
   for (const d of WEEK_DAYS) {
     const now = new Date(2026, 9, d)
     it(`10-${d} 逐日槽位与当日读数与旧实现逐枚相等`, () => {
+      assertFixtureSameDay(now, `10-${d}`)
       const rows = sampleRows()
       expect(weekSlots(rows, now), `slots 10-${d}`).toEqual(legacyWeekSlots(rows, now))
       expect(buildDaySummary(rows, dateKey(now)).hours, `today 10-${d}`).toBe(legacyTodayHours(rows, now))
@@ -125,6 +171,7 @@ describe('T634 — 口径未变：与改造前内联实现对平', () => {
   }
 
   it('按周三读数（日均/最高/累计）与旧格式化串逐字相等', () => {
+    assertFixtureSameDay(new Date(2026, 9, 9), '10-09')
     const rows = sampleRows()
     const now = new Date(2026, 9, 9)
     const agg = weekAggregate(weekSlots(rows, now))
@@ -190,10 +237,14 @@ describe('T634 — 仓内机械尺（判据的可复跑形）', () => {
   it('周界与时长换算在页面里只剩一处：都不许再内联出现', () => {
     expect(page.includes('getDay()'), '周界锚点只住 wear-summary').toBe(false)
     expect(page.includes('wearMinutes / 6'), '时长换算只住 wear-summary').toBe(false)
-    // 尺子的牙：同两枚针在共用层里必须命中，否则上面的「不含」是自证空白
+    // 尺子的牙：三枚针在共用层里必须命中，否则上面的「不含」是自证空白
     const util = fs.readFileSync(path.join(SRC, 'utils/wear-summary.ts'), 'utf8')
-    expect(util.includes('getDay()')).toBe(true)
+    expect(util.includes("trendWindow('week'"), '周界须从 trend-window 的 week 档派生').toBe(true)
+    expect(util.includes('cstDateStr'), '日键须走东八区')
+      .toBe(true)
     expect(util.includes('wearMinutes / 6')).toBe(true)
+    // 裁定第四节明句：界面上「本周（周一开始）MM-DD 至 MM-DD」那行保留，不许藏进代码
+    expect(page.includes('本周（周一开始）'), '周界口径要在界面文案里读得到').toBe(true)
   })
 
   it('两档都在页面上有入口，且默认按日', () => {

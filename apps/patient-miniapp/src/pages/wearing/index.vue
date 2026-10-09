@@ -6,7 +6,7 @@
   - PT-19 提醒：后端零端点（T098-Q4 §2），本轮仅按设计呈现 UI，开关禁用 +「待开放」，
     不做假保存；存取 + 订阅消息链路另立卡。
   - T634 汇总视图：按日（当日值 + 构成）与按周（本周值）两档切换，共用上面那一份 daily-wear 取数面，
-    切档只换聚合维度、不重新请求；时长换算与周界（周一起算）单点派生自 utils/wear-summary，本页不再各写一份。
+    切档只换聚合维度、不重新请求；时长换算与周界（东八区、周一起算）单点派生自 utils/wear-summary，本页不再各写一份。
 -->
 <template>
   <view class="page">
@@ -163,8 +163,9 @@ import { loadWearTarget, wearTargetHours } from '../../utils/wear-target'
 import {
   WEEK_LABELS,
   buildDaySummary,
+  cstTodayKey,
   dateKey,
-  mondayOf,
+  summaryWindowKeys,
   visibleDayKeys,
   weekAggregate,
   weekDayKeys,
@@ -190,6 +191,7 @@ interface DailyWearDay {
 const auth = useAuthStore()
 
 const now = new Date()
+// 「今日」那枚键按裁定第二节维持设备本地时区（迁 CST 助手属独立事项，不在本卡）
 const todayKey = dateKey(now)
 
 const days = ref<DailyWearDay[]>([])
@@ -201,7 +203,7 @@ const rateText = computed(() => String(Math.round((todayHours.value / wearTarget
 
 // T634 汇总视图档位：切档只改展示的聚合维度，取数面仍是下面 loadDailyWear 那一发
 const viewMode = ref<SummaryViewMode>('day')
-const selectedDayKey = ref(todayKey)
+const selectedDayKey = ref(cstTodayKey(now))
 
 function switchViewMode(mode: SummaryViewMode) {
   if (viewMode.value === mode) return
@@ -249,20 +251,21 @@ const totalText = computed(() =>
   weekAgg.value.coveredDays === 0 ? '0' : String(Math.round(weekAgg.value.sumHours))
 )
 
-// 加载：本周范围（周一 → 今日，闭区间；后端 Asia/Shanghai 切日）
+// 加载：本周范围（东八区周一 → 今日，闭区间；后端 Asia/Shanghai 切日）
 async function loadDailyWear() {
   const patientId = auth.patientId
   if (!patientId) {
     days.value = []
     return
   }
+  const win = summaryWindowKeys(now)
   try {
     const list = await request<DailyWearDay[]>({
       url: `/api/v1/patients/${patientId}/daily-wear`,
       method: 'GET',
       data: {
-        start: dateKey(mondayOf(now)),
-        end: todayKey,
+        start: win.start,
+        end: win.end,
       },
     })
     days.value = Array.isArray(list) ? list : []
