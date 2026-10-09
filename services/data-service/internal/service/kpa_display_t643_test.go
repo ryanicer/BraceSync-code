@@ -94,7 +94,7 @@ func TestT643DailyWearRowsCarryKpaSameSource(t *testing.T) {
 	svc := NewDailyWearService(&fakeDailyWearStore{rows: []model.DailyWearStats{{
 		PatientID: "P1", StatDate: t366Day(t, "2026-09-22"),
 		WearMinutes: 480, AvgPressure: 12.8, MaxPressure: 51.2, MaxPoint: "P03", FrameCount: 6,
-	}}}, nil, nil)
+	}}}, nil, nil, nil)
 	svc.SetDeviceStore(&mockDeviceStore{deviceID: testDevice, status: "online", exist: true, areaCm2: t508Area(t643AreaCm2)})
 	svc.now = func() time.Time { return time.Date(2026, 9, 22, 10, 0, 0, 0, model.CSTZone()) }
 
@@ -118,7 +118,7 @@ func TestT643DailyWearKpaNullWithoutDeviceStore(t *testing.T) {
 	svc := NewDailyWearService(&fakeDailyWearStore{rows: []model.DailyWearStats{{
 		PatientID: "P1", StatDate: t366Day(t, "2026-09-22"),
 		AvgPressure: 12.8, MaxPressure: 51.2, FrameCount: 6,
-	}}}, nil, nil)
+	}}}, nil, nil, nil)
 	svc.now = func() time.Time { return time.Date(2026, 9, 22, 10, 0, 0, 0, model.CSTZone()) }
 
 	list, appErr := svc.GetDailyWear(context.Background(), "P1", "2026-09-22", "2026-09-22")
@@ -132,4 +132,32 @@ func TestT643DailyWearKpaNullWithoutDeviceStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"avgPressureKpa":null`)
 	assert.Contains(t, string(raw), `"maxPressureKpa":null`)
+}
+
+// T599 补出来的零帧行同样要同源：行上两枚 N 是 0 ⇒ 面积在场给 0（不给 0 N 配一个「--」），
+// 面积读不到给 null（fail-closed，不退成 0 说成「已知的零」）。
+func TestT643BackfilledZeroRowCarriesKpa(t *testing.T) {
+	store := &fakeDailyWearStore{}
+	abn := &fakeAbnormalSource{counts: map[string]int{"2026-09-01": 3}}
+
+	svc := NewDailyWearService(store, nil, nil, abn)
+	svc.SetDeviceStore(&mockDeviceStore{deviceID: testDevice, status: "online", exist: true, areaCm2: t508Area(t643AreaCm2)})
+	svc.now = func() time.Time { return fakeNowT599 }
+	list, appErr := svc.GetDailyWear(context.Background(), "P1", "2026-08-27", "2026-09-01")
+	require.Nil(t, appErr)
+	row := findT599Day(list, "2026-09-01")
+	require.NotNil(t, row, "甲形：已过日无聚合行但有告警要补出行")
+	require.NotNil(t, row.AvgPressureKpa, "面积在场 ⇒ 补行的 kPa 是数值，不是「--」")
+	assert.Zero(t, *row.AvgPressureKpa, "0 N 同源得 0 kPa")
+	assert.Zero(t, *row.MaxPressureKpa)
+
+	// 同一份数据、不注入面积源 ⇒ 两枚回 null
+	svc2 := NewDailyWearService(store, nil, nil, abn)
+	svc2.now = func() time.Time { return fakeNowT599 }
+	list2, appErr := svc2.GetDailyWear(context.Background(), "P1", "2026-08-27", "2026-09-01")
+	require.Nil(t, appErr)
+	row2 := findT599Day(list2, "2026-09-01")
+	require.NotNil(t, row2)
+	assert.Nil(t, row2.AvgPressureKpa, "未注入面积源 ⇒ null，不用 0 补位")
+	assert.Nil(t, row2.MaxPressureKpa)
 }
