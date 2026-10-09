@@ -95,7 +95,9 @@ func (h *Handler) updatePatientProfile(c *gin.Context) {
 		fail(c, model.ErrNotFound("patient not found: %s", patientID))
 		return
 	}
-	ok(c, toPatientDTO(*row))
+	// T646：写响应回填同样走患者侧载荷 —— 本端点此前直接回 AdminPatientDTO，
+	// 于是「 PUT 自己改资料」也把医护姓名发回患者端（设计稿 §八 要收口的第二枚载荷面）。
+	ok(c, toPatientSelfDTO(toPatientDTO(*row)))
 }
 
 // buildPatientProfileUpdate 白名单字段值域校验 + 装配 repo 入参；全空 → 400。

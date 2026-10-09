@@ -493,6 +493,39 @@ export interface AdminPatient extends Patient {
   doctorName: string | null;  // doctors.name join（无主治为 null）
 }
 
+/**
+ * 患者本人视角的档案载荷（T646，依 T637 设计稿 §八）。
+ * 对齐后端 `model.PatientSelfDTO`：GET /api/v1/patient/profile 与 PUT /api/v1/patients/{patientId}
+ * 两条患者侧载荷面共用这一张名册。
+ *
+ * 🔴 故意**不** extends Patient，也不复用 AdminPatient：
+ *   · AdminPatient 带着 teamName / doctorName 两枚 join 键 —— 那正是本卡要从患者端收口的泄漏面；
+ *   · Patient 带着 T337 补账的 teamName?，extends 回来就等于把它写进患者侧契约；
+ *   · 契约对拍门（scripts/contract/go-json-tag-audit.mjs）会把 extends 展平后与 Go 的 json tag 比键集合，
+ *     所以这里必须平铺声明，让「字段名集合」这件事在两侧同时可见。
+ * 键恒在（Go 侧无 omitempty）、值可 null；与后台那两枚姓名键的差集由 T646 的结构面用例钉住。
+ */
+export interface PatientSelfProfile {
+  patientId: string;
+  name: string;
+  gender: 'male' | 'female' | null;
+  age: number | null;
+  diagnosis: string | null;
+  cobbAngle: number | null;
+  deviceId: string | null;      // devices.patient_id 只读关联（T151 方案 1）
+  teamId: string | null;        // 标识不是姓名：患者端「已绑定 / 未绑定」靠它
+  doctorId: string | null;      // 同上
+  phone: string;                // 患者侧两条读路都不映射，wire 上恒为 ""（T491 口径）
+  status: 'active' | 'pending';
+  createdAt: string;
+  updatedAt: string;
+  heightCm: number | null;           // T226 患者自助资料
+  weightKg: number | null;           // T226
+  emergencyContactName: string | null;    // T226
+  emergencyContactPhone: string | null;   // T226
+  emergencyContactRelation: string | null; // T226
+}
+
 /** RBAC 角色行（对齐 DB roles + admins 计数，user-service GET /api/v1/admin/roles） */
 export interface AdminRole {
   roleId: string;

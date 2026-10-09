@@ -10,8 +10,12 @@
 import { request } from '../utils/request'
 
 /**
- * T186 响应体，逐字对齐 user-service `model.AdminPatientDTO`
- * （services/user-service/internal/model/model.go:139-155，camelCase，可空字段为 null）。
+ * 患者侧载荷（GET /patient/profile 与 PUT /patients/:patientId 共用），逐字对齐后端
+ * `model.PatientSelfDTO`（services/user-service/internal/model/model.go:174）。
+ *
+ * T646（依 T637 设计稿 §八）：这里**没有** teamName / doctorName 两枚键 —— 不是「有键但值为 null」，
+ * 而是患者侧载荷面上压根不存在这两枚字段名。后台那两枚姓名 join 仍照旧下发（AdminPatient），
+ * 只是不再进患者端。所以本页不许再摸这两枚，也不要为了「兼容」把它们写成可选字段。
  */
 export interface PatientProfile {
   patientId: string
@@ -23,17 +27,16 @@ export interface PatientProfile {
   cobbAngle: number | null
   /** 来源 devices.patient_id 只读关联，非 patients.device_id（T151 方案 1） */
   deviceId: string | null
+  /** 标识不是姓名：本页「我的医生」副文案用 teamId 说「已绑定 / 未绑定」 */
   teamId: string | null
   doctorId: string | null
-  /** T186 的 toPatientDTO 未映射此字段，wire 上恒为 ""（且 repo 不查 phone_enc）；本页不展示 */
+  /** toPatientDTO 不映射此字段，wire 上恒为 ""（且 repo 不查 phone_enc）；本页不展示 */
   phone: string
   status: 'active' | 'pending'
   /** RFC3339 UTC */
   createdAt: string
   /** RFC3339 UTC */
   updatedAt: string
-  teamName: string | null
-  doctorName: string | null
   /** T226（迁移 000014）患者自助资料字段，可经 updatePatientProfile 修改 */
   heightCm: number | null
   weightKg: number | null

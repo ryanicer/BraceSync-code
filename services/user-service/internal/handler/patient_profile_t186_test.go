@@ -6,7 +6,8 @@
 //     非患者身份（X-User-Id=ADM001）→ 404，且查询键恒等于身份头 ⇒ 路径无患者 ID，结构上无法越权；
 //  3. DB 故障 → 500。
 //
-// 本文件不新增 DTO：断言对象即 handler 复用的 model.AdminPatientDTO。
+// 本文件不新增 DTO：断言对象即 handler 装配患者侧载荷用的 model.PatientSelfDTO
+// （T646 起患者侧两条载荷面不再内嵌 AdminPatientDTO —— 医护姓名两枚键随收口退场）。
 package handler
 
 import (
@@ -47,7 +48,7 @@ func TestT186_PatientProfile_SelfScope(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "本人身份应可读自己的档案")
 	assert.Equal(t, "P20260001", e.store.lastPatientQuery, "查询键必须等于注入的 X-User-Id")
 
-	var dto model.AdminPatientDTO
+	var dto model.PatientSelfDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &dto))
 	assert.Equal(t, "P20260001", dto.PatientID)
 	assert.Equal(t, "患者小明", dto.Name, "§7A.5 姓名")
@@ -61,12 +62,15 @@ func TestT186_PatientProfile_SelfScope(t *testing.T) {
 	assert.Equal(t, 28.0, *dto.CobbAngle)
 	require.NotNil(t, dto.TeamID)
 	assert.Equal(t, "TEAM01", *dto.TeamID, "§7A.5 team 卡片")
-	require.NotNil(t, dto.TeamName)
-	assert.Equal(t, "脊柱矫形一组", *dto.TeamName)
+	// T646（依 T637 设计稿 §八）：这两枚原来是「join 值在场」的断言（脊柱矫形一组 / 李医师），
+	// 现在钉的是「键根本不在载荷面上」。夹具那一行照旧带着 TeamName/DoctorName（见 samplePatient），
+	// 所以缺席是 DTO 装配的功劳不是数据为空；同名的在场正对照在后台详情面（t646 用例逐枚打）。
+	wireKeys := t646WireKeys(t, resp.Data)
+	assert.NotContains(t, wireKeys, "teamName", "患者侧载荷不得出现团队名")
+	assert.NotContains(t, wireKeys, "doctorName", "患者侧载荷不得出现医生名")
 	require.NotNil(t, dto.DoctorID)
 	assert.Equal(t, "D0001", *dto.DoctorID, "§7A.5 主治医生卡片")
-	require.NotNil(t, dto.DoctorName)
-	assert.Equal(t, "李医师", *dto.DoctorName)
+	assert.Contains(t, wireKeys, "doctorId", "收口只剥姓名，标识照常下发")
 	require.NotNil(t, dto.DeviceID)
 	assert.Equal(t, "PRS-001", *dto.DeviceID, "§7A.5 设备 ID")
 	assert.Equal(t, "active", dto.Status)
@@ -152,8 +156,8 @@ func TestT186_PatientProfile_RealWire(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	var envelope struct {
-		Code int                   `json:"code"`
-		Data model.AdminPatientDTO `json:"data"`
+		Code int                  `json:"code"`
+		Data model.PatientSelfDTO `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &envelope))
 	assert.Equal(t, 0, envelope.Code)

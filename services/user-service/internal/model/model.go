@@ -136,6 +136,9 @@ type PageData struct {
 // ─────────────────────────────────────────────────────────────
 
 // AdminPatientDTO 管理端患者视图（Patient + teamName/doctorName join，契约 getPatients）
+//
+// 🔴 只供后台读路（admin 列表/详情/建档/分配团队）。患者侧载荷用 PatientSelfDTO ——
+// 这两枚姓名键一旦跟着内嵌溜进患者端响应体，就是设计稿 §八 要收口的泄漏面。
 type AdminPatientDTO struct {
 	PatientID  string   `json:"patientId"`
 	Name       string   `json:"name"`
@@ -161,12 +164,45 @@ type AdminPatientDTO struct {
 	EmergencyContactRelation *string  `json:"emergencyContactRelation"`
 }
 
+// PatientSelfDTO 患者本人视角的档案（GET /api/v1/patient/profile 与患者自助 PUT 的载荷）。
+//
+// T646（依 T637 设计稿 §八）：与 AdminPatientDTO 的差别只有两枚键 —— teamName / doctorName
+// 在这里**不存在**（不是值为 null）。断言按字段名集合做，比按值断言稳：值是 seed 数据可以恰好为空，
+// 字段名是契约。Go 的内嵌只会把内嵌结构的键**加进**同一个 JSON 对象、减不掉，所以收口只能另起
+// 一枚平铺结构体，不能继续内嵌 AdminPatientDTO。
+// 🔴 新增字段时不要图省事改回内嵌 AdminPatientDTO —— 那等于把医护姓名重新发回患者端。
+type PatientSelfDTO struct {
+	PatientID string   `json:"patientId"`
+	Name      string   `json:"name"`
+	Gender    *string  `json:"gender"`
+	Age       *int     `json:"age"`
+	Diagnosis *string  `json:"diagnosis"`
+	CobbAngle *float64 `json:"cobbAngle"`
+	// DeviceID / TeamID / DoctorID 保留：这三枚是标识不是姓名，患者端「已绑定 / 未绑定」与
+	// 设备页要靠它们，设计稿 §八 要收口的只有医护姓名两列。
+	DeviceID  *string `json:"deviceId"`
+	TeamID    *string `json:"teamId"`
+	DoctorID  *string `json:"doctorId"`
+	Phone     string  `json:"phone"` // 与 AdminPatientDTO 同形：患者侧两条读路都不映射，wire 上恒为 ""
+	Status    string  `json:"status"`
+	CreatedAt string  `json:"createdAt"`
+	UpdatedAt string  `json:"updatedAt"`
+
+	// T226 患者自助资料字段（迁移 000014；均 nullable）。phone 不开放自助写（微信授权写入）。
+	HeightCm                 *float64 `json:"heightCm"`
+	WeightKg                 *float64 `json:"weightKg"`
+	EmergencyContactName     *string  `json:"emergencyContactName"`
+	EmergencyContactPhone    *string  `json:"emergencyContactPhone"`
+	EmergencyContactRelation *string  `json:"emergencyContactRelation"`
+}
+
 // PatientProfileDTO GET /api/v1/patient/profile 出参（T576 甲案，PM 裁定下发通道走甲）。
-// 内嵌 AdminPatientDTO ⇒ 既有扁平字段与 JSON 形状一字不变；只多加一枚后端下发的佩戴目标。
-// 🔴 不往 AdminPatientDTO 上加这一枚：那个 DTO 同时供后台患者列表与详情用，
-// 加上去会让列表每一行都携带一份系统配置值（改动面失控）。
+// 内嵌 PatientSelfDTO ⇒ 患者侧的扁平字段与 JSON 形状照旧，只多加一枚后端下发的佩戴目标；
+// T646 起内嵌的那一枚从 AdminPatientDTO 换成 PatientSelfDTO（医护姓名两枚键随之退场）。
+// 🔴 不往 PatientSelfDTO 上加佩戴目标：它同时供患者自助 PUT 的写响应回填用，
+// 加上去会让写响应携带一份与写入无关的系统配置值（改动面失控）。
 type PatientProfileDTO struct {
-	AdminPatientDTO
+	PatientSelfDTO
 	// DailyWearTargetHours 每日佩戴目标小时数，真源 sys_configs.wear_target_hours（与 §7D.12 同键，不另设）。
 	// 恒有值：键缺失 / 值非法 / 查询失败都退默认 22，不回 0 也不回 null（小程序两页直接读这一枚）。
 	DailyWearTargetHours float64 `json:"dailyWearTargetHours"`
