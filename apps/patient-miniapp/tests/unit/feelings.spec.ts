@@ -162,10 +162,14 @@ describe('B 路由注册与入口直连（T505 三件的第二、三件）', () 
   it('「我的」页入口从占位（即将开放 toast）改为直连新页', () => {
     expect(profileFile).toMatch(/@click="goFeelings"[\s\S]{0,120}矫形日志/)
     expect(profileFile).toMatch(/navigateTo\(\{ url: '\/pages\/feelings\/index' \}\)/)
-    // 反证：矫形日志那一行不能再绑占位 handler（占位仍服务「我的医生」，函数本身保留）
+    // 反证：矫形日志那一行不能再绑占位 handler
     const feelingsItem = profileFile.match(/@click="(\w+)"[^>]*>\s*<text class="menu-ic">📝<\/text>[\s\S]{0,60}矫形日志/)
     expect(feelingsItem?.[1]).toBe('goFeelings')
-    expect(profileFile).toContain('function comingSoon()')
+    // T641 改的正是这枚断言（设计稿 §十二 行 ⑥「失效针 2」预告）：占位 handler 的唯一消费者是
+    // 「我的医生」那一行，那行整枚替换成「康复建议」后占位函数没有在场者 ⇒ 连测试一起改，
+    // 按 §十二 本席倾向的第二档落（不是把 comingSoon 留着当摆设）。
+    expect(profileFile).not.toContain('comingSoon')
+    expect(profileFile).not.toContain('我的医生')
   })
 })
 

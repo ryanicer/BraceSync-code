@@ -79,9 +79,10 @@
               <el-option v-for="p in patients" :key="p.patientId" :label="`${p.name}（${p.patientId}）`" :value="p.patientId" />
             </el-select>
             <el-tag v-if="auth.role === 'doctor'" type="info" effect="plain">医护工作台：仅本团队患者（PRD §7D.11）</el-tag>
-            <!-- T344 第 4 块：稿面（矫形日志.html #wsSendAdvice）只定形态与位置 = 未选患者禁用 + 点击占位提示。
-                 模板消息无对外端点（卡内已报 PM），故本按钮本轮不触达患者。 -->
-            <el-button class="send-advice-btn" type="primary" :disabled="!patientId" @click="sendAdvice">发送建议给患者</el-button>
+            <!-- T344 第 4 块 · T641 落地：稿面（矫形日志.html #wsSendAdvice）定的形态与位置不动
+                 （未选患者禁用），点击从「占位提示」换成真写 —— 与撰写区共用同一份草稿与同一条写路径。
+                 admin 隐藏这一颗（他不是发送主体，见 canWriteAdvice 注释），:disabled 仍是前端约束不是安全边界。 -->
+            <el-button v-if="canWriteAdvice" class="send-advice-btn" type="primary" :disabled="!patientId" @click="sendAdvice">发送建议给患者</el-button>
           </div>
 
           <template v-if="patientId">
@@ -268,6 +269,48 @@
                   </div>
                 </div>
               </el-tab-pane>
+
+              <!-- T641 医护建议 pane（设计稿 §四 ①：撰写区复用方案输入那对控件形，列表复用历史方案的 el-timeline 形）。
+                   内层页签按本页既有约定「追加末位不重排」，故排在数据视图之后。
+                   🔴 admin 隐藏而非禁用：ROLE_PAGE_MATRIX.admin 含 /orthosis-log（permissions.ts:48），
+                   但运营管理员在 doctors 表无行、不是发送主体（稿面 §七 + 服务端 403 才是判据）。 -->
+              <el-tab-pane v-if="canWriteAdvice" label="医护建议" name="advice">
+                <div class="page-card">
+                  <div class="page-card-title">撰写建议</div>
+                  <el-input
+                    v-model="adviceDraft"
+                    type="textarea"
+                    :rows="3"
+                    :maxlength="ADVICE_MAX_LEN"
+                    show-word-limit
+                    placeholder="写给这位患者的话（纯文本，最多 500 字，服务端按字计数）"
+                  />
+                  <el-button
+                    type="primary"
+                    class="save-btn advice-send-btn"
+                    :loading="sendingAdvice"
+                    :disabled="!adviceDraft.trim()"
+                    @click="sendAdvice"
+                  >发送</el-button>
+                </div>
+                <div class="page-card">
+                  <div class="page-card-title">历史建议（{{ advices.length }}）</div>
+                  <el-timeline v-if="advices.length > 0">
+                    <el-timeline-item
+                      v-for="a in advices"
+                      :key="a.adviceId"
+                      :timestamp="`${a.title} · ${formatDateTime(a.createdAt)}`"
+                    >
+                      <div class="advice-content">{{ a.content }}</div>
+                      <div v-if="a.editable" class="advice-actions">
+                        <el-button size="small" @click="openAdviceEditor(a)">编辑</el-button>
+                        <el-button size="small" type="danger" :loading="deletingAdviceId === a.adviceId" @click="removeAdvice(a)">删除</el-button>
+                      </div>
+                    </el-timeline-item>
+                  </el-timeline>
+                  <el-empty v-else description="暂无建议记录" :image-size="60" />
+                </div>
+              </el-tab-pane>
             </el-tabs>
           </template>
           <el-empty v-else description="请选择患者开始诊断评估" class="empty-placeholder" />
@@ -290,23 +333,40 @@
       </div>
       <template #footer><el-button @click="detailVisible = false">关闭</el-button></template>
     </el-dialog>
+
+    <!-- T641 编辑建议弹窗（R4 甲：同行 UPDATE，不生成新版本，故不带版本号那一格）-->
+    <el-dialog v-model="adviceEditorVisible" title="编辑建议" width="520px">
+      <el-input
+        v-model="adviceEditDraft"
+        type="textarea"
+        :rows="4"
+        :maxlength="ADVICE_MAX_LEN"
+        show-word-limit
+        placeholder="修改后的建议正文"
+      />
+      <template #footer>
+        <el-button @click="adviceEditorVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingAdvice" :disabled="!adviceEditDraft.trim()" @click="submitAdviceEdit">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement,
   Tooltip, Legend, Filler, type ChartData, type ChartOptions,
 } from 'chart.js'
 import { Line, Bar } from 'vue-chartjs'
 import { alertTypeLabel, areaLabel, feelingLevelLabel, userErrorCopy } from '@bracesync/shared-utils'
-import type { Alert, FeelingLog, HealthReport, OrthosisPlan, Patient } from '@bracesync/shared-types'
+import type { Advice, Alert, FeelingLog, HealthReport, OrthosisPlan, Patient } from '@bracesync/shared-types'
 import {
   fetchPatients, fetchPatientDetail, fetchTeams, fetchAlerts, fetchSystemSettings,
   fetchOrthosisPlans, saveOrthosisPlanApi,
   fetchFeelingLogs, fetchFeelingLogsAdmin, fetchPatientDailyWear, fetchHealthReports, replyFeelingLogApi,
+  fetchPatientAdvice, sendAdviceApi, updateAdviceApi, deleteAdviceApi,
   patientNameOf, teamNameOf,
 } from '../../api'
 import type { SystemSettings } from '../../mock/system'
@@ -330,6 +390,22 @@ const newPlanContent = ref('')
 const savingPlan = ref(false)
 const replyDrafts = ref<Record<string, string>>({})
 const replyingId = ref<string | null>(null)
+
+// ===== T641 医护建议 =====
+/** 正文上限：与服务端 adviceContentMaxRunes 同值。前端 maxlength 数 UTF-16 单元、服务端数 rune
+ *  ⇒ 前端只会更严（emoji 算两格），不会出现「前端放行、后端判红」 */
+const ADVICE_MAX_LEN = 500
+const advices = ref<Advice[]>([])
+const adviceDraft = ref('')
+const sendingAdvice = ref(false)
+const adviceEditorVisible = ref(false)
+const adviceEditingId = ref<string | null>(null)
+const adviceEditDraft = ref('')
+const savingAdvice = ref(false)
+const deletingAdviceId = ref<string | null>(null)
+/** 发送主体只有医护：运营管理员在 doctors 表无行（稿面 §七），这一档对其整块隐藏。
+ *  隐藏只是体验，判据在服务端 403 —— 本页不拿「看不见」当安全边界 */
+const canWriteAdvice = computed(() => auth.role === 'doctor')
 
 // ===== T344 工作台区块 =====
 /** 患者基本信息卡（稿面 #wsProfile）：后端 join 出 teamName 时优先用它，否则查组织字典 */
@@ -429,6 +505,7 @@ async function loadPatientData() {
   wearRows.value = []
   wsAlerts.value = []
   alertTotal.value = 0
+  advices.value = []
   if (!patientId.value) return
   try {
     const [plansRes, feelingsRes, reportsRes] = await Promise.all([
@@ -443,6 +520,7 @@ async function loadPatientData() {
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   }
   loadProfile()
+  loadAdvice()
   // 内层 Tab 停在数据视图时切患者：该页内容当场就要有数
   if (activeTab.value === 'data') ensureDataView()
 }
@@ -612,9 +690,92 @@ function processStatusType(status: string): 'warning' | 'primary' | 'success' {
   return status === 'processing' ? 'primary' : 'warning'
 }
 
-/** 稿面 #wsSendAdvice：模板消息端点尚未建（卡内已报 PM），本轮只给占位提示 */
-function sendAdvice() {
-  ElMessage.info('发送建议给患者的模板消息通道待后端建端点（见 T344 卡内登记）')
+/**
+ * T641：工具栏那颗「发送建议给患者」由占位换成真写（稿面 §四 要点 1「按钮位置不动、语义变实」）。
+ * 它与撰写区的「发送」共用同一份草稿、同一个写路径（doSendAdvice）——两处各写一遍发送逻辑必漂。
+ * 草稿为空时不静默失败：切到撰写区并提示。
+ */
+async function sendAdvice() {
+  if (!adviceDraft.value.trim()) {
+    activeTab.value = 'advice'
+    ElMessage.info('请先在「医护建议」页填写要发给患者的话')
+    return
+  }
+  await doSendAdvice()
+}
+
+async function doSendAdvice() {
+  sendingAdvice.value = true
+  try {
+    const saved = await sendAdviceApi(patientId.value, adviceDraft.value.trim())
+    if (saved) advices.value = [saved, ...advices.value]
+    adviceDraft.value = ''
+    ElMessage.success('建议已发送')
+  } catch (e: unknown) {
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '发送失败' }))
+  } finally {
+    sendingAdvice.value = false
+  }
+}
+
+function openAdviceEditor(a: Advice) {
+  adviceEditingId.value = a.adviceId
+  adviceEditDraft.value = a.content
+  adviceEditorVisible.value = true
+}
+
+async function submitAdviceEdit() {
+  const id = adviceEditingId.value
+  const content = adviceEditDraft.value.trim()
+  if (!id || !content) return
+  savingAdvice.value = true
+  try {
+    const saved = await updateAdviceApi(id, content)
+    // 服务端回 nil（非本人所写 / 行已不在）时不许假成功：整表重取，屏面与库对齐
+    if (saved) advices.value = advices.value.map((a) => (a.adviceId === id ? saved : a))
+    else await loadAdvice()
+    adviceEditorVisible.value = false
+    ElMessage.success('建议已更新')
+  } catch (e: unknown) {
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '更新失败' }))
+  } finally {
+    savingAdvice.value = false
+  }
+}
+
+async function removeAdvice(a: Advice) {
+  // R3 甲硬删：确认后不可恢复，所以这一句必须问；文案不带患者姓名（本页对外只出编号与该患者档案卡内的字段）
+  try {
+    await ElMessageBox.confirm('删除后患者端立即看不到这条建议，且不可恢复。确认删除？', '删除建议', {
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
+    })
+  } catch {
+    return // 取消（ElMessageBox 以 reject 表示取消）
+  }
+  deletingAdviceId.value = a.adviceId
+  try {
+    await deleteAdviceApi(a.adviceId)
+    advices.value = advices.value.filter((x) => x.adviceId !== a.adviceId)
+    ElMessage.success('建议已删除')
+  } catch (e: unknown) {
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '删除失败' }))
+  } finally {
+    deletingAdviceId.value = null
+  }
+}
+
+/** 建议流只在医护角色下加载：admin 令牌打 GET /patients/:id/advice 在服务层是 200（可读），
+ *  但本页对 admin 整块隐藏那一档 ⇒ 不发这一枪，避免「界面没显示却每次切患者打一次」的空转 */
+async function loadAdvice() {
+  if (!canWriteAdvice.value || !patientId.value) {
+    advices.value = []
+    return
+  }
+  try {
+    advices.value = await fetchPatientAdvice(patientId.value)
+  } catch (e: unknown) {
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载建议失败' }))
+  }
 }
 
 async function savePlan() {
@@ -758,6 +919,16 @@ onMounted(async () => {
 }
 .send-advice-btn {
   margin-left: auto;
+}
+.advice-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+.advice-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
 }
 .profile-card :deep(.el-descriptions__label) {
   width: 96px;

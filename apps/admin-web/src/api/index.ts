@@ -3,7 +3,7 @@
 import type {
   AdminLoginResult, ApiResponse, DashboardKPI, TeamRanking, DoctorRanking, PaginatedResponse, Patient, Device,
   Alert, InstallRecordRow, InstallRecordDetail, Technician, Team, TeamDetail, TeamMember, TeamStats, Doctor, Feedback, OrthosisPlan,
-  FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
+  FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType, Advice,
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
   RolePermissions,
 } from '@bracesync/shared-types'
@@ -507,6 +507,28 @@ export async function saveOrthosisPlanApi(patientId: string, content: string): P
     return { planId: `PLAN-${Date.now()}`, patientId, doctorId: 'DOC-001', content, version: 'v2.2', createdAt: new Date().toISOString() }
   }
   return request<OrthosisPlan>({ url: `/api/v1/patients/${patientId}/orthosis-plans`, method: 'POST', data: { content } })
+}
+
+// T641 医护建议四枚口（契约 getPatientAdvice / sendAdvice / updateAdvice / deleteAdvice）。
+// 写三枚在网关落 doctorAdminOnlyPatterns：admin 令牌 403，故本页「医护建议」那一档对 admin 隐藏。
+export async function fetchPatientAdvice(patientId: string): Promise<Advice[]> {
+  if (USE_MOCK) { await delay(); return orthosisMock.mockAdviceList(patientId) }
+  return request<Advice[]>({ url: `/api/v1/patients/${patientId}/advice` })
+}
+
+export async function sendAdviceApi(patientId: string, content: string): Promise<Advice | null> {
+  if (USE_MOCK) { await delay(); return orthosisMock.mockSendAdvice(patientId, content) }
+  return request<Advice>({ url: `/api/v1/patients/${patientId}/advice`, method: 'POST', data: { content } })
+}
+
+export async function updateAdviceApi(adviceId: string, content: string): Promise<Advice | null> {
+  if (USE_MOCK) { await delay(); return orthosisMock.mockUpdateAdvice(adviceId, content) }
+  return request<Advice>({ url: `/api/v1/advice/${adviceId}`, method: 'PUT', data: { content } })
+}
+
+export async function deleteAdviceApi(adviceId: string): Promise<void> {
+  if (USE_MOCK) { await delay(); return orthosisMock.mockDeleteAdvice(adviceId) }
+  await request<null>({ url: `/api/v1/advice/${adviceId}`, method: 'DELETE' })
 }
 
 export async function fetchFeelingLogs(patientId: string): Promise<FeelingLog[]> {
