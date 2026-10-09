@@ -234,7 +234,7 @@ const weekAgg = computed(() => weekAggregate(weekHours.value))
 
 const weekRangeText = computed(() => {
   const keys = weekDayKeys(now)
-  return `本周（周一起算）${keys[0].slice(5)} ~ ${keys[6].slice(5)} · 有记录 ${weekAgg.value.coveredDays} 天`
+  return `本周（周一开始）${keys[0].slice(5)} 至 ${keys[6].slice(5)} · 有记录 ${weekAgg.value.coveredDays} 天`
 })
 
 const avgText = computed(() =>
