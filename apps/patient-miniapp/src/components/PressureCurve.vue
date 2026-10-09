@@ -4,6 +4,9 @@
   - canvas 节点获取分平台：MP-WEIXIN 用 type="2d" 新画布 API（createSelectorQuery 取 node）；
     H5 用模板引用拿原生 <canvas> 元素。二者共用同一套 render() 绘制逻辑。
   - 绘制内容：网格线 / Y 轴刻度 / X 轴标签 / 渐变面积 / 折线 / 末端点。
+  - T643（PRD V3.44）：纵轴随 N/kPa 档位切换。轴上每个数都来自后端同响应派生的 kPa 值
+    （`data[].kpa` 与父页按 `heatmapMaxKpa` 取的上界），组件内不出现 N 到 kPa 的算式；
+    kPa 档拿不到任何可用派生值（`maxValueKpa` 为 null）时刻度出「--」且不画线（fail-closed）。
 -->
 <template>
   <view class="pressure-curve" :style="{ height: height + 'px' }">
@@ -21,16 +24,22 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, getCurrentInstance } from 'vue'
+import { axisUnitText, type PressureUnit } from '@bracesync/shared-utils'
 
 const props = withDefaults(defineProps<{
-  data: { timestamp: string; value: number }[]
+  data: { timestamp: string; value: number; kpa?: number | null }[]
   maxValue?: number
+  /** T643：kPa 档的纵轴上界，由父页从后端派生的 kPa 值取整得到；null = 该档无可用数值 */
+  maxValueKpa?: number | null
+  unit?: PressureUnit
   labels?: string[]
   height?: number
   // 时间范围（毫秒），用于按真实时间定位 X 坐标；不传则按索引均匀分布
   timeRange?: { start: number; end: number }
 }>(), {
   maxValue: 75,
+  maxValueKpa: null,
+  unit: 'N',
   height: 180,
 })
 
@@ -44,10 +53,12 @@ const padBottom = 42
 
 function render(ctx: any, width: number, height: number) {
   ctx.clearRect(0, 0, width, height)
-  const maxValue = props.maxValue
+  const isKpa = props.unit === 'kPa'
+  // 当前档的纵轴上界：N 档沿用 maxValue，kPa 档只看后端派生值取出的上界
+  const axisMax = isKpa ? props.maxValueKpa : props.maxValue
   const chartWidth = width - padLeft - padRight
   const chartHeight = height - padTop - padBottom
-  const getY = (v: number) => padTop + chartHeight * ((maxValue - v) / maxValue)
+  const getY = (v: number) => padTop + chartHeight * ((axisMax! - v) / axisMax!)
   const getX = (i: number) => {
     if (props.timeRange && props.data[i]) {
       const ts = new Date(props.data[i].timestamp).getTime()
@@ -58,12 +69,11 @@ function render(ctx: any, width: number, height: number) {
     return props.data.length <= 1 ? padLeft : padLeft + (chartWidth / (props.data.length - 1)) * i
   }
 
-  // 网格线 + Y 轴刻度
+  // 网格线 + Y 轴刻度（kPa 档无可用数值 ⇒ 每格「--」，不拿 N 值凑一个 kPa 刻度）
   const steps = 5
-  const step = maxValue / steps
   for (let i = 0; i <= steps; i++) {
-    const val = Math.round(i * step)
-    const y = getY(val)
+    const frac = i / steps
+    const y = padTop + chartHeight * (1 - frac)
     ctx.strokeStyle = '#e2e8f0'
     ctx.lineWidth = 0.5
     ctx.beginPath()
@@ -74,7 +84,10 @@ function render(ctx: any, width: number, height: number) {
     ctx.font = '11px sans-serif'
     ctx.textAlign = 'right'
     ctx.textBaseline = 'middle'
-    ctx.fillText(val + 'N', padLeft - 8, y)
+    const tickText = axisMax === null || axisMax === undefined
+      ? '--'
+      : String(Math.round(frac * axisMax)) + axisUnitText(props.unit)
+    ctx.fillText(tickText, padLeft - 8, y)
   }
 
   // X 轴标签
@@ -92,32 +105,50 @@ function render(ctx: any, width: number, height: number) {
   }
 
   if (props.data.length === 0) return
-  const points = props.data.map((d, i) => ({ x: getX(i), y: getY(d.value) }))
+  if (axisMax === null || axisMax === undefined) return
+  // 当前档的逐点数值：kPa 档不可换算的点断线（不连、不当 0），N 档逐字沿用旧画法
+  const runs: { x: number; y: number }[][] = []
+  let run: { x: number; y: number }[] = []
+  props.data.forEach((d, i) => {
+    const v = isKpa ? d.kpa : d.value
+    if (v === null || v === undefined || !Number.isFinite(v)) {
+      if (run.length > 0) { runs.push(run); run = [] }
+      return
+    }
+    run.push({ x: getX(i), y: getY(v) })
+  })
+  if (run.length > 0) runs.push(run)
+  if (runs.length === 0) return
 
   // 渐变面积
   const grad = ctx.createLinearGradient(0, padTop, 0, padTop + chartHeight)
   grad.addColorStop(0, 'rgba(37,99,235,0.12)')
   grad.addColorStop(1, 'rgba(37,99,235,0.02)')
-  ctx.beginPath()
-  ctx.moveTo(points[0].x, padTop + chartHeight)
-  points.forEach(p => ctx.lineTo(p.x, p.y))
-  ctx.lineTo(points[points.length - 1].x, padTop + chartHeight)
-  ctx.closePath()
-  ctx.fillStyle = grad
-  ctx.fill()
+  for (const points of runs) {
+    ctx.beginPath()
+    ctx.moveTo(points[0].x, padTop + chartHeight)
+    points.forEach(p => ctx.lineTo(p.x, p.y))
+    ctx.lineTo(points[points.length - 1].x, padTop + chartHeight)
+    ctx.closePath()
+    ctx.fillStyle = grad
+    ctx.fill()
+  }
 
   // 折线
-  ctx.beginPath()
-  points.forEach((p, i) => {
-    if (i === 0) ctx.moveTo(p.x, p.y)
-    else ctx.lineTo(p.x, p.y)
-  })
-  ctx.strokeStyle = '#2563EB'
-  ctx.lineWidth = 2
-  ctx.stroke()
+  for (const points of runs) {
+    ctx.beginPath()
+    points.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y)
+      else ctx.lineTo(p.x, p.y)
+    })
+    ctx.strokeStyle = '#2563EB'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
 
   // 末端点
-  const last = points[points.length - 1]
+  const lastRun = runs[runs.length - 1]
+  const last = lastRun[lastRun.length - 1]
   ctx.beginPath()
   ctx.arc(last.x, last.y, 4, 0, Math.PI * 2)
   ctx.fillStyle = '#2563EB'
@@ -204,7 +235,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.data, props.maxValue, props.labels, props.height],
+  () => [props.data, props.maxValue, props.maxValueKpa, props.unit, props.labels, props.height],
   () => {
     draw()
   },

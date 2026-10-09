@@ -187,7 +187,7 @@ describe('T625 空采集点与断裂：交给图表的输入形状', () => {
     const { start } = trendWindow('day', ANCHOR)
     const single = [{ timestamp: iso(start), points: [{ pointId: 'P01', pressureValue: 7 }] }]
     const points = toTrendSeries(single, 'P01')
-    expect(points).toEqual([{ timestamp: iso(start), value: 7 }])
+    expect(points).toEqual([{ timestamp: iso(start), value: 7, kpa: null }])
     expect(deltas(points)).toEqual([])
   })
 
@@ -202,6 +202,6 @@ describe('T625 空采集点与断裂：交给图表的输入形状', () => {
     expect(pickPointValue(row, 'P01')).toBe(8)
     expect(pickPointValue(row, 'P99')).toBe(33)
     expect(pickPointValue(row)).toBe(33)
-    expect(toTrendSeries([row], 'P99')).toEqual([{ timestamp: '2026-10-07T16:00:00Z', value: 33 }])
+    expect(toTrendSeries([row], 'P99')).toEqual([{ timestamp: '2026-10-07T16:00:00Z', value: 33, kpa: null }])
   })
 })

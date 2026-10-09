@@ -140,14 +140,21 @@ function dayNoise(seed: string): number {
 export function mockPatientDailyWear(patientId: string, start: string, end: string): DailyWearDay[] {
   const patient = PATIENTS.find((p) => p.patientId === patientId)
   if (!patient?.deviceId) return []
+  // T643：日聚合的 kPa 同属「服务端替身」派生（选型 A，前端零换算）；
+  // PT-003 面积未配置 → 两枚都出 null，让矫形日志的 fail-closed 档在 mock 模式下也可测。
+  const areaCm2 = patientId === AREA_UNSET_PATIENT_ID ? null : MOCK_AREA_CM2
   return listDates({ start, end }).map((date) => {
     const a = dayNoise(`${patientId}|${date}`)
     const b = dayNoise(`${date}|${patientId}`)
+    const avgPressure = Number((22 + a * 18).toFixed(1))
+    const maxPressure = Number((38 + b * 26).toFixed(1))
     return {
       date,
       wearMinutes: Math.round(360 + a * 840),
-      avgPressure: Number((22 + a * 18).toFixed(1)),
-      maxPressure: Number((38 + b * 26).toFixed(1)),
+      avgPressure,
+      maxPressure,
+      avgPressureKpa: mockKpaOf(avgPressure, areaCm2),
+      maxPressureKpa: mockKpaOf(maxPressure, areaCm2),
       maxPoint: `P${String(1 + Math.floor(b * 20)).padStart(2, '0')}`,
       frameCount: Math.round(600 + a * 900),
       abnormalCount: b > 0.82 ? 1 : 0,

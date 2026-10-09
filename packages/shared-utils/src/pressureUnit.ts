@@ -5,8 +5,12 @@
  * 一律读快照里已经算好的派生值（`pressureHeatmap[].pressureKpa` / `heatmapMaxKpa`），
  * 绝不在前端重算 —— 重算就等于第二条口径线（T203 写死 60/45 滞后的同型坑）。
  *
- * 判档恒为 N：颜色、`isMax`、图例、状态列、趋势纵轴、事件流读数都不接这里的文本，
+ * 判档恒为 N：颜色、`isMax`、图例、状态列、事件流读数都不接这里的文本，
  * 换档只换「数字怎么写」，不换「格子算什么色」（Boss 裁定 4「仅展示层换算」）。
+ *
+ * T643（PRD V3.44）把「趋势/曲线纵轴」从恒 N 侧移入随档侧：纵轴数值与单位字母随档切换，
+ * 但轴上的每一个数仍然只能是后端派生好的 kPa 值 —— 显示层拿到的若是 N 值，
+ * 本模块没有任何一条腿允许把它除面积乘十（`kpaObservedMax` 的入参形即为此而设）。
  */
 
 export type PressureUnit = 'N' | 'kPa'
@@ -82,4 +86,28 @@ export function areaHintVisible(unit: PressureUnit, heatmapMaxKpa: number | null
 /** hero 副文案「20-60N 正常范围」只在 N 档出现（Boss 2026-09-30 08:58:12 裁定 c） */
 export function heroRangeHintVisible(unit: PressureUnit): boolean {
   return unit === 'N'
+}
+
+/** 纵轴与图例上的单位字母（T643：随档切换的那半句文本） */
+export function axisUnitText(unit: PressureUnit): string {
+  return unit === 'N' ? 'N' : 'kPa'
+}
+
+/**
+ * T643 纵轴随档：kPa 档轴的观测上界。
+ *
+ * 入参只能是「后端派生好的 kPa 值」——逐点值 + 同响应下发的上界（快照 `heatmapMaxKpa`），
+ * 一个可用数值都没有（面积未配置 / 非法 / 后端未下发）时回 null，
+ * 调用方按 fail-closed 出「--」或不画线。🔴 这里不接收 N 值也不做除法：
+ * 轴上每一格的间距与取整仍由各页沿用本页 N 档既有的步阶规则，那是呈现规则不是换算。
+ */
+export function kpaObservedMax(
+  kpaValues: readonly (number | null | undefined)[],
+  floor?: number | null,
+): number | null {
+  let max = Number.isFinite(floor as number) && (floor as number) > 0 ? (floor as number) : 0
+  for (const v of kpaValues) {
+    if (typeof v === 'number' && Number.isFinite(v) && v > max) max = v
+  }
+  return max > 0 ? max : null
 }

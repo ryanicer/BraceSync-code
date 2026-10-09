@@ -246,6 +246,59 @@ describe('页面接线：二档分段、取数只读快照下发字段', () => {
   })
 })
 
+describe('T643 三张趋势图纵轴随档（PRD V3.44：原「不动趋势曲线区」废止）', () => {
+  const curve = readSrc('src/components/PressureCurve.vue')
+  const trendUtil = readSrc('src/utils/trend-window.ts')
+
+  it('页面把档位与 kPa 轴上界都透传给 PressureCurve（绑定形态，不许塌成静态字面量）', () => {
+    const tag = page.match(/<PressureCurve[\s\S]*?\/>/)?.[0]
+    expect(tag, '页面应渲染 PressureCurve 标签').toBeTruthy()
+    expect(tag).toMatch(/:unit="unit"/)
+    expect(tag).toMatch(/:max-value-kpa="trendMaxValueKpa"/)
+    expect(tag).not.toMatch(/\bunit="(N|kPa)"/)
+  })
+
+  it('kPa 轴上界只由后端派生值取整（kpaObservedMax 喂逐点 kpa 与快照 heatmapMaxKpa）', () => {
+    expect(page).toMatch(/import \{[^}]*kpaObservedMax[^}]*\} from '@bracesync\/shared-utils'/)
+    const body = page.match(/const trendMaxValueKpa = computed<number \| null>\(\(\) => \{[\s\S]*?\n\}\)/)?.[0]
+    expect(body, '页面应有 trendMaxValueKpa').toBeTruthy()
+    expect(body).toMatch(/kpaObservedMax\(trendData\.value\.map\(p => p\.kpa\), heatmapMaxKpa\.value\)/)
+    // N 档那条算式必须逐字不动（默认档读数不变，PRD 四.2）
+    expect(page).toMatch(/return Math\.max\(TREND_CURVE_MAX_N, Math\.ceil\(max \/ 15\) \* 15\)/)
+  })
+
+  it('组件按当前档取数与取轴：kPa 档读 d.kpa，刻度字母走 axisUnitText，无可用值出「--」', () => {
+    expect(curve).toMatch(/import \{ axisUnitText, type PressureUnit \} from '@bracesync\/shared-utils'/)
+    expect(curve).toMatch(/const axisMax = isKpa \? props\.maxValueKpa : props\.maxValue/)
+    expect(curve).toMatch(/const v = isKpa \? d\.kpa : d\.value/)
+    expect(curve).toMatch(/axisUnitText\(props\.unit\)/)
+    expect(curve).toMatch(/\? '--'/)
+    // 曲线数据面：kPa 不可换算的点断线（不许把 null 当 0 连出去）
+    expect(curve).toMatch(/if \(v === null \|\| v === undefined \|\| !Number\.isFinite\(v\)\)/)
+  })
+
+  it('换档要触发重绘（watch 少了 unit 那一格，切档后画布还是上一档的轴）', () => {
+    const w = curve.match(/watch\(\s*\(\) => \[([^\]]*)\]/)?.[1]
+    expect(w, '组件应有 watch 依赖表').toBeTruthy()
+    expect(w).toContain('props.unit')
+    expect(w).toContain('props.maxValueKpa')
+  })
+
+  it('kPa 档轴缺失（heatmapMaxKpa 为 null 且逐点无 kpa）时刻度全「--」且不画线（fail-closed）', () => {
+    expect(curve).toMatch(/if \(axisMax === null \|\| axisMax === undefined\) return/)
+    // 上界由 kpaObservedMax 决定：它没有可用值时回 null，页面不另造一个数
+    expect(trendUtil).not.toMatch(/kpaObservedMax/)
+  })
+
+  it('趋势两文件也在零重复换算门禁内', () => {
+    for (const src of [curve, trendUtil]) {
+      expect(src).not.toMatch(/\*[^\S\n]*10\b/)
+      expect(src).not.toMatch(/\/[^\S\n]*[\w$]*[Aa]rea[\w$]*/)
+      expect(src).not.toMatch(/contactAreaCm2/)
+    }
+  })
+})
+
 describe('前端零重复换算门禁（派发单 §三 选型 A：换算真源只有一份，在后端）', () => {
   const files: Array<[string, string]> = [
     ['pages/monitor/index.vue', page],

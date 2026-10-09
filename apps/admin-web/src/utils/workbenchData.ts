@@ -17,6 +17,13 @@ export interface DailyWearDay {
   wearMinutes: number
   avgPressure: number
   maxPressure: number
+  /**
+   * T643 A 路（PRD §7A.2.1 三）：与上面两枚 N 值同源于本行的 kPa 展示档，由后端
+   * daily-wear 响应派生下发（复用 KpaFromN，不落库）。null / 字段不在 = 面积未配置或非法 ⇒
+   * kPa 档显示「--」。🔴 前端不得据 avgPressure 自行换算出第二个数。
+   */
+  avgPressureKpa?: number | null
+  maxPressureKpa?: number | null
   maxPoint: string
   frameCount: number
   abnormalCount: number
@@ -83,6 +90,8 @@ export interface WearSeries {
   /** 日最大压力（N），无统计行 ⇒ null，不填 0 */
   avgPressure: (number | null)[]
   maxPressure: (number | null)[]
+  /** T643：与 avgPressure 逐行同位的 kPa 派生值（后端下发；null = 该日不可换算） */
+  avgPressureKpa: (number | null)[]
   wearHours: (number | null)[]
 }
 
@@ -98,6 +107,7 @@ export function alignWearSeries(rows: DailyWearDay[], range: DateRange): WearSer
     dates,
     avgPressure: dates.map((d) => byDate.get(d)?.avgPressure ?? null),
     maxPressure: dates.map((d) => byDate.get(d)?.maxPressure ?? null),
+    avgPressureKpa: dates.map((d) => byDate.get(d)?.avgPressureKpa ?? null),
     wearHours: dates.map((d) => {
       const row = byDate.get(d)
       return row ? toWearHours(row.wearMinutes) : null
