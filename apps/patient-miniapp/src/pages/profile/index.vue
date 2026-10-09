@@ -177,13 +177,10 @@ const metaText = computed(() => {
   return parts.join(' · ')
 })
 
-// 我的医生菜单副文案：医生名 + 团队名（原信息卡的医生/团队信息在此保留）
-const doctorSubText = computed(() => {
-  const name = profile.value?.doctorName
-  const team = profile.value?.teamName
-  if (name && team) return `${name} · ${team}`
-  return name || team || (profile.value?.teamId ? '已绑定' : '未绑定')
-})
+// 我的医生菜单副文案（T646，依 T637 设计稿 八 + weide-duty 2026-10-09 22:52 裁定甲）：
+// 患者侧载荷里医护姓名两枚键值恒 null ⇒ 这一行只说绑定状态，数据源换成同源的 teamId。
+// 设计稿要的是把这一整行入口换成「康复建议」（T641 那一格）；入口换掉之前，副文案按本形状退场。
+const doctorSubText = computed(() => (profile.value?.teamId ? '已绑定' : '未绑定'))
 
 const editSheetVisible = ref(false)
 const editNickname = ref('')
@@ -285,8 +282,9 @@ async function loadProfile() {
     profile.value = await getPatientProfile()
     logger.info('[T187] profile loaded', {
       patientId: profile.value.patientId,
-      hasTeam: !!profile.value.teamName,
-      hasDoctor: !!profile.value.doctorName,
+      // T646：这两枚布尔原来读的是姓名字段，现改读同源的标识（绑定态不变，姓名不进日志）
+      hasTeam: !!profile.value.teamId,
+      hasDoctor: !!profile.value.doctorId,
       hasDevice: !!profile.value.deviceId,
     })
   } catch (e: unknown) {

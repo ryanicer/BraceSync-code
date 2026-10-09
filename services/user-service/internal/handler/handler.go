@@ -893,9 +893,19 @@ func (h *Handler) getPatientProfile(c *gin.Context) {
 	// T576 甲案：佩戴目标时长由后端下发（真源 sys_configs.wear_target_hours），
 	// 小程序两页不再各写一枚本地硬编码常量。读不到按默认 22 降级并记 Warn。
 	ok(c, model.PatientProfileDTO{
-		AdminPatientDTO:      toPatientDTO(*row),
+		AdminPatientDTO:      selfScopedPatientDTO(toPatientDTO(*row)),
 		DailyWearTargetHours: h.wearTargetHours(c.Request.Context(), ctxLogger(c)),
 	})
+}
+
+// selfScopedPatientDTO 患者侧载荷按值收口（T646 裁定甲，依 T637 设计稿 八「患者端任何响应体
+// 不再含医护姓名」）：teamName / doctorName 两枚键在场、值恒 null。
+// 只清姓名，标识（TeamID / DoctorID / DeviceID）照常下发 —— 收的是姓名不是关联能力。
+// 后台读路不调这一枚（/admin/patients 列表与详情仍带 join 出的姓名）。
+func selfScopedPatientDTO(dto model.AdminPatientDTO) model.AdminPatientDTO {
+	dto.TeamName = nil
+	dto.DoctorName = nil
+	return dto
 }
 
 // ─────────────────────────────────────────────────────────────
