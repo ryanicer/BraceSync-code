@@ -17,6 +17,7 @@
           :loading="patientLoading"
           placeholder="输入姓名或患者ID搜索"
           class="patient-select"
+          @change="onPatientChange"
         >
           <el-option
             v-for="p in patients"
@@ -267,20 +268,33 @@ function resetFilters() {
   generatedAt.value = ''
 }
 
+/** T596：取数序号——后发请求的响应才算数，旧患者的迟到响应直接丢弃（连切不许压回表头） */
+let reportSeq = 0
+
 async function loadReport() {
   const q = queryOrNull()
   if (!q) return
   notFound.value = false
+  const seq = ++reportSeq
   loading.value = true
   try {
-    report.value = await fetchAbnormalReport({ patientId: patientId.value, ...q })
+    const rep = await fetchAbnormalReport({ patientId: patientId.value, ...q })
+    if (seq !== reportSeq) return
+    report.value = rep
     generatedAt.value = stampText()
   } catch (e: unknown) {
+    if (seq !== reportSeq) return
     report.value = null
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '汇总加载失败' }))
   } finally {
-    loading.value = false
+    if (seq === reportSeq) loading.value = false
   }
+}
+
+/** T596：换患者立即下架旧读数并重新取数——未重查窗口不许挂着上一名患者的 KPI 与汇总 */
+function onPatientChange() {
+  report.value = null
+  void loadReport()
 }
 
 async function handleExport() {
