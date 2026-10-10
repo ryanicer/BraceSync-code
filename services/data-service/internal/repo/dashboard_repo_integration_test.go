@@ -99,18 +99,19 @@ func TestITKPICompare(t *testing.T) {
 		yesterday, today, monthStart, prevMonthStart, model.ScopeAll())
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, seeded.ActiveWear, int64(1), "昨日有佩戴统计")
-	assert.Greater(t, seeded.AvgWearMinutes, 0.0)
+	require.NotNil(t, seeded.AvgWearMinutes, "窗口内有聚合行 ⇒ 平均佩戴分钟可读")
+	assert.Greater(t, *seeded.AvgWearMinutes, 0.0)
 	assert.LessOrEqual(t, seeded.PrevMonthNewPatients, seeded.TotalPatientsAtMonth,
 		"上月新增必然 ⊆ 上月末累计")
 
-	// 远早于任何种子数据的窗口：全部为 0（证明 stat_date 半开区间与 created_at 边界不越界）
+	// 远早于任何种子数据的窗口：count 类为 0（实测无行），佩戴均值为 null（T636：无行≠0 小时）
 	far := time.Date(2000, 1, 2, 0, 0, 0, 0, model.CSTZone())
 	empty, err := r.KPICompare(ctx, far.Format("2006-01-02"), far.AddDate(0, 0, 1).Format("2006-01-02"),
 		far, far.AddDate(0, 0, 1), far, far.AddDate(0, -1, 0), model.ScopeAll())
 	require.NoError(t, err)
 	assert.Zero(t, empty.ActiveWear)
 	assert.Zero(t, empty.AlertCount)
-	assert.Zero(t, empty.AvgWearMinutes)
+	assert.Nil(t, empty.AvgWearMinutes, "窗口内无 daily_wear_stats 行 ⇒ NULL，不再被 COALESCE 涂成 0")
 	assert.Zero(t, empty.TotalPatientsAtMonth)
 	assert.Zero(t, empty.PrevMonthNewPatients)
 }

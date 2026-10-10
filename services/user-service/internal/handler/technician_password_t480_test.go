@@ -23,6 +23,10 @@ const t480Tech = "TECH0001"
 
 const t480Phone = "13800001111"
 
+// t480Team T627 方案乙之后的形态：技师建的是「维护班组」行，不是医疗团队行。
+// 这条链的判据是口令（初始口令能登进来），团队 id 本身不被断言，所以只需与侧别判据自洽。
+const t480Team = "TEAM04"
+
 func t480ResetPath() string { return "/api/v1/admin/technicians/" + t480Tech + "/reset-password" }
 
 // t480Env 放行到底所需的前置夹具：一条在档技师（重置的存在性判定要读它、创建要认团队）
@@ -30,12 +34,13 @@ func t480Env(t *testing.T) *testEnv {
 	t.Helper()
 	e := newEnv(t, true, true)
 	row := repo.TechnicianRow{
-		TechID: t480Tech, Name: "技师老陈", TeamID: strPtr("TEAM01"),
+		TechID: t480Tech, Name: "技师老陈", TeamID: strPtr(t480Team),
 		Status: "enabled", AuthStatus: "authorized",
 	}
 	e.store.tech = &row
 	e.store.createdTech = &row
 	e.store.teamExists = true
+	e.store.teamType = "maintenance" // T627 方案乙：创建腿现在多问一次侧别，医疗团队会 400
 	return e
 }
 
@@ -43,7 +48,7 @@ func t480Env(t *testing.T) *testEnv {
 func t480Create(t *testing.T, e *testEnv) (int, int, string, json.RawMessage) {
 	t.Helper()
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/technicians",
-		map[string]any{"name": "新技师", "phone": t480Phone, "teamId": "TEAM01"}, adminHdr)
+		map[string]any{"name": "新技师", "phone": t480Phone, "teamId": t480Team}, adminHdr)
 	return w.Code, resp.Code, resp.Message, resp.Data
 }
 
@@ -97,7 +102,7 @@ func TestT480_CreateThenTechLoginRoundTrip(t *testing.T) {
 	e.store.techLogin = &repo.TechLoginRow{
 		TechID: t480Tech, Name: "新技师",
 		PasswordHash: e.store.lastTechInput.PasswordHash,
-		TeamID:       "TEAM01", Status: "enabled", AuthStatus: "authorized",
+		TeamID:       t480Team, Status: "enabled", AuthStatus: "authorized",
 	}
 
 	w, resp := e.do(http.MethodPost, "/api/v1/tech/login",

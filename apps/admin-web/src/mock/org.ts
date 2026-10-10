@@ -1,5 +1,5 @@
 // 组织域 mock 数据（对齐 api-contracts.ts getTeams/getDoctors/getTechnicians/getInstallRecords）
-import type { Team, TeamDetail, TeamMember, TeamStats, Doctor, Technician, InstallRecordRow, InstallRecordDetail } from '@bracesync/shared-types'
+import type { Team, TeamDetail, TeamMember, TeamStats, Doctor, Technician, InstallRecordRow, InstallRecordDetail, TeamType } from '@bracesync/shared-types'
 import { PHONE_PLACEHOLDER } from '../utils/phoneField'
 import { mockPatients, mockPatientDetail } from './patients'
 import { mockDeviceModel } from './devices'
@@ -10,15 +10,22 @@ export interface TeamMembersView {
   technicians: TeamMember[]
 }
 
+// T627 方案乙：teamType 是 teams 表的列（迁移 000035），mock 面按同一枚举写死。
+// TEAM-001..005 与 TEAM-101/102 都是医护团队；末尾新增两行维护班组。
+// 前四行技师仍挂在医护团队上，那是**存量刷数之前**的形状（派发单第四节：刷数脚本先 dry-run、Boss 批准再执行），
+// 不是本卡裁定后的目标态。按类型过滤因此仍会把它们读成 medical —— 过滤要暴露的正是这一格，不是在掩盖它。
 const TEAMS: Team[] = [
-  { teamId: 'TEAM-001', name: '脊柱侧弯一组', memberCount: 8, patientCount: 186 },
-  { teamId: 'TEAM-002', name: '脊柱侧弯二组', memberCount: 7, patientCount: 204 },
-  { teamId: 'TEAM-003', name: '术后康复治疗组', memberCount: 6, patientCount: 158 },
-  { teamId: 'TEAM-004', name: '儿童矫形组', memberCount: 9, patientCount: 312 },
-  { teamId: 'TEAM-005', name: '成人矫形组', memberCount: 8, patientCount: 275 },
+  { teamId: 'TEAM-001', name: '脊柱侧弯一组', memberCount: 8, patientCount: 186, teamType: 'medical' },
+  { teamId: 'TEAM-002', name: '脊柱侧弯二组', memberCount: 7, patientCount: 204, teamType: 'medical' },
+  { teamId: 'TEAM-003', name: '术后康复治疗组', memberCount: 6, patientCount: 158, teamType: 'medical' },
+  { teamId: 'TEAM-004', name: '儿童矫形组', memberCount: 9, patientCount: 312, teamType: 'medical' },
+  { teamId: 'TEAM-005', name: '成人矫形组', memberCount: 8, patientCount: 275, teamType: 'medical' },
   // T059 团队管理写功能：骨科一组（被引用，删除返回 409）/ 康复组（可删）
-  { teamId: 'TEAM-101', name: '骨科一组', memberCount: 4, patientCount: 86, leader: 'DOC-101', leaderName: '张主任', description: '骨科诊疗一组', status: 'active', createdAt: '2026-01-15T09:00:00+08:00' },
-  { teamId: 'TEAM-102', name: '康复组', memberCount: 3, patientCount: 42, leader: 'DOC-103', leaderName: '王康复师', description: '康复诊疗组', status: 'active', createdAt: '2026-02-20T10:00:00+08:00' },
+  { teamId: 'TEAM-101', name: '骨科一组', memberCount: 4, patientCount: 86, leader: 'DOC-101', leaderName: '张主任', description: '骨科诊疗一组', status: 'active', createdAt: '2026-01-15T09:00:00+08:00', teamType: 'medical' },
+  { teamId: 'TEAM-102', name: '康复组', memberCount: 3, patientCount: 42, leader: 'DOC-103', leaderName: '王康复师', description: '康复诊疗组', status: 'active', createdAt: '2026-02-20T10:00:00+08:00', teamType: 'medical' },
+  // T627：维护班组（成员腿是技师，不接患者）
+  { teamId: 'TEAM-201', name: '设备维护一组', memberCount: 1, patientCount: 0, description: 'T627 方案乙新增的维护班组', status: 'active', createdAt: '2026-09-01T09:00:00+08:00', teamType: 'maintenance' },
+  { teamId: 'TEAM-202', name: '设备维护二组', memberCount: 1, patientCount: 0, description: 'T627 方案乙新增的维护班组', status: 'active', createdAt: '2026-09-03T09:00:00+08:00', teamType: 'maintenance' },
 ]
 
 const DOCTORS: Doctor[] = [
@@ -41,6 +48,9 @@ const TECHNICIANS: Technician[] = [
   { techId: 'TECH-002', name: '吴师傅', phoneMasked: '139****6789', phoneState: 'masked', teamId: 'TEAM-002', installCount: 38, status: 'enabled', authStatus: 'authorized', createdAt: '2026-06-01T00:00:00+08:00' },
   { techId: 'TECH-003', name: '郑师傅', phoneMasked: '137****7890', phoneState: 'masked', teamId: 'TEAM-003', installCount: 29, status: 'enabled', authStatus: 'unauthorized', createdAt: '2026-06-20T00:00:00+08:00' },
   { techId: 'TECH-004', name: '冯师傅', phoneMasked: '136****8901', phoneState: 'masked', teamId: 'TEAM-004', installCount: 52, status: 'disabled', authStatus: 'authorized', createdAt: '2026-07-01T00:00:00+08:00' },
+  // T627：刷数后的目标态形状——技师归属维护班组，两行各挂一个班组
+  { techId: 'TECH-005', name: '孙师傅', phoneMasked: '135****9012', phoneState: 'masked', teamId: 'TEAM-201', installCount: 17, status: 'enabled', authStatus: 'unauthorized', createdAt: '2026-09-02T00:00:00+08:00' },
+  { techId: 'TECH-006', name: '马师傅', phoneMasked: '134****0123', phoneState: 'masked', teamId: 'TEAM-202', installCount: 9, status: 'enabled', authStatus: 'authorized', createdAt: '2026-09-05T00:00:00+08:00' },
 ]
 
 const INSTALL_RECORDS: InstallRecordRow[] = [
@@ -84,8 +94,17 @@ export function __resetOrgForTest(): void {
   INSTALL_RECORDS.splice(0, INSTALL_RECORDS.length, ...seed.INSTALL_RECORDS)
 }
 
-export function mockTeams(): Team[] {
-  return TEAMS.map((t) => ({ ...t }))
+/** T627：技师行本身没有类型列，类型由所属团队 join 出来（后端 techColumns 的 LEFT JOIN teams 同口径）。
+ *  团队行不存在时回 null，与 teamName 回落显示 teamId 同一口径——不拿 'medical' 补位，
+ *  那会把一条脏归属读数涂成合法读数。 */
+function teamTypeOf(teamId: string | null | undefined): TeamType | null {
+  if (!teamId) return null
+  return TEAMS.find((t) => t.teamId === teamId)?.teamType ?? null
+}
+
+export function mockTeams(params: { teamType?: TeamType } = {}): Team[] {
+  const list = TEAMS.map((t) => ({ ...t }))
+  return params.teamType ? list.filter((t) => t.teamType === params.teamType) : list
 }
 
 /** T289 5.1：GET /admin/teams/stats 的 mock 版，四个计数由本地 mock 体现算，不写死设计稿样例数字 */
@@ -113,11 +132,14 @@ export function mockDoctorName(doctorId: string | null): string {
   return DOCTORS.find((d) => d.doctorId === doctorId)?.name ?? doctorId
 }
 
-export function mockTechnicians(params: { page?: number; pageSize?: number }): { list: Technician[]; total: number; page: number; pageSize: number } {
+/** T627：teamType 过滤在后端是 SQL 侧先过滤再分页（分页端点的 total 必须是过滤后的条数），mock 同口径 */
+export function mockTechnicians(params: { page?: number; pageSize?: number; teamType?: TeamType }): { list: Technician[]; total: number; page: number; pageSize: number } {
   const page = params.page ?? 1
   const pageSize = params.pageSize ?? 10
+  const all = TECHNICIANS.map((t) => ({ ...t, teamType: teamTypeOf(t.teamId) }))
+  const filtered = params.teamType ? all.filter((t) => t.teamType === params.teamType) : all
   const start = (page - 1) * pageSize
-  return { list: TECHNICIANS.slice(start, start + pageSize), total: TECHNICIANS.length, page, pageSize }
+  return { list: filtered.slice(start, start + pageSize), total: filtered.length, page, pageSize }
 }
 
 export function mockInstallRecords(params: { keyword?: string; page?: number; pageSize?: number }): { list: InstallRecordRow[]; total: number; page: number; pageSize: number } {
@@ -183,6 +205,7 @@ export function mockCreateTechnician(input: {
     status: 'enabled',
     authStatus: 'unauthorized',
     createdAt: new Date().toISOString(),
+    teamType: teamTypeOf(input.teamId),
   }
   TECHNICIANS.push(tech)
   return { account: { ...tech }, initialPassword: genTechPassword() }
@@ -254,6 +277,7 @@ export interface CreateTeamInput {
   name: string                    // 必填，≤50
   leader: string                  // 必填，doctorId 存在性校验
   description?: string            // 可选，≤200
+  teamType?: TeamType             // T627：可选，缺省归 medical（与迁移 000035 的 DEFAULT 同口径）
 }
 
 export interface UpdateTeamInput {
@@ -298,6 +322,7 @@ export function mockCreateTeam(input: CreateTeamInput): TeamDetail {
     description: input.description ?? null,
     status: 'active',
     createdAt: now,
+    teamType: input.teamType ?? 'medical',
   }
 }
 

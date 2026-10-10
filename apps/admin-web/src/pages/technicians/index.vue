@@ -10,6 +10,19 @@
           @keyup.enter="loadData"
           @clear="loadData"
         />
+        <!-- T627 方案乙：类型过滤走服务端（?teamType=），分页端点必须先过滤再分页，
+             否则「total 是全量、列的是过滤后」两数在同一页打脸。 -->
+        <el-select
+          v-model="teamTypeFilter"
+          clearable
+          placeholder="全部类型"
+          class="type-filter"
+          style="width: 130px"
+          @change="onFilterChange"
+        >
+          <el-option label="医护团队" value="medical" />
+          <el-option label="维护班组" value="maintenance" />
+        </el-select>
         <el-button type="primary" @click="openCreate">新建技师</el-button>
       </div>
       <el-table :data="list" size="small" v-loading="loading">
@@ -19,6 +32,13 @@
         </el-table-column>
         <el-table-column label="所属团队" width="140">
           <template #default="{ row }">{{ teamNameOf(row.teamId) }}</template>
+        </el-table-column>
+        <el-table-column label="归属类型" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.teamType === 'maintenance' ? 'success' : row.teamType === 'medical' ? 'info' : 'warning'" size="small">
+              {{ teamTypeLabel(row.teamType) }}
+            </el-tag>
+          </template>
         </el-table-column>
         <el-table-column prop="installCount" label="安装次数" width="90" />
         <el-table-column label="认证状态" width="100">
@@ -75,11 +95,11 @@
           <el-input v-model="form.phone" :placeholder="phoneHint" maxlength="11" />
         </el-form-item>
         <el-form-item label="所属团队" required>
-          <el-select v-model="form.teamId" placeholder="请选择团队" style="width: 100%">
+          <el-select v-model="form.teamId" placeholder="请选择维护班组" style="width: 100%">
             <el-option
-              v-for="t in teams"
+              v-for="t in teamOptions"
               :key="t.teamId"
-              :label="t.name"
+              :label="t.label"
               :value="t.teamId"
             />
           </el-select>
@@ -99,7 +119,7 @@
 import { ref, computed, h, onMounted } from 'vue'
 import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { PhoneState, Technician, Team } from '@bracesync/shared-types'
+import type { PhoneState, Technician, Team, TeamType } from '@bracesync/shared-types'
 import { PHONE_RE, phoneDisplay, phonePatch, phonePlaceholder } from '../../utils/phoneField'
 import {
   fetchTechnicians, toggleTechnicianApi, teamNameOf,
@@ -113,6 +133,8 @@ const page = ref(1)
 const pageSize = ref(10)
 const loading = ref(false)
 const keyword = ref('')
+/** T627：'' = 不过滤（api 层把空值剔出 query string），其余两值就是 shared-types 的 TeamType */
+const teamTypeFilter = ref<'' | TeamType>('')
 
 const formVisible = ref(false)
 const editing = ref(false)
@@ -127,7 +149,11 @@ const phoneHint = computed(() => (editing.value ? phonePlaceholder(editingPhoneS
 async function loadData() {
   loading.value = true
   try {
-    const res = await fetchTechnicians({ page: page.value, pageSize: pageSize.value })
+    const res = await fetchTechnicians({
+      page: page.value,
+      pageSize: pageSize.value,
+      teamType: teamTypeFilter.value || undefined,
+    })
     let rows = res.list
     if (keyword.value.trim()) {
       const kw = keyword.value.trim().toLowerCase()
@@ -141,6 +167,32 @@ async function loadData() {
     loading.value = false
   }
 }
+
+function onFilterChange() {
+  page.value = 1
+  loadData()
+}
+
+function teamTypeLabel(t?: TeamType | null): string {
+  if (t === 'maintenance') return '维护班组'
+  if (t === 'medical') return '医护团队'
+  return '未知团队'
+}
+
+/** T627 R1：新建/编辑技师的归属只列维护班组。
+ *  例外是编辑存量行——它当前挂在医护团队上（刷数之前的形状），服务端对「保存同团队」放行
+ *  （类型判据只在 teamChanged 为真时咬），所以这一格得把它当前的团队也列出来并标明是存量；
+ *  不列就是下拉里没有它 ⇒ 页面显示裸 ID，要么把人悄悄搬走，要么让一条本来合法的保存看起来坏了。 */
+const teamOptions = computed(() => {
+  const opts = teams.value
+    .filter((t) => t.teamType === 'maintenance')
+    .map((t) => ({ teamId: t.teamId, label: t.name }))
+  const cur = teams.value.find((t) => t.teamId === form.value.teamId)
+  if (cur && cur.teamType !== 'maintenance') {
+    opts.push({ teamId: cur.teamId, label: `${cur.name}（存量：${teamTypeLabel(cur.teamType)}，保存同团队不改归属）` })
+  }
+  return opts
+})
 
 async function loadTeams() {
   try {

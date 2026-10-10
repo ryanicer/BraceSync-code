@@ -16,6 +16,8 @@ export function mockSensorPoints(): SensorPoint[] {
         label: `R${r}C${c}`,
         pressureValue: value,
         status: value < 20 ? 'normal' : value < 40 ? 'normal' : value < 60 ? 'warning' : 'critical',
+        // T643 A 路：kPa 档由后端同源派生，mock 不自己换算（禁第二套口径），故恒 null
+        pressureKpa: null,
       })
     }
   }

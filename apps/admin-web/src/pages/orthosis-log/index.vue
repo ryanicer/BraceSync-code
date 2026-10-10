@@ -374,6 +374,7 @@ import {
   alignWearSeries, constantLine, rangeForDays, seriesIsEmpty,
   type DailyWearDay, type WearRangeDays, type WearSeries,
 } from '../../utils/workbenchData'
+import { canSaveOrthosisPlan, DOCTOR_ONLY_HINT } from '../../utils/doctorOnlyAccess'
 import { useAuthStore } from '../../stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
@@ -779,6 +780,13 @@ async function loadAdvice() {
 }
 
 async function savePlan() {
+  // T629 方案C：后端 savePlan 要医生身份，非医生这一枪必 403，而 10403 查表只得通用句
+  // 「没有该操作的权限，请联系管理员」。按钮保留可用（Boss 裁「不动权限矩阵」），点击时
+  // 就地说明「仅医生开放」并阻止请求发起；判据见 utils/doctorOnlyAccess.ts。
+  if (!canSaveOrthosisPlan(auth.role)) {
+    ElMessage.warning(DOCTOR_ONLY_HINT)
+    return
+  }
   savingPlan.value = true
   try {
     const saved = await saveOrthosisPlanApi(patientId.value, newPlanContent.value.trim())

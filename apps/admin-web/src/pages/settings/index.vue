@@ -71,8 +71,12 @@
                已登记 PRD V3.17 冲突 ⑥，不在界面文案里向用户播报。 -->
         </div>
 
-        <!-- T289 12.4（设计稿 系统配置.html:103-137，表头 :107、20 行 :109-128、说明 :131-135）：医生默认阈值 20 点表（只读，单点在告警页网格改） -->
-        <div class="page-card default-threshold-card">
+        <!-- T289 12.4（设计稿 系统配置.html:103-137，表头 :107、20 行 :109-128、说明 :131-135）：医生默认阈值 20 点表（只读，单点在告警页网格改）。
+             T633（Boss 2026-10-09 报单）：本卡与下面那块「WiFi 预设列表」一起隐藏（只关模板挂载）。
+             本卡是只读回显且全点同值，真实编辑入口在「告警管理 · 告警规则配置」；它回显的 5/1 又未按 T203
+             口径与生效配置同源，对用户是困惑。form 的键、pointDefaults 与后端 sys_configs 一律不动：
+             本表回显的就是压力阈值卡那同一组键（threshold_pressure_high / low），本就没建第二份数据。 -->
+        <div v-if="SHOW_LOW_VALUE_BLOCKS" class="page-card default-threshold-card">
           <div class="page-card-title">医生默认阈值</div>
           <p class="card-desc">
             全 20 个采集点（4×5 网格）逐点列出，未逐点改过时的回退默认值；单点独立阈值在
@@ -101,7 +105,10 @@
           </ul>
         </div>
 
-        <div class="page-card">
+        <!-- T633：微信小程序 WiFi 能力（startWifi / getWifiList / connectWifi 全系列）2024-12 起不可用，
+             技师端扫不到也连不了这份列表，此块在当前技术条件下落不到端上 ⇒ 同样只关挂载：
+             wifi_presets 键、form.wifiPresets 回显与 PUT 载荷都不动，接口就绪或配网方案定了再置回开关。 -->
+        <div v-if="SHOW_LOW_VALUE_BLOCKS" class="page-card">
           <div class="page-card-title">WiFi 预设列表（技师端配网辅助）</div>
           <el-table :data="form.wifiPresets" size="small">
             <el-table-column prop="ssid" label="网络名称" min-width="200" />
@@ -265,6 +272,12 @@ const form = reactive<SystemSettings>({
   sensorDriftN: 2.8,
   wifiPresets: [],
 })
+
+/**
+ * T633：「WiFi 预设列表」与「医生默认阈值」两张卡的挂载开关（Boss 2026-10-09 裁定隐藏）。
+ * 只关界面，不动数据与接口；将来配网方案确定后置回 true 即恢复，判据见模板同处注释。
+ */
+const SHOW_LOW_VALUE_BLOCKS = false
 
 /**
  * T289 12.4：中间档「正常上限」后端不落库（三档合两键，PM 裁定 Q3）。

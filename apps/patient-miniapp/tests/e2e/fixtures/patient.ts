@@ -51,6 +51,8 @@ export function sensorPoints20(): SensorPoint[] {
         label: `R${r}C${c}`,
         pressureValue: value,
         status,
+        // T643 A 路：kPa 档由后端派生，夹具不自己换算
+        pressureKpa: null,
       })
     }
   }
@@ -111,6 +113,9 @@ export function realtimeSnapshot(opts: { areaCm2?: number | null } = {}) {
     heatmapMaxN,
     contactAreaCm2: areaCm2,
     heatmapMaxKpa: serverKpa(heatmapMaxN, areaCm2),
+    // T601：hero「正常范围」文案的配置边界（与告警引擎同源；值取迁移 000021 后的现网口径 1/5）
+    pressureLowN: 1,
+    pressureHighN: 5,
   })
 }
 

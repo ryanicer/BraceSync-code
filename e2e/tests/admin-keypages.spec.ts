@@ -50,15 +50,21 @@ test.describe('技师管理', () => {
     await page.goto(adminRoutes.technicians)
   })
 
-  test('渲染 4 名技师及认证/账号状态', async ({ page }) => {
+  test('渲染 6 名技师（含 T627 两枚维护班组行）及认证/账号状态与归属侧别', async ({ page }) => {
     const rows = tableRows(page)
-    await expect(rows).toHaveCount(4)
+    // 原为 4 名：T627 方案乙在 mock 面补了两枚「刷数后目标态」技师（TECH-005/006 各挂一支维护班组），
+    // 没有它们的话「归属类型」这一列在这套用例里只有单侧读数，筛错侧别筛不出来。
+    await expect(rows).toHaveCount(6)
     await expect(rows.filter({ hasText: '周师傅' })).toContainText('已认证')
     await expect(rows.filter({ hasText: '郑师傅' })).toContainText('未认证')
     await expect(rows.filter({ hasText: '冯师傅' })).toContainText('禁用')
     // 所属团队显示名字而非编号（T269 D1；mock 下取 mock 字典，真实模式的值级判据在
-    // contract-drift-gate.spec.ts（后端 ID TEAM01/D0001 夹具，API 层）+ e2e-real/tests/05-patients.spec.ts 5.6（DOM 层））
+    // contract-drift-gate.spec.ts（后端 ID TEAM01/D0001 夹具，API 层）+ e2e-real/tests/05-patients.spec.ts 5.6（DOM 层）
     await expect(rows.filter({ hasText: '周师傅' })).toContainText('脊柱侧弯一组')
+    // T627 方案乙：同一列里两侧都要出现，且名字与侧别成对（挂医护团队的行不得读成维护班组）
+    await expect(rows.filter({ hasText: '周师傅' })).toContainText('医护团队')
+    await expect(rows.filter({ hasText: '孙师傅' })).toContainText('设备维护一组')
+    await expect(rows.filter({ hasText: '孙师傅' })).toContainText('维护班组')
   })
 
   test('禁用技师：popconfirm 确认后状态翻转', async ({ page }) => {
@@ -127,10 +133,11 @@ test.describe('系统配置', () => {
     await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
 
-  test('WiFi 预设列表展示脱敏密码', async ({ page }) => {
-    await expect(page.getByText('WiFi 预设列表')).toBeVisible()
-    await expect(page.getByText('Hospital-WiFi').first()).toBeVisible()
-    await expect(page.getByText('********').first()).toBeVisible()
+  // T633（Boss 2026-10-09 报单）：微信小程序 WiFi 能力已整体下架，这块预设列表落不到端上 ⇒ 整卡隐藏。
+  // 原「展示脱敏密码」那条正向判据换成反向断言（mock 的 Hospital-WiFi 行不得再上屏）。
+  test('T633：WiFi 预设列表卡不挂载（标题与 mock 行都不在场）', async ({ page }) => {
+    await expect(page.getByText('WiFi 预设列表')).toHaveCount(0)
+    await expect(page.getByText('Hospital-WiFi')).toHaveCount(0)
   })
 
   test('通知规则 tab：4 类告警规则与渠道/对象勾选', async ({ page }) => {
