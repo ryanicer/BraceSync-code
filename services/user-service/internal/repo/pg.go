@@ -1077,6 +1077,134 @@ func (s *PGStore) CreatePlan(ctx context.Context, patientID, doctorID, content, 
 }
 
 // ─────────────────────────────────────────────────────────────
+// 康复建议（T641，advice_logs）
+// ─────────────────────────────────────────────────────────────
+
+// adviceColumns 建议流统一投影（写侧回读 + 列表读共用同一份列清单，口径同 feelingLogColumns）。
+// title/department 由 LEFT JOIN doctors 带出（R5 甲：库里只存 author_doctor_id，职称不作快照），
+// 所以写侧 INSERT 也走同一条投影 —— 否则「200 回的那一行」与「列表里的那一行」字段集会不一致。
+const adviceColumns = `a.advice_id, a.patient_id, a.author_doctor_id, a.content, a.created_at, a.updated_at, d.title, d.department`
+
+func scanAdvice(scanner interface{ Scan(dest ...any) error }) (AdviceRow, error) {
+	var r AdviceRow
+	err := scanner.Scan(&r.AdviceID, &r.PatientID, &r.AuthorDoctorID, &r.Content,
+		&r.CreatedAt, &r.UpdatedAt, &r.AuthorTitle, &r.AuthorDepartment)
+	return r, err
+}
+
+// CreateAdvice 写入一条建议。author_doctor_id 由 handler 侧 DoctorIDByAdmin 解析后传入，不信客户端。
+func (s *PGStore) CreateAdvice(ctx context.Context, patientID, doctorID, content string) (*AdviceRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`WITH ins AS (
+			INSERT INTO advice_logs (patient_id, author_doctor_id, content)
+			VALUES ($1, $2, $3)
+			RETURNING advice_id, patient_id, author_doctor_id, content, created_at, updated_at
+		)
+		SELECT `+adviceColumns+`
+		FROM ins a LEFT JOIN doctors d ON d.doctor_id = a.author_doctor_id`,
+		patientID, doctorID, content)
+	r, err := scanAdvice(row)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// ListAdvice 患者建议流（按创建倒序，走 idx_advice_patient (patient_id, created_at DESC)）
+func (s *PGStore) ListAdvice(ctx context.Context, patientID string) ([]AdviceRow, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+adviceColumns+`
+		 FROM advice_logs a LEFT JOIN doctors d ON d.doctor_id = a.author_doctor_id
+		 WHERE a.patient_id = $1 ORDER BY a.created_at DESC, a.advice_id DESC`, patientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []AdviceRow
+	for rows.Next() {
+		r, scanErr := scanAdvice(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
+// UpdateAdvice T641 / R7 甲：作者谓词写在 SQL 里（AND author_doctor_id = $2），不是只在前端藏按钮。
+// 「这条不是他写的」与「这条不存在」都回 (nil, nil) —— 四格合一，不留 advice_id 存在性 oracle
+// （口径同 FeelingLogInTeam / GetPatientInTeam）。updated_at 由本条 SQL 刷新（应用层口径，见 000035 头注）。
+func (s *PGStore) UpdateAdvice(ctx context.Context, adviceID int64, doctorID, content string) (*AdviceRow, error) {
+	row := s.pool.QueryRow(ctx,
+		`WITH upd AS (
+			UPDATE advice_logs SET content = $3, updated_at = now()
+			WHERE advice_id = $1 AND author_doctor_id = $2
+			RETURNING advice_id, patient_id, author_doctor_id, content, created_at, updated_at
+		)
+		SELECT `+adviceColumns+`
+		FROM upd a LEFT JOIN doctors d ON d.doctor_id = a.author_doctor_id`,
+		adviceID, doctorID, content)
+	r, err := scanAdvice(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// DeleteAdvice R3 甲硬删（全仓零软删列，可追溯性由 audit_logs 那一行提供）+ R7 甲作者谓词。
+// 返回 false 且 err==nil = 行不存在或非本人所写，handler 侧统一 403。
+func (s *PGStore) DeleteAdvice(ctx context.Context, adviceID int64, doctorID string) (bool, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx,
+		`DELETE FROM advice_logs WHERE advice_id = $1 AND author_doctor_id = $2 RETURNING advice_id`,
+		adviceID, doctorID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CareTeamByPatient 患者所绑定团队的成员行（患者端「你的医护团队」）。
+// 🔴 列清单里不选 name / phone_*：隐私裁定（设计稿 §八）要求患者端此后拿不到医护姓名，
+// 所以这格在 SQL 面就断掉，不靠 handler 记得丢字段。
+// status='enabled' 与 teamMemberCountExpr（本文件 :593）同口径 —— 停用账号不再算作患者的团队成员。
+// 技师侧塌成一枚存在性行：technicians 表没有 title 列（000001:53-65），逐行列只会把同一枚固定标签重复 N 遍。
+func (s *PGStore) CareTeamByPatient(ctx context.Context, patientID string) ([]CareTeamRow, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT 'doctor' AS member_type, d.title, d.department
+		 FROM patients p
+		 JOIN doctors d ON d.team_id = p.team_id AND d.status = 'enabled'
+		 WHERE p.patient_id = $1 AND p.team_id IS NOT NULL
+		 UNION ALL
+		 SELECT 'technician', NULL, NULL
+		 WHERE EXISTS (
+		   SELECT 1 FROM patients p
+		   JOIN technicians t ON t.team_id = p.team_id AND t.status = 'enabled'
+		   WHERE p.patient_id = $1 AND p.team_id IS NOT NULL
+		 )
+		 ORDER BY member_type, title NULLS LAST`, patientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []CareTeamRow
+	for rows.Next() {
+		var r CareTeamRow
+		if scanErr := rows.Scan(&r.MemberType, &r.Title, &r.Department); scanErr != nil {
+			return nil, scanErr
+		}
+		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
+// ─────────────────────────────────────────────────────────────
 // 感受日志
 // ─────────────────────────────────────────────────────────────
 
@@ -1504,13 +1632,13 @@ func (e *ErrPatientInUse) Error() string {
 
 // patientRefTables 患者关联面全集（scripts/db/migrations 逐条实测，非推断）：
 //
-//	有外键 12 张：000001:97/123/189/219/229/243/258/272/284、000003:13/48、000009:10
+//	有外键 13 张：000001:97/123/189/219/229/243/258/272/284、000003:13/48、000009:10、000035:26
 //	无外键 3 张：pressure_records(000001:147)、daily_wear_stats(000001:173)、device_bindings(000002:14)
 //
 // 🔴 后三张必须一起数：它们只有 patient_id 列、没有 REFERENCES patients，数据库不会拦删除，
 // 少数一张就等于「删患者顺手留下一堆无主体的佩戴明细/日聚合/绑定历史」——
 // 派发单「禁止级联误删业务数据」点名的正是这一面。
-// 前十二张有外键，靠数据库拦会直接 23503 变 500，所以在服务端先判成 409。
+// 前十三张有外键，靠数据库拦会直接 23503 变 500，所以在服务端先判成 409。
 var patientRefTables = []patientRefTable{
 	{name: "devices", hasFK: true},
 	{name: "install_records", hasFK: true},
@@ -1524,6 +1652,7 @@ var patientRefTables = []patientRefTable{
 	{name: "notification_records", hasFK: true},
 	{name: "quota_grants", hasFK: true},
 	{name: "review_records", hasFK: true},
+	{name: "advice_logs", hasFK: true},
 	{name: "pressure_records", hasFK: false},
 	{name: "daily_wear_stats", hasFK: false},
 	{name: "device_bindings", hasFK: false},

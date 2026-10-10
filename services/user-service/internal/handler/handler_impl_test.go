@@ -124,7 +124,26 @@ type fakeStore struct {
 	latestErr              error
 	createdPlan            *repo.OrthosisPlanRow
 	createPlanEr           error
-	createPlanCalls        int // T373：CreatePlan 被调次数（跨团队必须为 0）
+	createPlanCalls        int                // T373：CreatePlan 被调次数（跨团队必须为 0）
+	advices                []repo.AdviceRow   // T641：ListAdvice 出参
+	advicesErr             error              // T641：ListAdvice 注入错误
+	adviceListCalls        int                // T641：跨团队/越权读必须在触库前被拦掉，此计数须保持 0
+	createdAdvice          *repo.AdviceRow    // T641：CreateAdvice 回读行
+	createAdviceErr        error              // T641：CreateAdvice 注入错误
+	createAdviceCalls      int                // T641：跨团队写时此计数须保持 0
+	updatedAdvice          *repo.AdviceRow    // T641：UpdateAdvice 回读行（nil = 「非本人所写 / 不存在」合一）
+	updateAdviceErr        error              // T641：UpdateAdvice 注入错误
+	deleteAdviceOK         bool               // T641：DeleteAdvice 返回值
+	deleteAdviceErr        error              // T641：DeleteAdvice 注入错误
+	updateAdviceCalls      int                // T641：编辑写次计数（越权须保持 0）
+	deleteAdviceCalls      int                // T641：删除写次计数（越权须保持 0）
+	careTeamRows           []repo.CareTeamRow // T641：CareTeamByPatient 出参
+	careTeamErr            error              // T641：CareTeamByPatient 注入错误
+	careTeamCalls          int                // T641：患者团队读次计数
+	lastAdvicePatientID    string             // T641：最近一次建议域调用的 patientId
+	lastAdviceDoctorID     string             // T641：最近一次建议域调用的作者 doctorId（写侧必须来自服务端解析）
+	lastAdviceContent      string             // T641：最近一次建议域调用的正文
+	lastAdviceID           int64              // T641：最近一次编辑/删除的 adviceId
 	feelings               []repo.FeelingLogRow
 	feelingsErr            error
 	replyOK                bool
@@ -514,6 +533,38 @@ func (f *fakeStore) CreatePlan(_ context.Context, _, _, _, version string) (*rep
 		f.createdPlan.Version = version
 	}
 	return f.createdPlan, f.createPlanEr
+}
+
+// ── T641 康复建议（advice_logs）──
+func (f *fakeStore) CreateAdvice(_ context.Context, patientID, doctorID, content string) (*repo.AdviceRow, error) {
+	f.createAdviceCalls++ // 越权写必须在触库前被拦掉，此计数须保持 0
+	f.lastAdvicePatientID = patientID
+	f.lastAdviceDoctorID = doctorID
+	f.lastAdviceContent = content
+	return f.createdAdvice, f.createAdviceErr
+}
+func (f *fakeStore) ListAdvice(_ context.Context, patientID string) ([]repo.AdviceRow, error) {
+	f.adviceListCalls++
+	f.lastAdvicePatientID = patientID
+	return f.advices, f.advicesErr
+}
+func (f *fakeStore) UpdateAdvice(_ context.Context, adviceID int64, doctorID, content string) (*repo.AdviceRow, error) {
+	f.updateAdviceCalls++
+	f.lastAdviceID = adviceID
+	f.lastAdviceDoctorID = doctorID
+	f.lastAdviceContent = content
+	return f.updatedAdvice, f.updateAdviceErr
+}
+func (f *fakeStore) DeleteAdvice(_ context.Context, adviceID int64, doctorID string) (bool, error) {
+	f.deleteAdviceCalls++
+	f.lastAdviceID = adviceID
+	f.lastAdviceDoctorID = doctorID
+	return f.deleteAdviceOK, f.deleteAdviceErr
+}
+func (f *fakeStore) CareTeamByPatient(_ context.Context, patientID string) ([]repo.CareTeamRow, error) {
+	f.careTeamCalls++
+	f.lastAdvicePatientID = patientID
+	return f.careTeamRows, f.careTeamErr
 }
 func (f *fakeStore) ListFeelingLogs(_ context.Context, patientID string) ([]repo.FeelingLogRow, error) {
 	f.feelingListCalls++ // T350 返工 D-2：越权读必须在触库前被拦掉
