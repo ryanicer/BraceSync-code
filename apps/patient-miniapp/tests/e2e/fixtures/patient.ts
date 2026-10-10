@@ -51,6 +51,8 @@ export function sensorPoints20(): SensorPoint[] {
         label: `R${r}C${c}`,
         pressureValue: value,
         status,
+        // T643 A 路：kPa 档由后端派生，夹具不自己换算
+        pressureKpa: null,
       })
     }
   }

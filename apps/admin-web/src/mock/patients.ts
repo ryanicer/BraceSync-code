@@ -13,6 +13,8 @@ function makePoints(maxValue: number): SensorPoint[] {
       label: `R${Math.ceil(i / 5)}C${((i - 1) % 5) + 1}`,
       pressureValue,
       status: pressureValue > 50 ? 'warning' : 'normal',
+      // T643 A 路：kPa 档由后端同源派生，mock 不自己换算（禁第二套口径），故恒 null
+      pressureKpa: null,
     })
   }
   return points
@@ -87,6 +89,8 @@ function seedHeatmap(patientId: string): PressureHeatmapPoint[] {
       label: `R${r + 1}C${c + 1}`,
       pressureValue: v,
       status: v >= 45 ? 'critical' : v >= 33.75 ? 'warning' : 'normal',
+      // T643 A 路：本数组只喂 makeHeatmap（它另按 HeatmapPoint 派生），SensorPoint 侧 mock 不换算
+      pressureKpa: null,
     })
   }
   return makeHeatmap(pts)

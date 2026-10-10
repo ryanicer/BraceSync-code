@@ -87,6 +87,8 @@ const (
 	itTeam   = "TEAM-USR-IT"
 	itDoctor = "DOC-USR-IT"
 	itAdmin  = "ADM-USR-IT"
+	// itMaintTeam T627 方案乙：维护班组那一侧的种子行（医疗团队由 itTeam 代表，两枚并存才筛得动）
+	itMaintTeam = "TEAM-USR-IT-MNT"
 )
 
 // seedITData 集成测试专用种子（避开 scripts/db/seed 的共享 ID，防用例间污染）
@@ -97,6 +99,9 @@ func seedITData(ctx context.Context, pool *pgxpool.Pool) {
 	}{
 		{`INSERT INTO teams (team_id, name, member_count, patient_count) VALUES ($1, '集成团队', 2, 2)
 		 ON CONFLICT (team_id) DO NOTHING`, []any{itTeam}},
+		// T627 方案乙：另一枚带类型的团队（维护侧），用于 TeamTypeOf / 列表侧别筛的正对照
+		{`INSERT INTO teams (team_id, name, member_count, patient_count, team_type) VALUES ($1, '集成维护班组', 0, 0, 'maintenance')
+		 ON CONFLICT (team_id) DO NOTHING`, []any{itMaintTeam}},
 		{`INSERT INTO roles (role_id, name, description, permissions_json) VALUES
 		   ('ROLE_IT', '集成角色', '测试', '{"scope":"team","modules":["alerts"]}')
 		 ON CONFLICT (role_id) DO NOTHING`, nil},
@@ -234,7 +239,7 @@ func TestITTechnicianLifecycle(t *testing.T) {
 	assert.False(t, exists)
 
 	// 列表分页
-	list, total, err := itStore.ListTechnicians(ctx, 1, 10)
+	list, total, err := itStore.ListTechnicians(ctx, 1, 10, "")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total)
 	require.Len(t, list, 1)
@@ -245,6 +250,63 @@ func TestITTechnicianLifecycle(t *testing.T) {
 	teamTechs, err := itStore.ListTechniciansByTeam(ctx, "TEAM-EMPTY")
 	require.NoError(t, err)
 	assert.Empty(t, teamTechs)
+
+	// ── T627 方案乙：列表的侧别筛（WHERE 落在 SQL 侧，total 与页同源才不塌分页语义）──
+	// 两枚团队名册是常量 ⇒ 取地址要先落成局部变量（与上面 teamID := itTeam 同一形）。
+	maintID, medID := itMaintTeam, itTeam
+	// 这一枚技师此刻未入队（上面刚编辑成 NULL）：两侧筛都不出，不筛仍列 ⇒ 存量可见性不塌
+	medRows, medTotal, err := itStore.ListTechnicians(ctx, 1, 10, "medical")
+	require.NoError(t, err)
+	assert.Zero(t, medTotal, "未挂团队的技师不属于任何一侧")
+	assert.Empty(t, medRows)
+
+	_, err = itStore.UpdateTechnician(ctx, "TECH-USR-IT-1", TechInput{
+		Name: "集成技师改", PhoneEnc: []byte("enc2"), PhoneHash: "hash-it-2", TeamID: &maintID,
+	})
+	require.NoError(t, err)
+	mntRows, mntTotal, err := itStore.ListTechnicians(ctx, 1, 10, "maintenance")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), mntTotal)
+	require.Len(t, mntRows, 1)
+	assert.Equal(t, "TECH-USR-IT-1", mntRows[0].TechID)
+	require.NotNil(t, mntRows[0].TeamType, "列表投影要带出所属团队的侧别")
+	assert.Equal(t, "maintenance", *mntRows[0].TeamType)
+	assert.Equal(t, itMaintTeam, *mntRows[0].TeamID)
+
+	// 同一枚技师换回医疗团队：筛子跟着团队走，不跟着人走
+	_, err = itStore.UpdateTechnician(ctx, "TECH-USR-IT-1", TechInput{
+		Name: "集成技师改", PhoneEnc: []byte("enc2"), PhoneHash: "hash-it-2", TeamID: &medID,
+	})
+	require.NoError(t, err)
+	mntAgain, mntAgainTotal, err := itStore.ListTechnicians(ctx, 1, 10, "maintenance")
+	require.NoError(t, err)
+	assert.Zero(t, mntAgainTotal, "换到医疗团队后维护侧筛选必须立刻取不到")
+	assert.Empty(t, mntAgain)
+	medAgain, medAgainTotal, err := itStore.ListTechnicians(ctx, 1, 10, "medical")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), medAgainTotal)
+	require.Len(t, medAgain, 1)
+	assert.Equal(t, "medical", *medAgain[0].TeamType)
+
+	// 侧别探测（TeamTypeOf）：三枚面各一种读数 —— 维护侧、医疗侧、查无此队
+	tt, exists, err := itStore.TeamTypeOf(ctx, itMaintTeam)
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, "maintenance", tt)
+	tt, exists, err = itStore.TeamTypeOf(ctx, itTeam)
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, "medical", tt, "不给类型的建队腿落的是 DEFAULT medical（与迁移 000035 同枚字面量）")
+	tt, exists, err = itStore.TeamTypeOf(ctx, "TEAM-USR-IT-NOPE")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	assert.Empty(t, tt)
+
+	// 复位到本用例开头之后的形态（team_id NULL），后面的用例仍按未入队读
+	_, err = itStore.UpdateTechnician(ctx, "TECH-USR-IT-1", TechInput{
+		Name: "集成技师改", PhoneEnc: []byte("enc2"), PhoneHash: "hash-it-2", TeamID: nil,
+	})
+	require.NoError(t, err)
 }
 
 // ─────────────────────────────────────────────────────────────

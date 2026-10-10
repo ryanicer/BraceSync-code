@@ -23,6 +23,11 @@ test.describe('02-Dashboard 数据概览', () => {
     '本月新增患者',
   ] as const
 
+  // T636：这两枚是「两态」指标（窗口内无行 / 无已绑定设备时为 null，页面出占位不出 0）；
+  // NO_DATA 与 dashboard/index.vue 的常量同名同形，改文案要两处一起改。
+  const TWO_STATE_LABELS: string[] = ['平均佩戴时长', '设备在线率']
+  const NO_DATA = '—'
+
   test.describe('KPI 卡片', () => {
     test('2.1 渲染 6 张 KPI 卡片，label 齐全 + value 含数字（非空）', async ({ page }) => {
       const cards = page.locator('.kpi-card')
@@ -35,10 +40,18 @@ test.describe('02-Dashboard 数据概览', () => {
       for (const label of KPI_LABELS) {
         const card = cards.filter({ hasText: label })
         await expect(card).toHaveCount(1)
-        // 对应 kpi-value 含至少 1 位数字（真实数据可能是 "1234"、"8.2h"、"96.8%" 等）
         const valueText = await card.locator('.kpi-value').textContent({ timeout: 5_000 })
         expect(valueText).toBeTruthy()
-        expect(/\d/.test(valueText!)).toBe(true)
+        // T636 两态：count 类四项无行时回真 0，必须含数字；
+        // 平均佩戴时长 / 设备在线率的合法形状有两种 —— 含数字，或「—」且带 .kpi-note「暂无数据」。
+        // 旧写法对六项一律要求含数字，等于把「查不到」也判成缺陷，与卡面「无真实数据显示空/占位」冲突。
+        if (TWO_STATE_LABELS.includes(label)) {
+          const noteCount = await card.locator('.kpi-note').count()
+          const shapeOk = /\d/.test(valueText!) || (valueText!.trim() === NO_DATA && noteCount === 1)
+          expect(shapeOk, `${label} 既不是数值也不是「${NO_DATA}+暂无数据」，实际 value=${JSON.stringify(valueText)} note=${noteCount}`).toBe(true)
+        } else {
+          expect(/\d/.test(valueText!), `${label} 应含数字，实际 ${JSON.stringify(valueText)}`).toBe(true)
+        }
       }
     })
   })
@@ -55,11 +68,12 @@ test.describe('02-Dashboard 数据概览', () => {
       for (const t of chartTitles) {
         await expect(page.getByText(t)).toBeVisible({ timeout: 10_000 })
       }
-      // canvas 数量至少 4
-      const canvas = page.locator('.dashboard canvas, .page-card canvas, canvas')
-      await expect(canvas.first()).toBeVisible({ timeout: 25_000 })
-      const canvasCount = await canvas.count()
-      expect(canvasCount).toBeGreaterThanOrEqual(4)
+      // T636 两态：整窗无数据那一格换成 el-empty「暂无数据」，所以合法形状是「canvas 格 + 占位格 = 4」，
+      // 不再要求 canvas 恒 ≥4（旧写法会在正确的空态上判红）。至少一张图真渲染出来这条等待保留。
+      await expect(page.locator('.dashboard .chart-container canvas').first()).toBeVisible({ timeout: 25_000 })
+      const slotCanvases = await page.locator('.dashboard .chart-container canvas').count()
+      const slotEmpties = await page.locator('.dashboard .el-empty').count()
+      expect(slotCanvases + slotEmpties, `四张图每格要么是 canvas 要么是 el-empty，实际 canvas=${slotCanvases} empty=${slotEmpties}`).toBe(4)
       // 团队佩戴达标排行表 ≥3 行（seed 3 团队）
       const teamRankCard = page.locator('.page-card').filter({ hasText: '团队佩戴达标排行' })
       const teamRows = teamRankCard.locator('.el-table__body-wrapper tbody tr')
@@ -172,7 +186,13 @@ test.describe('02b-Dashboard 医护角色（T348）', () => {
     for (const label of doctorKpiLabels) {
       await expect(page.locator('.kpi-card').filter({ hasText: label })).toHaveCount(1)
     }
-    await expect(page.locator('.dashboard canvas')).toHaveCount(4, { timeout: 20_000 })
+    // T636 两态：整窗无数据的图会换成 el-empty「暂无数据」，四格的合法形状是「canvas 或占位」补齐 4，
+    // 不再是恒等 4 枚 canvas（旧写法在医生scope 的空窗下必红，而那恰恰是新契约要求的正确表现）。
+    const doctorCanvases = await page.locator('.dashboard canvas').count()
+    const doctorEmpties = await page.locator('.dashboard .chart-card .el-empty').count()
+    expect(doctorCanvases + doctorEmpties, `四张图每格要么是 canvas 要么是 el-empty，实际 canvas=${doctorCanvases} empty=${doctorEmpties}`).toBe(4)
+    // D-1 的鉴别位仍要留：旧包现场是「6 端点全 200 但整页不渲染」，那时 canvas 与占位一起为 0。
+    expect(doctorCanvases, '医生 scope 下至少一张图真有数据（TEAM01 有 seed 佩戴行）').toBeGreaterThanOrEqual(1)
 
     // 两张排行表都得有行：旧包这里是 0 行 + 两个「暂无数据」
     const teamRankRows = page
