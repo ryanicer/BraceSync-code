@@ -305,9 +305,13 @@ jobs:
           retention-days: 14
 
   e2e-real-staging:
-    # T651：job 标签跟着 target 走 —— staging 档（PR / 两档定时 / 不带 input 的手动）那一串与改造前
-    # 逐字同值，只有显式 tst 档才换标签，免得 checks 面出现「名字写 staging、实际打 TST」这种标签宽于取值。
-    name: "${{ github.event.inputs.target == 'tst' && 'E2E Real（真实模式全量回归，打 TST lane）' || 'E2E Real（真实模式全量回归，打 staging）' }}"
+    # T651：job 标签一律不动（staging 档与 tst 档同一串，逐字等于改造前）。
+    # 为什么不做成「标签跟着 target 走」：实测在 checks 面上，**被跳过**的 job 标签会留成未求值的
+    # 表达式原文（PR 377 那一发的 `Real Backend Smoke` 是 skipped，标签面渲染出整串
+    # `github.event.inputs.target == 'tst' && ...`），那是给别人的按标签取值的尺灌进去的新噪声。
+    # 自曝面改放在两处实打实的读数里：下面「目标面预检」那步的逐枚 origin 打印（打的是解析后的值），
+    # 以及同一步写进 `$GITHUB_STEP_SUMMARY` 的那行 target（同一份内容、两个读数面）。
+    name: E2E Real（真实模式全量回归，打 staging）
     runs-on: ubuntu-latest
     # T381：本 job 过去没有 if（= 任何触发器都跑）。加了 push main 触发后必须显式排除 push：
     #   1) 它打的是【已部署的 staging 包】，push main 时包多半还没追平 main ⇒ post-deploy 判红是噪音；
@@ -502,8 +506,8 @@ jobs:
   # 但「进程 rc=0 而 0 执行 / 全 skip」那一形当时只有一把没接线的尺在管
   # （e2e-real/assert-smoke-executed.mjs 在场、tracked 文件引用 0 颗）⇒ 第 73 轮接进本 job。
   real-backend-smoke:
-    # T651：标签同 e2e-real-staging 那一格 —— staging 档逐字不变，显式 tst 档才换。
-    name: "${{ github.event.inputs.target == 'tst' && 'Real Backend Smoke（真实后端冒烟，TST lane）' || 'Real Backend Smoke（真实后端冒烟，T144 P1）' }}"
+    # T651：标签同 e2e-real-staging 那一格 —— 不动（含 tst 档也用原串），理由与自曝面见上面那格注释。
+    name: Real Backend Smoke（真实后端冒烟，T144 P1）
     runs-on: ubuntu-latest
     # T609 甲案：本 job 打 staging，定时臂只认领 12:00Z 档（02:00Z 那档不得再放行它）。
     if: (github.event_name == 'schedule' && github.event.schedule == '0 12 * * *') || github.event_name == 'workflow_dispatch'
