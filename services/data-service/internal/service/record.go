@@ -871,15 +871,19 @@ type DailyWearService struct {
 	// configs T411 复算假设来源（sys_configs 的佩戴阈值 + 采集间隔）。
 	// nil = 未注入 ⇒ 回退 model.WearingThresholdN / repo.DefaultIntervalMinutes，并把回退值随行下发。
 	configs repo.WearRecomputeConfig
-	now     func() time.Time
+	// abnormal T599 异常数现算源：与异常报告面同源同窗同分桶的逐日告警计数。
+	// nil = 未注入（仅测试/降级场景）⇒ 回退表内 stored abnormal_count（T599 之前的行为）。
+	abnormal repo.AbnormalCountSource
+	now      func() time.Time
 }
 
 // NewDailyWearService 组装 DailyWearService
 // store 注入 RollupRepo；detail 注入 RecordRepo（明细佐证 + 复算输入，可为 nil）；
-// configs 注入 ConfigRepo（T411 复算假设，可为 nil）
+// configs 注入 ConfigRepo（T411 复算假设，可为 nil）；
+// abnormal 注入 RollupRepo（T599 异常数现算，可为 nil = 回退表内值）
 func NewDailyWearService(store repo.DailyWearStatsStore, detail repo.DailyWearDetailSource,
-	configs repo.WearRecomputeConfig) *DailyWearService {
-	return &DailyWearService{store: store, detail: detail, configs: configs, now: time.Now}
+	configs repo.WearRecomputeConfig, abnormal repo.AbnormalCountSource) *DailyWearService {
+	return &DailyWearService{store: store, detail: detail, configs: configs, abnormal: abnormal, now: time.Now}
 }
 
 // deriveWearProvenance T366 三值来源判定（纯函数，单测直接打表）。
@@ -989,6 +993,22 @@ func (s *DailyWearService) wearDetailByDay(ctx context.Context, patientID string
 	return details
 }
 
+// abnormalCounts T599：取区间内逐 CST 日的告警计数（与异常报告面同源同窗同分桶）。
+// 未注入或查询失败返回 nil（= 本趟不现算，调用方回退表内值）——可用性优先，
+// 与 wearDetailByDay 的降级口径一致；失败必留 warn 日志，不静默。
+func (s *DailyWearService) abnormalCounts(ctx context.Context, patientID string, from, to time.Time) map[string]int {
+	if s.abnormal == nil {
+		return nil
+	}
+	byDay, err := s.abnormal.AbnormalCountByCSTDay(ctx, patientID, from, to)
+	if err != nil {
+		log.Warn().Err(err).Str("patient_id", patientID).
+			Msg("T599: abnormal recount failed, falls back to stored abnormal_count")
+		return nil
+	}
+	return byDay
+}
+
 // GetDailyWear 按日期范围（闭区间，YYYY-MM-DD，Asia/Shanghai 切日）返回 daily_wear_stats。
 // 参数规则：
 //   - start 空 → 缺省 end-6 天（默认近 7 天）；end 空 → 缺省今日。
@@ -1040,9 +1060,15 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 	assumedN, assumedInterval := s.recomputeAssumptions(ctx)
 	dayDetails := s.wearDetailByDay(ctx, patientID, fromUTC, toUTC, assumedN)
 
+	// T599：异常数现算（与异常报告面同源同窗同分桶），表内 stored abnormal_count 不再作为读侧真相。
+	// nil = 源未注入或查询失败 ⇒ 回退表内值（可用性优先，失败有 warn 日志；回退态即 T599 之前的行为）。
+	abnByDay := s.abnormalCounts(ctx, patientID, fromUTC, toUTC)
+
 	out := make([]*model.DailyWearDayDTO, 0, len(rows))
+	seen := make(map[string]bool, len(rows))
 	for _, r := range rows {
 		date := r.StatDate.In(model.CSTZone()).Format("2006-01-02")
+		seen[date] = true
 		var detail *int
 		var dayDetail *repo.WearDayDetail
 		if dayDetails != nil {
@@ -1056,6 +1082,10 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 			}
 		}
 		generation, genCheck := deriveWearGeneration(r.HasRollupStamp(), r, dayDetail, assumedN, assumedInterval)
+		abnormal := r.AbnormalCount // 源未注入时保持表内值
+		if abnByDay != nil {
+			abnormal = abnByDay[date] // 现算覆盖：报告面同口径下该日无告警即 0（旧表值可能是历史错值）
+		}
 		dto := &model.DailyWearDayDTO{
 			Date:             date,
 			WearMinutes:      r.WearMinutes,
@@ -1063,7 +1093,7 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 			MaxPressure:      r.MaxPressure,
 			MaxPoint:         r.MaxPoint, // QueryRange SQL COALESCE(max_point, '') 兜底空串
 			FrameCount:       r.FrameCount,
-			AbnormalCount:    r.AbnormalCount,
+			AbnormalCount:    abnormal,
 			Provenance:       deriveWearProvenance(r.HasRollupStamp(), r.FrameCount, detail),
 			DetailFrameCount: detail,
 			WearGeneration:   generation,
@@ -1075,6 +1105,49 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 			dto.WearingThresholdN = r.WearingThresholdN
 		}
 		out = append(out, dto)
+	}
+
+	// T599 甲形补行：已过日「无聚合行但现算有告警」的天也出行 —— 写入腿的行由
+	// FROM pressure_records GROUP BY 驱动，零帧日不出行，而报告面该日照样有告警，
+	// 不补行则两面对拍该日恒缺。仅补「已过日」：今日/未来日聚合任务可能还没跑，
+	// 补 0 帧行会把「没聚合」说成「佩戴 0 小时」（对齐前端 alignWearSeries 的 null 语义红线）。
+	// 行内佩戴各列给 0：该日在明细面上确为 0 帧（有告警无上报）；无告警的零帧日保持
+	// 不出行，与报告面 0 条对拍时按「缺行 = 0」等值，不破坏前端缺行判空。
+	if abnByDay != nil {
+		todayStr := nowCST.Format("2006-01-02")
+		for day := startDay; !day.After(endDay); day = day.AddDate(0, 0, 1) {
+			ds := day.Format("2006-01-02")
+			if seen[ds] || ds >= todayStr {
+				continue
+			}
+			n := abnByDay[ds]
+			if n == 0 {
+				continue
+			}
+			var detail *int
+			var dayDetail *repo.WearDayDetail
+			if dayDetails != nil {
+				if d, ok := dayDetails[ds]; ok {
+					detail, dayDetail = &d.Frames, &d
+				} else {
+					zero := 0
+					detail = &zero
+					empty := repo.WearDayDetail{}
+					dayDetail = &empty
+				}
+			}
+			zeroRow := model.DailyWearStats{}
+			generation, genCheck := deriveWearGeneration(false, zeroRow, dayDetail, assumedN, assumedInterval)
+			out = append(out, &model.DailyWearDayDTO{
+				Date:             ds,
+				AbnormalCount:    n,
+				Provenance:       deriveWearProvenance(false, 0, detail),
+				DetailFrameCount: detail,
+				WearGeneration:   generation,
+				WearRecompute:    genCheck,
+			})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Date < out[j].Date })
 	}
 	return out, nil
 }
