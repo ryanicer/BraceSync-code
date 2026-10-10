@@ -40,11 +40,14 @@ import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
  *   读数  每笔写后 GET 详情逐字段对平；
  *   还原  afterAll 独立于用例结果逐颗 DELETE /admin/flow/templates/:id，并逐颗定性删除结果；
  *   报备  删不掉的颗数、每颗的 HTTP/code/message 与 instanceCount 都打进 stdout。
- *   🔴 两处「还原做不到」是契约事实，本文件把它们钉在证据面上而不是藏起来：
+ *   🔴 三处「还原做不到」是契约事实，本文件把它们钉在证据面上而不是藏起来：
  *      ① 实例侧没有删除端点（flow_t274.go:7-9 的接口清单里 DELETE 只有 templates 一条，instances 三条都是读/操作）⇒ 对已知实例发 DELETE
  *         应 404（24.7 断言），实例行只能推到终态、不能删行；
  *      ② 被实例引用的模板不可删（repo/flow.go:284-291 先数 flow_instance 引用，cnt>0 直接
  *         ErrFlowTemplateInUse → handler.go:507 转 409）⇒ 凡跑过实例的模板都留在架上。
+ *      ③ T647 丙案起，24.0 前置会自清往轮留下的空壳模板行（详情 instanceCount=0 的那几颗）：这些行
+ *         不是本 run 造的，本文件没有把它们建回去的通路，快照面只留 templateId/name/instanceCount，
+ *         nodes 与 edges 不落证据面 ⇒ 这一笔删除不可还原，逐颗定性与颗数进 stdout 与 job summary。
  *      ⇒ 因此本文件的守恒律写成「收尾 total = 基线 total + 本轮在用残留颗数」，而不是「total 回到基线」；
  *        基线里本来就带着往轮的在用残留（跑过一次就永久留架，删不掉），所以 24.0 的基线判据不是
  *        「本前缀 0 颗」而是「在册的每一颗详情 instanceCount≥1」——都在用 = 可以接着跑，
@@ -67,6 +70,11 @@ if (/api\.hbksd\.com\.cn|49\.235\.137\.217/.test(ENTRY)) {
 
 /** 造数名前缀（与真实数据区分；派发单 §五 的 T053 口径） */
 const FLOW_TPL_PREFIX = 'T053流程'
+/**
+ * T647 丙案：24.0 前置自清的单轮颗数上限。这枚数还没有现读背书（红发都停在断言那一行之前，
+ * 名册颗数的一手读数取不到），所以首拍把在册颗数打进 summary 交接班席校准；超上限一律不改数据、照旧抛停手句。
+ */
+const SELF_CLEAN_CAP = 20
 /** 全仓未注册的路径：负对照用（缺了它，「JSON 信封 code=10400」分不清是路由在架还是网关兜底） */
 const NOT_REGISTERED_PATH = '/api/v1/zzz-t574-chain-d-flow-not-registered-9c2f'
 /** A6 的两个非 admin 角色账号（staging 既有测试账号，口径同 03-alerts.spec.ts 与 21 号用例） */
@@ -438,6 +446,51 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     })
   }
 
+  /**
+   * T647 丙案：把「往轮漏删的空壳」从「报给人清」改成本文件自己清一遍，通路就是 afterAll 每轮都在用的
+   * 那条 admin 模板单删（文件头 41 行），作用域锁死在按 FLOW_TPL_PREFIX 筛出来的名册里，
+   * 越出前缀即零动作（不碰 alerts、不碰实例行、不碰 seed、不碰非本前缀模板）。
+   * 四纪律落三件：快照（删前逐颗 templateId/name/instanceCount）＋读数（删后逐颗定性）＋报备
+   * （stdout 与 job summary 两头都不得静默）；「还原」对模板单删做不到，这是文件头两处之外的第三处，
+   * 钉在证据面上而不是藏起来。颗数超上限时返回 overCap，由调用方抛停手句，本腿不改数据。
+   */
+  async function cleanPrefixShells(
+    p: Page,
+    token: string,
+    tag: string,
+  ): Promise<{ scanned: number; deleted: string[]; refusedInUse: string[]; unexpected: string[]; shellCount: number; overCap: boolean }> {
+    const list = await callOk<{ list: TemplateDTO[]; total: number }>(p, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+      token,
+      why: '自清前的模板列表读不通（作用域尺就立在这一枚面上）',
+    })
+    expect(list.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${list.list.length}/${list.total}）`).toBe(list.total)
+    const mine = list.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
+    const shells: TemplateDTO[] = []
+    for (const t of mine) {
+      const d = await detailOf(p, token, t.templateId)
+      if (d.instanceCount < 1) shells.push(d)
+    }
+    const line =
+      `[t647-自清][${tag}] 在册本前缀=${mine.length} 空壳=${shells.length} 单轮上限=${SELF_CLEAN_CAP} ` +
+      `逐颗=${shells.map((d) => `${d.name}(${d.templateId}) instanceCount=${d.instanceCount}`).join(' ; ') || '无'}`
+    console.log(line)
+    test.info().annotations.push({ type: 't647-self-clean-snapshot', description: `自清快照（删前逐颗现读）：${line}` })
+    appendJobSummary(line)
+    const out = { scanned: mine.length, deleted: [] as string[], refusedInUse: [] as string[], unexpected: [] as string[], shellCount: shells.length, overCap: shells.length > SELF_CLEAN_CAP }
+    if (out.overCap) return out
+    for (const d of shells) {
+      const r = await callApi(p, 'DELETE', `/api/v1/admin/flow/templates/${d.templateId}`, { token })
+      if (r.code === 0) out.deleted.push(d.templateId)
+      // 建队之后被别的写腿占了实例 ⇒ 这颗改判「在用不可删」，留在名册里，不算自清失败
+      else if (r.status === 409 && r.code === 10409) out.refusedInUse.push(d.templateId)
+      else out.unexpected.push(`${d.templateId}: HTTP=${r.status} code=${String(r.code)} message=${r.message}`)
+      console.log(
+        `[t647-自清][${tag}] 删 ${d.name}(${d.templateId}) ⇒ HTTP=${r.status} code=${String(r.code)} message=${r.message} 定性=${r.code === 0 ? '删成' : r.status === 409 && r.code === 10409 ? '在用不可删（改判）' : '第三种读数'}`,
+      )
+    }
+    return out
+  }
+
   test('24.0 前置：管理端会话在架、路由形状确认、基线快照与空闲告警面现读', async ({ page }) => {
     const token = await ensureAdmin(page)
 
@@ -450,16 +503,37 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
       ).toBeNull()
     }
 
-    const list = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+    // 「在用不可删」的残留会永久留在架上（文件头②），所以基线不许写「本前缀 0 颗」，要改成逐颗现读详情核
+    // 「残留都在用」：instanceCount=0 却还在册 = 往轮漏删。T647 丙案把这一类从「报给人清」改成本腿自清
+    // （通路就是 afterAll 每轮都在用的那条模板单删），清完再按原口径复尺断言，牙不丢；
+    // 基线与往轮残留名册一律取自**清后**那一枚面，否则 afterAll 的行数守恒会把自清掉的颗数算成漏删。
+    const preClean = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
       token,
       why: '模板列表读不通',
+    })
+    expect(preClean.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${preClean.list.length}/${preClean.total}）`).toBe(preClean.total)
+    const cleaned = await cleanPrefixShells(page, token, '前置')
+    expect(
+      cleaned.unexpected,
+      `自清的删除结果只该有两种（删成 / 在用 409），出现第三种就是端点变化或越界：${cleaned.unexpected.join(' ; ') || '无'}`,
+    ).toEqual([])
+    if (cleaned.overCap) {
+      const over = new Error(
+        `[t647-自清][前置] 本前缀空壳 ${cleaned.shellCount} 颗超过单轮上限 ${SELF_CLEAN_CAP} 颗 ⇒ 本腿不改数据、照旧停手：` +
+          `清前 templates total=${preClean.total} 在册本前缀=${cleaned.scanned}。需要谁：T639 侧的授权清理席先确认这几颗的来历，本卡不代删、不放宽上限。`,
+      )
+      console.log(over.message)
+      appendJobSummary(over.message)
+      throw over
+    }
+    const list = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+      token,
+      why: '自清后的模板列表读不通（基线要取这一枚面，不是清前那枚）',
     })
     baselineTplTotal = list.total
     const mine = list.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
     expect(list.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${list.list.length}/${list.total}）`).toBe(list.total)
     preexistingTplIds = mine.map((t) => t.templateId)
-    // 「在用不可删」的残留会永久留在架上（文件头②），所以基线不许写「本前缀 0 颗」，
-    // 要改成逐颗现读详情核「残留都在用」：instanceCount=0 却还在册 = 往轮漏删，那一类必须先清再跑。
     const prevUnsupported: string[] = []
     for (const t of mine) {
       const d = await detailOf(page, token, t.templateId)
@@ -467,11 +541,48 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     }
     expect(
       prevUnsupported,
-      `往轮残留里有 ${prevUnsupported.length} 颗可删却没删（详情 instanceCount=0，这才是真漏删），先清掉再跑：${prevUnsupported.join(' ; ') || '无'}`,
+      `自清之后仍有 ${prevUnsupported.length} 颗详情 instanceCount=0（这一类删得动却没删掉，是自清腿的缺陷，不是往轮账）：${prevUnsupported.join(' ; ') || '无'}`,
     ).toEqual([])
     console.log(
-      `[t574-chain-d][快照] templates total=${baselineTplTotal} 本前缀在册颗数=${mine.length}（详情面 instanceCount 逐颗≥1 已核，都是「在用不可删」的往轮残留）`,
+      `[t574-chain-d][快照] templates total=${baselineTplTotal} 本前缀在册颗数=${mine.length}（详情面 instanceCount 逐颗≥1 已核，都是「在用不可删」的往轮残留）` +
+        `｜本轮自清 清前total=${preClean.total} 空壳=${cleaned.shellCount} 删成=${cleaned.deleted.length} 改判在用=${cleaned.refusedInUse.length}`,
     )
+
+    // 合成夹具格（T647 验收第一格）：自然名册本来就干净时，上面那串断言会空绿，所以这里造一颗
+    // 「只建模板、不起实例」的前缀空壳逼自清腿真删一次。这一格证「前置有自愈的牙」，
+    // 与现网格（staging 当前那几颗空壳）各证一半，两格不可替代。
+    const fixtureName = uniqueName(FLOW_TPL_PREFIX)
+    const fixture = await callOk<TemplateDTO>(page, 'POST', '/api/v1/admin/flow/templates', {
+      token,
+      body: { name: fixtureName, nodes: LIN.nodes(), edges: LIN.edges() },
+      why: '夹具建模板应回 code=0（这一格的前提是造得出空壳）',
+    })
+    // 🔴 不推进 madeTemplates：这颗由本格的自清腿当场删掉，再让 afterAll 删第二次就会读出第三种结果。
+    const fixtureClean = await cleanPrefixShells(page, token, '夹具')
+    expect(
+      fixtureClean.overCap,
+      `夹具轮撞上单轮上限（在册空壳=${fixtureClean.shellCount} 颗 > ${SELF_CLEAN_CAP}）⇒ 这一格判不了自清有没有牙，按上限停手口径交人，不放宽`,
+    ).toBe(false)
+    expect(
+      fixtureClean.unexpected,
+      `夹具轮的删除结果同样只该有两种（删成 / 在用 409）：${fixtureClean.unexpected.join(' ; ') || '无'}`,
+    ).toEqual([])
+    expect(
+      fixtureClean.deleted.includes(fixture.templateId),
+      `夹具那颗 ${fixtureName}(${fixture.templateId}) 没被自清腿删掉（deleted=${fixtureClean.deleted.join(' ; ') || '空'}）⇒ 前置的自愈是假的`,
+    ).toBe(true)
+    const afterFixture = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
+      token,
+      why: '夹具轮的收尾列表读不通',
+    })
+    expect(
+      afterFixture.list.filter((t) => t.templateId === fixture.templateId).length,
+      `夹具那颗删后仍在本前缀名册里（回读 id=${fixture.templateId}）⇒ 单删只删了行没出名册`,
+    ).toBe(0)
+    expect(
+      afterFixture.total,
+      `夹具造一颗又删一颗，收尾 total 应回到基线 ${baselineTplTotal}（实回 ${afterFixture.total}）⇒ 净零不成立，基线与守恒律的账都会被这格带歪`,
+    ).toBe(baselineTplTotal)
 
     // 实例面基线（T582 格一改自证式）：现读**整页**每一颗告警各自的实例颗数，只作快照，不再对 free 作门禁断言。
     // 为什么这一格不该当门禁（口径来自派发单 §四 格一 允许方向②，不是「放宽」）：
