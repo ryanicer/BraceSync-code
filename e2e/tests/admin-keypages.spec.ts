@@ -133,10 +133,11 @@ test.describe('系统配置', () => {
     await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
 
-  test('WiFi 预设列表展示脱敏密码', async ({ page }) => {
-    await expect(page.getByText('WiFi 预设列表')).toBeVisible()
-    await expect(page.getByText('Hospital-WiFi').first()).toBeVisible()
-    await expect(page.getByText('********').first()).toBeVisible()
+  // T633（Boss 2026-10-09 报单）：微信小程序 WiFi 能力已整体下架，这块预设列表落不到端上 ⇒ 整卡隐藏。
+  // 原「展示脱敏密码」那条正向判据换成反向断言（mock 的 Hospital-WiFi 行不得再上屏）。
+  test('T633：WiFi 预设列表卡不挂载（标题与 mock 行都不在场）', async ({ page }) => {
+    await expect(page.getByText('WiFi 预设列表')).toHaveCount(0)
+    await expect(page.getByText('Hospital-WiFi')).toHaveCount(0)
   })
 
   test('通知规则 tab：4 类告警规则与渠道/对象勾选', async ({ page }) => {
