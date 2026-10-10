@@ -99,10 +99,16 @@ describe('单元格与 hero：数字走 shared-utils 单函数，患者端不挂
     expect(page).toMatch(/if \(!pt\) return unitNumberText\(unit\.value, '--', null\)/)
   })
 
-  it('副文案「20-60N 正常范围」只在 N 档出现（裁定 c；V3.37 待裁的 hero 字面按此收敛）', () => {
-    expect(page).toMatch(/v-show="heroRangeHintVisible\(unit\)" class="hero-meta-left"/)
-    expect(page).toMatch(/import \{[^}]*heroRangeHintVisible[^}]*\} from '@bracesync\/shared-utils'/)
-    expect(page).toContain('<text class="meta-text">20-60N 正常范围</text>')
+  it('副文案随配置派生、只在 N 档出现（T601：不再写死 20-60N，配置注入值出现在文案里）', () => {
+    expect(page).toMatch(/v-show="heroRangeHintVisible\(unit\) && heroRange"/)
+    expect(page).toMatch(/import \{[^}]*heroRangeHintVisible[^}]*heroRangeText[^}]*\} from '@bracesync\/shared-utils'/)
+    // 渲染的是插值而不是字面量；页面源码不得再出现旧写死值
+    expect(page).toContain('<text class="meta-text">{{ heroRange }}</text>')
+    expect(page).not.toContain('20-60N 正常范围')
+    // 派生链：文案来自 heroRangeText，两个边界取自同快照下发的配置字段
+    expect(page).toMatch(/heroRangeText\(pressureRangeLow\.value, pressureRangeHigh\.value\)/)
+    expect(page).toMatch(/snap\?\.pressureLowN/)
+    expect(page).toMatch(/snap\?\.pressureHighN/)
   })
 })
 

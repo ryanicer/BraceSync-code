@@ -16,9 +16,9 @@
         <text class="hero-unit">{{ unit }}</text>
       </view>
       <view class="hero-meta">
-        <view v-show="heroRangeHintVisible(unit)" class="hero-meta-left">
+        <view v-show="heroRangeHintVisible(unit) && heroRange" class="hero-meta-left">
           <view class="dot dot-blue"></view>
-          <text class="meta-text">20-60N 正常范围</text>
+          <text class="meta-text">{{ heroRange }}</text>
         </view>
         <view class="hero-meta-right">
           <text class="battery-icon">🔋</text>
@@ -77,7 +77,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { logErrorText, userErrorCopy, unitNumberText, heroRangeHintVisible, PRESSURE_UNITS, type PressureUnit } from '@bracesync/shared-utils'
+import { logErrorText, userErrorCopy, unitNumberText, heroRangeHintVisible, heroRangeText, PRESSURE_UNITS, type PressureUnit } from '@bracesync/shared-utils'
 import { onPullDownRefresh } from '@dcloudio/uni-app'
 import PressureHeatmap from '../../components/PressureHeatmap.vue'
 import PressureCurve from '../../components/PressureCurve.vue'
@@ -113,6 +113,9 @@ interface RealtimeSnapshot {
   /** 设备有效受压面积。本卡只声明字段、不参与任何换算（换算由后端做，前端重复实现＝双口径） */
   contactAreaCm2?: number | null
   heatmapMaxKpa?: number | null
+  /** T601：hero「正常范围」的两条配置边界（与告警引擎同源，随 T296 链同响应下发） */
+  pressureLowN?: number
+  pressureHighN?: number
 }
 
 // GET /patients/:patientId/records 返回分页结构（data-service HistoryPage）
@@ -140,6 +143,11 @@ const unit = ref<PressureUnit>(readStoredUnit())
 // T513：快照 pressureHeatmap[].pressureKpa 按点位号索引；heatmapMaxKpa 同响应下发
 const kpaByPoint = ref<Record<string, number | null>>({})
 const heatmapMaxKpa = ref<number | null>(null)
+// T601：hero「正常范围」两条配置边界（同快照下发；null = 未到 / 字段缺席 ⇒ 文案行隐藏）
+const pressureRangeLow = ref<number | null>(null)
+const pressureRangeHigh = ref<number | null>(null)
+// 副文案随配置派生（写死字面量会与 sys_configs 漂移，T601 缺陷本体）
+const heroRange = computed(() => heroRangeText(pressureRangeLow.value, pressureRangeHigh.value))
 
 const activePoint = computed(() =>
   activeIndex.value >= 0 ? sensorPoints.value[activeIndex.value] : undefined
@@ -247,6 +255,9 @@ async function loadData() {
     for (const hp of snap?.pressureHeatmap ?? []) byPoint[hp.pointId] = hp.pressureKpa ?? null
     kpaByPoint.value = byPoint
     heatmapMaxKpa.value = snap?.heatmapMaxKpa ?? null
+    // T601：边界取同一响应下发的配置值；字段缺席按 null 处理（文案行隐藏，不猜值不回落旧字面量）
+    pressureRangeLow.value = typeof snap?.pressureLowN === 'number' ? snap.pressureLowN : null
+    pressureRangeHigh.value = typeof snap?.pressureHighN === 'number' ? snap.pressureHighN : null
     calibratedFlag.value = recs.length ? recs[0].calibrated === true : null
     let maxIdx = -1
     if (points.length > 0) {
@@ -282,6 +293,9 @@ async function loadData() {
     // T513：取不到帧就别留上一帧的换算值（fail-closed，禁止沿用上一帧）
     kpaByPoint.value = {}
     heatmapMaxKpa.value = null
+    // T601：取数失败同样清边界（fail-closed，不沿用上一帧配置）
+    pressureRangeLow.value = null
+    pressureRangeHigh.value = null
   } finally {
     loading.value = false
   }

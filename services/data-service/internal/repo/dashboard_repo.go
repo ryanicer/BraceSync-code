@@ -19,24 +19,29 @@ import (
 )
 
 // KPIRow KPI 六指标单趟查询投影（avg_wear_minutes 由 service 换算小时）
+//
+// 🔴 T636：两枚量按「窗口内有没有数据行」分两态，无行不许涂成 0——
+// AvgWearMinutes（无 daily_wear_stats 行 ⇒ NULL；「今日 rollup 还没跑」与「真戴了 0 小时」是两件事）、
+// DeviceOnlineRate（无有效绑定设备 ⇒ NULL；「没有设备」不等于「在线率 0%」）。
+// AlertCount/ActiveWear 仍是 int64：COUNT 在无行时回 0 是实测事实（近 7 日无告警就是 0 条）。
 type KPIRow struct {
 	TotalPatients    int64
-	ActiveWear       int64   // 窗口内有佩戴（wear_minutes > 0）的患者数
-	AlertCount       int64   // 窗口内告警数
-	AvgWearMinutes   float64 // 窗口内日聚合平均佩戴分钟
-	DeviceOnlineRate float64 // online / 已绑定设备 × 100（无绑定设备为 0）
-	MonthNewPatients int64   // 本自然月新增患者
+	ActiveWear       int64    // 窗口内有佩戴（wear_minutes > 0）的患者数
+	AlertCount       int64    // 窗口内告警数
+	AvgWearMinutes   *float64 // 窗口内日聚合平均佩戴分钟；nil = 窗口内无聚合行
+	DeviceOnlineRate *float64 // online / 已绑定设备 × 100；nil = 无有效绑定设备
+	MonthNewPatients int64    // 本自然月新增患者
 }
 
 // KPICompareRow 上一周期对比基准投影（T248 1.1 · PRD §7D.1 KPI 表「对比基准」列）。
 // 窗口 = 与当前 period 等长、紧邻在前的一段（[prevFromDate, fromDate)）。
 // 🔴 不含设备在线率：devices.status 为当前态快照、无历史表，昨日在线率无从取（见 service 层注释）。
 type KPICompareRow struct {
-	ActiveWear           int64   // 上一周期有佩戴的去重患者数
-	AlertCount           int64   // 上一周期告警数
-	AvgWearMinutes       float64 // 上一周期平均佩戴分钟
-	TotalPatientsAtMonth int64   // 上月末累计患者（created_at < 本月起点）
-	PrevMonthNewPatients int64   // 上月新增患者
+	ActiveWear           int64    // 上一周期有佩戴的去重患者数
+	AlertCount           int64    // 上一周期告警数
+	AvgWearMinutes       *float64 // 上一周期平均佩戴分钟；nil = 前窗无聚合行（T636，与当前窗同口径）
+	TotalPatientsAtMonth int64    // 上月末累计患者（created_at < 本月起点）
+	PrevMonthNewPatients int64    // 上月新增患者
 }
 
 // TrendRow 日趋势投影（wear：平均佩戴分钟；alert：告警条数）
@@ -105,10 +110,10 @@ SELECT
        AND ($4::bool = FALSE OR patient_id IN (SELECT patient_id FROM sp)))          AS active_wear,
   (SELECT COUNT(*) FROM alerts WHERE ts >= $2
        AND ($4::bool = FALSE OR patient_id IN (SELECT patient_id FROM sp)))          AS alert_count,
-  (SELECT COALESCE(AVG(wear_minutes), 0) FROM daily_wear_stats
+  (SELECT AVG(wear_minutes) FROM daily_wear_stats
      WHERE stat_date >= $1::date
        AND ($4::bool = FALSE OR patient_id IN (SELECT patient_id FROM sp)))          AS avg_wear_minutes,
-  (SELECT CASE WHEN COUNT(*) FILTER (WHERE status <> 'unbound') = 0 THEN 0
+  (SELECT CASE WHEN COUNT(*) FILTER (WHERE status <> 'unbound') = 0 THEN NULL
                ELSE COUNT(*) FILTER (WHERE status = 'online') * 100.0 /
                     COUNT(*) FILTER (WHERE status <> 'unbound') END
      FROM devices
@@ -143,7 +148,7 @@ SELECT
        AND ($7::bool = FALSE OR patient_id IN (SELECT patient_id FROM sp)))          AS active_wear,
   (SELECT COUNT(*) FROM alerts WHERE ts >= $3 AND ts < $4
        AND ($7::bool = FALSE OR patient_id IN (SELECT patient_id FROM sp)))          AS alert_count,
-  (SELECT COALESCE(AVG(wear_minutes), 0) FROM daily_wear_stats
+  (SELECT AVG(wear_minutes) FROM daily_wear_stats
      WHERE stat_date >= $1::date AND stat_date < $2::date
        AND ($7::bool = FALSE OR patient_id IN (SELECT patient_id FROM sp)))          AS avg_wear_minutes,
   (SELECT COUNT(*) FROM patients WHERE created_at < $5

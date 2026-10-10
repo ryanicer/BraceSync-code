@@ -236,14 +236,18 @@ func TestT625_UpdateTechnician_DuplicatePhoneIsConflictWithNoWrite(t *testing.T)
 // 5) 新建技师不产生任何角色/权限关联（现可断言的形：technicians 无 role 列、DTO/TechInput 无角色字段、角色侧写零）
 // ─────────────────────────────────────────────────────────────
 
-// 现读事实（不是期望，是「类 5 的可观测面」）：
+// 现读事实（不是期望，是「类 5 的可观测面」；坐标按 T627 合入后的主干面复跑）：
 //   - scripts/db/migrations/000001_init_schema.up.sql:53-65 technicians 无 role/权限列（roles 表 :18-22 与之无外键、无中间表）
-//   - services/user-service/internal/repo/pg.go:788 INSERT 只写 tech_id,name,phone_enc,phone_hash,team_id,password_hash
-//   - services/user-service/internal/handler/handler.go:1081-1085 techRequest 只有 name/phone/teamId
-//   - teamId 可选且只做存在性校验（validateTechTeam :1119 → TeamExists），不校验团队语义
+//   - services/user-service/internal/repo/pg.go:827 INSERT 只写 tech_id,name,phone_enc,phone_hash,team_id,password_hash
+//   - services/user-service/internal/handler/handler.go:1111 techRequest 只有 name/phone/teamId
+//   - T627 方案乙起，POST 技师腿的 teamId 除存在性外还过侧别判据（validateTechTeamType :1185 只放 maintenance）；
+//     validateTechTeam :1151 仍在，但只服务「PUT 未改归属」与医护账号腿的存在性校验
 func TestT625_CreateTechnician_ProducesNoRoleOrPermissionLink(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.teamExists = true
+	// T627 方案乙落地面：新建技师的团队除存在性外还要过侧别判据（validateTechTeamType），
+	// 本用例证的是「无角色/权限面」，与侧别无关 ⇒ 夹具按现契约配一枚合法侧别（维护班组）。
+	e.store.teamType = teamTypeMaintenance
 	e.store.createdTech = &repo.TechnicianRow{
 		TechID: "TECH-NEW", Name: "新技师", TeamID: strPtr("TEAM01"),
 		Status: "enabled", AuthStatus: "authorized",
@@ -338,23 +342,43 @@ func reflectJSONKeysOf(anyStruct any) []string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 6) T623 产品要求：新建技师的团队只能从「维护人员团队」里选 —— PRD 未定稿，不钉断言
+// 6) T623 产品要求：新建技师的团队只能从「维护人员团队」里选
 // ─────────────────────────────────────────────────────────────
 
+// T627 方案乙已入册（本 PR）：teams.team_type 列 = 迁移 000035，写侧判据 = validateTechTeamType
+// handler.go:1185。原 t.Skip 那句「合入后去掉本行即转绿」按约定执行 ⇒ 断言已生效。
+// 记录过的三条形状落了两条：1) 非维护类 → 400、2) teamId 必须落在类型子集（正对照 maintenance → 200）；
+// 3)「角色若由 team 推导」那条不在本用例展开 —— 现实现不推导，由类 5 那枚用例钉住「响应无角色面」。
 func TestT625_CreateTechnician_TeamMustBeMaintenanceOnly(t *testing.T) {
-	reason := "T623 未合入：PRD 尚未定稿「技师角色 = 维护人员团队」的归类口径" +
-		"（teams 表现无团队类型列，scripts/db/migrations/000001_init_schema.up.sql:10-16；" +
-		"validateTechTeam handler.go:1119 只验存在性）——PRD 定稿前不写死断言，合入后去掉本行即转绿"
-	t.Skip(reason)
-
-	// 定稿后要补的断言形状（此处仅记录，不生效）：
-	//   1. 非维护类 teamId → 400；
-	//   2. teams 表新增类型列后，新建技师的 teamId 必须落在该类型子集；
-	//   3. 角色若由 team 推导，响应回显 role 口径与 PRD 术语一致。
 	e := newEnv(t, true, true)
 	e.store.teamExists = true
-	w, _ := e.do(http.MethodPost, "/api/v1/admin/technicians", map[string]any{
+	e.store.createdTech = &repo.TechnicianRow{
+		TechID: "TECH-SIDE", Name: "归类测试", TeamID: strPtr("TEAM-MAINT"),
+		Status: "enabled", AuthStatus: "authorized",
+	}
+
+	// 医护团队（类型列 = medical）→ 拒：技师不得挂进医疗团队（不变式 I2）
+	e.store.teamType = "medical"
+	w, resp := e.do(http.MethodPost, "/api/v1/admin/technicians", map[string]any{
 		"name": "归类测试", "phone": "13800005555", "teamId": "TEAM-DOCTOR",
 	}, nil)
-	assert.Equal(t, http.StatusBadRequest, w.Code, "非维护人员团队应被拒（现实现放行）")
+	assert.Equal(t, http.StatusBadRequest, w.Code, "非维护人员团队应被拒")
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	assert.Empty(t, e.store.lastTechInput.Name, "400 之后不得有写库动作")
+
+	// 类型未知（空串）同样拒 —— 不能把「无归类」放行成绕过分类机制的后门
+	e.store.teamType = ""
+	w, _ = e.do(http.MethodPost, "/api/v1/admin/technicians", map[string]any{
+		"name": "归类测试", "phone": "13800005556", "teamId": "TEAM-DOCTOR",
+	}, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code, "类型第三值/空值按拒处理（fail-closed）")
+
+	// 正对照：维护班组 → 200，证上面两枚 400 是侧别判据咬的，不是夹具整体不通
+	e.store.teamType = "maintenance"
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/technicians", map[string]any{
+		"name": "归类测试", "phone": "13800005555", "teamId": "TEAM-MAINT",
+	}, nil)
+	assert.Equal(t, http.StatusOK, w.Code, resp.Message)
+	require.NotNil(t, e.store.lastTechInput.TeamID)
+	assert.Equal(t, "TEAM-MAINT", *e.store.lastTechInput.TeamID)
 }
