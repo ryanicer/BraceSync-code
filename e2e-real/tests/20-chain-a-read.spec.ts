@@ -216,12 +216,25 @@ test.describe('20-链 A 读段（T462 S1，零写）', () => {
       .locator('.el-table__body-wrapper tbody tr')
       .filter({ hasText: target!.patientId })
       .first()
+    // 「DOM 里应出现目标行」不能单独当就绪信号：目标行是从首屏列表里挑的，点「查询」后旧 DOM
+    // 还在，那一行本来就在页里 ⇒ poll 立刻为真，逐行校验就打在未过滤的旧表上。PR 365 的 CI 实跑
+    // 红在此处（结果第 2 行读到别的患者），而同页 5.2 靠一句 waitForTimeout(2000) 躲过同一形。
+    // 收敛判据按本链自己的口径定：DOM 与 GET 响应体同形 —— 行数相等 **且** 首行姓名格等于接口
+    // 首行姓名。只比行数会在「过滤后恰好也是 10 行」时放旧 DOM 过关，所以内容那条不能省。
     await expect
-      .poll(async () => (await targetRow.count()) > 0, {
-        timeout: 20_000,
-        message: '搜索后 DOM 里应出现目标患者那一行',
-      })
+      .poll(
+        async () => {
+          if ((await rows.count()) !== searched.list.length) return false
+          const firstCells = await cellTexts(rows.first())
+          return firstCells[nameIdx] === searched.list[0].name
+        },
+        {
+          timeout: 20_000,
+          message: '搜索后表格应按关键词收敛（行数与首行姓名都应与接口一致）',
+        },
+      )
       .toBe(true)
+    await expect(targetRow, '收敛后的 DOM 里应有目标患者那一行').toHaveCount(1)
 
     // 逐行校验：搜索结果每一格的姓名都要含关键词（重名患者会一起回来，故不比行数）
     const hitCount = await rows.count()

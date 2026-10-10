@@ -143,19 +143,23 @@ func TestT350ITKPITeamScope(t *testing.T) {
 	assert.Equal(t, int64(1), ta.TotalPatients, "A 科医生只看得到 1 名患者")
 	assert.Equal(t, int64(1), ta.ActiveWear)
 	assert.Equal(t, int64(1), ta.AlertCount, "A 科告警不得混入 B 科那条")
-	assert.InDelta(t, 600.0, ta.AvgWearMinutes, 0.01, "均值只在本科室患者上算，不被 B 科的 120 拉低")
+	require.NotNil(t, ta.AvgWearMinutes)
+	require.NotNil(t, ta.DeviceOnlineRate)
+	require.NotNil(t, tb.AvgWearMinutes)
+	assert.InDelta(t, 600.0, *ta.AvgWearMinutes, 0.01, "均值只在本科室患者上算，不被 B 科的 120 拉低")
 	assert.Equal(t, int64(1), ta.MonthNewPatients)
-	assert.InDelta(t, 100.0, ta.DeviceOnlineRate, 0.01)
+	assert.InDelta(t, 100.0, *ta.DeviceOnlineRate, 0.01)
 	assert.Equal(t, int64(1), tb.AlertCount)
-	assert.InDelta(t, 120.0, tb.AvgWearMinutes, 0.01)
+	assert.InDelta(t, 120.0, *tb.AvgWearMinutes, 0.01)
 
-	// fail-closed：team_id 为 NULL 的医生 ⇒ 零值，不是全院
+	// fail-closed：team_id 为 NULL 的医生 ⇒ 范围空集。count 类是实测 0；
+	// 佩戴均值与在线率是「范围内无行/无设备」⇒ NULL（T636：没有数据不显示成 0）。
 	assert.Zero(t, none.TotalPatients)
 	assert.Zero(t, none.ActiveWear)
 	assert.Zero(t, none.AlertCount)
-	assert.Zero(t, none.AvgWearMinutes)
-	assert.Zero(t, none.MonthNewPatients)
-	assert.Zero(t, none.DeviceOnlineRate)
+	assert.Nil(t, none.AvgWearMinutes)
+	assert.Equal(t, int64(0), none.MonthNewPatients)
+	assert.Nil(t, none.DeviceOnlineRate)
 }
 
 // TestT350ITKPICompareSameScope 对比窗必须与当前窗同一范围，否则「较昨日」跨团队比歪。
@@ -183,10 +187,11 @@ func TestT350ITKPICompareSameScope(t *testing.T) {
 	assert.GreaterOrEqual(t, cmpAll.ActiveWear, int64(2))
 	assert.Equal(t, int64(1), cmpA.ActiveWear)
 	assert.Equal(t, int64(1), cmpA.AlertCount)
-	assert.InDelta(t, 600.0, cmpA.AvgWearMinutes, 0.01)
+	require.NotNil(t, cmpA.AvgWearMinutes)
+	assert.InDelta(t, 600.0, *cmpA.AvgWearMinutes, 0.01)
 	assert.Zero(t, cmpNone.ActiveWear)
 	assert.Zero(t, cmpNone.AlertCount)
-	assert.Zero(t, cmpNone.AvgWearMinutes)
+	assert.Nil(t, cmpNone.AvgWearMinutes, "前窗范围内无聚合行 ⇒ NULL（T636）")
 }
 
 func TestT350ITTrendAndDistributionScope(t *testing.T) {

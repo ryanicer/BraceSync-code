@@ -189,8 +189,8 @@ func TestServiceGetKPICacheHit(t *testing.T) {
 		TotalPatients:    100,
 		ActiveWear:       80,
 		AlertCount:       50,
-		AvgWearMinutes:   480,
-		DeviceOnlineRate: 95.5,
+		AvgWearMinutes:   float64Val(480),
+		DeviceOnlineRate: float64Val(95.5),
 		MonthNewPatients: 10,
 	}}
 	svc.store = mockStore
@@ -200,8 +200,8 @@ func TestServiceGetKPICacheHit(t *testing.T) {
 		TotalPatients:    100,
 		TodayActiveWear:  80,
 		TodayAlerts:      50,
-		AvgWearHours:     round2(mockStore.kpiRow.AvgWearMinutes / 60),
-		DeviceOnlineRate: round2(mockStore.kpiRow.DeviceOnlineRate),
+		AvgWearHours:     hoursFromMinutes(mockStore.kpiRow.AvgWearMinutes),
+		DeviceOnlineRate: roundedRate(mockStore.kpiRow.DeviceOnlineRate),
 		MonthNewPatients: 10,
 	}
 	data, err := json.Marshal(kpiDTO)
@@ -248,9 +248,11 @@ func TestValidateDays(t *testing.T) {
 	require.NotNil(t, err)
 }
 
-// ========== Service Layer: WearTrend + AlertTrend (gap-filling + CST timezone) ==========
+// ========== Service Layer: WearTrend + AlertTrend (缺行日两态 + CST timezone) ==========
 
-func TestServiceGetWearTrend_GapFilling(t *testing.T) {
+// TestServiceGetWearTrend_GapIsNull T636：7 日窗口里只有今日有聚合行 ⇒ 其余 6 日必须是 null，
+// 不是 0。0 是一枚读数（「那天戴了 0 小时」），null 才是「那天没有数据」。
+func TestServiceGetWearTrend_GapIsNull(t *testing.T) {
 	nowTS := time.Date(2026, 8, 11, 10, 0, 0, 0, model.CSTZone())
 	store := &mockDashboardStore{
 		wearRows: []repo.TrendRow{
@@ -263,14 +265,15 @@ func TestServiceGetWearTrend_GapFilling(t *testing.T) {
 
 	list, err := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.Nil(t, err)
-	assert.Len(t, list, 7) // 填充 7 天（含今日）
+	assert.Len(t, list, 7) // 日期轴仍铺满 7 天（缺行日也要占一格，否则前端 X 轴会自己缩）
 	// 检查最近的一天（今天是 8/11）格式 MM-DD
 	lastDate := list[len(list)-1].Date
 	assert.Equal(t, "08-11", lastDate)
-	// 今日有值 = 8h；其他缺失日为 0
-	assert.Equal(t, 8.0, list[6].AvgHours)
+	// 今日有值 = 8h；其余 6 日 = null
+	require.NotNil(t, list[6].AvgHours)
+	assert.Equal(t, 8.0, *list[6].AvgHours)
 	for i := 0; i < 6; i++ {
-		assert.Equal(t, 0.0, list[i].AvgHours)
+		assert.Nil(t, list[i].AvgHours, "缺行日必须回 null（第 %d 格）", i)
 	}
 }
 
@@ -417,8 +420,9 @@ func TestServiceGetWearTrend_SinglePatientOverCap(t *testing.T) {
 	list, err := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.Nil(t, err)
 	// 最后一天是 09-02，avgHours 应 ≤ 24（24h 物理上限）
-	assert.LessOrEqual(t, list[6].AvgHours, 24.0, "avgHours 不应超过 24h 物理上限")
-	assert.Equal(t, 24.0, list[6].AvgHours) // 26730/60=445.5 → cap 到 24
+	require.NotNil(t, list[6].AvgHours)
+	assert.LessOrEqual(t, *list[6].AvgHours, 24.0, "avgHours 不应超过 24h 物理上限")
+	assert.Equal(t, 24.0, *list[6].AvgHours) // 26730/60=445.5 → cap 到 24
 }
 
 // TestServiceGetWearTrend_MultiPatientOneAbnormal 多患者中一人异常，cap 后均值合理
@@ -436,7 +440,8 @@ func TestServiceGetWearTrend_MultiPatientOneAbnormal(t *testing.T) {
 
 	list, err := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.Nil(t, err)
-	assert.Equal(t, 24.0, list[6].AvgHours, "1440/60=24h，刚好等于物理上限")
+	require.NotNil(t, list[6].AvgHours)
+	assert.Equal(t, 24.0, *list[6].AvgHours, "1440/60=24h，刚好等于物理上限")
 }
 
 // TestServiceGetWearTrend_NormalDay 正常日 → 不被 cap（回归测试）
@@ -452,7 +457,8 @@ func TestServiceGetWearTrend_NormalDay(t *testing.T) {
 
 	list, err := svc.GetWearTrend(context.Background(), 7, model.ScopeAll())
 	require.Nil(t, err)
-	assert.Equal(t, 12.0, list[6].AvgHours, "正常值不应被 cap")
+	require.NotNil(t, list[6].AvgHours)
+	assert.Equal(t, 12.0, *list[6].AvgHours, "正常值不应被 cap")
 }
 
 // TestServiceGetKPI_AvgWearHoursCap KPI 的 AvgWearHours 也受 24h 限制
@@ -463,16 +469,54 @@ func TestServiceGetKPI_AvgWearHoursCap(t *testing.T) {
 		TotalPatients:    100,
 		ActiveWear:       50,
 		AlertCount:       10,
-		AvgWearMinutes:   26730, // 445.5h → 应被 cap
-		DeviceOnlineRate: 80.0,
+		AvgWearMinutes:   float64Val(26730), // 445.5h → 应被 cap
+		DeviceOnlineRate: float64Val(80.0),
 		MonthNewPatients: 5,
 	}}
 	svc := NewDashboardService(mockStore, nil)
 
 	dto, appErr := svc.GetKPI(ctx, "today", model.ScopeAll())
 	require.Nil(t, appErr)
-	assert.LessOrEqual(t, dto.AvgWearHours, 24.0, "KPI AvgWearHours 不应超过 24h")
-	assert.Equal(t, 24.0, dto.AvgWearHours)
+	require.NotNil(t, dto.AvgWearHours)
+	assert.LessOrEqual(t, *dto.AvgWearHours, 24.0, "KPI AvgWearHours 不应超过 24h")
+	assert.Equal(t, 24.0, *dto.AvgWearHours)
+}
+
+// TestServiceGetKPI_NoRowsAreNull T636：窗口内无聚合行 / 无有效绑定设备 ⇒ 两枚量回 null，
+// 且「较昨日」小时差不因一侧缺数而造出一枚假降幅。count 类仍照实回 0。
+func TestServiceGetKPI_NoRowsAreNull(t *testing.T) {
+	t248ResetCompareSpy()
+	store := &mockDashboardStore{kpiRow: &repo.KPIRow{
+		TotalPatients:    0,
+		ActiveWear:       0,
+		AlertCount:       0,
+		AvgWearMinutes:   nil, // 无 daily_wear_stats 行
+		DeviceOnlineRate: nil, // 无有效绑定设备
+		MonthNewPatients: 0,
+	}}
+	svc := NewDashboardService(store, nil)
+	svc.now = t248FixedNow
+
+	dto, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
+	require.Nil(t, appErr)
+	assert.Nil(t, dto.AvgWearHours, "无聚合行 ⇒ avgWearHours 为 null，不是 0")
+	assert.Nil(t, dto.DeviceOnlineRate, "无有效绑定设备 ⇒ deviceOnlineRate 为 null，不是 0%")
+	assert.Equal(t, int64(0), dto.TodayAlerts, "count 类保持实测 0，不跟着变 null")
+	assert.Nil(t, dto.AvgWearHoursDelta, "当前窗缺数 ⇒ 小时差无定义")
+
+	// 前窗缺数、当前窗有数：同样不许造差值
+	t248ResetCompareSpy()
+	t248CmpRow = &repo.KPICompareRow{ActiveWear: 3, AvgWearMinutes: nil}
+	defer t248ResetCompareSpy()
+	store2 := &mockDashboardStore{kpiRow: &repo.KPIRow{AvgWearMinutes: float64Val(600)}}
+	svc2 := NewDashboardService(store2, nil)
+	svc2.now = t248FixedNow
+	dto2, appErr2 := svc2.GetKPI(context.Background(), "today", model.ScopeAll())
+	require.Nil(t, appErr2)
+	require.NotNil(t, dto2.AvgWearHours)
+	assert.Equal(t, 10.0, *dto2.AvgWearHours)
+	assert.Nil(t, dto2.PrevAvgWearHours, "前窗无行 ⇒ 基准为 null")
+	assert.Nil(t, dto2.AvgWearHoursDelta, "前窗缺数 ⇒ 差值无定义")
 }
 
 // TestServiceRankingAndDistributionFollowPeriod T489：排行/分布的窗口起点必须随 period 变，
