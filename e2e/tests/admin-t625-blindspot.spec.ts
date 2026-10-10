@@ -260,7 +260,8 @@ test.describe('T625 类 5 · 技师手机号可见可编辑与「只动号码」
   const PHONE_AFTER = '13500007777'
   const PHONE_AFTER_MASKED = '135****7777'
 
-  /** 一行 7 列的文本快照（姓名 0 / 手机号 1 / 团队 2 / 安装次数 3 / 认证 4 / 状态 5 / 创建时间 6） */
+  /** 一行 8 列的文本快照（姓名 0 / 手机号 1 / 团队 2 / 归属类型 3 / 安装次数 4 / 认证 5 / 状态 6 / 创建时间 7；
+   *  第 3 列由 T627 方案乙插入，本用例逐列比对不按下标取值 ⇒ 只随列数改写注释与用例名） */
   async function cells(row: Locator): Promise<string[]> {
     return row.evaluate((el) => Array.from(el.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim()))
   }
@@ -280,7 +281,7 @@ test.describe('T625 类 5 · 技师手机号可见可编辑与「只动号码」
     phoneInput = page.locator('.el-dialog:visible .el-form-item').filter({ hasText: '手机号' }).locator('input')
   })
 
-  test('换号只动号码：其余六列逐项与换号前一致，且明文号码不得留在页面上任何位置', async ({ page }) => {
+  test('换号只动号码：其余七列逐项与换号前一致，且明文号码不得留在页面上任何位置', async ({ page }) => {
     const row = rowOf(page, TECH_NAME)
     const before = await cells(row)
     expect(before[1], '基线行的手机号列应是脱敏值').toBe(PHONE_BEFORE_MASKED)
