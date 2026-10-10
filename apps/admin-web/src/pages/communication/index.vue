@@ -95,6 +95,7 @@ import { ElMessage } from 'element-plus'
 import type { Feedback } from '@bracesync/shared-types'
 import { fetchFeedbacks, processFeedbackApi, patientNameOf } from '../../api'
 import { useAuthStore } from '../../stores/auth'
+import { formatCstMonthDayTime } from '../../utils/formatTime'
 
 const auth = useAuthStore()
 const list = ref<Feedback[]>([])
@@ -116,7 +117,8 @@ function statusTagType(status: Feedback['status']): 'warning' | 'primary' | 'suc
 }
 
 function formatTime(iso: string): string {
-  return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`
+  // T597：东八区公共出口（原 UTC 串切片早 8 小时）
+  return formatCstMonthDayTime(iso)
 }
 
 function openWechatKF() {

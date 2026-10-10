@@ -243,6 +243,7 @@ import {
 import type { AlertPointRule, AlertGlobalRules } from '../../mock/alerts'
 import { useAuthStore } from '../../stores/auth'
 import { canConfigureAlerts } from '../../utils/alertPageAccess'
+import { formatCstMonthDayTime } from '../../utils/formatTime'
 import FlowRuntime from './flow/FlowRuntime.vue'
 import FlowDesigner from './flow/designer/FlowDesigner.vue'
 
@@ -283,8 +284,8 @@ function severityType(type: string): 'danger' | 'warning' {
 }
 
 function formatTime(iso: string | null | undefined): string {
-  if (typeof iso !== 'string' || iso.length < 16) return '-'
-  return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`
+  // T597：东八区公共出口（原 UTC 串切片早 8 小时）
+  return formatCstMonthDayTime(iso)
 }
 
 async function loadData() {

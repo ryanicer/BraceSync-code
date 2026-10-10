@@ -113,6 +113,7 @@ import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage } from 'element-plus'
 import type { Device } from '@bracesync/shared-types'
 import { fetchDevices, fetchDeviceDetail, fetchDeviceBindings, registerDeviceApi, patientNameOf, type DeviceBindingRecord } from '../../api'
+import { formatCstMonthDayTime } from '../../utils/formatTime'
 
 const list = ref<Device[]>([])
 const keyword = ref('')
@@ -146,8 +147,8 @@ function statusTagType(status: Device['status']): 'success' | 'danger' | 'warnin
 }
 
 function formatDateTime(iso: string | null): string {
-  if (!iso) return '-'
-  return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`
+  // T597：东八区公共出口（原 UTC 串切片早 8 小时）
+  return formatCstMonthDayTime(iso)
 }
 
 async function loadData() {
