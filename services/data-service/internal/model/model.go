@@ -325,10 +325,14 @@ type SensorPoint struct {
 	Label         string  `json:"label"`
 	PressureValue float64 `json:"pressureValue"`
 	Status        string  `json:"status"`
+	// PressureKpa T643 A 路展示档：与热力图同源走 KpaFromN 在本响应内派生，不落库、不改 Status 分档
+	// （分档恒按 PressureValue，N）。nil = 面积未配置/非法，前端显示「--」，不用默认值补位。
+	PressureKpa *int `json:"pressureKpa"`
 }
 
-// BuildSensorPoints 将 20 点已校准值转为前端 SensorPoint 数组（阈值可配置，T173）
-func BuildSensorPoints(points [PointCount]float32, th PressureThresholds) []SensorPoint {
+// BuildSensorPoints 将 20 点已校准值转为前端 SensorPoint 数组（阈值可配置，T173）；
+// areaCm2 为设备有效受压面积（devices.contact_area_cm2，与 BuildHeatmap 同一枚来源），用于派生逐点 kPa 展示档。
+func BuildSensorPoints(points [PointCount]float32, th PressureThresholds, areaCm2 *float64) []SensorPoint {
 	out := make([]SensorPoint, PointCount)
 	for i, v := range points {
 		row, col, label := PointLabel(i)
@@ -339,6 +343,7 @@ func BuildSensorPoints(points [PointCount]float32, th PressureThresholds) []Sens
 			Label:         label,
 			PressureValue: float64(v),
 			Status:        PointStatus(v, th),
+			PressureKpa:   KpaFromN(float64(v), areaCm2),
 		}
 	}
 	return out
@@ -445,14 +450,15 @@ type PressureRecordDTO struct {
 	MaxPressure float32 `json:"maxPressure"`
 }
 
-// ToDTO 领域实体 → 前端 DTO（阈值可配置，T173；Calibrated 由读取侧按校准结果回填）
-func (r *PressureRecord) ToDTO(th PressureThresholds) PressureRecordDTO {
+// ToDTO 领域实体 → 前端 DTO（阈值可配置，T173；Calibrated 由读取侧按校准结果回填；
+// areaCm2 供逐点 kPa 展示档派生，T643 A 路）
+func (r *PressureRecord) ToDTO(th PressureThresholds, areaCm2 *float64) PressureRecordDTO {
 	return PressureRecordDTO{
 		RecordID:    fmt.Sprintf("%d", r.RecordID),
 		DeviceID:    r.DeviceID,
 		PatientID:   r.PatientID,
 		Timestamp:   r.Ts.UTC().Format(time.RFC3339),
-		Points:      BuildSensorPoints(r.Points, th),
+		Points:      BuildSensorPoints(r.Points, th, areaCm2),
 		UploadTime:  r.UploadTime.UTC().Format(time.RFC3339),
 		MaxPressure: r.MaxPressure,
 	}
@@ -585,6 +591,11 @@ type DailyWearDayDTO struct {
 	MaxPoint      string  `json:"maxPoint"`      // 最大点位（P01..P20，空串兜底）
 	FrameCount    int     `json:"frameCount"`    // 日帧总数
 	AbnormalCount int     `json:"abnormalCount"` // 日异常/告警数
+	// AvgPressureKpa / MaxPressureKpa T643 A 路展示档：与上面两枚 N 值同源于本行，读接口层用
+	// KpaFromN 派生（分母 devices.contact_area_cm2），不落库、不改聚合与告警判档（PRD 裁定四）。
+	// nil（JSON null）= 面积未配置或非法，前端显示「--」，不退 0 也不用默认 0.64 补位。
+	AvgPressureKpa *int `json:"avgPressureKpa"`
+	MaxPressureKpa *int `json:"maxPressureKpa"`
 	// ── T366 可解释性四字段（示例行与聚合行在读接口层可辨 + 可独立复算）──
 	Provenance string `json:"provenance"` // rollup | corroborated | unsupported
 	// DetailFrameCount 该患者该 CST 日 pressure_records 的**实际**明细帧数。

@@ -3,7 +3,7 @@
 import type {
   AdminLoginResult, ApiResponse, DashboardKPI, TeamRanking, DoctorRanking, PaginatedResponse, Patient, Device,
   Alert, InstallRecordRow, InstallRecordDetail, Technician, Team, TeamDetail, TeamMember, TeamStats, Doctor, Feedback, OrthosisPlan,
-  FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType,
+  FeelingLog, HealthReport, NotifyRule, NotificationRecord, AlertType, TeamType,
   ReviewRecord, CreateReviewRecordRequest, ReviewTemplate, CreateReviewTemplateRequest,
   RolePermissions,
 } from '@bracesync/shared-types'
@@ -78,9 +78,10 @@ export async function fetchDashboardKPI(period: 'today' | 'week' | 'month'): Pro
   return request<DashboardKPI>({ url: '/api/v1/admin/dashboard/kpi', data: { period } })
 }
 
-export async function fetchWearTrend(days = 7): Promise<{ date: string; avgHours: number }[]> {
+// 🔴 T636：avgHours 两态 —— 该日无 daily_wear_stats 行 ⇒ null（不再补 0），前端断线 + 空态。
+export async function fetchWearTrend(days = 7): Promise<{ date: string; avgHours: number | null }[]> {
   if (USE_MOCK) { await delay(); return dashboardMock.mockWearTrend(days) }
-  return request<{ date: string; avgHours: number }[]>({ url: '/api/v1/admin/dashboard/wear-trend', data: { days } })
+  return request<{ date: string; avgHours: number | null }[]>({ url: '/api/v1/admin/dashboard/wear-trend', data: { days } })
 }
 
 export async function fetchAlertTrend(days = 7): Promise<{ date: string; count: number }[]> {
@@ -353,9 +354,12 @@ export async function registerDeviceApi(data: { deviceId: string; model?: string
   return request<Device>({ url: '/api/v1/devices', method: 'POST', data: data as unknown as Record<string, unknown> })
 }
 
-export async function fetchTeams(): Promise<Team[]> {
-  if (USE_MOCK) { await delay(); return orgMock.mockTeams() }
-  const teams = await request<Team[]>({ url: '/api/v1/teams' })
+/** T627：teamType 为可选过滤（空值不传 ⇒ 后端不过滤，返回全部类型）。
+ *  后端过滤落点：/teams 在 handler 侧过滤（该端点不分页），/technicians 在 SQL 侧过滤（分页端点，
+ *  先过滤再分页才对得上 total）—— 两处的口径都是「按团队的类型」，技师自己的行上没有类型列。 */
+export async function fetchTeams(params: { teamType?: TeamType } = {}): Promise<Team[]> {
+  if (USE_MOCK) { await delay(); return orgMock.mockTeams(params) }
+  const teams = await request<Team[]>({ url: '/api/v1/teams', data: params as Record<string, unknown> })
   for (const t of teams) orgNames.teams[t.teamId] = t.name
   return teams
 }
@@ -410,7 +414,7 @@ export async function fetchDoctors(): Promise<Doctor[]> {
   return doctors
 }
 
-export async function fetchTechnicians(params: { page?: number; pageSize?: number }): Promise<PaginatedResponse<Technician>> {
+export async function fetchTechnicians(params: { page?: number; pageSize?: number; teamType?: TeamType }): Promise<PaginatedResponse<Technician>> {
   if (USE_MOCK) { await delay(); return orgMock.mockTechnicians(params) }
   return request<PaginatedResponse<Technician>>({ url: '/api/v1/technicians', data: params as Record<string, unknown> })
 }

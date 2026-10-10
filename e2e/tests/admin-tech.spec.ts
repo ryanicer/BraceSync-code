@@ -18,7 +18,8 @@ import { adminRoutes, adminLogin, adminMessage, tableRows } from '../admin-helpe
 
 const MARK = (testId: string) => `E2E-T270-${testId}`
 
-/** 一行按下标取单元格文本（姓名 0 / 手机号 1 / 所属团队 2 / 安装次数 3 / 认证 4 / 状态 5 / 创建时间 6） */
+/** 一行按下标取单元格文本（姓名 0 / 手机号 1 / 所属团队 2 / 归属类型 3 / 安装次数 4 / 认证 5 / 状态 6 / 创建时间 7）
+ *  归属类型 = T627 方案乙新列，插在「所属团队」之后 ⇒ 其后各列下标整体 +1 */
 function cellTexts(row: Locator): Promise<string[]> {
   return row.evaluate((el) => Array.from(el.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim()))
 }
@@ -164,10 +165,11 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     const row = rowByName(page, marker)
     await expect(row).toHaveCount(1)
     const cells = await cellTexts(row)
-    expect(cells.slice(0, 4), '姓名/脱敏手机号/团队中文名/安装次数').toEqual([marker, '138****0270', chosenTeam, '0'])
-    expect(cells[4], '新建技师默认未认证').toBe('未认证')
-    expect(cells[5], '新建技师默认启用').toBe('启用')
-    expect(cells[6], '创建时间列取日期（非原始 ISO）').toMatch(/^\d{4}-\d{2}-\d{2}$|^\-$/)
+    // 归属类型一格读作「维护班组」就是 T627 R1 的端到面：下拉只出维护班组 ⇒ 新建行的侧别不可能是医护
+    expect(cells.slice(0, 5), '姓名/脱敏手机号/团队中文名/归属类型/安装次数').toEqual([marker, '138****0270', chosenTeam, '维护班组', '0'])
+    expect(cells[5], '新建技师默认未认证').toBe('未认证')
+    expect(cells[6], '新建技师默认启用').toBe('启用')
+    expect(cells[7], '创建时间列取日期（非原始 ISO）').toMatch(/^\d{4}-\d{2}-\d{2}$|^\-$/)
     // 分页总数 +1，且与表格行数同步
     await expect.poll(() => paginationTotal(page), { timeout: 10_000 }).toBe(totalBefore + 1)
     await expect(tableRows(page)).toHaveCount(rowsBefore + 1)
@@ -213,7 +215,7 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
 
     // 重置不动档案：姓名仍在、状态未翻面
     await expect(row).toHaveCount(1)
-    expect((await cellTexts(row))[5], '重置口令不得改动启停状态').toBe('启用')
+    expect((await cellTexts(row))[6], '重置口令不得改动启停状态').toBe('启用')
   })
 
   test('A-TECH-05 编辑技师：标题/回填/手机号可编辑 → 留空不改号 → 改号落库 → 强制还原', async ({ page }) => {
@@ -283,11 +285,11 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     await expect(restored.locator('td').nth(1), '还原后手机号列回到基线脱敏值').toHaveText(phoneBefore)
   })
 
-  test('A-TECH-07 团队下拉数据来源：占位文案 + 选项与「团队管理」页名单一致 + 列表列取自同一来源', async ({ page }) => {
+  test('A-TECH-07 团队下拉数据来源：占位文案 + 选项与「团队管理」页的维护班组一支一致 + 列表列取自同一来源', async ({ page }) => {
     await page.getByRole('button', { name: '新建技师' }).click()
     const dialog = page.locator('.el-dialog:visible')
-    // 未选择时显示占位文案
-    await expect(dialog.locator('.el-select .el-select__placeholder')).toHaveText('请选择团队')
+    // T627 方案乙 R1：占位文案跟着筛后的名单走（下拉里已经没有医护团队，文案再写「请选择团队」就是假面）
+    await expect(dialog.locator('.el-select .el-select__placeholder')).toHaveText('请选择维护班组')
 
     const items = await openTeamOptions(page, dialog)
     const dropdownNames = (await items.allInnerTexts()).map((s) => s.trim())
@@ -299,15 +301,26 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     await dialog.locator('.el-select').click() // 再点一次收起下拉（勿用 Escape：会连带关掉弹窗）
     await dialog.getByRole('button', { name: '取消' }).click()
 
-    // 与团队管理页列表同源：两侧团队名集合必须一致
+    // 与团队管理页同源，但只同源到「维护班组」那一支：两侧的名字+类型逐行取回，
+    // 下拉集合 == 类型列为「维护班组」的那一组名字（旧口径「与全量名单一致」已被 T627 R1 取代）
     await page.goto(adminRoutes.teams)
     const teamRows = tableRows(page)
     await expect(teamRows.first()).toBeVisible({ timeout: 15_000 })
-    const pageNames = await teamRows.evaluateAll((rows) =>
-      rows.map((r) => (r as HTMLElement).querySelectorAll('td')[1]?.textContent?.trim() ?? ''),
+    const roster = await teamRows.evaluateAll((rows) =>
+      rows.map((r) => {
+        const td = (r as HTMLElement).querySelectorAll('td')
+        return { name: td[1]?.textContent?.trim() ?? '', type: td[2]?.textContent?.trim() ?? '' }
+      }),
     )
-    expect(pageNames.length, '团队管理页应至少有一个团队').toBeGreaterThan(0)
-    expect([...dropdownNames].sort()).toEqual([...pageNames.filter(Boolean)].sort())
+    expect(roster.length, '团队管理页应至少有一个团队').toBeGreaterThan(0)
+    const pageNames = roster.map((r) => r.name).filter(Boolean)
+    const maintNames = roster.filter((r) => r.type === '维护班组').map((r) => r.name)
+    expect(maintNames.length, '维护班组一支须非空，否则这一格退化成「下拉恒空」的假绿').toBeGreaterThan(0)
+    expect([...dropdownNames].sort(), '技师归属下拉与团队页的维护班组一支不同名').toEqual([...maintNames].sort())
+    // 医护团队不得出现在技师下拉里（判据 3 的页面面：不是排在后面，是不在面板里）
+    for (const r of roster.filter((x) => x.type === '医护团队')) {
+      expect(dropdownNames, `医护团队「${r.name}」不应进技师归属下拉`).not.toContain(r.name)
+    }
 
     // 技师列表「所属团队」列的取值必须落在同一份团队名单里（D1 类展示错配的守卫）
     await page.goto(adminRoutes.technicians)
