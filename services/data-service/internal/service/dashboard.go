@@ -43,17 +43,23 @@ const (
 
 // DashboardKPIDTO 对齐 shared-types DashboardKPI
 //
+// 🔴 T636（数据概览假数据清零）：avgWearHours / deviceOnlineRate 一律指针——
+// 窗口内无 daily_wear_stats 行、或没有有效绑定设备时回 null，由前端渲染「暂无数据」占位；
+// 旧写法把「没有数据」显示成 0h / 0%，等于凭空造了一枚读数（今日 00:10 的 rollup 还没跑，
+// 读出来的就不是「今日戴了 0 小时」）。count 类（totalPatients/todayActiveWear/todayAlerts/
+// monthNewPatients）保持非负整数：COUNT 无行回 0 是实测事实，不是缺数。
+//
 // T248 1.1 对比基准（PRD §7D.1 KPI 表「对比基准」列 · 设计稿 数据概览.html:97-119 卡片 trend 行）：
 // prev* = 紧邻当前窗口的**等长前窗**原值（period=today→昨日、week→前一 7 日、month→前一 30 日），
 // changePct = 相对前窗的变化百分比，avgWearHoursDelta = 绝对差（小时，设计稿「0.3h 较昨日」口径）。
-// 🔴 一律指针：前窗为 0 或无基准时变化率无定义 ⇒ null，不以 0 冒充「持平」。
+// 🔴 前窗量一律指针：前窗为 0 或无基准时变化率无定义 ⇒ null，不以 0 冒充「持平」。
 type DashboardKPIDTO struct {
-	TotalPatients    int64   `json:"totalPatients"`
-	TodayActiveWear  int64   `json:"todayActiveWear"`
-	TodayAlerts      int64   `json:"todayAlerts"`
-	AvgWearHours     float64 `json:"avgWearHours"`
-	DeviceOnlineRate float64 `json:"deviceOnlineRate"`
-	MonthNewPatients int64   `json:"monthNewPatients"`
+	TotalPatients    int64    `json:"totalPatients"`
+	TodayActiveWear  int64    `json:"todayActiveWear"`
+	TodayAlerts      int64    `json:"todayAlerts"`
+	AvgWearHours     *float64 `json:"avgWearHours"`
+	DeviceOnlineRate *float64 `json:"deviceOnlineRate"`
+	MonthNewPatients int64    `json:"monthNewPatients"`
 
 	PrevTodayActiveWear  *int64   `json:"prevTodayActiveWear"`
 	PrevTodayAlerts      *int64   `json:"prevTodayAlerts"`
@@ -73,9 +79,13 @@ type DashboardKPIDTO struct {
 }
 
 // WearTrendPoint 佩戴趋势点（date 为 MM-DD，对齐 admin-web mock 口径）
+//
+// 🔴 T636：AvgHours 是指针。缺行日 = 该日没有聚合行 = 无数据 ⇒ null，前端画断点并可在整段全
+// null 时显「暂无数据」；旧实现按 0 填充（本文件旧注释「缺失日补 0」），把 7 个未知数画成了一条
+// 有 4 个零的曲线 —— 那 4 枚 0 就是凭空生成的数值。
 type WearTrendPoint struct {
-	Date     string  `json:"date"`
-	AvgHours float64 `json:"avgHours"`
+	Date     string   `json:"date"`
+	AvgHours *float64 `json:"avgHours"`
 }
 
 // AlertTrendPoint 告警趋势点
@@ -182,8 +192,8 @@ func (s *DashboardService) GetKPI(ctx context.Context, period string, scope mode
 		TotalPatients:    row.TotalPatients,
 		TodayActiveWear:  row.ActiveWear,
 		TodayAlerts:      row.AlertCount,
-		AvgWearHours:     min(round2(row.AvgWearMinutes/60), 24),
-		DeviceOnlineRate: round2(row.DeviceOnlineRate),
+		AvgWearHours:     hoursFromMinutes(row.AvgWearMinutes),
+		DeviceOnlineRate: roundedRate(row.DeviceOnlineRate),
 		MonthNewPatients: row.MonthNewPatients,
 	}
 	// T248 1.1 对比基准。查询失败只降级（对比字段留空），不让整块看板 500 ——
@@ -216,7 +226,7 @@ func validateDays(days int) (int, *model.AppError) {
 	return days, nil
 }
 
-// GetWearTrend 契约 getWearTrend：近 days 日平均佩戴小时（缺失日补 0）
+// GetWearTrend 契约 getWearTrend：近 days 日平均佩戴小时（缺行日 ⇒ null，T636）
 func (s *DashboardService) GetWearTrend(ctx context.Context, days int, scope model.TeamScope) ([]WearTrendPoint, *model.AppError) {
 	days, appErr := validateDays(days)
 	if appErr != nil {
@@ -237,7 +247,15 @@ func (s *DashboardService) GetWearTrend(ctx context.Context, days int, scope mod
 	out := make([]WearTrendPoint, 0, days)
 	for d := 0; d < days; d++ {
 		day := from.AddDate(0, 0, d)
-		out = append(out, WearTrendPoint{Date: day.Format("01-02"), AvgHours: byDate[day.Format("01-02")]})
+		key := day.Format("01-02")
+		// T636：只有当日真有聚合行才给数；缺行 ⇒ nil（旧写法 byDate[key] 取 map 零值 = 0，
+		// 等于把「那天没数据」画成「那天戴了 0 小时」）。
+		point := WearTrendPoint{Date: key}
+		if hours, ok := byDate[key]; ok {
+			h := hours
+			point.AvgHours = &h
+		}
+		out = append(out, point)
 	}
 	return out, nil
 }
@@ -381,10 +399,10 @@ func round2(v float64) float64 { return math.Round(v*100) / 100 }
 // fillKPIComparison 装配上一等长周期的原值与变化（T248 1.1）。
 // 设备在线率两项不填：devices.status 无历史快照，基准取不到（见 DashboardKPIDTO 注释）。
 func fillKPIComparison(dto *DashboardKPIDTO, cmp *repo.KPICompareRow) {
-	prevHours := min(round2(cmp.AvgWearMinutes/60), 24)
+	prevHours := hoursFromMinutes(cmp.AvgWearMinutes)
 	dto.PrevTodayActiveWear = int64Val(cmp.ActiveWear)
 	dto.PrevTodayAlerts = int64Val(cmp.AlertCount)
-	dto.PrevAvgWearHours = float64Val(prevHours)
+	dto.PrevAvgWearHours = prevHours
 	dto.PrevTotalPatients = int64Val(cmp.TotalPatientsAtMonth)
 	dto.PrevMonthNewPatients = int64Val(cmp.PrevMonthNewPatients)
 
@@ -392,7 +410,34 @@ func fillKPIComparison(dto *DashboardKPIDTO, cmp *repo.KPICompareRow) {
 	dto.AlertsChangePct = changePct(float64(dto.TodayAlerts), float64(cmp.AlertCount))
 	dto.TotalPatientsChangePct = changePct(float64(dto.TotalPatients), float64(cmp.TotalPatientsAtMonth))
 	dto.MonthNewPatientsChangePct = changePct(float64(dto.MonthNewPatients), float64(cmp.PrevMonthNewPatients))
-	dto.AvgWearHoursDelta = float64Val(round2(dto.AvgWearHours - prevHours))
+	dto.AvgWearHoursDelta = hoursDelta(dto.AvgWearHours, prevHours)
+}
+
+// hoursFromMinutes 分钟 → 小时（两位小数、夹到 24h 物理上限）；nil（窗口内无聚合行）原样传 nil。
+func hoursFromMinutes(minutes *float64) *float64 {
+	if minutes == nil {
+		return nil
+	}
+	h := min(round2(*minutes/60), 24)
+	return &h
+}
+
+// roundedRate 百分比两位小数；nil（无有效绑定设备）原样传 nil。
+func roundedRate(rate *float64) *float64 {
+	if rate == nil {
+		return nil
+	}
+	v := round2(*rate)
+	return &v
+}
+
+// hoursDelta 小时绝对差。任一侧无聚合行 ⇒ nil —— 拿 0 顶上去会造出一枚「较昨日 -24h」的假降幅。
+func hoursDelta(cur, prev *float64) *float64 {
+	if cur == nil || prev == nil {
+		return nil
+	}
+	v := round2(*cur - *prev)
+	return &v
 }
 
 // changePct 相对前窗的变化百分比 (cur-prev)/prev×100；prev=0 ⇒ 无定义，返回 nil（不以 0 冒充持平）

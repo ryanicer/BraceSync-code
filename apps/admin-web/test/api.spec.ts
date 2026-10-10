@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   fetchDashboardKPI, fetchWearTrend, fetchAlertTrend, fetchTeamRanking, fetchDoctorRanking,
-  fetchWearDistribution, fetchPatients, fetchAlerts, fetchDevices, fetchTeams,
+  fetchWearDistribution, fetchPatients, fetchAlerts, fetchDevices, fetchTeams, fetchTechnicians,
   fetchFeedbacks, fetchPatientRealtime, fetchPatientDailyWear, fetchNotifyRules, fetchNotificationLogs,
   fetchAbnormalReport,
 } from '../src/api'
@@ -120,6 +120,33 @@ describe('API 层（USE_MOCK 模式）', () => {
     expect(snapshot).toHaveProperty('events')
     expect(Array.isArray(snapshot.pressureRecords)).toBe(true)
     expect(Array.isArray(snapshot.alerts)).toBe(true)
+  })
+})
+
+// T627 方案乙：技师归属的类型过滤（前端这一半 —— 后端那一半在 user-service 的用例里）
+describe('T627 技师归属类型过滤', () => {
+  it('不带过滤时列全量，每行都带出所属团队的类型', async () => {
+    const all = await fetchTechnicians({ pageSize: 100 })
+    expect(all.list.length).toBe(all.total)
+    expect(all.list.every((t) => t.teamType === 'medical' || t.teamType === 'maintenance')).toBe(true)
+  })
+
+  it('maintenance 一支只出维护班组的行，且 total 是过滤后的条数', async () => {
+    const maint = await fetchTechnicians({ pageSize: 100, teamType: 'maintenance' })
+    expect(maint.list.length).toBeGreaterThan(0)
+    expect(maint.list.every((t) => t.teamType === 'maintenance')).toBe(true)
+    // 验收判据 3 的那一句「维护类技师不误归医护」：行的 teamId 必须落在维护班组集合里
+    const maintTeamIds = new Set((await fetchTeams({ teamType: 'maintenance' })).map((t) => t.teamId))
+    expect(maint.list.every((t) => maintTeamIds.has(t.teamId))).toBe(true)
+    const all = await fetchTechnicians({ pageSize: 100 })
+    expect(maint.total).toBeLessThan(all.total)
+    expect(maint.total).toBe(maint.list.length)
+  })
+
+  it('medical 一支仍列出存量挂在医护团队的技师（刷数前的形状，过滤不掩盖它）', async () => {
+    const med = await fetchTechnicians({ pageSize: 100, teamType: 'medical' })
+    expect(med.list.length).toBeGreaterThan(0)
+    expect(med.list.every((t) => t.teamType === 'medical')).toBe(true)
   })
 })
 

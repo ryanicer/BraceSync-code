@@ -205,7 +205,7 @@ function lastRequest(): { url: string; method?: string; data?: Record<string, un
   return calls[calls.length - 1][0]
 }
 
-const backendTeamRow: Team = { teamId: 'TEAM01', name: '脊柱矫形一组', memberCount: 3, patientCount: 12 }
+const backendTeamRow: Team = { teamId: 'TEAM01', name: '脊柱矫形一组', memberCount: 3, patientCount: 12, teamType: 'medical' }
 const backendDoctorRow: Doctor = {
   doctorId: 'D0001', name: '李医师', title: '主治医师', department: '脊柱外科',
   teamId: 'TEAM01', phoneMasked: '138****0001', phoneState: 'masked', patientCount: 5, status: 'enabled',

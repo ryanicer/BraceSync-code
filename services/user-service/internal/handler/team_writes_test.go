@@ -444,6 +444,107 @@ func TestAddTeamMember_KNOWN_RED(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// T627 方案乙：团队类型的写侧判据 + 成员这条侧门
+// ─────────────────────────────────────────────────────────────
+
+// TestTeamType_T627 覆盖三格：createTeam 的类型归一（缺省 medical、非法 400、维护侧透传并回显）、
+// addTeamMember 的技师腿受侧别约束（医疗团队 400 / 查无此队 404 / 维护班组 200）、
+// 医护腿仍只问存在性（把医护赶出医疗团队属医护侧裁定，不在本卡派发面）。
+func TestTeamType_T627(t *testing.T) {
+	e := newEnv(t, true, true)
+
+	t.Run("create_team_defaults_to_medical", func(t *testing.T) {
+		created := sampleTeamDetail()
+		created.TeamType = "medical"
+		e.store.createdTeam = ptrToTeamDetail(created)
+		e.store.createTeamErr = nil
+		w, resp := e.do(http.MethodPost, "/api/v1/teams",
+			model.CreateTeamRequestDTO{Name: "默认组", Leader: "D0001"}, nil)
+		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		assert.Equal(t, "medical", e.store.lastCreateTeamIn.TeamType,
+			"不带 teamType ⇒ 归一成 medical，与迁移 000035 的 DEFAULT 同枚字面量")
+		var dto model.TeamDetailDTO
+		require.NoError(t, json.Unmarshal(resp.Data, &dto))
+		assert.Equal(t, "medical", dto.TeamType)
+	})
+
+	t.Run("create_team_maintenance_passthrough", func(t *testing.T) {
+		created := sampleTeamDetail()
+		created.TeamType = "maintenance"
+		e.store.createdTeam = ptrToTeamDetail(created)
+		e.store.createTeamErr = nil
+		w, resp := e.do(http.MethodPost, "/api/v1/teams",
+			model.CreateTeamRequestDTO{Name: "设备维护三组", Leader: "D0001", TeamType: "maintenance"}, nil)
+		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		assert.Equal(t, "maintenance", e.store.lastCreateTeamIn.TeamType)
+		var dto model.TeamDetailDTO
+		require.NoError(t, json.Unmarshal(resp.Data, &dto))
+		assert.Equal(t, "maintenance", dto.TeamType, "弹窗要能回显自己刚提交的类型")
+	})
+
+	t.Run("create_team_bogus_type_400", func(t *testing.T) {
+		e.store.createdTeam = nil
+		e.store.createTeamErr = nil
+		e.store.lastCreateTeamIn = repo.TeamInput{}
+		w, resp := e.do(http.MethodPost, "/api/v1/teams",
+			model.CreateTeamRequestDTO{Name: "第三种", Leader: "D0001", TeamType: "other"}, nil)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, model.CodeInvalidParam, resp.Code)
+		assert.Empty(t, e.store.lastCreateTeamIn.Name, "非法类型必须在落到 store 之前挡掉")
+	})
+
+	techBody := func(id string) model.AddMemberRequestDTO {
+		return model.AddMemberRequestDTO{MemberType: "technician", MemberID: id}
+	}
+
+	t.Run("add_tech_into_medical_team_400", func(t *testing.T) {
+		e.store.teamExists = true
+		e.store.teamType = "medical"
+		e.store.addedMember = ptrToTeamMember(sampleTeamMember())
+		e.store.addMemberErr = nil
+		w, resp := e.do(http.MethodPost, "/api/v1/teams/TEAM26001/members", techBody("T0001"), nil)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, model.CodeInvalidParam, resp.Code)
+		assert.Equal(t, "TEAM26001", e.store.lastTeamTypeQuery)
+		assert.Empty(t, e.store.lastAddTeamID, "侧门拦下时不得再往 store 走")
+	})
+
+	t.Run("add_tech_into_maintenance_team_200", func(t *testing.T) {
+		e.store.teamExists = true
+		e.store.teamType = "maintenance"
+		m := sampleTeamMember()
+		m.MemberType = "technician"
+		e.store.addedMember = ptrToTeamMember(m)
+		e.store.addMemberErr = nil
+		w, resp := e.do(http.MethodPost, "/api/v1/teams/TEAM04/members", techBody("T0001"), nil)
+		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		assert.Equal(t, "TEAM04", e.store.lastAddTeamID)
+	})
+
+	t.Run("add_tech_team_missing_stays_404", func(t *testing.T) {
+		// 状态码口径：成员这条腿「查无此队」既往由 store 回 404，加侧别判据不许把它改成 400
+		e.store.teamExists = false
+		e.store.addedMember = nil
+		e.store.addMemberErr = nil
+		w, resp := e.do(http.MethodPost, "/api/v1/teams/TEAM-NOPE/members", techBody("T0001"), nil)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, model.CodeNotFound, resp.Code)
+		e.store.teamExists = true
+	})
+
+	t.Run("add_doctor_is_still_existence_only", func(t *testing.T) {
+		e.store.teamType = "medical"
+		e.store.lastTeamTypeQuery = ""
+		e.store.addedMember = ptrToTeamMember(sampleTeamMember())
+		e.store.addMemberErr = nil
+		w, resp := e.do(http.MethodPost, "/api/v1/teams/TEAM26001/members",
+			model.AddMemberRequestDTO{MemberType: "doctor", MemberID: "D0002"}, nil)
+		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		assert.Empty(t, e.store.lastTeamTypeQuery, "医护腿不该被侧别判据扫到")
+	})
+}
+
+// ─────────────────────────────────────────────────────────────
 // 编辑成员 PUT /api/v1/teams/:teamId/members/:memberId
 // ─────────────────────────────────────────────────────────────
 

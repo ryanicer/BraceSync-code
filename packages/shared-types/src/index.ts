@@ -61,6 +61,11 @@ export interface Doctor {
   createdAt?: string | null;
 }
 
+/** T627 方案乙（T623 PRD）：团队类型轴。medical 医护团队（成员腿是医生），maintenance 维护班组（成员腿是技师）。
+ *  取值与后端 model 常量、迁移 000035 的 CHECK 同一集合；卡面正文写的是「maintainer」，
+ *  本节以已合入的 T623 载体（docs PR1685）用词为准，差异已在 T627 卡内登记请裁。 */
+export type TeamType = 'medical' | 'maintenance';
+
 export interface Technician {
   techId: string;
   name: string;
@@ -72,6 +77,8 @@ export interface Technician {
   authStatus: 'authorized' | 'unauthorized';  // 对齐 DB technicians.auth_status
   createdAt?: string;            // T247 10.4: 创建时间（设计稿 技师管理.html:102）
   teamName?: string | null;      // T337 契约补账：T278-② 起后端 join 带出（未入队为 null，前端回落显示 teamId）
+  /** T627：所属团队的类型（后端 join teams 带出；团队行不存在时为 null，与 teamName 同一回落口径） */
+  teamType?: TeamType | null;
 }
 
 export interface Device {
@@ -102,6 +109,9 @@ export interface Team {
   description?: string | null;    // 团队描述
   status?: 'active' | 'deleted';  // 状态
   createdAt?: string;            // 创建时间
+  /** T627 方案乙：团队类型。后端 TeamDTO 无 omitempty ⇒ 键恒在，前端不得当可选读
+   *  （新建技师的下拉靠它筛侧，缺键与「医护侧」是两个形状）。 */
+  teamType: TeamType;
 }
 
 /** 团队详情（T059 写端点 POST/PUT /teams 返回，对齐后端 TeamDetailDTO） */
@@ -444,8 +454,11 @@ export interface DashboardKPI {
   totalPatients: number;
   todayActiveWear: number;
   todayAlerts: number;
-  avgWearHours: number;
-  deviceOnlineRate: number;
+  // 🔴 T636 两态：窗口内无 daily_wear_stats 行 / 无已绑定设备 ⇒ null（「暂无数据」），
+  // 不是 0 —— 后端原以 COALESCE(...,0) 与 CASE ... ELSE 0 把「取不到」涂成「0 小时 / 0% 在线」。
+  // count 类四项无行时回 0 是实测事实，保持 number。
+  avgWearHours: number | null;
+  deviceOnlineRate: number | null;
   monthNewPatients: number;
 
   // T248 1.1 对比基准（PRD §7D.1「对比基准」列）。T418 归口：后端 09xx 起就随 KPI 同行返回，
