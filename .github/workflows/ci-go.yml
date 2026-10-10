@@ -161,3 +161,4 @@ jobs:
             ./services/gateway/... ./services/user-service/... ./services/device-service/... \
             ./services/data-service/... ./services/alert-service/... ./services/file-service/... \
             ./services/msg-service/...
+  # (duty r125v 22:xx) no-op comment: force re-trigger after lost synchronize event
