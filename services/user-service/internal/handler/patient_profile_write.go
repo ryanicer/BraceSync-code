@@ -95,7 +95,8 @@ func (h *Handler) updatePatientProfile(c *gin.Context) {
 		fail(c, model.ErrNotFound("patient not found: %s", patientID))
 		return
 	}
-	ok(c, toPatientDTO(*row))
+	// T646 裁定甲：自助改档的写响应与 GET /patient/profile 同一枚收口口径（键在、医护姓名值恒 null）。
+	ok(c, selfScopedPatientDTO(toPatientDTO(*row)))
 }
 
 // buildPatientProfileUpdate 白名单字段值域校验 + 装配 repo 入参；全空 → 400。

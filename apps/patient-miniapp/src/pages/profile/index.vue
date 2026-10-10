@@ -180,6 +180,7 @@ const metaText = computed(() => {
 
 // T641：那一行的副文案（组出医护名与团队名）随入口一起退场——患者端此后不再在「我的」页
 // 展示任何医护姓名（设计稿 §八）。新页的成员行改由 /api/v1/patient/care-team 出角色 + 职称。
+// T646 收口后端：患者侧 profile 载荷中医护姓名两枚键值恒 null（weide-duty 2026-10-09 22:52 裁定甲）。
 
 const editSheetVisible = ref(false)
 const editNickname = ref('')
@@ -281,8 +282,9 @@ async function loadProfile() {
     profile.value = await getPatientProfile()
     logger.info('[T187] profile loaded', {
       patientId: profile.value.patientId,
-      hasTeam: !!profile.value.teamName,
-      hasDoctor: !!profile.value.doctorName,
+      // T646：这两枚布尔原来读的是姓名字段，现改读同源的标识（绑定态不变，姓名不进日志）
+      hasTeam: !!profile.value.teamId,
+      hasDoctor: !!profile.value.doctorId,
       hasDevice: !!profile.value.deviceId,
     })
   } catch (e: unknown) {
