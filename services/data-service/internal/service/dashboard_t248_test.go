@@ -61,10 +61,10 @@ func TestT248_KPI_ComparisonValues(t *testing.T) {
 	t248ResetCompareSpy()
 	store := &mockDashboardStore{kpiRow: &repo.KPIRow{
 		TotalPatients: 100, ActiveWear: 100, AlertCount: 30,
-		AvgWearMinutes: 660, DeviceOnlineRate: 62.5, MonthNewPatients: 8,
+		AvgWearMinutes: float64Val(660), DeviceOnlineRate: float64Val(62.5), MonthNewPatients: 8,
 	}}
 	t248CmpRow = &repo.KPICompareRow{
-		ActiveWear: 80, AlertCount: 20, AvgWearMinutes: 600,
+		ActiveWear: 80, AlertCount: 20, AvgWearMinutes: float64Val(600),
 		TotalPatientsAtMonth: 90, PrevMonthNewPatients: 5,
 	}
 	svc := NewDashboardService(store, nil)
@@ -107,7 +107,13 @@ func TestT248_KPI_ComparisonValues(t *testing.T) {
 // prev=0 ⇒ 变化率无定义：指针为 null，不以 0 冒充「持平」
 func TestT248_KPI_ZeroPrevWindow_YieldsNullChangePct(t *testing.T) {
 	t248ResetCompareSpy()
-	store := &mockDashboardStore{kpiRow: &repo.KPIRow{TotalPatients: 12, ActiveWear: 9, AlertCount: 4}}
+	// 两窗都「真有行、佩戴 0 分钟」——T636 之后这仍是实测 0；缺行才是 null（见 dashboard_impl_test 的
+	// TestServiceGetKPI_NoRowsAreNull）。
+	store := &mockDashboardStore{kpiRow: &repo.KPIRow{
+		TotalPatients: 12, ActiveWear: 9, AlertCount: 4, AvgWearMinutes: float64Val(0),
+	}}
+	t248CmpRow = &repo.KPICompareRow{AvgWearMinutes: float64Val(0)}
+	defer t248ResetCompareSpy()
 	svc := NewDashboardService(store, nil)
 	svc.now = t248FixedNow
 
@@ -122,6 +128,10 @@ func TestT248_KPI_ZeroPrevWindow_YieldsNullChangePct(t *testing.T) {
 	assert.Nil(t, dto.MonthNewPatientsChangePct)
 	require.NotNil(t, dto.AvgWearHoursDelta, "小时差是绝对差，前窗为 0 仍有定义")
 	assert.Equal(t, 0.0, *dto.AvgWearHoursDelta)
+	require.NotNil(t, dto.AvgWearHours)
+	assert.Equal(t, 0.0, *dto.AvgWearHours, "有行且 wear_minutes=0 ⇒ 0h 是真读数")
+	require.NotNil(t, dto.PrevAvgWearHours)
+	assert.Equal(t, 0.0, *dto.PrevAvgWearHours)
 }
 
 // 🔴 对比查询失败只降级：主指标照常 200，对比字段留空，不让整块看板 500
@@ -187,14 +197,15 @@ func TestT248_KPI_PrevWindowArgs(t *testing.T) {
 // 设备在线率无历史快照 ⇒ 两项对比字段恒 null（不伪造基准）
 func TestT248_KPI_DeviceOnlineRate_HasNoBaseline(t *testing.T) {
 	t248ResetCompareSpy()
-	store := &mockDashboardStore{kpiRow: &repo.KPIRow{DeviceOnlineRate: 66.67}}
-	t248CmpRow = &repo.KPICompareRow{ActiveWear: 1, AvgWearMinutes: 60}
+	store := &mockDashboardStore{kpiRow: &repo.KPIRow{DeviceOnlineRate: float64Val(66.67)}}
+	t248CmpRow = &repo.KPICompareRow{ActiveWear: 1, AvgWearMinutes: float64Val(60)}
 	svc := NewDashboardService(store, nil)
 	svc.now = t248FixedNow
 
 	dto, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
 	require.Nil(t, appErr)
-	assert.Equal(t, 66.67, dto.DeviceOnlineRate)
+	require.NotNil(t, dto.DeviceOnlineRate)
+	assert.Equal(t, 66.67, *dto.DeviceOnlineRate)
 	assert.Nil(t, dto.PrevDeviceOnlineRate)
 	assert.Nil(t, dto.DeviceOnlineRateDelta)
 }

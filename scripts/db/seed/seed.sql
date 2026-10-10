@@ -43,6 +43,18 @@ INSERT INTO teams (team_id, name, member_count, patient_count) VALUES
   ('TEAM03', '康复理疗三组', 2, 1)
 ON CONFLICT (team_id) DO NOTHING;
 
+-- ===== 维护班组（T627 方案乙，迁移 000035 的 team_type='maintenance'）=====
+-- 为什么必须在这里播：新建技师的下拉只出维护侧团队，而「所属团队」是必填项 ⇒
+--   库里一颗维护班组都没有时，那一页是「有下拉、无选项」的死面，验收 1 无从起。
+-- 上面三颗不补值：000035 的 DEFAULT 'medical' 已经把它们归到医护侧（PRD §7D.4 的定性）。
+-- 下面三颗技师（T0001-T0003）的 team_id 本块刻意不动：那是存量数据修正动作，
+--   与现网同一套走 T627 的存量刷数脚本（先 dry-run 计数、Boss 批准再执行），
+--   本卡声明 seed 面不随本块改口径。
+INSERT INTO teams (team_id, name, member_count, patient_count, team_type) VALUES
+  ('TEAM04', '设备维护一组', 0, 0, 'maintenance'),
+  ('TEAM05', '设备维护二组', 0, 0, 'maintenance')
+ON CONFLICT (team_id) DO NOTHING;
+
 -- ===== 运营账号（测试环境统一密码 admin123）=====
 INSERT INTO admins (admin_id, username, name, password_hash, role_id) VALUES
   ('A0001', 'ops_admin', '运营小张', '$2a$10$HpFYM9TY7cv8ABe.UZDx/OWi/HpdFcPSBf4rbvyJtlgLBmSo2/Snm', 'ROLE_ADMIN'),

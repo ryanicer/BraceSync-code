@@ -83,10 +83,12 @@ async function createTechnician(wrapper: VueWrapper, name: string, phone: string
   select.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   await flushAll()
   const pops = [...document.querySelectorAll<HTMLElement>('.el-popper[aria-hidden="false"]')]
+  // T627 方案乙 R1：新建技师的归属只列维护班组，所以这里选的必须是维护班组
+  // （旧形状选的是「脊柱侧弯一组」——那是医护团队，本卡之后它不再出现在面板里）。
   const opt = pops
     .flatMap((p) => [...p.querySelectorAll<HTMLElement>('.el-select-dropdown__item')])
-    .find((li) => (li.textContent ?? '').trim() === '脊柱侧弯一组')
-  if (!opt) throw new Error(`团队下拉里没有「脊柱侧弯一组」，展开面板 ${pops.length} 个`)
+    .find((li) => (li.textContent ?? '').trim() === '设备维护一组')
+  if (!opt) throw new Error(`团队下拉里没有「设备维护一组」，展开面板 ${pops.length} 个`)
   opt.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   await flushAll()
   clickByText(dialogIn(wrapper.element), '确认创建')
@@ -155,6 +157,26 @@ describe('T486 创建技师成功弹窗：三行凭据 + 登录方式说明', ()
     expect(row?.phoneState).toBe('masked')
     wrapper.unmount()
   })
+
+  it('T627 R1：新建技师的归属下拉只出维护班组，医护团队不在面板里', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    clickByText(wrapper.element, '新建技师')
+    await flushAll()
+    const dlg = dialogIn(wrapper.element)
+    const select = formItem(dlg, '所属团队').querySelector<HTMLElement>('.el-select__wrapper')
+    if (!select) throw new Error('所属团队下拉未渲染')
+    select.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushAll()
+    const labels = [...document.querySelectorAll<HTMLElement>('.el-popper[aria-hidden="false"] .el-select-dropdown__item')]
+      .map((li) => (li.textContent ?? '').trim())
+    expect(labels).toContain('设备维护一组')
+    expect(labels).toContain('设备维护二组')
+    // 医护团队那一支整面缺席：不是排在后面，是不在面板里（筛的是 shared-types 的 teamType）
+    expect(labels).not.toContain('脊柱侧弯一组')
+    expect(labels).not.toContain('骨科一组')
+    wrapper.unmount()
+  })
 })
 
 describe('T486 重置密码弹窗：与创建共用同一形状', () => {
@@ -193,9 +215,11 @@ describe('T486 创建响应体形状（弹窗明文为何取自表单而不是�
   afterEach(() => __resetOrgForTest())
 
   it('响应只有脱敏号 + 一次性口令，没有明文字段 ⇒ 登录账号行只能来自管理员刚填的那格', () => {
-    const { account, initialPassword } = mockCreateTechnician({ name: 'T486形状技师', phone: '13800000273', teamId: 'TEAM-001' })
+    // T627 方案乙 R1：创建技师只能挂在维护班组上，所以这里喂的也是维护班组 id。
+    const { account, initialPassword } = mockCreateTechnician({ name: 'T486形状技师', phone: '13800000273', teamId: 'TEAM-201' })
     expect(account).not.toHaveProperty('phone')
     expect(account.phoneMasked).toBe('138****0273')
+    expect(account.teamType).toBe('maintenance')
     expect(initialPassword).toMatch(/^Br[a-z0-9]{8}#7$/)
   })
 })
