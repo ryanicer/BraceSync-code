@@ -21,7 +21,8 @@ type AuditInput struct {
 	// admin/flow_* 由本服务 handler 内直埋；patient…review_record 走表驱动 auditRoutes；
 	// device（T448）与 install_record（T485）由 device-service 同库直写，
 	// pressure_record（T498）由 data-service 同库直写，词形在此登记。
-	TargetType  string // admin | alert_rule | device | doctor | feedback | feeling_log | flow_instance | flow_template | install_record | member | orthosis_plan | patient | pressure_record | review_record | role | sys_config | team | technician
+	// advice_log（T641 医护建议三枚写通道）走 user-service 表驱动 auditRoutes。
+	TargetType  string // admin | advice_log | alert_rule | device | doctor | feedback | feeling_log | flow_instance | flow_template | install_record | member | orthosis_plan | patient | pressure_record | review_record | role | sys_config | team | technician
 	TargetID    string
 	Description string
 	Detail      map[string]any // 与 Description 合并落 detail；Description 优先级更高

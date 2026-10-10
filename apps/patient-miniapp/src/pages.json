@@ -51,6 +51,10 @@
     {
       "path": "pages/feelings/index",
       "style": { "navigationBarTitleText": "矫形日志" }
+    },
+    {
+      "path": "pages/advice/index",
+      "style": { "navigationBarTitleText": "康复建议" }
     }
   ],
   "tabBar": {

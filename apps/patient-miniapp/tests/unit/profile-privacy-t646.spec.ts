@@ -49,10 +49,12 @@ describe('A 患者端页面不再摸医护姓名两枚键', () => {
     }
   })
 
-  it('「我的医生」副文案只说绑定状态，数据源是同源的 teamId', () => {
-    expect(pageFile).toContain('已绑定')
-    expect(pageFile).toContain('未绑定')
-    expect(pageFile).toMatch(/doctorSubText[\s\S]{0,200}teamId[\s\S]{0,60}已绑定/)
+  it('「我的医生」入口已被 T641 整枚替换为「康复建议」：姓名副文案无消费者，doctorSubText 不得复活', () => {
+    // T641（PR 368，2026-10-11 合入）整行替换入口后，原 doctorSubText computed 已删；
+    // 本卡（T646）的前端形状随之收口为「页面零姓名键」，绑定态副文案不再有承载位置。
+    // 正向入口形状由 advice-t641.spec.ts B 组钉，这里只在隐私缝上防复活。
+    expect(pageFile).not.toContain('doctorSubText')
+    expect(pageFile).toMatch(/@click="goAdvice"[\s\S]{0,120}康复建议/)
   })
 
   it('加载日志的两枚布尔读标识而不是姓名（姓名不进日志面）', () => {
