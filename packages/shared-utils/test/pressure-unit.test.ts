@@ -21,6 +21,8 @@ import {
   unitValueText,
   areaHintVisible,
   heroRangeHintVisible,
+  axisUnitText,
+  kpaObservedMax,
   heroRangeText,
 } from '../src/index'
 
@@ -131,6 +133,35 @@ describe('heroRangeHintVisible：hero 正常范围副文案只在 N 档（Boss 0
   it('N 档保留、kPa 档隐藏', () => {
     expect(heroRangeHintVisible('N')).toBe(true)
     expect(heroRangeHintVisible('kPa')).toBe(false)
+  })
+})
+
+describe('T643 纵轴随档：轴字母与 kPa 档轴上界（PRD V3.44 把趋势纵轴移入随档侧）', () => {
+  it('axisUnitText 两档各一个拼写，与档位词表逐字同形', () => {
+    expect(axisUnitText('N')).toBe('N')
+    expect(axisUnitText('kPa')).toBe('kPa')
+  })
+
+  it('kpaObservedMax 只认后端派生的 kPa 数值：逐点与上界取大者', () => {
+    expect(kpaObservedMax([47, 63, 12], null)).toBe(63)
+    expect(kpaObservedMax([47, 12], 94)).toBe(94)
+    expect(kpaObservedMax([null, undefined, NaN, -5, 0], null)).toBe(null)
+  })
+
+  it('一个可用值都没有 ⇒ null（调用方出「--」），有 0 也不算可用（0 不是上界）', () => {
+    expect(kpaObservedMax([null, null])).toBe(null)
+    expect(kpaObservedMax([0, 0], 0)).toBe(null)
+    // 反面：真有一个正派生值就必须被拿到，不许因为混进 null 就整窗判 null
+    expect(kpaObservedMax([null, 3, null])).toBe(3)
+  })
+
+  it('门禁：本模块新增的这条腿同样不许出现换算式', () => {
+    const src = srcOf('../src/pressureUnit.ts')
+    expect(src).toMatch(/export function kpaObservedMax/)
+    expect(src).not.toMatch(/contactAreaCm2/)
+    expect(src).not.toMatch(/areaCm2/)
+    expect(src).not.toMatch(/\*[^\S\n]*10\b/)
+    expect(src).not.toMatch(/\/[^\S\n]*[\w$]*[Aa]rea[\w$]*/)
   })
 })
 

@@ -85,10 +85,18 @@ export function trendInterval(segment: TrendSegment): string {
   return segment === 'day' ? '30m' : '1d'
 }
 
-/** 曲线点位（PressureCurve 的 data 项） */
+/** 曲线点位（PressureCurve 的 data 项）。value 恒为 N 读数；kpa 是同一选点在同响应里派生的 kPa 值，null = 不可换算 */
 export interface TrendPoint {
   timestamp: string
   value: number
+  kpa: number | null
+}
+
+/** 后端桶行里参与取数的字段（pressureKpa 由 data-service T643 A 路同源派生；前端不换算） */
+interface TrendSourcePoint {
+  pointId: string
+  pressureValue: number
+  pressureKpa?: number | null
 }
 
 /**
@@ -99,30 +107,48 @@ export interface TrendPoint {
  *    导致每天 0:00-8:00 结构性缺一块）；
  * 2. 不再丢弃 0 值——0N 是「未受压」的真实读数，丢掉就等于把连续曲线打洞；
  * 3. 只按时间升序排列，越界的桶不夹到端点（前端坐标轴自己会按窗口定位）。
+ *
+ * T643：N 读数与 kPa 派生值必须取自同一枚选点（见 `pickPointReading`），
+ * 否则两档曲线画的是两条线。
  */
 export function toTrendSeries(
-  records: { timestamp: string; points?: { pointId: string; pressureValue: number }[] }[],
+  records: { timestamp: string; points?: TrendSourcePoint[] }[],
   pointId?: string
 ): TrendPoint[] {
   const points = records
-    .map(r => ({ timestamp: r.timestamp, value: pickPointValue(r, pointId) }))
+    .map(r => ({ timestamp: r.timestamp, ...pickPointReading(r, pointId) }))
     .filter(p => !Number.isNaN(new Date(p.timestamp).getTime()))
   points.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
   return points
 }
 
-/** 取某行（帧或桶）里指定点位的压力值；点位缺失时退到该行最大值。 */
+/** 取某行（帧或桶）里指定点位的压力读数；点位缺失时退到该行最大值。 */
 export function pickPointValue(
-  r: { points?: { pointId: string; pressureValue: number }[] },
+  r: { points?: TrendSourcePoint[] },
   pointId?: string
 ): number {
+  return pickPointReading(r, pointId).value
+}
+
+/**
+ * 同一行里 N 与 kPa 的一对读数，二者必须出自同一枚选点：
+ * 指定点位命中就用那一个点位，否则用该行压力最大的点位（与旧 pickPointValue 的退路一致）。
+ * 行里没有点位 ⇒ N 回 0、kPa 回 null（kPa 没有「0」这个兜底含义，缺值只以 null 表达）。
+ */
+export function pickPointReading(
+  r: { points?: TrendSourcePoint[] },
+  pointId?: string
+): { value: number; kpa: number | null } {
+  const pts = r.points || []
   if (pointId) {
-    const p = (r.points || []).find(pt => pt.pointId === pointId)
-    if (p) return p.pressureValue
+    const hit = pts.find(pt => pt.pointId === pointId)
+    // 命中指定点位时 N 逐字沿用旧口径（原样回那一点位的读数，含 0 与负值），本卡不动数值
+    if (hit) return { value: hit.pressureValue, kpa: hit.pressureKpa ?? null }
   }
-  let maxP = 0
-  for (const p of r.points || []) {
-    if (p.pressureValue > maxP) maxP = p.pressureValue
+  let rep: TrendSourcePoint | undefined
+  for (const p of pts) {
+    if (!rep || p.pressureValue > rep.pressureValue) rep = p
   }
-  return maxP
+  // 退路旧口径：从 0 起比，全行没有正读数就回 0（负读数不参与「取最大」），本卡同样不改数值
+  return { value: rep && rep.pressureValue > 0 ? rep.pressureValue : 0, kpa: rep ? rep.pressureKpa ?? null : null }
 }

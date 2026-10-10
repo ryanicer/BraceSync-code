@@ -198,19 +198,32 @@
                 <div class="page-card chart-card" v-loading="wearLoading">
                   <div class="chart-head">
                     <span class="page-card-title">压力趋势图</span>
-                    <el-radio-group v-model="wearRange" size="small" @change="onRangeChange">
-                      <el-radio-button :value="7">7 天</el-radio-button>
-                      <el-radio-button :value="14">14 天</el-radio-button>
-                      <el-radio-button :value="30">30 天</el-radio-button>
-                    </el-radio-group>
+                    <span class="chart-head-tools">
+                      <!-- T643：档位只改纵轴怎么写，不改后端给什么数 —— kPa 取日聚合里的后端派生值，
+                           本页零换算（选型 A）。切换不发请求，记忆键与实时监控页同一个（admin_monitor_unit）。 -->
+                      <span class="unit-seg" aria-label="压力单位">
+                        <span
+                          v-for="u in PRESSURE_UNITS"
+                          :key="u"
+                          :class="['unit-seg-btn', { 'unit-seg-active': unit === u }]"
+                          @click="switchUnit(u)"
+                        >{{ u }}</span>
+                      </span>
+                      <el-radio-group v-model="wearRange" size="small" @change="onRangeChange">
+                        <el-radio-button :value="7">7 天</el-radio-button>
+                        <el-radio-button :value="14">14 天</el-radio-button>
+                        <el-radio-button :value="30">30 天</el-radio-button>
+                      </el-radio-group>
+                    </span>
                   </div>
-                  <div v-if="!seriesIsEmpty(wearSeries)" class="chart-container">
+                  <div v-if="!seriesIsEmpty(wearSeries) && pressureAxisUsable" class="chart-container">
                     <Line :data="pressureChartData" :options="pressureOptions" />
                   </div>
-                  <el-empty v-else-if="!wearLoading" description="暂无日佩戴统计" :image-size="60" />
+                  <el-empty v-else-if="!wearLoading" :description="pressureEmptyText" :image-size="60" />
                   <div class="axis-note">
-                    纵轴 = 日均压力（N），横轴 = 日期（后端按 Asia/Shanghai 切日）。
-                    <span v-if="thresholds">虚线为压力上限线，当前取系统配置 {{ thresholds.pressureHighThresholdN }}N（PRD §7D.12，不写死数值）。</span>
+                    纵轴 = 日均压力（{{ axisUnitText(unit) }}），横轴 = 日期（后端按 Asia/Shanghai 切日）。
+                    <span v-if="unit === 'kPa'">压力上限线只有 N 口径（PRD §7D.12 未设 kPa 阈值键），kPa 档不画这条虚线。</span>
+                    <span v-else-if="thresholds">虚线为压力上限线，当前取系统配置 {{ thresholds.pressureHighThresholdN }}N（PRD §7D.12，不写死数值）。</span>
                     <span v-else>虚线为压力上限线，取值来自系统配置（PRD §7D.12），不写死数值。</span>
                   </div>
                 </div>
@@ -360,7 +373,10 @@ import {
   Tooltip, Legend, Filler, type ChartData, type ChartOptions,
 } from 'chart.js'
 import { Line, Bar } from 'vue-chartjs'
-import { alertTypeLabel, areaLabel, feelingLevelLabel, userErrorCopy } from '@bracesync/shared-utils'
+import {
+  alertTypeLabel, areaLabel, feelingLevelLabel, userErrorCopy,
+  AREA_MISSING_HINT, PRESSURE_UNITS, axisUnitText, type PressureUnit,
+} from '@bracesync/shared-utils'
 import type { Advice, Alert, FeelingLog, HealthReport, OrthosisPlan, Patient } from '@bracesync/shared-types'
 import {
   fetchPatients, fetchPatientDetail, fetchTeams, fetchAlerts, fetchSystemSettings,
@@ -374,6 +390,7 @@ import {
   alignWearSeries, constantLine, rangeForDays, seriesIsEmpty,
   type DailyWearDay, type WearRangeDays, type WearSeries,
 } from '../../utils/workbenchData'
+import { persistUnit, readStoredUnit } from '../../utils/unitPref'
 import { formatCstDateTime } from '../../utils/formatTime'
 import { canSaveOrthosisPlan, DOCTOR_ONLY_HINT } from '../../utils/doctorOnlyAccess'
 import { useAuthStore } from '../../stores/auth'
@@ -415,6 +432,8 @@ type PatientRow = Patient & { teamName?: string | null }
 const profile = ref<PatientRow | null>(null)
 const wearRange = ref<WearRangeDays>(7)
 const wearRows = ref<DailyWearDay[]>([])
+/** T643：压力趋势图的显示档位。与实时监控页共用同一枚本地记忆键（裁定 e：只写 localStorage，不发请求、不写服务端字段） */
+const unit = ref<PressureUnit>(readStoredUnit())
 const wearLoading = ref(false)
 const wsAlerts = ref<Alert[]>([])
 const alertTotal = ref(0)
@@ -597,26 +616,57 @@ function onRangeChange() {
 
 const wearSeries = computed<WearSeries>(() => alignWearSeries(wearRows.value, rangeForDays(wearRange.value)))
 
+/**
+ * T513 双单位（裁定 e）：切档只改显示档并写本地记忆，不重新请求、不写任何服务端字段。
+ * 与实时监控页共用 admin_monitor_unit，两页档位一致（同一台管理员机器只该有一个偏好）。
+ */
+function switchUnit(next: PressureUnit) {
+  if (unit.value === next) return
+  unit.value = next
+  persistUnit(next)
+}
+
+const isKpaAxis = computed(() => unit.value === 'kPa')
+
+/**
+ * kPa 档的数据面一律取后端派生值（选型 A，本页零换算）。
+ * 逐日 null 只是「那天不可换算」，由 spanGaps: false 断线；
+ * 整条全 null（设备面积未配置）就不画图，改出面积提示 —— fail-closed，不许画一条 0 线冒充有数。
+ */
+const pressureAxisUsable = computed(
+  () => !isKpaAxis.value || wearSeries.value.avgPressureKpa.some((v) => typeof v === 'number'),
+)
+
+const pressureEmptyText = computed(() =>
+  isKpaAxis.value && !pressureAxisUsable.value ? AREA_MISSING_HINT : '暂无日佩戴统计',
+)
+
 const pressureChartData = computed<ChartData<'line'>>(() => ({
   labels: wearSeries.value.dates,
   datasets: [
     {
-      label: '日均压力（N）',
-      data: wearSeries.value.avgPressure,
+      label: `日均压力（${axisUnitText(unit.value)}）`,
+      data: isKpaAxis.value ? wearSeries.value.avgPressureKpa : wearSeries.value.avgPressure,
       borderColor: '#409eff',
       backgroundColor: 'rgba(64, 158, 255, 0.12)',
       fill: true,
       tension: 0.25,
       spanGaps: false,
     },
-    {
-      label: `压力上限线（${thresholds.value?.pressureHighThresholdN ?? '—'}N）`,
-      data: constantLine(thresholds.value?.pressureHighThresholdN ?? 0, wearSeries.value.dates.length),
-      borderColor: '#f56c6c',
-      borderDash: [6, 4],
-      pointRadius: 0,
-      fill: false,
-    },
+    // 压力上限线恒 N：PRD §7D.12 只配 N 口径阈值，后端不下发 kPa 阈值键。
+    // 前端不许自算第二套口径（选型 A）⇒ kPa 档整条线不画，原因写在轴注里。
+    ...(isKpaAxis.value
+      ? []
+      : [
+          {
+            label: `压力上限线（${thresholds.value?.pressureHighThresholdN ?? '—'}N）`,
+            data: constantLine(thresholds.value?.pressureHighThresholdN ?? 0, wearSeries.value.dates.length),
+            borderColor: '#f56c6c',
+            borderDash: [6, 4],
+            pointRadius: 0,
+            fill: false,
+          },
+        ]),
   ],
 }))
 
@@ -644,12 +694,12 @@ const wearChartData = computed(() => ({
   ],
 }) as unknown as ChartData<'bar'>)
 
-const pressureOptions: ChartOptions<'line'> = {
+const pressureOptions = computed<ChartOptions<'line'>>(() => ({
   responsive: true,
   maintainAspectRatio: false,
   plugins: { legend: { position: 'bottom' } },
-  scales: { y: { beginAtZero: false, title: { display: true, text: 'N' } } },
-}
+  scales: { y: { beginAtZero: false, title: { display: true, text: axisUnitText(unit.value) } } },
+}))
 
 const wearOptions: ChartOptions<'bar'> = {
   responsive: true,
@@ -952,6 +1002,32 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+.chart-head-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+/* T643：档位切换控件与实时监控页同一套视觉（本页 scoped，样式各页自带） */
+.unit-seg {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 2px;
+  gap: 1px;
+  flex: none;
+}
+.unit-seg-btn {
+  padding: 3px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #666;
+  user-select: none;
+}
+.unit-seg-active {
+  background: #1a6db5;
+  color: #fff;
 }
 .chart-unit {
   font-size: 12px;
