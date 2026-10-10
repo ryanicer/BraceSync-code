@@ -172,7 +172,8 @@ func main() {
 	// T076：患者日佩戴聚合端点（数据源 daily_wear_stats，患者自查 + admin 任意）
 	// T366：第二参数注入 pressure_records 明细佐证源，用于给无聚合印章的行判 corroborated / unsupported
 	// T411：第三参数注入 sys_configs 假设值（佩戴阈值 + 采集间隔），供口径代次复算使用
-	dailyWearSvc := service.NewDailyWearService(rollupRepo, repo.NewRecordRepo(pool), configRepo)
+	// T599：第四参数注入 rollupRepo（alerts 逐日计数），异常数读时现算、与异常报告面同源
+	dailyWearSvc := service.NewDailyWearService(rollupRepo, repo.NewRecordRepo(pool), configRepo, rollupRepo)
 	h.SetDailyWearQuerier(dailyWearSvc)
 
 	router := h.Router()

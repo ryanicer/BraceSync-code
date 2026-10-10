@@ -301,7 +301,7 @@ func newDailyWearStatsTestRow(pid, dateCST string, wearMin, frameCount, abnormal
 // newDailyWearSvcWithNow 装配带 fake now 的 DailyWearService
 // detail 传 nil = 不注入明细佐证源：T366 之后无印章的行会判 unsupported（既有断言不碰来源档）
 func newDailyWearSvcWithNow(store repo.DailyWearStatsStore, now time.Time) *DailyWearService {
-	svc := NewDailyWearService(store, nil, nil)
+	svc := NewDailyWearService(store, nil, nil, nil)
 	svc.now = func() time.Time { return now }
 	return svc
 }

@@ -155,6 +155,7 @@ func TestT411ServiceUsesConfiguredAssumptions(t *testing.T) {
 	svc := NewDailyWearService(
 		&fakeDailyWearStore{rows: []model.DailyWearStats{t411LegacyRow}},
 		src, &fakeWearConfig{wearingN: 0.4, interval: 7},
+		nil,
 	)
 	svc.now = func() time.Time { return time.Date(2026, 9, 24, 10, 0, 0, 0, model.CSTZone()) }
 
@@ -177,7 +178,7 @@ func TestT411ServiceUsesConfiguredAssumptions(t *testing.T) {
 func TestT411CorroboratedRowCanStillBeUnattributed(t *testing.T) {
 	ctx := context.Background()
 	src := &fakeDailyWearSource{details: map[string]repo.WearDayDetail{"2026-09-22": t411Detail600}}
-	svc := NewDailyWearService(&fakeDailyWearStore{rows: []model.DailyWearStats{t411LegacyRow}}, src, nil)
+	svc := NewDailyWearService(&fakeDailyWearStore{rows: []model.DailyWearStats{t411LegacyRow}}, src, nil, nil)
 	svc.now = func() time.Time { return time.Date(2026, 9, 24, 10, 0, 0, 0, model.CSTZone()) }
 
 	list, appErr := svc.GetDailyWear(ctx, "P1", "2026-09-22", "2026-09-22")
@@ -194,7 +195,7 @@ func TestT411CorroboratedRowCanStillBeUnattributed(t *testing.T) {
 func TestT411GenerationSerializesExplicitly(t *testing.T) {
 	ctx := context.Background()
 	svc := NewDailyWearService(
-		&fakeDailyWearStore{rows: []model.DailyWearStats{t411LegacyRow}}, nil, nil)
+		&fakeDailyWearStore{rows: []model.DailyWearStats{t411LegacyRow}}, nil, nil, nil)
 	svc.now = func() time.Time { return time.Date(2026, 9, 24, 10, 0, 0, 0, model.CSTZone()) }
 
 	list, appErr := svc.GetDailyWear(ctx, "P1", "2026-09-22", "2026-09-22")
