@@ -480,9 +480,10 @@ func (s *RecordService) getHistoryBuckets(ctx context.Context, patientID, interv
 		return nil, model.ErrInternal("query history buckets: %v", err)
 	}
 	th := s.pressureThresholds(ctx)
+	areaCm2 := contactAreaForPatient(ctx, s.devices, patientID)
 	list := make([]model.PressureRecordDTO, 0, len(records))
 	for i := range records {
-		list = append(list, s.calibratedRecordDTO(ctx, th, records[i]))
+		list = append(list, s.calibratedRecordDTO(ctx, th, areaCm2, records[i]))
 	}
 	// 桶模式不分页：page 恒 1、pageSize 恒桶数，total 是桶数（不是帧数）
 	return &model.HistoryPage{List: list, Total: total, Page: 1, PageSize: len(list)}, nil
@@ -504,20 +505,42 @@ func (s *RecordService) GetHistory(ctx context.Context, patientID, period, date,
 		return nil, model.ErrInternal("query history: %v", err)
 	}
 	th := s.pressureThresholds(ctx)
+	areaCm2 := contactAreaForPatient(ctx, s.devices, patientID)
 	list := make([]model.PressureRecordDTO, 0, len(records))
 	for i := range records {
-		list = append(list, s.calibratedRecordDTO(ctx, th, records[i]))
+		list = append(list, s.calibratedRecordDTO(ctx, th, areaCm2, records[i]))
 	}
 	return &model.HistoryPage{List: list, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-// calibratedRecordDTO 单条记录读侧校准：减偏移后构造 DTO 并回填 calibrated 标记
-func (s *RecordService) calibratedRecordDTO(ctx context.Context, th model.PressureThresholds, rec model.PressureRecord) model.PressureRecordDTO {
+// calibratedRecordDTO 单条记录读侧校准：减偏移后构造 DTO 并回填 calibrated 标记；
+// areaCm2 供逐点 kPa 展示档派生（T643 A 路，同一次换算喂给整页记录）
+func (s *RecordService) calibratedRecordDTO(ctx context.Context, th model.PressureThresholds, areaCm2 *float64, rec model.PressureRecord) model.PressureRecordDTO {
 	res := s.calibrate(ctx, rec.DeviceID, rec.Points)
-	dto := rec.ToDTO(th)
-	dto.Points = model.BuildSensorPoints(res.Points, th)
+	dto := rec.ToDTO(th, areaCm2)
+	dto.Points = model.BuildSensorPoints(res.Points, th, areaCm2)
 	dto.Calibrated = res.Applied
 	return dto
+}
+
+// contactAreaForPatient T643 A 路：取该患者当前绑定设备的有效受压面积（devices.contact_area_cm2），
+// realtime 快照的 contactAreaCm2、历史逐点 kPa、日佩戴逐行 kPa 共用这一枚来源与这一个查询。
+// 未注入 devices / 未绑定 / 未配置 / 查询失败一律回 nil，让 kPa 档 fail-closed 成 JSON null（前端「--」）；
+// 🔴 不回后台默认 0.64 补位，也不因面积读不到而把整条读路判失败。
+func contactAreaForPatient(ctx context.Context, devices repo.DeviceStore, patientID string) *float64 {
+	if devices == nil || patientID == "" {
+		return nil
+	}
+	_, _, areaCm2, exists, err := devices.GetDeviceByPatient(ctx, patientID)
+	if err != nil {
+		log.Warn().Err(err).Str("patient_id", patientID).
+			Msg("kpa: contact area unreadable, display degrades to null")
+		return nil
+	}
+	if !exists {
+		return nil
+	}
+	return areaCm2
 }
 
 // GetRealtime 实时快照：DB 优先（pressure_records 最新行），无 DB reader 时走 Redis 回退
@@ -574,7 +597,7 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 	}
 
 	res := s.calibrate(ctx, deviceID, rec.Points)
-	snapshot.PressureRecords = []model.PressureRecordDTO{s.calibratedRecordDTO(ctx, th, rec)}
+	snapshot.PressureRecords = []model.PressureRecordDTO{s.calibratedRecordDTO(ctx, th, areaCm2, rec)}
 	snapshot.PressureHeatmap = model.BuildHeatmap(res.Points, areaCm2)
 
 	// 一次性读 stat:today：wear_minutes / max_pressure / max_point / abnormal_count
@@ -662,7 +685,7 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 					DeviceID:   rf.DeviceID,
 					PatientID:  rf.PatientID,
 					Timestamp:  rf.Timestamp.UTC().Format(time.RFC3339),
-					Points:     model.BuildSensorPoints(res.Points, th),
+					Points:     model.BuildSensorPoints(res.Points, th, areaCm2),
 					UploadTime: rf.UploadTime.UTC().Format(time.RFC3339),
 					Calibrated: res.Applied,
 					// T366：与 DB 分支同口径的 raw 峰值（Redis 无库侧生成列，按 greatest(p01..p20) 现算）
@@ -871,11 +894,18 @@ type DailyWearService struct {
 	// configs T411 复算假设来源（sys_configs 的佩戴阈值 + 采集间隔）。
 	// nil = 未注入 ⇒ 回退 model.WearingThresholdN / repo.DefaultIntervalMinutes，并把回退值随行下发。
 	configs repo.WearRecomputeConfig
+	// devices T643 A 路 kPa 展示档的分母来源（devices.contact_area_cm2，只读）。
+	// nil = 未注入 ⇒ 逐行 kPa 下发 null（fail-closed，与面积未配置同形），不影响 N 值那两列。
+	devices repo.DeviceStore
 	// abnormal T599 异常数现算源：与异常报告面同源同窗同分桶的逐日告警计数。
 	// nil = 未注入（仅测试/降级场景）⇒ 回退表内 stored abnormal_count（T599 之前的行为）。
 	abnormal repo.AbnormalCountSource
 	now      func() time.Time
 }
+
+// SetDeviceStore 注入设备面积只读源（T643 A 路：日佩戴逐行 kPa 与 realtime/历史同源）。
+// 走 setter 而非第 5 枚 ctor 参数：T599 刚把 ctor 扩到四参数，再改签名会打到他人本轮的测试调用点。
+func (s *DailyWearService) SetDeviceStore(d repo.DeviceStore) { s.devices = d }
 
 // NewDailyWearService 组装 DailyWearService
 // store 注入 RollupRepo；detail 注入 RecordRepo（明细佐证 + 复算输入，可为 nil）；
@@ -1060,6 +1090,10 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 	assumedN, assumedInterval := s.recomputeAssumptions(ctx)
 	dayDetails := s.wearDetailByDay(ctx, patientID, fromUTC, toUTC, assumedN)
 
+	// T643 A 路：整趟查询共用一枚面积（与 realtime / 历史同源的 devices.contact_area_cm2），
+	// 逐行 avg/max 的 kPa 由它派生；读不到就是 null，不补默认面积。
+	areaCm2 := contactAreaForPatient(ctx, s.devices, patientID)
+
 	// T599：异常数现算（与异常报告面同源同窗同分桶），表内 stored abnormal_count 不再作为读侧真相。
 	// nil = 源未注入或查询失败 ⇒ 回退表内值（可用性优先，失败有 warn 日志；回退态即 T599 之前的行为）。
 	abnByDay := s.abnormalCounts(ctx, patientID, fromUTC, toUTC)
@@ -1098,6 +1132,8 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 			DetailFrameCount: detail,
 			WearGeneration:   generation,
 			WearRecompute:    genCheck,
+			AvgPressureKpa:   model.KpaFromN(float64(r.AvgPressure), areaCm2),
+			MaxPressureKpa:   model.KpaFromN(float64(r.MaxPressure), areaCm2),
 		}
 		if r.HasRollupStamp() {
 			agg := r.AggregatedAt.UTC().Format(time.RFC3339)
@@ -1145,6 +1181,9 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 				DetailFrameCount: detail,
 				WearGeneration:   generation,
 				WearRecompute:    genCheck,
+				// T643：与行上两枚 0 N 值同源派生（面积读不到仍回 null），不给 0 N 配一个「--」
+				AvgPressureKpa: model.KpaFromN(float64(zeroRow.AvgPressure), areaCm2),
+				MaxPressureKpa: model.KpaFromN(float64(zeroRow.MaxPressure), areaCm2),
 			})
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Date < out[j].Date })
