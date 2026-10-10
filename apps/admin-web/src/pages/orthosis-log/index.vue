@@ -331,6 +331,7 @@ import {
   type DailyWearDay, type WearRangeDays, type WearSeries,
 } from '../../utils/workbenchData'
 import { persistUnit, readStoredUnit } from '../../utils/unitPref'
+import { formatCstDateTime } from '../../utils/formatTime'
 import { canSaveOrthosisPlan, DOCTOR_ONLY_HINT } from '../../utils/doctorOnlyAccess'
 import { useAuthStore } from '../../stores/auth'
 
@@ -391,7 +392,8 @@ function feelingLabel(feeling: FeelingLog['feeling']): string {
 }
 
 function formatDateTime(iso: string): string {
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`
+  // T597：东八区公共出口（本页实测现场：UTC 串切片把 12:11 显示成 04:11）
+  return formatCstDateTime(iso)
 }
 
 async function loadLogs() {

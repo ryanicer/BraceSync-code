@@ -244,6 +244,7 @@ import { ElMessage } from 'element-plus'
 import { DEFAULT_THRESHOLDS } from '@bracesync/constants'
 import type { NotifyRule, NotificationRecord, NotifyChannel, NotifyTarget, AlertType } from '@bracesync/shared-types'
 import { alertTypeLabel, userErrorCopy } from '@bracesync/shared-utils'
+import { formatCstMonthDayTime } from '../../utils/formatTime'
 import {
   fetchSystemSettings, saveSystemSettingsApi, fetchNotifyRules,
   updateNotifyRuleApi, fetchNotificationLogs, patientNameOf, fetchAuditLogsApi,
@@ -313,7 +314,8 @@ function logStatusType(status: NotificationRecord['status']): 'info' | 'success'
 }
 
 function formatTime(iso: string): string {
-  return `${iso.slice(5, 10)} ${iso.slice(11, 16)}`
+  // T597：东八区公共出口（原 UTC 串切片早 8 小时）
+  return formatCstMonthDayTime(iso)
 }
 
 // ===== 操作日志（T253-12.3） =====
