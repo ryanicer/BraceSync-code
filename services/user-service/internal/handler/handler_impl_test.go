@@ -77,28 +77,33 @@ type fakeStore struct {
 	teamsErr           error
 	teamExists         bool
 	teamErr            error
-	doctors            []repo.DoctorRow
-	doctorsErr         error
-	techs              []repo.TechnicianRow
-	techTotal          int64
-	techsErr           error
-	teamTechs          []repo.TechnicianRow
-	teamTechsErr       error
-	tech               *repo.TechnicianRow
-	techErr            error
-	createdTech        *repo.TechnicianRow
-	createErr          error
-	updatedTech        *repo.TechnicianRow
-	updateErr          error
-	toggleExists       bool
-	toggleErr          error
-	phoneTaken         bool
-	takenErr           error
-	feedbacks          []repo.FeedbackRow
-	feedbacksErr       error
-	feedbackIn         repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
-	feedbackID         int64                    // T311：CreateFeedback 返回的自增 id
-	feedbackErr        error                    // T311：CreateFeedback 注入错误
+	// teamType T627 方案乙：TeamTypeOf 的返回值（技师侧写判据读它）。
+	// 零值是空串 = 「无类型」，判据按拒绝处理 ⇒ 想测通路的用例必须显式给一侧。
+	teamType          string
+	lastTeamTypeQuery string
+	doctors           []repo.DoctorRow
+	doctorsErr        error
+	techs             []repo.TechnicianRow
+	techTotal         int64
+	techsErr          error
+	lastTechTeamType  string
+	teamTechs         []repo.TechnicianRow
+	teamTechsErr      error
+	tech              *repo.TechnicianRow
+	techErr           error
+	createdTech       *repo.TechnicianRow
+	createErr         error
+	updatedTech       *repo.TechnicianRow
+	updateErr         error
+	toggleExists      bool
+	toggleErr         error
+	phoneTaken        bool
+	takenErr          error
+	feedbacks         []repo.FeedbackRow
+	feedbacksErr      error
+	feedbackIn        repo.FeedbackCreateInput // T311：CreateFeedback 落库入参
+	feedbackID        int64                    // T311：CreateFeedback 返回的自增 id
+	feedbackErr       error                    // T311：CreateFeedback 注入错误
 	// T378 反馈域读写归属：列表/统计条收到的团队范围、写前的只读探测计数、写调用计数
 	lastFeedbackListScope  repo.FeedbackScope
 	lastFeedbackStatsScope repo.FeedbackScope
@@ -119,7 +124,26 @@ type fakeStore struct {
 	latestErr              error
 	createdPlan            *repo.OrthosisPlanRow
 	createPlanEr           error
-	createPlanCalls        int // T373：CreatePlan 被调次数（跨团队必须为 0）
+	createPlanCalls        int                // T373：CreatePlan 被调次数（跨团队必须为 0）
+	advices                []repo.AdviceRow   // T641：ListAdvice 出参
+	advicesErr             error              // T641：ListAdvice 注入错误
+	adviceListCalls        int                // T641：跨团队/越权读必须在触库前被拦掉，此计数须保持 0
+	createdAdvice          *repo.AdviceRow    // T641：CreateAdvice 回读行
+	createAdviceErr        error              // T641：CreateAdvice 注入错误
+	createAdviceCalls      int                // T641：跨团队写时此计数须保持 0
+	updatedAdvice          *repo.AdviceRow    // T641：UpdateAdvice 回读行（nil = 「非本人所写 / 不存在」合一）
+	updateAdviceErr        error              // T641：UpdateAdvice 注入错误
+	deleteAdviceOK         bool               // T641：DeleteAdvice 返回值
+	deleteAdviceErr        error              // T641：DeleteAdvice 注入错误
+	updateAdviceCalls      int                // T641：编辑写次计数（越权须保持 0）
+	deleteAdviceCalls      int                // T641：删除写次计数（越权须保持 0）
+	careTeamRows           []repo.CareTeamRow // T641：CareTeamByPatient 出参
+	careTeamErr            error              // T641：CareTeamByPatient 注入错误
+	careTeamCalls          int                // T641：患者团队读次计数
+	lastAdvicePatientID    string             // T641：最近一次建议域调用的 patientId
+	lastAdviceDoctorID     string             // T641：最近一次建议域调用的作者 doctorId（写侧必须来自服务端解析）
+	lastAdviceContent      string             // T641：最近一次建议域调用的正文
+	lastAdviceID           int64              // T641：最近一次编辑/删除的 adviceId
 	feelings               []repo.FeelingLogRow
 	feelingsErr            error
 	replyOK                bool
@@ -394,13 +418,18 @@ func (f *fakeStore) ListTeams(_ context.Context) ([]repo.TeamRow, error) { retur
 func (f *fakeStore) TeamExists(_ context.Context, _ string) (bool, error) {
 	return f.teamExists, f.teamErr
 }
+func (f *fakeStore) TeamTypeOf(_ context.Context, teamID string) (string, bool, error) {
+	f.lastTeamTypeQuery = teamID
+	return f.teamType, f.teamExists, f.teamErr
+}
 func (f *fakeStore) ListDoctors(_ context.Context) ([]repo.DoctorRow, error) {
 	return f.doctors, f.doctorsErr
 }
 func (f *fakeStore) ListDoctorsByTeam(_ context.Context, _ string) ([]repo.DoctorRow, error) {
 	return f.doctors, f.doctorsErr
 }
-func (f *fakeStore) ListTechnicians(_ context.Context, _, _ int) ([]repo.TechnicianRow, int64, error) {
+func (f *fakeStore) ListTechnicians(_ context.Context, _, _ int, teamType string) ([]repo.TechnicianRow, int64, error) {
+	f.lastTechTeamType = teamType // T627 方案乙：筛子有没有真下到 store，用这一格证
 	return f.techs, f.techTotal, f.techsErr
 }
 func (f *fakeStore) ListTechniciansByTeam(_ context.Context, _ string) ([]repo.TechnicianRow, error) {
@@ -504,6 +533,38 @@ func (f *fakeStore) CreatePlan(_ context.Context, _, _, _, version string) (*rep
 		f.createdPlan.Version = version
 	}
 	return f.createdPlan, f.createPlanEr
+}
+
+// ── T641 康复建议（advice_logs）──
+func (f *fakeStore) CreateAdvice(_ context.Context, patientID, doctorID, content string) (*repo.AdviceRow, error) {
+	f.createAdviceCalls++ // 越权写必须在触库前被拦掉，此计数须保持 0
+	f.lastAdvicePatientID = patientID
+	f.lastAdviceDoctorID = doctorID
+	f.lastAdviceContent = content
+	return f.createdAdvice, f.createAdviceErr
+}
+func (f *fakeStore) ListAdvice(_ context.Context, patientID string) ([]repo.AdviceRow, error) {
+	f.adviceListCalls++
+	f.lastAdvicePatientID = patientID
+	return f.advices, f.advicesErr
+}
+func (f *fakeStore) UpdateAdvice(_ context.Context, adviceID int64, doctorID, content string) (*repo.AdviceRow, error) {
+	f.updateAdviceCalls++
+	f.lastAdviceID = adviceID
+	f.lastAdviceDoctorID = doctorID
+	f.lastAdviceContent = content
+	return f.updatedAdvice, f.updateAdviceErr
+}
+func (f *fakeStore) DeleteAdvice(_ context.Context, adviceID int64, doctorID string) (bool, error) {
+	f.deleteAdviceCalls++
+	f.lastAdviceID = adviceID
+	f.lastAdviceDoctorID = doctorID
+	return f.deleteAdviceOK, f.deleteAdviceErr
+}
+func (f *fakeStore) CareTeamByPatient(_ context.Context, patientID string) ([]repo.CareTeamRow, error) {
+	f.careTeamCalls++
+	f.lastAdvicePatientID = patientID
+	return f.careTeamRows, f.careTeamErr
 }
 func (f *fakeStore) ListFeelingLogs(_ context.Context, patientID string) ([]repo.FeelingLogRow, error) {
 	f.feelingListCalls++ // T350 返工 D-2：越权读必须在触库前被拦掉
@@ -1310,9 +1371,9 @@ func TestListTeams(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.teams = []repo.TeamRow{
 		{TeamID: "TEAM01", Name: "一组", MemberCount: 2, PatientCount: 3, Leader: "D01", LeaderName: "医生甲",
-			Description: "脊柱侧弯保守组", Status: "active",
+			Description: "脊柱侧弯保守组", Status: "active", TeamType: "medical",
 			CreatedAt: time.Date(2026, 8, 3, 1, 2, 3, 0, time.UTC)},
-		{TeamID: "TEAM02", Name: "二组", MemberCount: 1, PatientCount: 1, Status: "active",
+		{TeamID: "TEAM02", Name: "二组", MemberCount: 1, PatientCount: 1, Status: "active", TeamType: "maintenance",
 			CreatedAt: time.Date(2026, 8, 4, 9, 8, 7, 0, time.UTC)}, // 无负责人
 	}
 	w, resp := e.do(http.MethodGet, "/api/v1/teams", nil, nil)
@@ -1335,10 +1396,22 @@ func TestListTeams(t *testing.T) {
 	// T337：description / status 同为契约 Team 声明列（详情一直有、列表此前漏带）
 	assert.JSONEq(t, `{"teamId":"TEAM02","name":"二组","memberCount":1,"patientCount":1,
 		"leader":null,"leaderName":null,"createdAt":"2026-08-04T09:08:07Z",
-		"description":"","status":"active"}`, string(items[1]))
+		"description":"","status":"active","teamType":"maintenance"}`, string(items[1]))
 	assert.JSONEq(t, `{"teamId":"TEAM01","name":"一组","memberCount":2,"patientCount":3,
 		"leader":"D01","leaderName":"医生甲","createdAt":"2026-08-03T01:02:03Z",
-		"description":"脊柱侧弯保守组","status":"active"}`, string(items[0]))
+		"description":"脊柱侧弯保守组","status":"active","teamType":"medical"}`, string(items[0]))
+
+	// T627 方案乙：?teamType= 是筛子，不带 = 两侧都出（前端团队管理页读全量、技师下拉只读 maintenance）
+	w, resp = e.do(http.MethodGet, "/api/v1/teams?teamType=maintenance", nil, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	list = nil
+	require.NoError(t, json.Unmarshal(resp.Data, &list))
+	require.Len(t, list, 1)
+	assert.Equal(t, "TEAM02", list[0].TeamID)
+	assert.Equal(t, "maintenance", list[0].TeamType)
+
+	w, _ = e.do(http.MethodGet, "/api/v1/teams?teamType=bogus", nil, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	e.store.teamsErr = errors.New("db")
 	w, _ = e.do(http.MethodGet, "/api/v1/teams", nil, nil)
@@ -1441,8 +1514,16 @@ func TestListTechnicians(t *testing.T) {
 	var page model.PageData
 	require.NoError(t, json.Unmarshal(resp.Data, &page))
 	assert.Equal(t, int64(1), page.Total)
+	assert.Empty(t, e.store.lastTechTeamType, "不带 teamType = 两侧都列（默认不收窄）")
+
+	// T627 方案乙：筛子要真的下到 store（列表是分页面，筛必须在 SQL 侧做，不能读回一页再筛）
+	w, _ = e.do(http.MethodGet, "/api/v1/technicians?teamType=maintenance", nil, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "maintenance", e.store.lastTechTeamType)
 
 	w, _ = e.do(http.MethodGet, "/api/v1/technicians?page=0", nil, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	w, _ = e.do(http.MethodGet, "/api/v1/technicians?teamType=bogus", nil, nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	e.store.techsErr = errors.New("db")
 	w, _ = e.do(http.MethodGet, "/api/v1/technicians", nil, nil)
@@ -1481,14 +1562,17 @@ func TestListTechniciansCarriesTeamName(t *testing.T) {
 func TestCreateTechnician(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.teamExists = true
-	e.store.createdTech = &repo.TechnicianRow{TechID: "TECH-NEW", Name: "新技师", TeamID: strPtr("TEAM01"), Status: "enabled", AuthStatus: "authorized"}
+	// T627 方案乙：新建技师的团队必须是维护班组（seed 面 TEAM04/05 那一族），医疗团队直接 400。
+	e.store.teamType = "maintenance"
+	e.store.createdTech = &repo.TechnicianRow{TechID: "TECH-NEW", Name: "新技师", TeamID: strPtr("TEAM04"), Status: "enabled", AuthStatus: "authorized"}
 
 	w, resp := e.do(http.MethodPost, "/api/v1/admin/technicians",
-		map[string]any{"name": "新技师", "phone": "13800001111", "teamId": "TEAM01"}, nil)
+		map[string]any{"name": "新技师", "phone": "13800001111", "teamId": "TEAM04"}, nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.NotEmpty(t, e.store.lastTechInput.TechID)
 	assert.NotEmpty(t, e.store.lastTechInput.PhoneHash)
 	require.NotEmpty(t, e.store.lastTechInput.PhoneEnc)
+	assert.Equal(t, "TEAM04", e.store.lastTeamTypeQuery, "侧别判据要真的问到这一枚团队，不是只看存在性")
 	var dto model.TechnicianDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &dto))
 	assert.Equal(t, "TECH-NEW", dto.TechID)
@@ -1511,6 +1595,21 @@ func TestCreateTechnician(t *testing.T) {
 		map[string]any{"name": "x", "phone": "13800001111", "teamId": "T"}, nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	e.store.teamErr = nil
+
+	// T627 方案乙 · I2 归属轴：团队存在但属医护侧 → 400（这一格是本卡判据本体）
+	e.store.teamType = "medical"
+	w, resp = e.do(http.MethodPost, "/api/v1/admin/technicians",
+		map[string]any{"name": "x", "phone": "13800001111", "teamId": "TEAM01"}, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+	assert.Equal(t, "TEAM01", e.store.lastTeamTypeQuery, "拦的就是那一枚被点名的团队")
+
+	// 类型未知（既不是 medical 也不是 maintenance）→ 同样 400：「无归类」不是后门（fail-closed）
+	e.store.teamType = ""
+	w, _ = e.do(http.MethodPost, "/api/v1/admin/technicians",
+		map[string]any{"name": "x", "phone": "13800001111", "teamId": "TEAM09"}, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	e.store.teamType = "maintenance"
 
 	// 手机号重复 → 409
 	e.store.phoneTaken = true
@@ -1615,6 +1714,32 @@ func TestUpdateTechnician(t *testing.T) {
 	w, _ = e.do(http.MethodPut, "/api/v1/admin/technicians/T1",
 		map[string]any{"name": "x", "teamId": "NOPE"}, nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	e.store.teamExists = true
+	e.store.updateErr = nil
+
+	// T627 方案乙 · 编辑腿：把归属改到医疗团队 → 400（侧别判据只在「真的在改归属」时咬）
+	e.store.tech = existing
+	e.store.updatedTech = existing
+	e.store.teamType = "medical"
+	w, resp = e.do(http.MethodPut, "/api/v1/admin/technicians/T1",
+		map[string]any{"name": "x", "teamId": "TEAM03"}, nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, model.CodeInvalidParam, resp.Code)
+
+	// 改到维护班组 → 200，且问的就是这一枚新团队
+	e.store.teamType = "maintenance"
+	w, _ = e.do(http.MethodPut, "/api/v1/admin/technicians/T1",
+		map[string]any{"name": "x", "teamId": "TEAM04"}, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "TEAM04", e.store.lastTeamTypeQuery)
+
+	// 存量行还挂在医疗团队：只改名/改号不许被侧别判据挡住（刷数脚本执行前这一批必须还能改）
+	e.store.teamType = "medical"
+	e.store.lastTeamTypeQuery = ""
+	w, _ = e.do(http.MethodPut, "/api/v1/admin/technicians/T1", map[string]any{"name": "只改名"}, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, e.store.lastTeamTypeQuery, "没带 teamId 就不该去问侧别")
+	e.store.teamType = "maintenance"
 
 	// body 非法 → 400
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/technicians/T1", strings.NewReader("{"))

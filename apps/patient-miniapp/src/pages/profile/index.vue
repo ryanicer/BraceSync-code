@@ -31,10 +31,11 @@
       <!-- T223 六项功能菜单（顺序/文案/图标对齐 profile.html） -->
       <view class="section">
         <view class="menu-group">
-          <view class="menu-item" @click="comingSoon">
-            <text class="menu-ic">👨‍⚕️</text>
-            <text class="menu-text">我的医生</text>
-            <text class="menu-sub">{{ doctorSubText }}</text>
+          <!-- T641：这一行整枚替换（入口命名 = 设计稿 §九 丙「康复建议」，稿面 advice.html 附注右列）。
+               随替换退场的还有原副文案组出的医护名 + 团队名：那正是 §八 要修的泄漏面，新页只出角色与职称。 -->
+          <view class="menu-item" @click="goAdvice">
+            <text class="menu-ic">🩺</text>
+            <text class="menu-text">康复建议</text>
             <text class="menu-arrow">›</text>
           </view>
           <view class="menu-item" @click="goDevice">
@@ -177,13 +178,9 @@ const metaText = computed(() => {
   return parts.join(' · ')
 })
 
-// 我的医生菜单副文案：医生名 + 团队名（原信息卡的医生/团队信息在此保留）
-const doctorSubText = computed(() => {
-  const name = profile.value?.doctorName
-  const team = profile.value?.teamName
-  if (name && team) return `${name} · ${team}`
-  return name || team || (profile.value?.teamId ? '已绑定' : '未绑定')
-})
+// T641：那一行的副文案（组出医护名与团队名）随入口一起退场——患者端此后不再在「我的」页
+// 展示任何医护姓名（设计稿 §八）。新页的成员行改由 /api/v1/patient/care-team 出角色 + 职称。
+// T646 收口后端：患者侧 profile 载荷中医护姓名两枚键值恒 null（weide-duty 2026-10-09 22:52 裁定甲）。
 
 const editSheetVisible = ref(false)
 const editNickname = ref('')
@@ -285,8 +282,9 @@ async function loadProfile() {
     profile.value = await getPatientProfile()
     logger.info('[T187] profile loaded', {
       patientId: profile.value.patientId,
-      hasTeam: !!profile.value.teamName,
-      hasDoctor: !!profile.value.doctorName,
+      // T646：这两枚布尔原来读的是姓名字段，现改读同源的标识（绑定态不变，姓名不进日志）
+      hasTeam: !!profile.value.teamId,
+      hasDoctor: !!profile.value.doctorId,
       hasDevice: !!profile.value.deviceId,
     })
   } catch (e: unknown) {
@@ -320,9 +318,10 @@ function goFeelings() {
   uni.navigateTo({ url: '/pages/feelings/index' })
 }
 
-function comingSoon() {
-  // 我的医生页未建：只呈现入口，不接坏链
-  uni.showToast({ title: '即将开放', icon: 'none' })
+function goAdvice() {
+  // T641：那一行原本是「点了给一句 toast」的占位，现在直连本页
+  // （非 tabBar 页，同 goFeelings 画法；占位函数本身随唯一消费者退场而删除）
+  uni.navigateTo({ url: '/pages/advice/index' })
 }
 
 function bindWechat() {

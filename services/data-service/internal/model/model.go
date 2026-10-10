@@ -39,6 +39,9 @@ type PressureThresholds struct {
 	HeatmapMaxN float64
 	// PressureHighN 压力偏高告警阈值（sys_configs: threshold_pressure_high，T203 后默认 5）
 	PressureHighN float64
+	// PressureLowN 压力低压边界（sys_configs: threshold_pressure_low，迁移 000021 后默认 1；
+	// 与 user-service 系统参数 / 告警页 Tab2 同键。T601：患者端 hero 正常范围文案的下边界来源）
+	PressureLowN float64
 }
 
 // DefaultPressureThresholds T203 ÷10 后默认口径（配置缺失/非法时兜底）
@@ -47,6 +50,7 @@ func DefaultPressureThresholds() PressureThresholds {
 		WearingN:      WearingThresholdN,
 		HeatmapMaxN:   6.0, // T203: 60 → 6
 		PressureHighN: 5.0, // T203: 45 → 5
+		PressureLowN:  1.0, // 迁移 000021 / seed 同值（T281 量纲修复后的默认）
 	}
 }
 
@@ -321,10 +325,14 @@ type SensorPoint struct {
 	Label         string  `json:"label"`
 	PressureValue float64 `json:"pressureValue"`
 	Status        string  `json:"status"`
+	// PressureKpa T643 A 路展示档：与热力图同源走 KpaFromN 在本响应内派生，不落库、不改 Status 分档
+	// （分档恒按 PressureValue，N）。nil = 面积未配置/非法，前端显示「--」，不用默认值补位。
+	PressureKpa *int `json:"pressureKpa"`
 }
 
-// BuildSensorPoints 将 20 点已校准值转为前端 SensorPoint 数组（阈值可配置，T173）
-func BuildSensorPoints(points [PointCount]float32, th PressureThresholds) []SensorPoint {
+// BuildSensorPoints 将 20 点已校准值转为前端 SensorPoint 数组（阈值可配置，T173）；
+// areaCm2 为设备有效受压面积（devices.contact_area_cm2，与 BuildHeatmap 同一枚来源），用于派生逐点 kPa 展示档。
+func BuildSensorPoints(points [PointCount]float32, th PressureThresholds, areaCm2 *float64) []SensorPoint {
 	out := make([]SensorPoint, PointCount)
 	for i, v := range points {
 		row, col, label := PointLabel(i)
@@ -335,6 +343,7 @@ func BuildSensorPoints(points [PointCount]float32, th PressureThresholds) []Sens
 			Label:         label,
 			PressureValue: float64(v),
 			Status:        PointStatus(v, th),
+			PressureKpa:   KpaFromN(float64(v), areaCm2),
 		}
 	}
 	return out
@@ -441,14 +450,15 @@ type PressureRecordDTO struct {
 	MaxPressure float32 `json:"maxPressure"`
 }
 
-// ToDTO 领域实体 → 前端 DTO（阈值可配置，T173；Calibrated 由读取侧按校准结果回填）
-func (r *PressureRecord) ToDTO(th PressureThresholds) PressureRecordDTO {
+// ToDTO 领域实体 → 前端 DTO（阈值可配置，T173；Calibrated 由读取侧按校准结果回填；
+// areaCm2 供逐点 kPa 展示档派生，T643 A 路）
+func (r *PressureRecord) ToDTO(th PressureThresholds, areaCm2 *float64) PressureRecordDTO {
 	return PressureRecordDTO{
 		RecordID:    fmt.Sprintf("%d", r.RecordID),
 		DeviceID:    r.DeviceID,
 		PatientID:   r.PatientID,
 		Timestamp:   r.Ts.UTC().Format(time.RFC3339),
-		Points:      BuildSensorPoints(r.Points, th),
+		Points:      BuildSensorPoints(r.Points, th, areaCm2),
 		UploadTime:  r.UploadTime.UTC().Format(time.RFC3339),
 		MaxPressure: r.MaxPressure,
 	}
@@ -581,6 +591,11 @@ type DailyWearDayDTO struct {
 	MaxPoint      string  `json:"maxPoint"`      // 最大点位（P01..P20，空串兜底）
 	FrameCount    int     `json:"frameCount"`    // 日帧总数
 	AbnormalCount int     `json:"abnormalCount"` // 日异常/告警数
+	// AvgPressureKpa / MaxPressureKpa T643 A 路展示档：与上面两枚 N 值同源于本行，读接口层用
+	// KpaFromN 派生（分母 devices.contact_area_cm2），不落库、不改聚合与告警判档（PRD 裁定四）。
+	// nil（JSON null）= 面积未配置或非法，前端显示「--」，不退 0 也不用默认 0.64 补位。
+	AvgPressureKpa *int `json:"avgPressureKpa"`
+	MaxPressureKpa *int `json:"maxPressureKpa"`
 	// ── T366 可解释性四字段（示例行与聚合行在读接口层可辨 + 可独立复算）──
 	Provenance string `json:"provenance"` // rollup | corroborated | unsupported
 	// DetailFrameCount 该患者该 CST 日 pressure_records 的**实际**明细帧数。
@@ -660,6 +675,9 @@ type RealtimeSnapshot struct {
 	// 供前端色阶上界与分级渲染用——写死常量会与 sys_configs 漂移（T203 前端即因写死 60/45 滞后一个量级）。
 	HeatmapMaxN   float64 `json:"heatmapMaxN"`
 	PressureHighN float64 `json:"pressureHighN"`
+	// PressureLowN 低压边界（T601）：hero「正常范围」文案的下边界，与 PressureHighN 同链
+	// （sys_configs threshold_pressure_low）——文案写死会与告警配置差一个量级（T601 现网 20-60 对 1-5）。
+	PressureLowN float64 `json:"pressureLowN"`
 	// T508 双单位（N/kPa）展示档：三字段全部同源于 device-service 写的 devices.contact_area_cm2，
 	// 只在本响应内派生，不落库、不进告警与聚合（PRD 裁定四）。
 	//   - ContactAreaCm2：当前绑定设备的面积；null = 未配置（前端「未配置面积，暂无法换算」)

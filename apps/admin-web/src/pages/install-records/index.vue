@@ -115,6 +115,7 @@ import { ElMessage } from 'element-plus'
 import type { CalibStatus, InstallRecordRow, InstallRecordDetail } from '@bracesync/shared-types'
 import { fetchInstallRecords, fetchInstallRecordDetail, patientNameOf, techNameOf } from '../../api'
 import { wifiStatusLabel, wifiStatusTagType } from '../../utils/wifiStatus'
+import { formatCstDateTime } from '../../utils/formatTime'
 
 const list = ref<InstallRecordRow[]>([])
 const total = ref(0)
@@ -151,7 +152,8 @@ function sensorId(index: number): string {
 }
 
 function formatTime(iso: string): string {
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`
+  // T597：东八区公共出口（原 UTC 串切片早 8 小时，且北京 00:00-07:59 的日期会切成前一天）
+  return formatCstDateTime(iso)
 }
 
 async function loadData() {

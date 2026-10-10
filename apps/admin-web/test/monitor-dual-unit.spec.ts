@@ -203,10 +203,20 @@ describe('四.9③：判档恒为 N，颜色/最大点/状态列不随档变', (
     expect(src).not.toMatch(/hmColor\([^)]*heatmapMaxKpa/)
   })
 
-  it('曲线纵轴与 tooltip 仍按 N（源码级：不接显示档）', () => {
+  // T513 期这条钉的是「曲线恒 N」（当时裁定纵轴不接显示档）。T643 / PRD V3.44 把实时曲线
+  // 纳入随档切换面 ⇒ 钉子换形不换职责：仍禁止页面自己算 kPa（kPa 只许来自快照派生字段）。
+  it('曲线纵轴/图例/tooltip 随档切换，N 档读数逐字不变（T643 取代 T513 的「曲线恒 N」）', () => {
     const src = srcOf('../src/pages/monitor/index.vue')
-    expect(src).toContain('label: (c) => `压力：${fmtN(Number(c.parsed.y))} N`')
-    expect(src).toContain('callback: (v) => `${fmtN(Number(v))}N`')
+    // kPa 腿（新增）
+    expect(src).toContain('`压力 (${axisUnitText(unit.value)})`')
+    expect(src).toContain('`压力：${fmtKpa(Number(c.parsed.y))} kPa`')
+    expect(src).toContain('`${fmtKpa(Number(v))}${axisUnitText(unit.value)}`')
+    // N 腿（改动前原文，逐字仍在 ⇒ 默认档读数不变）
+    expect(src).toContain('`压力：${fmtN(Number(c.parsed.y))} N`')
+    expect(src).toContain('`${fmtN(Number(v))}N`')
+    // 取数面：kPa 序列读的是帧上的后端派生值，不是页面换算结果
+    expect(src).toMatch(/d\.kpa/)
+    expect(src).not.toMatch(/mockKpaOf|contactAreaCm2|areaCm2/)
   })
 })
 

@@ -1,7 +1,7 @@
 // T467 患者档案删除（repo 侧纯函数判据，无库依赖）。
 //
 // 本文件守三件事，都是「真库跑不到、但一改就崩」的形状：
-//  1. 关联表白名单的字面锁 —— 15 张表一张不许少，尤其是三张「有 patient_id 但没外键」的
+//  1. 关联表白名单的字面锁 —— 16 张表一张不许少，尤其是三张「有 patient_id 但没外键」的
 //     （pressure_records / daily_wear_stats / device_bindings）。数据库拦不住它们，
 //     漏一张就是「删患者顺手留下一堆无主体的佩戴明细/日聚合/绑定历史」；
 //  2. 计数 SQL 的形状：一表一条 COUNT、患者号只走 $1 参数位，绝不拼串；
@@ -18,7 +18,7 @@ import (
 
 // TestT467_PatientRefTables_LiteralLock 白名单逐字锁：增删一张表、改动 hasFK 标记，这条先红。
 // hasFK 的真实依据见 scripts/db/migrations（000001:97/123/189/219/229/243/258/272/284、
-// 000003:13/48、000009:10 有 REFERENCES patients；后三张只有列没有外键）。
+// 000003:13/48、000009:10、000035:26 有 REFERENCES patients；后三张只有列没有外键）。
 func TestT467_PatientRefTables_LiteralLock(t *testing.T) {
 	assert.Equal(t, []patientRefTable{
 		{name: "devices", hasFK: true},
@@ -33,13 +33,14 @@ func TestT467_PatientRefTables_LiteralLock(t *testing.T) {
 		{name: "notification_records", hasFK: true},
 		{name: "quota_grants", hasFK: true},
 		{name: "review_records", hasFK: true},
+		{name: "advice_logs", hasFK: true},
 		{name: "pressure_records", hasFK: false},
 		{name: "daily_wear_stats", hasFK: false},
 		{name: "device_bindings", hasFK: false},
 	}, patientRefTables)
 
 	// 基数单独再锁一次：上面那张字面表被人整段替换时，这条给的是「少了哪一类」的读数
-	assert.Len(t, patientRefTables, 15)
+	assert.Len(t, patientRefTables, 16)
 	var noFK []string
 	for _, tbl := range patientRefTables {
 		if !tbl.hasFK {
@@ -55,7 +56,7 @@ func TestT467_PatientRefCountSQL_Shape(t *testing.T) {
 	sqlText := patientRefCountSQL()
 
 	assert.Equal(t, len(patientRefTables)-1, strings.Count(sqlText, " UNION ALL "),
-		"15 张表汇成一条语句 = 14 个 UNION ALL，缺一张就少一个")
+		"16 张表汇成一条语句 = 15 个 UNION ALL，缺一张就少一个")
 	assert.Equal(t, len(patientRefTables), strings.Count(sqlText, "patient_id = $1"),
 		"患者号必须逐表走 $1 参数位（不拼串）")
 	assert.NotContains(t, sqlText, ";", "不得有多语句拼接")

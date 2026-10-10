@@ -42,8 +42,9 @@ test.describe('团队管理 · 列表渲染（T270 A-FLOW-14）', () => {
     await expect(page.locator('.page-toolbar').getByRole('button', { name: '新建团队' })).toBeVisible()
   })
 
-  test('表头八列（顺序即契约）', async ({ page }) => {
-    expect(await headers(page)).toEqual(['团队编号', '团队名称', '负责人', '成员数', '管理患者数', '创建时间', '状态', '操作'])
+  test('表头九列（顺序即契约）', async ({ page }) => {
+    // T627 方案乙：「类型」插在「团队名称」之后 ⇒ 其后各列下标整体 +1
+    expect(await headers(page)).toEqual(['团队编号', '团队名称', '类型', '负责人', '成员数', '管理患者数', '创建时间', '状态', '操作'])
   })
 
   test('逐行格式：编号/名称非空、计数为整数、状态文案与 tag 颜色一致、操作三按钮', async ({ page }) => {
@@ -54,12 +55,14 @@ test.describe('团队管理 · 列表渲染（T270 A-FLOW-14）', () => {
     for (let i = 0; i < count; i++) {
       const row = rows.nth(i)
       const cells = await rowCells(row)
-      expect(cells, `第 ${i + 1} 行须有 8 列`).toHaveLength(8)
-      const [teamId, name, leader, memberCount, patientCount, createdAt, status] = cells
+      expect(cells, `第 ${i + 1} 行须有 9 列`).toHaveLength(9)
+      const [teamId, name, teamType, leader, memberCount, patientCount, createdAt, status] = cells
       const where = `第 ${i + 1} 行（${teamId || '(空)'}）`
 
       expect(teamId, `${where} 团队编号非空`).not.toBe('')
       expect(name, `${where} 团队名称非空`).not.toBe('')
+      // T627：类型列只认两值（库里是 CHECK 收两枚字面量）；「未知团队」是读侧兜底文案，不该在列表出现
+      expect(['医护团队', '维护班组'], `${where} 类型文案`).toContain(teamType)
       expect(memberCount, `${where} 成员数须为整数`).toMatch(/^\d+$/)
       expect(patientCount, `${where} 管理患者数须为整数`).toMatch(/^\d+$/)
       // 未落地列允许 '-'，但不许漏 undefined/NaN
@@ -67,12 +70,12 @@ test.describe('团队管理 · 列表渲染（T270 A-FLOW-14）', () => {
         expect(value, `${where} ${label} 不得是 undefined/NaN`).not.toMatch(/undefined|NaN/)
       }
       expect(['活跃', '已删除'], `${where} 状态文案`).toContain(status)
-      const tagClass = (await row.locator('td').nth(6).locator('.el-tag').getAttribute('class')) ?? ''
+      const tagClass = (await row.locator('td').nth(7).locator('.el-tag').getAttribute('class')) ?? ''
       if (status === '活跃') expect(tagClass, '活跃须绿标').toContain('el-tag--success')
       else expect(tagClass, '已删除须灰标').toContain('el-tag--info')
 
       // 操作列：成员 / 编辑 / 删除 都在（🔴 不点删除）
-      const ops = row.locator('td').nth(7)
+      const ops = row.locator('td').nth(8)
       for (const btn of ['成员', '编辑', '删除']) {
         await expect(ops.getByRole('button', { name: btn }), `${where} 缺操作按钮「${btn}」`).toBeVisible()
       }

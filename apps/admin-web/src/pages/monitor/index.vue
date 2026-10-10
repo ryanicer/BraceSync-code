@@ -94,13 +94,16 @@
         </div>
         <div class="chart-container">
           <Line
-            v-if="chartReady"
+            v-if="chartReady && chartAxisUsable"
             ref="chartRef"
             :data="chartData"
             :options="chartOptions"
           />
           <!-- T322：曲线只画本轮真实帧，开局/无帧/过期都要说清楚，不给「有曲线」的错觉 -->
-          <div v-if="chartNotice" class="chart-empty">{{ chartNotice }}</div>
+          <!-- T643：kPa 档轴建不起来（后端一个派生值都没下发＝面积未配置）同样要显式说明，不拿 N 值凑刻度 -->
+          <div v-if="chartNotice || !chartAxisUsable" class="chart-empty">
+            {{ chartAxisUsable ? chartNotice : AREA_MISSING_HINT }}
+          </div>
         </div>
       </div>
 
@@ -248,6 +251,8 @@ import {
   AREA_MISSING_HINT,
   PRESSURE_UNITS,
   areaHintVisible,
+  axisUnitText,
+  kpaObservedMax,
   unitNumberText,
   unitValueText,
   type PressureUnit,
@@ -279,7 +284,7 @@ const BLUE_ALPHA = 'rgba(26,109,181,0.08)'
 
 // ====== 类型辅助 ======
 interface PatientOption { patientId: string; name: string; deviceId: string | null }
-type HistoryPoint = { t: string; v: number }
+type HistoryPoint = { t: string; v: number; kpa: number | null }
 interface TodayPeak { value: number; pointId: string; label: string; time: string; dateKey: string }
 
 // ====== 状态 ======
@@ -484,12 +489,17 @@ function eventTypeClass(type: string): string {
 }
 
 // ====== Chart.js 配置 ======
+// T643（PRD V3.44）：实时压力曲线的纵轴随 N/kPa 档位切换。轴上的每个 kPa 数都只能是
+// 后端在同一快照里派生好的值（pressureHeatmap[].pressureKpa / heatmapMaxKpa），
+// 本页不出现 N 到 kPa 的算式；一个可用派生值都没有 ⇒ 轴建不起来，走 fail-closed 提示。
+const isKpaAxis = computed(() => unit.value === 'kPa')
+
 const chartData = computed<ChartData<'line'>>(() => ({
   labels: pressureHistory.value.map((d) => d.t),
   datasets: [
     {
-      label: '压力 (N)',
-      data: pressureHistory.value.map((d) => d.v),
+      label: `压力 (${axisUnitText(unit.value)})`,
+      data: isKpaAxis.value ? pressureHistory.value.map((d) => d.kpa) : pressureHistory.value.map((d) => d.v),
       borderColor: BLUE,
       backgroundColor: BLUE_ALPHA,
       fill: true,
@@ -508,12 +518,27 @@ function niceStep(span: number): number {
   return Math.ceil(raw / mag) * mag
 }
 
+/** kPa 档的刻度与 tooltip 数值文本：整数就照写，小数留 1 位（呈现口径，不是换算） */
+function fmtKpa(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1)
+}
+
 // 数据超出下发量程时抬高纵轴，否则曲线会被裁到画布外（Chart.js 不画越界段）
-const chartYMax = computed(() => {
+// null 只可能出现在 kPa 档且后端无可用派生值 ⇒ chartAxisUsable 判假，页面出提示不画线
+const chartYMax = computed<number | null>(() => {
+  if (isKpaAxis.value) {
+    const observed = kpaObservedMax(
+      pressureHistory.value.map((d) => d.kpa),
+      snapshot.value?.heatmapMaxKpa ?? null,
+    )
+    return observed === null ? null : niceStep(observed) * 3
+  }
   const dataMax = pressureHistory.value.reduce((m, d) => Math.max(m, d.v), 0)
   const ceil = Math.max(hmMaxN.value, dataMax)
   return niceStep(ceil) * 3
 })
+
+const chartAxisUsable = computed(() => chartYMax.value !== null)
 
 const chartOptions = computed<ChartOptions<'line'>>(() => ({
   responsive: true,
@@ -525,15 +550,22 @@ const chartOptions = computed<ChartOptions<'line'>>(() => ({
       mode: 'index',
       intersect: false,
       callbacks: {
-        label: (c) => `压力：${fmtN(Number(c.parsed.y))} N`,
+        label: (c) =>
+          isKpaAxis.value
+            ? `压力：${fmtKpa(Number(c.parsed.y))} kPa`
+            : `压力：${fmtN(Number(c.parsed.y))} N`,
       },
     },
   },
   scales: {
     y: {
       min: 0,
-      max: chartYMax.value,
-      ticks: { stepSize: niceStep(chartYMax.value), callback: (v) => `${fmtN(Number(v))}N` },
+      max: chartYMax.value ?? undefined,
+      ticks: {
+        stepSize: chartYMax.value === null ? undefined : niceStep(chartYMax.value),
+        callback: (v) =>
+          isKpaAxis.value ? `${fmtKpa(Number(v))}${axisUnitText(unit.value)}` : `${fmtN(Number(v))}N`,
+      },
       grid: { color: '#f0f0f0' },
     },
     x: {
@@ -559,9 +591,10 @@ function selectHeatmapPoint(pt: PressureHeatmapPoint) {
   heatmapSelected.value = pt
 }
 
-/** 曲线点只由真实帧产生：横轴用帧采集时刻（数据侧），不用拉取时刻（T322） */
-function pushHistory(val: number, atMs: number | null) {
-  pressureHistory.value.push({ t: formatClock(atMs ?? Date.now()), v: val })
+/** 曲线点只由真实帧产生：横轴用帧采集时刻（数据侧），不用拉取时刻（T322）。
+ *  T643：N 与 kPa 同行入列（同一帧同一个最大点位的两份读数），kPa 缺失只以 null 表达 */
+function pushHistory(val: number, kpa: number | null, atMs: number | null) {
+  pressureHistory.value.push({ t: formatClock(atMs ?? Date.now()), v: val, kpa })
   if (pressureHistory.value.length > CHART_WINDOW) {
     pressureHistory.value.shift()
   }
@@ -650,7 +683,7 @@ async function refreshTick() {
     }
 
     // 曲线只收「未过期的新帧」；过期/无帧时宁可不画，也不制造在动的样子
-    if (isNewFrame && frame.value.state === 'fresh') pushHistory(curV, frame.value.collectedAt)
+    if (isNewFrame && frame.value.state === 'fresh') pushHistory(curV, curFrameKpa.value, frame.value.collectedAt)
   } catch (e: unknown) {
     if (currentPatientId.value === pid) {
       ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '实时数据刷新失败' }))

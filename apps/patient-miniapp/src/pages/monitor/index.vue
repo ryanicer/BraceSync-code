@@ -16,9 +16,9 @@
         <text class="hero-unit">{{ unit }}</text>
       </view>
       <view class="hero-meta">
-        <view v-show="heroRangeHintVisible(unit)" class="hero-meta-left">
+        <view v-show="heroRangeHintVisible(unit) && heroRange" class="hero-meta-left">
           <view class="dot dot-blue"></view>
-          <text class="meta-text">20-60N 正常范围</text>
+          <text class="meta-text">{{ heroRange }}</text>
         </view>
         <view class="hero-meta-right">
           <text class="battery-icon">🔋</text>
@@ -69,7 +69,7 @@
     <view class="section trend-section">
       <text class="section-title">{{ trendTitle }}</text>
       <view class="card curve-card">
-        <PressureCurve :data="trendData" :labels="trendLabels" :max-value="trendMaxValue" :time-range="trendTimeRange" :height="180" />
+        <PressureCurve :data="trendData" :labels="trendLabels" :max-value="trendMaxValue" :max-value-kpa="trendMaxValueKpa" :unit="unit" :time-range="trendTimeRange" :height="180" />
       </view>
     </view>
   </view>
@@ -77,7 +77,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { logErrorText, userErrorCopy, unitNumberText, heroRangeHintVisible, PRESSURE_UNITS, type PressureUnit } from '@bracesync/shared-utils'
+import { logErrorText, userErrorCopy, unitNumberText, heroRangeHintVisible, heroRangeText, kpaObservedMax, PRESSURE_UNITS, type PressureUnit } from '@bracesync/shared-utils'
 import { onPullDownRefresh } from '@dcloudio/uni-app'
 import PressureHeatmap from '../../components/PressureHeatmap.vue'
 import PressureCurve from '../../components/PressureCurve.vue'
@@ -87,7 +87,7 @@ import { request } from '../../utils/request'
 import { logger } from '../../utils/logger'
 import { formatPressureValue } from '../../utils/format'
 import { trendSectionTitle } from '../../utils/monitor-copy'
-import { cstDateStr, trendInterval, trendWindow, toTrendSeries, type TrendSegment } from '../../utils/trend-window'
+import { cstDateStr, trendInterval, trendWindow, toTrendSeries, type TrendPoint, type TrendSegment } from '../../utils/trend-window'
 import { readStoredUnit, persistUnit } from '../../utils/unit-pref'
 import { useAuthStore } from '../../stores/auth'
 
@@ -113,6 +113,9 @@ interface RealtimeSnapshot {
   /** 设备有效受压面积。本卡只声明字段、不参与任何换算（换算由后端做，前端重复实现＝双口径） */
   contactAreaCm2?: number | null
   heatmapMaxKpa?: number | null
+  /** T601：hero「正常范围」的两条配置边界（与告警引擎同源，随 T296 链同响应下发） */
+  pressureLowN?: number
+  pressureHighN?: number
 }
 
 // GET /patients/:patientId/records 返回分页结构（data-service HistoryPage）
@@ -140,6 +143,11 @@ const unit = ref<PressureUnit>(readStoredUnit())
 // T513：快照 pressureHeatmap[].pressureKpa 按点位号索引；heatmapMaxKpa 同响应下发
 const kpaByPoint = ref<Record<string, number | null>>({})
 const heatmapMaxKpa = ref<number | null>(null)
+// T601：hero「正常范围」两条配置边界（同快照下发；null = 未到 / 字段缺席 ⇒ 文案行隐藏）
+const pressureRangeLow = ref<number | null>(null)
+const pressureRangeHigh = ref<number | null>(null)
+// 副文案随配置派生（写死字面量会与 sys_configs 漂移，T601 缺陷本体）
+const heroRange = computed(() => heroRangeText(pressureRangeLow.value, pressureRangeHigh.value))
 
 const activePoint = computed(() =>
   activeIndex.value >= 0 ? sensorPoints.value[activeIndex.value] : undefined
@@ -156,7 +164,7 @@ const segLabel = computed(() => {
 // T444 M-2：无点位时不渲染前置分隔符（修前实测渲染成「· 今日压力趋势」）
 const trendTitle = computed(() => trendSectionTitle(activePoint.value?.pointId, segLabel.value))
 
-const trendData = ref<{ timestamp: string; value: number }[]>([])
+const trendData = ref<TrendPoint[]>([])
 const trendLabels = computed(() => {
   if (segment.value === 'day') return ['0:00', '6:00', '12:00', '18:00', '24:00']
   if (segment.value === 'week') return ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
@@ -169,6 +177,14 @@ const trendMaxValue = computed(() => {
   if (values.length === 0) return TREND_CURVE_MAX_N
   const max = Math.max(...values)
   return Math.max(TREND_CURVE_MAX_N, Math.ceil(max / 15) * 15)
+})
+
+// T643：kPa 档纵轴上界只由后端派生的 kPa 值（逐点 kpa 与快照 heatmapMaxKpa）取整，
+// 二者一个都没有 ⇒ null，组件按 fail-closed 出「--」且不画线
+const trendMaxValueKpa = computed<number | null>(() => {
+  const observed = kpaObservedMax(trendData.value.map(p => p.kpa), heatmapMaxKpa.value)
+  if (observed === null) return null
+  return Math.ceil(observed / 15) * 15
 })
 
 // T620：本页取样时刻。date 参数与 X 轴窗口必须由同一枚「现在」推出来，
@@ -214,12 +230,16 @@ async function loadTrend(baseVal: number) {
       if (trendData.value.length > 0) return
     }
     // 空窗口：fallback 给当前单点避免图表空（时刻取本页同一枚 nowMs，落进窗口内）
-    trendData.value = [{ timestamp: new Date(at).toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
-    logger.warn('[T620] loadTrend: 桶为空, fallback 单点', { baseVal, pointId, dateStr, interval })
+    // T643：兜底单点的 kPa 只认「同一枚选中点位在后端派生表里的值」；
+    // baseVal 退到快照 maxPressure 时已对不上具体点位，无从配对 ⇒ null（画不出就不画）
+    const baseKpa = pointId ? kpaByPoint.value[pointId] ?? null : null
+    trendData.value = [{ timestamp: new Date(at).toISOString(), value: parseFloat(baseVal.toFixed(2)), kpa: baseKpa }]
+    logger.warn('[T620] loadTrend: 桶为空, fallback 单点', { baseVal, baseKpa, pointId, dateStr, interval })
   } catch (e: unknown) {
     const msg = logErrorText(e)
     logger.error('[T620] loadTrend catch', { msg, pointId })
-    trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)) }]
+    const baseKpa = pointId ? kpaByPoint.value[pointId] ?? null : null
+    trendData.value = [{ timestamp: new Date().toISOString(), value: parseFloat(baseVal.toFixed(2)), kpa: baseKpa }]
   }
 }
 
@@ -247,6 +267,9 @@ async function loadData() {
     for (const hp of snap?.pressureHeatmap ?? []) byPoint[hp.pointId] = hp.pressureKpa ?? null
     kpaByPoint.value = byPoint
     heatmapMaxKpa.value = snap?.heatmapMaxKpa ?? null
+    // T601：边界取同一响应下发的配置值；字段缺席按 null 处理（文案行隐藏，不猜值不回落旧字面量）
+    pressureRangeLow.value = typeof snap?.pressureLowN === 'number' ? snap.pressureLowN : null
+    pressureRangeHigh.value = typeof snap?.pressureHighN === 'number' ? snap.pressureHighN : null
     calibratedFlag.value = recs.length ? recs[0].calibrated === true : null
     let maxIdx = -1
     if (points.length > 0) {
@@ -282,6 +305,9 @@ async function loadData() {
     // T513：取不到帧就别留上一帧的换算值（fail-closed，禁止沿用上一帧）
     kpaByPoint.value = {}
     heatmapMaxKpa.value = null
+    // T601：取数失败同样清边界（fail-closed，不沿用上一帧配置）
+    pressureRangeLow.value = null
+    pressureRangeHigh.value = null
   } finally {
     loading.value = false
   }

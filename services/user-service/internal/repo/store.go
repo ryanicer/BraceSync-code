@@ -188,13 +188,17 @@ var PatientProfileClearColumns = map[string]string{
 type TeamRow struct {
 	TeamID       string
 	Name         string
-	MemberCount  int    // T385：teamMemberCountExpr 实时数（挂本团队的医生+技师），非 teams.member_count 维护列；T429 起只数 status=enabled
+	MemberCount  int    // T385：teamMemberCountExpr 实时数，非 teams.member_count 维护列；T429 起只数 status=enabled；T627 方案乙**没有**改这一列的口径（医生+技师仍相加）——分侧是 T623 附页请裁点 3，未裁
 	PatientCount int    // T371-B1：teamPatientCountExpr 实时数，非 teams.patient_count 快照列
 	Leader       string // 负责人 doctor_id，无负责人为空串（T333）
 	LeaderName   string // 负责人姓名（join doctors.name），无负责人为空串（T333）
 	Description  string // T337：与 TeamDetailRow 同列，列表此前漏带
 	Status       string // T337："active"（一期固定；预留软删除字段）
-	CreatedAt    time.Time
+	// TeamType T627 方案乙：teams.team_type（迁移 000035）。
+	// 库里 NOT NULL + CHECK IN ('medical','maintenance') ⇒ 读侧不该出现第三种值；
+	// 空串只在合成夹具里可能（未赋值的零值），真库由 DEFAULT 'medical' 兜住。
+	TeamType  string
+	CreatedAt time.Time
 }
 
 // T385 删除 TeamStatsRow：T256 声明的团队统计聚合投影，全仓零使用点 ——
@@ -213,6 +217,7 @@ type TeamDetailRow struct {
 	PatientCount int    // T371-B1：与 TeamRow 同表达式
 	Description  string
 	Status       string // "active"（一期固定；预留软删除字段）
+	TeamType     string // T627 方案乙：与 TeamRow 同列，写端点回读要带得回（否则新建维护班组后弹窗回显空类型）
 	CreatedAt    time.Time
 }
 
@@ -234,6 +239,11 @@ type TeamInput struct {
 	Name        string // 必填，trim 后 ≥1 字符 ≤50
 	Leader      string // 必填，doctor_id 存在性校验
 	Description string // 可选，≤200 字符
+	// TeamType T627 方案乙：只参与新建（CreateTeam 的 INSERT 带它）；
+	//   编辑不改类型 —— 换类型等于把这一行成员的归类悄悄搬到另一侧（技师原挂医疗团队，
+	//   团队改成 maintenance 后它反而合法；反向则一批在册技师一夜之间站错侧），
+	//   而「能不能换、换了谁负责重挂」T627 没裁这一格 ⇒ UpdateTeam 的 SQL 不碰该列。
+	TeamType string
 }
 
 // MemberInput 成员管理入参（T059 写功能契约）
@@ -269,6 +279,7 @@ type TechnicianRow struct {
 	// 装配时经 TrimPhoneHash 去除（与 uk_technicians_phone_hash 查重口径一致）
 	TeamID       *string
 	TeamName     *string // NULL = 未入队（technicians.team_id 可空）
+	TeamType     *string // T627 方案乙：teams.team_type（LEFT JOIN 带出）；NULL = 未入队或团队无类型
 	InstallCount int
 	Status       string
 	AuthStatus   string
@@ -331,6 +342,33 @@ type OrthosisPlanRow struct {
 	Content   string
 	Version   string
 	CreatedAt time.Time
+}
+
+// AdviceRow advice_logs 表投影（T641）
+//
+// AuthorTitle / AuthorDepartment 是读时 JOIN doctors 带出的两列（R5 甲：库里只存 author_doctor_id，
+// 职称不作快照），回落链 title → department →「医护团队」在 handler 组 DTO 时走，不在 SQL 里 COALESCE
+// 成固定词 —— 那样会把「回落用了哪一档」这一格在库里抹平，测试也就断不出回落链有没有生效。
+// 两列都可空：doctors.title 建表未带 NOT NULL（000001:42），technicians 表根本没有 title 列（:53-65）。
+type AdviceRow struct {
+	AdviceID         int64
+	PatientID        string
+	AuthorDoctorID   string
+	Content          string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	AuthorTitle      *string
+	AuthorDepartment *string
+}
+
+// CareTeamRow 患者所绑定团队的成员行（T641 患者端「你的医护团队」）。
+// 只带展示需要的两列：MemberType（doctor | technician，对应成员落在哪张表 = 「角色」那一维）
+// 与 Title / Department（doctors 才有，technicians 恒 nil）。
+// 🔴 结构里不出现 name / phone / username 任何一列 —— 组 SQL 时就不 SELECT，隐私不靠 handler 记得丢字段。
+type CareTeamRow struct {
+	MemberType string
+	Title      *string
+	Department *string
 }
 
 // FeelingLogRow feeling_logs 表投影
@@ -536,6 +574,10 @@ type Store interface {
 	// 团队 / 医生
 	ListTeams(ctx context.Context) ([]TeamRow, error)
 	TeamExists(ctx context.Context, teamID string) (bool, error)
+	// TeamTypeOf T627 方案乙：技师侧写路径的类型判据取数腿（存在性 + 类型一并回，
+	// 好让 handler 把「团队不存在」与「团队是医护侧」回成两个不同的 400 文案）。
+	// 不复用 TeamExists：它另有两处调用方只问存在性（团队成员明细、医护侧 FK 前置）。
+	TeamTypeOf(ctx context.Context, teamID string) (teamType string, exists bool, err error)
 	ListDoctors(ctx context.Context) ([]DoctorRow, error)
 	ListDoctorsByTeam(ctx context.Context, teamID string) ([]DoctorRow, error)
 	// GetTeamStats T256 #1：团队管理 4 张统计卡（团队/成员/管理患者/待分配患者计数）
@@ -554,7 +596,9 @@ type Store interface {
 	RemoveTeamMember(ctx context.Context, teamID, memberID, memberType string) error // 幂等：已移除 no-op
 
 	// 技师
-	ListTechnicians(ctx context.Context, page, pageSize int) ([]TechnicianRow, int64, error)
+	// ListTechnicians T627 方案乙：teamType 是可选筛（空串 = 不筛，其余按 teams.team_type 等值筛）；
+	// 分页接口在前端筛等于只筛当前一页，所以筛子必须下到这里。
+	ListTechnicians(ctx context.Context, page, pageSize int, teamType string) ([]TechnicianRow, int64, error)
 	ListTechniciansByTeam(ctx context.Context, teamID string) ([]TechnicianRow, error)
 	GetTechnician(ctx context.Context, techID string) (*TechnicianRow, error)
 	CreateTechnician(ctx context.Context, in TechInput) (*TechnicianRow, error)
@@ -595,6 +639,21 @@ type Store interface {
 	ListPlans(ctx context.Context, patientID string) ([]OrthosisPlanRow, error)
 	LatestPlanVersion(ctx context.Context, patientID string) (string, bool, error)
 	CreatePlan(ctx context.Context, patientID, doctorID, content, version string) (*OrthosisPlanRow, error)
+
+	// 康复建议（T641，留言板模式：写一次成一行，编辑覆盖同一行，删除为硬删 R3 甲）
+	CreateAdvice(ctx context.Context, patientID, doctorID, content string) (*AdviceRow, error)
+	// ListAdvice 按患者取建议流（created_at 倒序，走 idx_advice_patient）。
+	// 只出未删的整表行 —— 本表无软删列，「删除」在库里就是行不在。
+	ListAdvice(ctx context.Context, patientID string) ([]AdviceRow, error)
+	// UpdateAdvice T641 / R7 甲：作者谓词必须在 SQL 里（WHERE advice_id AND author_doctor_id），
+	// 不能只靠前端藏按钮。返回 nil 表示「这条不是他写的 / 这条不存在」，由 handler 统一 403，
+	// 不给存在性留 oracle（口径同 FeelingLogInTeam 的「四格合一」）。
+	UpdateAdvice(ctx context.Context, adviceID int64, doctorID, content string) (*AdviceRow, error)
+	// DeleteAdvice R3 甲硬删 + R7 甲作者谓词；返回 false = 行不存在或非本人所写（handler 侧统一 403）。
+	DeleteAdvice(ctx context.Context, adviceID int64, doctorID string) (bool, error)
+	// CareTeamByPatient T641 患者端团队展示：patients.team_id → doctors(title/department) + technicians。
+	// 出参不含任何姓名列（隐私裁定 §八：患者端此后不应拿到医护姓名），SQL 的列清单里就不选 name。
+	CareTeamByPatient(ctx context.Context, patientID string) ([]CareTeamRow, error)
 
 	// 感受日志
 	ListFeelingLogs(ctx context.Context, patientID string) ([]FeelingLogRow, error)

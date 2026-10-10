@@ -11,7 +11,12 @@ import { request } from '../utils/request'
 
 /**
  * T186 响应体，逐字对齐 user-service `model.AdminPatientDTO`
- * （services/user-service/internal/model/model.go:139-155，camelCase，可空字段为 null）。
+ * （services/user-service/internal/model/model.go:139-162，camelCase，可空字段为 null）。
+ *
+ * T646 裁定甲（依 T637 设计稿 八）：患者侧载荷里 teamName / doctorName **键在场、值恒 null**
+ * —— 服务端两条患者侧装配点（GET /patient/profile 与自助 PUT 的写响应）都把这两枚置空。
+ * 所以这两枚在本页是「拿不到值的可空字段」：不许在任何界面组串，也不许当「团队/医生卡片」的数据源，
+ * 绑定态改由同源的 teamId / doctorId 表达（收的是姓名，不是关联能力）。
  */
 export interface PatientProfile {
   patientId: string

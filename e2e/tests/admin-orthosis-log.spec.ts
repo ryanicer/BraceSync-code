@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
-import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
+import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows, type AdminRole } from '../admin-helpers'
 
 /**
  * admin-web 矫形日志（T289 批次三 B 批 8.1 跨患者视图 + 8.2 佩戴感受两档）
@@ -109,9 +109,10 @@ test.describe('患者工作台（PM 裁定 ⑤ 并存保留）', () => {
  * T344 患者工作台 4 区块（Boss 2026-09-23 裁定问题 2「本期做」）
  * 设计稿 docs/design/admin/矫形日志.html #tabWorkspace：
  *  - #wsProfile 8 格 = PRD §7D.8 视图② 的 7 字段 + 稿面另加「患者ID」
- *  - #wsTabs 内层页签顺序：矫形方案 → 佩戴感受 → 健康报告 → 数据视图（新增项追加末位不重排）
+ *  - #wsTabs 内层页签顺序：矫形方案 → 佩戴感受 → 健康报告 → 数据视图 → 医护建议（新增项追加末位不重排；
+ *    医护建议只在医护角色下渲染，见下方 T641 块）
  *  - #wsData 三块：压力趋势图（7/14/30 天）、每日佩戴时长柱状图、告警记录列表 5 列
- *  - #wsSendAdvice：未选患者禁用 + 点击给占位提示（模板消息端点待 PM 派后端卡）
+ *  - #wsSendAdvice：T641 起是真写（占位提示与「模板消息端点待 PM 派后端卡」那句一起退场）
  * mock 取数：PT-001 林小雨（有设备 DEV-A3F312）、PT-005 赵欣然（deviceId 为 null）
  */
 test.describe('工作台 · T344 患者基本信息卡', () => {
@@ -146,24 +147,76 @@ test.describe('工作台 · T344 患者基本信息卡', () => {
   })
 })
 
-test.describe('工作台 · T344 发送建议给患者', () => {
-  test('未选患者时按钮禁用，选定后可点且只给占位提示', async ({ page }) => {
+/**
+ * 工作台 · T641 医护建议（原 T344「发送建议给患者」占位格）
+ *
+ * 失效针 1（设计稿 §十二 行 ⑤ 预告的那枚）：`toContainText('模板消息通道待后端建端点')`
+ * 随占位文案退场必红 ⇒ 本块整体重写成两格真判据：
+ *  - admin 看不到写面（隐藏，不是禁用）——稿面 §七「发送主体是医护」在前端的画法；
+ *  - doctor 选定患者后真发送，时间轴前插一条、计数跟着长。
+ * 未选患者时按钮仍禁用（:disabled 是前端约束，服务端 403 才是边界）。
+ */
+test.describe('工作台 · T641 医护建议（发送真实化）', () => {
+  test('运营管理员看不到那颗按钮与「医护建议」页签（按角色隐藏，其余四签仍在）', async ({ page }) => {
     const ws = await openWorkspace(page)
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+    await expect(ws.getByRole('button', { name: '发送建议给患者' })).toHaveCount(0)
+    await expect(ws.getByRole('tab', { name: '医护建议' })).toHaveCount(0)
+    // 反证（针有牙）：隐藏只针对写面那一档，不是把整排页签拿掉
+    await expect(ws.locator('.el-tabs__item')).toHaveCount(4)
+  })
+
+  test('医护：未选患者禁用 → 选定后可点 → 发送后时间轴前插一条', async ({ page }) => {
+    await adminLogin(page, 'doctor')
+    await page.goto(adminRoutes.orthosisLog)
+    await page.getByRole('tab', { name: '患者工作台' }).click()
+    const ws = page.locator('.view-workspace')
+    await expect(ws).toBeVisible()
+
     const btn = ws.getByRole('button', { name: '发送建议给患者' })
     await expect(btn).toBeDisabled()
     await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
     await expect(btn).toBeEnabled()
-    await btn.click()
-    await expect(adminMessage(page)).toContainText('模板消息通道待后端建端点')
+
+    await ws.getByRole('tab', { name: '医护建议' }).click()
+    const pane = ws.locator('.el-tab-pane:visible')
+    // mock PT-001 两枚在册（ADV-001 editable / ADV-002 非本人所写只展示）
+    await expect(pane.locator('.el-timeline-item')).toHaveCount(2)
+    await expect(pane.locator('.page-card-title').nth(1)).toContainText('历史建议（2）')
+
+    await pane.locator('textarea').fill('夜间佩戴保持 22 小时以上，洗澡后先涂润肤再戴。')
+    await pane.getByRole('button', { name: '发送' }).click()
+    await expect(adminMessage(page)).toContainText('建议已发送')
+    await expect(pane.locator('.el-timeline-item')).toHaveCount(3)
+    await expect(pane.locator('.page-card-title').nth(1)).toContainText('历史建议（3）')
+  })
+
+  test('草稿为空时不静默失败：工具栏那颗把视图切到撰写区并提示，不发写请求', async ({ page }) => {
+    await adminLogin(page, 'doctor')
+    await page.goto(adminRoutes.orthosisLog)
+    await page.getByRole('tab', { name: '患者工作台' }).click()
+    const ws = page.locator('.view-workspace')
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
+    await ws.getByRole('button', { name: '发送建议给患者' }).click()
+    await expect(adminMessage(page)).toContainText('请先在「医护建议」页填写要发给患者的话')
+    await expect(ws.getByRole('tab', { name: '医护建议' })).toHaveClass(/is-active/)
   })
 })
 
 test.describe('工作台 · T344 数据视图', () => {
-  test('内层页签顺序：三块照实现现状，数据视图追加末位', async ({ page }) => {
+  test('内层页签顺序：三块照实现现状，数据视图追加末位；医护再追加医护建议', async ({ page }) => {
     const ws = await openWorkspace(page)
     await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
     const names = (await ws.locator('.el-tabs__item').allTextContents()).map((t) => t.trim())
     expect(names).toEqual(['矫形方案', '佩戴感受', '健康报告', '数据视图'])
+
+    // T641 第五枚追加末位不重排（医护才看得到写面，所以第二腿换 doctor 令牌）
+    await adminLogin(page, 'doctor')
+    await page.goto(adminRoutes.orthosisLog)
+    await page.getByRole('tab', { name: '患者工作台' }).click()
+    await pickSelectOption(page, page.locator('.view-workspace .patient-select'), '林小雨')
+    const doctorNames = (await page.locator('.view-workspace .el-tabs__item').allTextContents()).map((t) => t.trim())
+    expect(doctorNames).toEqual(['矫形方案', '佩戴感受', '健康报告', '数据视图', '医护建议'])
   })
 
   test('两张图 + 告警 5 列：区间切到 14 天后图表仍在，虚线取值来自系统配置', async ({ page }) => {
@@ -220,8 +273,8 @@ test.describe('工作台 · T344 数据视图', () => {
  *  报告 周报 92.5% / 38.2N、月报 88.1%。
  * 写操作只改浏览器内存里的 mock，每条用例新开 context，不碰共享 seed。
  */
-async function openWorkspace(page: Page): Promise<Locator> {
-  await adminLogin(page, 'admin')
+async function openWorkspace(page: Page, role: AdminRole = 'admin'): Promise<Locator> {
+  await adminLogin(page, role)
   await page.goto(adminRoutes.orthosisLog)
   await expect(listRows(page).first()).toBeVisible({ timeout: 15_000 })
   await page.getByRole('tab', { name: '患者工作台' }).click()
@@ -271,7 +324,9 @@ test.describe('工作台 · 矫形方案 Tab（T301 G1）', () => {
     await expect(ws.getByRole('button', { name: '保存新方案' })).toBeDisabled()
   })
 
-  test('保存新方案后前插 v2.2，输入框清空', async ({ page }) => {
+  test('保存新方案后前插 v2.2，输入框清空（医生身份；T629 后非医生点不动这一枪）', async ({ page }) => {
+    ws = await openWorkspace(page, 'doctor')
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
     await ws.locator('.page-card textarea').first().fill('T301 用例：夜间佩戴目标调整')
     await ws.getByRole('button', { name: '保存新方案' }).click()
     await expect(adminMessage(page)).toContainText('方案已保存')
@@ -280,6 +335,17 @@ test.describe('工作台 · 矫形方案 Tab（T301 G1）', () => {
     await expect(stamps.first()).toContainText('v2.2')
     await expect(ws.locator('.el-timeline-item').first()).toContainText('T301 用例：夜间佩戴目标调整')
     await expect(ws.locator('.page-card textarea').first()).toHaveValue('')
+  })
+
+  // T629 方案C：运营管理员点保存要看到「仅医生开放」的明确句，而不是链路那枚 403 的通用句。
+  // 本用例的 mock 层不调权限（真拒在后端 savePlan 的医生身份判定），它锁的是前端闸门那一步：
+  // 提示出得来 + POST 发不出（历史方案条数不动）。
+  test('运营管理员点保存新方案：出「仅对医生开放」提示，历史方案条数不动', async ({ page }) => {
+    await ws.locator('.page-card textarea').first().fill('T629 用例：非医生不应把这一枪打出去')
+    await ws.getByRole('button', { name: '保存新方案' }).click()
+    await expect(adminMessage(page)).toContainText('仅对医生开放')
+    await expect(ws.locator('.page-card-title').filter({ hasText: '历史方案' })).toHaveText('历史方案（2）')
+    await expect(ws.locator('.page-card textarea').first()).toHaveValue('T629 用例：非医生不应把这一枪打出去')
   })
 })
 

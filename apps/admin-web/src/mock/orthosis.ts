@@ -1,6 +1,6 @@
 // 矫形日志域 mock 数据（对齐 api-contracts.ts getOrthosisPlans/saveOrthosisPlan/
 // getFeelingLogs/getHealthReports/getFeelingLogsAdmin，PRD §7D.8 医生工作台 + T289 8.1 跨患者流）
-import type { FeelingLog, HealthReport, OrthosisPlan } from '@bracesync/shared-types'
+import type { Advice, FeelingLog, HealthReport, OrthosisPlan } from '@bracesync/shared-types'
 import { mockPatientDetail } from './patients'
 
 const PLANS: OrthosisPlan[] = [
@@ -75,4 +75,40 @@ export function mockReplyFeelingLog(logId: string, replyContent: string): void {
 
 export function mockHealthReports(patientId: string): HealthReport[] {
   return REPORTS.filter((r) => r.patientId === patientId).map((r) => ({ ...r }))
+}
+
+// T641 医护建议 mock（契约 getPatientAdvice / sendAdvice / updateAdvice / deleteAdvice）。
+// 🔴 行内不出姓名：title 是服务端回落链的结果（职称 → 科室 → 固定词），editable 由服务端按作者算，
+// 前端不拿作者 id 自己比 —— 那样会把「谁能改」这一格从契约里搬进页面逻辑。
+const ADVICE: Advice[] = [
+  { adviceId: 'ADV-001', patientId: 'PT-001', title: '主治医师', content: '这两周胸段压力偏高，夜间请保持 22h 以上；洗澡后皮肤发干，先涂润肤再戴。', createdAt: '2026-08-11T14:20:00+08:00', updatedAt: '2026-08-11T14:20:00+08:00', editable: true },
+  { adviceId: 'ADV-002', patientId: 'PT-001', title: '康复师', content: '呼吸训练按上次教的三组做完；若右侧肩胛酸痛加重就暂停并告诉我。', createdAt: '2026-08-06T09:05:00+08:00', updatedAt: '2026-08-06T09:05:00+08:00', editable: false },
+  { adviceId: 'ADV-003', patientId: 'PT-002', title: '医护团队', content: '复查前先连续记一周佩戴时长，方便对比调整加压区。', createdAt: '2026-07-28T16:40:00+08:00', updatedAt: '2026-07-28T16:40:00+08:00', editable: true },
+]
+
+export function mockAdviceList(patientId: string): Advice[] {
+  return ADVICE.filter((a) => a.patientId === patientId)
+    .slice()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((a) => ({ ...a }))
+}
+
+export function mockSendAdvice(patientId: string, content: string): Advice {
+  const now = new Date().toISOString()
+  const row: Advice = { adviceId: `ADV-${Date.now()}`, patientId, title: '主治医师', content, createdAt: now, updatedAt: now, editable: true }
+  ADVICE.unshift(row)
+  return { ...row }
+}
+
+export function mockUpdateAdvice(adviceId: string, content: string): Advice | null {
+  const row = ADVICE.find((a) => a.adviceId === adviceId)
+  if (!row) return null
+  row.content = content
+  row.updatedAt = new Date().toISOString()
+  return { ...row }
+}
+
+export function mockDeleteAdvice(adviceId: string): void {
+  const i = ADVICE.findIndex((a) => a.adviceId === adviceId)
+  if (i >= 0) ADVICE.splice(i, 1)
 }

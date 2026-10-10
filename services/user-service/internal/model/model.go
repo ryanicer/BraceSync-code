@@ -186,6 +186,9 @@ type TeamDTO struct {
 	// T337：与 TeamDetailDTO 同列同口径（详情一直有、列表漏带；shared-types Team 已声明这两项）
 	Description string `json:"description"`
 	Status      string `json:"status"`
+	// TeamType T627 方案乙：'medical' | 'maintenance'（库列 NOT NULL + CHECK，无第三值）。
+	// 不带 omitempty ⇒ 键恒在：新建技师的下拉靠它筛侧，缺键与「医护侧」在前端是两个形状。
+	TeamType string `json:"teamType"`
 }
 
 // DoctorDTO 医生（契约 getDoctors，对齐 shared-types Doctor）
@@ -211,12 +214,15 @@ type DoctorDTO struct {
 // teamName：T278-② 后端 join 带出（/technicians 是分页接口，前端建不出全量团队字典 ⇒
 // 团队列此前回落成 TEAM01 编号）；NULL = 该技师未入队，前端回落显示 teamId。
 type TechnicianDTO struct {
-	TechID       string  `json:"techId"`
-	Name         string  `json:"name"`
-	PhoneMasked  string  `json:"phoneMasked"`
-	PhoneState   string  `json:"phoneState"` // T361：absent|masked|unreadable
-	TeamID       string  `json:"teamId"`
-	TeamName     *string `json:"teamName"`
+	TechID      string  `json:"techId"`
+	Name        string  `json:"name"`
+	PhoneMasked string  `json:"phoneMasked"`
+	PhoneState  string  `json:"phoneState"` // T361：absent|masked|unreadable
+	TeamID      string  `json:"teamId"`
+	TeamName    *string `json:"teamName"`
+	// TeamType T627 方案乙：所在团队的类型；NULL = 该技师未挂团队（LEFT JOIN 带不出）。
+	// 技师列表的「归属侧」列与「维护类技师不误归医护」那条验收判据读的就是这一枚。
+	TeamType     *string `json:"teamType"`
 	InstallCount int     `json:"installCount"`
 	Status       string  `json:"status"`
 	AuthStatus   string  `json:"authStatus"`
@@ -281,6 +287,31 @@ type OrthosisPlanDTO struct {
 	Content   string `json:"content"`
 	Version   string `json:"version"`
 	CreatedAt string `json:"createdAt"`
+}
+
+// AdviceDTO 康复建议（T641，契约 getPatientAdvice / listAdvice，对齐 shared-types Advice）。
+//
+// 🔴 隐私（设计稿 §八）：本 DTO 的字段名集合里不得出现 name / doctorName / teamName / username / phone*，
+// 患者端与后台端共用这一枚 DTO —— 医护姓名压根不在结构里，而不是「组完之后删字段」。
+// Title 是回落链的结果（doctors.title → department →「医护团队」，见 handler 侧 adviceTitleOrFallback），
+// 技师成员没有 title 列，走的是固定标签那一档 —— 两档都不回落姓名。
+// Editable = 「这一行是不是当前调用人写的」（R7 甲），后台据此出编辑/删除；患者端恒 false。
+type AdviceDTO struct {
+	AdviceID  string `json:"adviceId"`
+	PatientID string `json:"patientId"`
+	Title     string `json:"title"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+	Editable  bool   `json:"editable"`
+}
+
+// CareTeamMemberDTO 患者端「你的医护团队」的一行（T641，契约 getPatientCareTeam，对齐 shared-types CareTeamMember）。
+// MemberType = 这一维的「角色」（成员行落在哪张表：doctors=医护 / technicians=技术支撑）；
+// Title = 这一维的「职称」（doctors.title 回落结果；technicians 无该列，恒为固定标签）。
+type CareTeamMemberDTO struct {
+	MemberType string `json:"memberType"`
+	Title      string `json:"title"`
 }
 
 // FeelingLogDTO 佩戴感受日志（契约 getFeelingLogs，对齐 shared-types FeelingLog）
@@ -467,6 +498,9 @@ type CreateTeamRequestDTO struct {
 	Name        string `json:"name"`        // 必填，trim 后 ≥1 字符 ≤50
 	Leader      string `json:"leader"`      // 必填，doctor_id 存在性校验
 	Description string `json:"description"` // 可选，≤200 字符
+	// TeamType T627 方案乙：可选，缺省归 'medical'（与建库 DEFAULT 同口径）；
+	// 非枚举值 400，不静默回落 —— 静默回落会把「想建维护班组」变成一列悄悄是医护的团队。
+	TeamType string `json:"teamType"`
 }
 
 // UpdateTeamRequestDTO 编辑团队请求（与创建同字段，全量替换语义）
@@ -486,6 +520,7 @@ type TeamDetailDTO struct {
 	PatientCount int    `json:"patientCount"`
 	Description  string `json:"description"`
 	Status       string `json:"status"`
+	TeamType     string `json:"teamType"` // T627 方案乙：与 TeamDTO 同列，写端点回读也要带得回
 	CreatedAt    string `json:"createdAt"`
 }
 

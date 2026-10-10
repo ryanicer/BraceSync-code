@@ -23,6 +23,11 @@
 //	GET  /api/v1/patients/:patientId/feeling-logs        佩戴感受日志
 //	POST /api/v1/patients/:patientId/feeling-logs        患者端录入佩戴感受（T188，同日覆盖）
 //	POST /api/v1/feeling-logs/:logId/reply               医生回复感受日志
+//	POST /api/v1/patients/:patientId/advice              医护写一条建议（T641）
+//	GET  /api/v1/patients/:patientId/advice              建议流（staff 与患者端同一条路径、两枚 token）
+//	PUT  /api/v1/advice/:adviceId                        作者本人编辑（同行 UPDATE）
+//	DELETE /api/v1/advice/:adviceId                      作者本人删除（硬删 + 审计留痕）
+//	GET  /api/v1/patient/care-team                      患者端「你的医护团队」（只出角色与职称）
 //	GET  /api/v1/admin/roles                             RBAC 角色列表
 //	GET  /api/v1/admin/roles/:roleId/permissions         权限矩阵读
 //	PUT  /api/v1/admin/roles/:roleId/permissions         权限矩阵写
@@ -294,6 +299,13 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/patients/:patientId/feeling-logs", h.createFeelingLog)
 		v1.POST("/feeling-logs/:logId/reply", h.replyFeelingLog)
 		v1.GET("/admin/feeling-logs", h.listFeelingLogsAdmin) // T256 #2 跨患者感受日志流
+
+		// T641 医护建议（留言板：写走 staff token，读两枚 token 共用同一路径；授权矩阵在 gateway rbac.go）
+		v1.POST("/patients/:patientId/advice", h.createAdvice)
+		v1.GET("/patients/:patientId/advice", h.listAdvice)
+		v1.PUT("/advice/:adviceId", h.updateAdvice)
+		v1.DELETE("/advice/:adviceId", h.deleteAdvice)
+		v1.GET("/patient/care-team", h.getCareTeam)
 
 		v1.GET("/admin/roles", h.listRoles)
 		v1.GET("/admin/roles/:roleId/permissions", h.getPermissions)
@@ -893,9 +905,19 @@ func (h *Handler) getPatientProfile(c *gin.Context) {
 	// T576 甲案：佩戴目标时长由后端下发（真源 sys_configs.wear_target_hours），
 	// 小程序两页不再各写一枚本地硬编码常量。读不到按默认 22 降级并记 Warn。
 	ok(c, model.PatientProfileDTO{
-		AdminPatientDTO:      toPatientDTO(*row),
+		AdminPatientDTO:      selfScopedPatientDTO(toPatientDTO(*row)),
 		DailyWearTargetHours: h.wearTargetHours(c.Request.Context(), ctxLogger(c)),
 	})
+}
+
+// selfScopedPatientDTO 患者侧载荷按值收口（T646 裁定甲，依 T637 设计稿 八「患者端任何响应体
+// 不再含医护姓名」）：teamName / doctorName 两枚键在场、值恒 null。
+// 只清姓名，标识（TeamID / DoctorID / DeviceID）照常下发 —— 收的是姓名不是关联能力。
+// 后台读路不调这一枚（/admin/patients 列表与详情仍带 join 出的姓名）。
+func selfScopedPatientDTO(dto model.AdminPatientDTO) model.AdminPatientDTO {
+	dto.TeamName = nil
+	dto.DoctorName = nil
+	return dto
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -910,8 +932,26 @@ func nilIfBlank(s string) *string {
 	return &s
 }
 
+// parseTeamTypeFilter T627 方案乙：GET /teams 与 GET /technicians 共用的 ?teamType= 筛子解析。
+// 空 = 不筛；非枚举值 400（不静默当「不筛」放过 —— 放过就是「筛了个空条件还以为筛过」）。
+func parseTeamTypeFilter(c *gin.Context) (string, *model.AppError) {
+	v := strings.TrimSpace(c.Query("teamType"))
+	if v == "" {
+		return "", nil
+	}
+	if !validTeamType(v) {
+		return "", model.ErrInvalidParam("invalid teamType: medical|maintenance")
+	}
+	return v, nil
+}
+
 // listTeams GET /api/v1/teams —— 团队概要
 func (h *Handler) listTeams(c *gin.Context) {
+	teamType, appErr := parseTeamTypeFilter(c)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
 	rows, err := h.store.ListTeams(c.Request.Context())
 	if err != nil {
 		fail(c, model.ErrInternal("list teams failed"))
@@ -919,6 +959,11 @@ func (h *Handler) listTeams(c *gin.Context) {
 	}
 	list := make([]model.TeamDTO, 0, len(rows))
 	for _, r := range rows {
+		// 筛在这里而不是 SQL 里：/teams 是不分页的全量投影，两种写法等价；
+		// 技师那张是分页接口，筛子必须下到 SQL（见 repo.ListTechnicians）。
+		if teamType != "" && r.TeamType != teamType {
+			continue
+		}
 		list = append(list, model.TeamDTO{
 			TeamID:       r.TeamID,
 			Name:         r.Name,
@@ -929,6 +974,7 @@ func (h *Handler) listTeams(c *gin.Context) {
 			CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 			Description:  r.Description, // T337：契约已声明、详情已带，列表补齐
 			Status:       r.Status,
+			TeamType:     r.TeamType, // T627 方案乙
 		})
 	}
 	ok(c, list)
@@ -978,6 +1024,7 @@ func (h *Handler) toTechDTO(r repo.TechnicianRow) model.TechnicianDTO {
 		PhoneState:   string(v.State),
 		TeamID:       strOr(r.TeamID, ""),
 		TeamName:     r.TeamName,
+		TeamType:     r.TeamType,
 		InstallCount: r.InstallCount,
 		Status:       r.Status,
 		AuthStatus:   r.AuthStatus,
@@ -1059,14 +1106,19 @@ func (h *Handler) listDoctors(c *gin.Context) {
 // 技师（T030 #4：新建/编辑 + 列表/启停）
 // ─────────────────────────────────────────────────────────────
 
-// listTechnicians GET /api/v1/technicians —— 分页列表
+// listTechnicians GET /api/v1/technicians —— 分页列表（?teamType= 可按维护/医护侧筛，T627 方案乙）
 func (h *Handler) listTechnicians(c *gin.Context) {
 	page, pageSize, appErr := parsePaging(c)
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
-	rows, total, err := h.store.ListTechnicians(c.Request.Context(), page, pageSize)
+	teamType, appErr := parseTeamTypeFilter(c)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	rows, total, err := h.store.ListTechnicians(c.Request.Context(), page, pageSize, teamType)
 	if err != nil {
 		fail(c, model.ErrInternal("list technicians failed"))
 		return
@@ -1116,7 +1168,8 @@ func (h *Handler) preparePhone(plain string) (enc []byte, hash string, appErr *m
 	return enc, phone.Hash(plain), nil
 }
 
-// validateTechTeam teamId 传入时校验存在性（FK 前置，友好 400 替代 DB 违约）
+// validateTechTeam 团队存在性校验（FK 前置，友好 400 替代 DB 违约）。
+// 只问存在性 ⇒ 给医护账号腿复用；技师腿走 validateTechTeamType（存在性 + 侧别）。
 func (h *Handler) validateTechTeam(c *gin.Context, teamID *string) *model.AppError {
 	if teamID == nil || *teamID == "" {
 		return nil
@@ -1127,6 +1180,52 @@ func (h *Handler) validateTechTeam(c *gin.Context, teamID *string) *model.AppErr
 	}
 	if !exists {
 		return model.ErrInvalidParam("team not found: %s", *teamID)
+	}
+	return nil
+}
+
+// 团队类型两枚字面量（T627 方案乙；与迁移 000035 的 CHECK 逐字同串）
+const (
+	teamTypeMedical     = "medical"
+	teamTypeMaintenance = "maintenance"
+)
+
+// validTeamType 枚举判据（空串不算合法：由调用方先归一成 medical）
+func validTeamType(t string) bool {
+	return t == teamTypeMedical || t == teamTypeMaintenance
+}
+
+// validateTechTeamType T627 方案乙的写侧判据：技师（维护人员）不得进入医疗团队（不变式 I2）。
+//
+// 与 validateTechTeam 分开两枚函数是必要的，不是重复：后者被医护账号腿复用
+// （doctor_accounts_t314.go 的新建/编辑两处「复用技师侧同一校验器」只问存在性），
+// 把「必须 maintenance」塞进共用那一枚，等于把医护全体赶进维护班组 —— 判据方向整个反掉。
+//
+// 类型未知（空串）按拒绝处理，不放行：这一列在库里是 NOT NULL + CHECK 两值，
+// 读到第三值只可能是绕过迁移的建库，那种团队既不属医护侧也不属维护侧，
+// 放它过等于让「无归类」变成一个可以绕过分类机制的后门（fail-open）。
+func (h *Handler) validateTechTeamType(c *gin.Context, teamID *string) *model.AppError {
+	if teamID == nil || *teamID == "" {
+		return nil
+	}
+	return h.techTeamSideCheck(c, *teamID, model.ErrInvalidParam("team not found: %s", *teamID))
+}
+
+// techTeamSideCheck 侧别判据的共用内核：团队不存在时回哪一枚错由调用方给 ——
+// 技师创建/编辑那条腿既往回 400，成员那条腿既往由 store 的 ErrTeamNotFound 回 404，
+// 收成同一枚判据不该顺带改掉「查无此队」的状态码口径。
+func (h *Handler) techTeamSideCheck(c *gin.Context, teamID string, notFound *model.AppError) *model.AppError {
+	teamType, exists, err := h.store.TeamTypeOf(c.Request.Context(), teamID)
+	if err != nil {
+		return model.ErrInternal("query team failed")
+	}
+	if !exists {
+		return notFound
+	}
+	if teamType != teamTypeMaintenance {
+		return model.ErrInvalidParam(
+			"team %s is %s, technicians may only belong to %s teams",
+			teamID, teamType, teamTypeMaintenance)
 	}
 	return nil
 }
@@ -1146,7 +1245,7 @@ func (h *Handler) createTechnician(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid phone: must be 11 digits starting with 1"))
 		return
 	}
-	if appErr := h.validateTechTeam(c, req.TeamID); appErr != nil {
+	if appErr := h.validateTechTeamType(c, req.TeamID); appErr != nil {
 		fail(c, appErr)
 		return
 	}
@@ -1210,12 +1309,23 @@ func (h *Handler) updateTechnician(c *gin.Context) {
 		name = strings.TrimSpace(req.Name)
 	}
 	teamID := existing.TeamID
+	teamChanged := req.TeamID != nil && (existing.TeamID == nil || *req.TeamID != *existing.TeamID)
 	if req.TeamID != nil {
 		teamID = req.TeamID
 	}
 	if appErr := h.validateTechTeam(c, teamID); appErr != nil {
 		fail(c, appErr)
 		return
+	}
+	// T627 方案乙：侧别判据只在「这一次真的在改归属」时咬。
+	// 不这么切的话，存量那批还挂在医疗团队上的技师会被自己的旧值卡死 ——
+	// 编辑姓名/手机号也 400，而这正是刷数脚本执行前必须还能改的那一批。
+	// 旧值本身不改写（PUT 不带 teamId 时 teamID 仍是原团队），清理动作留给刷数脚本。
+	if teamChanged {
+		if appErr := h.validateTechTeamType(c, teamID); appErr != nil {
+			fail(c, appErr)
+			return
+		}
 	}
 
 	enc, hash := existing.PhoneEnc, existing.PhoneHash
@@ -1799,6 +1909,256 @@ func (h *Handler) replyFeelingLog(c *gin.Context) {
 		return
 	}
 	ok(c, nil)
+}
+
+// ─────────────────────────────────────────────────────────────
+// T641 医护建议（advice_logs）
+// ─────────────────────────────────────────────────────────────
+
+// adviceContentMaxRunes 正文上限（R2 甲 500，与 feedbacks.content VARCHAR(500) 同档）。
+// 口径走 rune，不抄本文件 savePlan 那处 len() 字节口径：字节口径下 500 只放得下约 166 个汉字，
+// 而患者端摘要按字符切，服务端与展示两把尺不同尺。
+const adviceContentMaxRunes = 500
+
+// adviceTeamLabel / adviceTechLabel 回落链末档与技师固定标签（R6 甲：不编造职称、绝不用姓名兜底）。
+const (
+	adviceTeamLabel = "医护团队"
+	adviceTechLabel = "技术支撑"
+)
+
+// adviceDisplayTitle R5 甲回落链：title → department → 固定词。
+// 三档都在 handler 侧算（库里不 COALESCE 成固定词），否则「回落走了哪一档」在 SQL 面被抹平，
+// 断言就退化成只看最终字符串。
+func adviceDisplayTitle(title, department *string) string {
+	if title != nil && strings.TrimSpace(*title) != "" {
+		return strings.TrimSpace(*title)
+	}
+	if department != nil && strings.TrimSpace(*department) != "" {
+		return strings.TrimSpace(*department)
+	}
+	return adviceTeamLabel
+}
+
+func toAdviceDTO(r repo.AdviceRow, editorDoctorID string) model.AdviceDTO {
+	return model.AdviceDTO{
+		AdviceID:  strconv.FormatInt(r.AdviceID, 10),
+		PatientID: r.PatientID,
+		Title:     adviceDisplayTitle(r.AuthorTitle, r.AuthorDepartment),
+		Content:   r.Content,
+		CreatedAt: r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt: r.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Editable:  editorDoctorID != "" && r.AuthorDoctorID == editorDoctorID,
+	}
+}
+
+func toCareTeamDTO(r repo.CareTeamRow) model.CareTeamMemberDTO {
+	// technicians 表没有 title 列（000001:53-65），这一行恒给固定标签；医生行走回落链。
+	if r.MemberType == "technician" {
+		return model.CareTeamMemberDTO{MemberType: r.MemberType, Title: adviceTechLabel}
+	}
+	return model.CareTeamMemberDTO{MemberType: r.MemberType, Title: adviceDisplayTitle(r.Title, r.Department)}
+}
+
+type adviceContentRequest struct {
+	Content string `json:"content"`
+}
+
+// validateAdviceContent 必填 + rune 上限两关；通过时回去空白后的正文。
+func validateAdviceContent(raw string) (string, *model.AppError) {
+	content := trimStr(raw)
+	if content == "" {
+		return "", model.ErrInvalidParam("content is required")
+	}
+	if runeLen(content) > adviceContentMaxRunes {
+		return "", model.ErrInvalidParam("content exceeds %d chars", adviceContentMaxRunes)
+	}
+	return content, nil
+}
+
+// adviceWriteIdentity 写三腿的作者身份：author_doctor_id 只从这里取，不信客户端。
+//
+// 两道各自必要，缺一不可：
+//   - 非 staff 先拒。assertAdminOrSelf 对「患者本人」是放行的（那是本人档案域的语义），
+//     而建议的写域按裁定只属于医护 —— 患者给自己发一条不该落到库。
+//     网关那层 doctorAdminOnly 已经拦过一次，服务层这层是 T491 一族「只收紧不放宽」的兜底：
+//     写替身不校验角色，一旦身份解析被更宽的路径喂到，直接产生的是一次库写。
+//   - 无 doctors 行（客服 / 运营管理员令牌）⇒ 403，发不出「谁说的」这一格。
+//
+// 返回 false 时响应已写出。
+func (h *Handler) adviceWriteIdentity(c *gin.Context) (string, bool) {
+	if !isStaffRole(c.GetHeader(headerRole)) {
+		fail(c, model.ErrForbidden("advice must be written by care staff"))
+		return "", false
+	}
+	doctorID, found, err := h.store.DoctorIDByAdmin(c.Request.Context(), operatorID(c, ""))
+	if err != nil {
+		fail(c, model.ErrInternal("resolve doctor identity failed"))
+		return "", false
+	}
+	if !found {
+		fail(c, model.ErrForbidden("doctor identity required to write advice"))
+		return "", false
+	}
+	return doctorID, true
+}
+
+// callerDoctorID 读端点算 editable 用。非 staff、库里无 doctors 行、解析失败三形都回空串：
+// 这三种身份本来就一条都改不了（editable 恒 false 是正确读数），不该把一页建议流打成 500。
+func (h *Handler) callerDoctorID(c *gin.Context) string {
+	if !isStaffRole(c.GetHeader(headerRole)) {
+		return ""
+	}
+	doctorID, found, err := h.store.DoctorIDByAdmin(c.Request.Context(), operatorID(c, ""))
+	if err != nil || !found {
+		return ""
+	}
+	return doctorID
+}
+
+// createAdvice POST /api/v1/patients/:patientId/advice —— 医护写一条建议
+func (h *Handler) createAdvice(c *gin.Context) {
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+	var req adviceContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	content, appErr := validateAdviceContent(req.Content)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	// 归属判定排在任何库写之前（口径同 savePlan D2）：跨团队时一次 INSERT 都不许发生。
+	if !assertAdminOrSelf(c, patientID) {
+		return
+	}
+	if !h.assertPatientInScope(c, patientID) {
+		return
+	}
+	doctorID, pass := h.adviceWriteIdentity(c)
+	if !pass {
+		return
+	}
+	row, err := h.store.CreateAdvice(c.Request.Context(), patientID, doctorID, content)
+	if err != nil {
+		fail(c, model.ErrInternal("create advice failed"))
+		return
+	}
+	ok(c, toAdviceDTO(*row, doctorID))
+}
+
+// listAdvice GET /api/v1/patients/:patientId/advice —— 建议流，created_at 倒序。
+// 后台 staff 与患者端走同一条路径：assertAdminOrSelf 放行 staff / 拦患者跨本人，
+// 再由 assertPatientInScope 收窄到本团队（照抄 listPlans 的两行式，不另造判定）。
+func (h *Handler) listAdvice(c *gin.Context) {
+	patientID := c.Param("patientId")
+	if patientID == "" {
+		fail(c, model.ErrInvalidParam("patientId is required"))
+		return
+	}
+	if !assertAdminOrSelf(c, patientID) {
+		return
+	}
+	if !h.assertPatientInScope(c, patientID) {
+		return
+	}
+	rows, err := h.store.ListAdvice(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("list advice failed"))
+		return
+	}
+	editorDoctorID := h.callerDoctorID(c)
+	list := make([]model.AdviceDTO, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, toAdviceDTO(r, editorDoctorID))
+	}
+	ok(c, list)
+}
+
+// updateAdvice PUT /api/v1/advice/:adviceId —— R4 甲同行 UPDATE（updated_at 由 SQL 刷新）。
+// R7 甲的作者谓词在 SQL 的 WHERE 里（store.UpdateAdvice），此处不另查归属：能改的只有「我写的那一行」，
+// 跨团队改他人建议需要以他人身份命中谓词，结构上不成立。
+func (h *Handler) updateAdvice(c *gin.Context) {
+	adviceID, err := strconv.ParseInt(c.Param("adviceId"), 10, 64)
+	if err != nil || adviceID < 1 {
+		fail(c, model.ErrInvalidParam("invalid adviceId: %s", c.Param("adviceId")))
+		return
+	}
+	var req adviceContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	content, appErr := validateAdviceContent(req.Content)
+	if appErr != nil {
+		fail(c, appErr)
+		return
+	}
+	doctorID, pass := h.adviceWriteIdentity(c)
+	if !pass {
+		return
+	}
+	row, err := h.store.UpdateAdvice(c.Request.Context(), adviceID, doctorID, content)
+	if err != nil {
+		fail(c, model.ErrInternal("update advice failed"))
+		return
+	}
+	if row == nil {
+		// 「行不存在」与「存在但非本人所写」两格同码：受限身份在这一端点永不出 404，
+		// adviceId 存在性不可辨（口径同 replyFeelingLog 的四格合一 403）。
+		fail(c, model.ErrForbidden("advice %d is not editable by you", adviceID))
+		return
+	}
+	ok(c, toAdviceDTO(*row, doctorID))
+}
+
+// deleteAdvice DELETE /api/v1/advice/:adviceId —— R3 甲硬删；可追溯性由审计行提供
+// （audit_t252.go 登记表，target_type=advice_log），业务表不开全仓没有的 deleted_at 列。
+func (h *Handler) deleteAdvice(c *gin.Context) {
+	adviceID, err := strconv.ParseInt(c.Param("adviceId"), 10, 64)
+	if err != nil || adviceID < 1 {
+		fail(c, model.ErrInvalidParam("invalid adviceId: %s", c.Param("adviceId")))
+		return
+	}
+	doctorID, pass := h.adviceWriteIdentity(c)
+	if !pass {
+		return
+	}
+	deleted, err := h.store.DeleteAdvice(c.Request.Context(), adviceID, doctorID)
+	if err != nil {
+		fail(c, model.ErrInternal("delete advice failed"))
+		return
+	}
+	if !deleted {
+		fail(c, model.ErrForbidden("advice %d is not deletable by you", adviceID))
+		return
+	}
+	ok(c, nil)
+}
+
+// getCareTeam GET /api/v1/patient/care-team —— 患者端「你的医护团队」，只出角色 + 职称。
+// self-scope：患者 ID 只取网关注入的 X-User-Id，路径不带 ID（口径同 getPatientProfile），
+// 结构上无法请求他人团队，因此不需要存在性判 404（令牌本身已锁人）。
+func (h *Handler) getCareTeam(c *gin.Context) {
+	patientID := c.GetHeader(headerUserID)
+	if patientID == "" {
+		fail(c, model.ErrForbidden("patient identity required"))
+		return
+	}
+	rows, err := h.store.CareTeamByPatient(c.Request.Context(), patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("list care team failed"))
+		return
+	}
+	list := make([]model.CareTeamMemberDTO, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, toCareTeamDTO(r))
+	}
+	ok(c, list)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2507,6 +2867,7 @@ func toTeamDetailDTO(r repo.TeamDetailRow) model.TeamDetailDTO {
 		PatientCount: r.PatientCount,
 		Description:  r.Description,
 		Status:       r.Status,
+		TeamType:     r.TeamType, // T627 方案乙：新建维护班组后弹窗要能回显自己刚提交的类型
 		CreatedAt:    r.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
@@ -2552,10 +2913,20 @@ func (h *Handler) createTeam(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("description exceeds 200 chars"))
 		return
 	}
+	// T627 方案乙：缺省归 medical（与迁移 000035 的 DEFAULT 同口径），给了就必须是两值之一。
+	teamType := strings.TrimSpace(req.TeamType)
+	if teamType == "" {
+		teamType = teamTypeMedical
+	}
+	if !validTeamType(teamType) {
+		fail(c, model.ErrInvalidParam("invalid teamType: medical|maintenance"))
+		return
+	}
 	row, err := h.store.CreateTeam(c.Request.Context(), repo.TeamInput{
 		Name:        name,
 		Leader:      req.Leader,
 		Description: req.Description,
+		TeamType:    teamType,
 	})
 	if err != nil {
 		if errors.Is(err, repo.ErrTeamNameExists) {
@@ -2656,6 +3027,16 @@ func (h *Handler) addTeamMember(c *gin.Context) {
 	if req.MemberID == "" {
 		fail(c, model.ErrInvalidParam("memberId is required"))
 		return
+	}
+	// T627 方案乙：成员这条写通路同样受侧别约束 —— 只在新建技师/编辑技师那两条路上设判据，
+	// 「把技师加进医疗团队」就会成为绕过分类机制的侧门。
+	// 医护腿本卡只收口到「团队存在」：把医护赶出医疗团队属医护侧裁定，不在 T627 的派发面内（卡内已请裁）。
+	if req.MemberType == "technician" {
+		if appErr := h.techTeamSideCheck(c, teamID,
+			model.ErrNotFound("team not found: %s", teamID)); appErr != nil {
+			fail(c, appErr)
+			return
+		}
 	}
 	row, err := h.store.AddTeamMember(c.Request.Context(), teamID, repo.MemberInput{
 		MemberType: req.MemberType,

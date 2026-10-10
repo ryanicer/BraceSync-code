@@ -90,9 +90,9 @@ describe('T620 桶宽与序列化', () => {
       { timestamp: '2026-10-07T17:00:00Z', points: [{ pointId: 'P01', pressureValue: 28 }] },
     ]
     expect(toTrendSeries(rows, 'P01')).toEqual([
-      { timestamp: '2026-10-07T16:00:00Z', value: 30 },
-      { timestamp: '2026-10-07T16:30:00Z', value: 0 },
-      { timestamp: '2026-10-07T17:00:00Z', value: 28 },
+      { timestamp: '2026-10-07T16:00:00Z', value: 30, kpa: null },
+      { timestamp: '2026-10-07T16:30:00Z', value: 0, kpa: null },
+      { timestamp: '2026-10-07T17:00:00Z', value: 28, kpa: null },
     ])
   })
 
@@ -112,7 +112,7 @@ describe('T620 桶宽与序列化', () => {
       { timestamp: 'not-a-date', points: [{ pointId: 'P01', pressureValue: 9 }] },
       { timestamp: '2026-10-07T16:00:00Z', points: [{ pointId: 'P01', pressureValue: 3 }] },
     ]
-    expect(toTrendSeries(rows, 'P01')).toEqual([{ timestamp: '2026-10-07T16:00:00Z', value: 3 }])
+    expect(toTrendSeries(rows, 'P01')).toEqual([{ timestamp: '2026-10-07T16:00:00Z', value: 3, kpa: null }])
   })
 
   it('选中点位不在该行时退到该行最大值；无点位入参也走最大值', () => {
@@ -125,6 +125,58 @@ describe('T620 桶宽与序列化', () => {
 
   it('空窗口返回空序列（由页面决定 fallback 单点，序列化层不造点）', () => {
     expect(toTrendSeries([], 'P01')).toEqual([])
+  })
+})
+
+describe('T643 纵轴随档：kPa 与 N 必须出自同一枚选点', () => {
+  it('命中指定点位时取那点位的 kpa（不借同行的最大点位）', () => {
+    const rows = [
+      {
+        timestamp: '2026-10-07T16:00:00Z',
+        points: [
+          { pointId: 'P01', pressureValue: 30, pressureKpa: 47 },
+          { pointId: 'P02', pressureValue: 55, pressureKpa: 86 },
+        ],
+      },
+    ]
+    expect(toTrendSeries(rows, 'P01')).toEqual([{ timestamp: '2026-10-07T16:00:00Z', value: 30, kpa: 47 }])
+    expect(toTrendSeries(rows, 'P02')).toEqual([{ timestamp: '2026-10-07T16:00:00Z', value: 55, kpa: 86 }])
+  })
+
+  it('选中点位不在该行时退到该行最大点位，kpa 跟着同一枚点位走', () => {
+    const row = {
+      timestamp: '2026-10-07T16:00:00Z',
+      points: [
+        { pointId: 'P01', pressureValue: 12, pressureKpa: 19 },
+        { pointId: 'P02', pressureValue: 40, pressureKpa: 63 },
+      ],
+    }
+    expect(pickPointValue(row, 'P99')).toBe(40)
+    expect(row.points[1].pressureKpa).toBe(63)
+    expect(toTrendSeries([row], 'P99')).toEqual([{ timestamp: '2026-10-07T16:00:00Z', value: 40, kpa: 63 }])
+  })
+
+  it('后端没下发 pressureKpa ⇒ kpa 为 null，绝不退化成 0（0 kPa 是读数，缺失是缺失）', () => {
+    const rows = [{ timestamp: '2026-10-07T16:00:00Z', points: [{ pointId: 'P01', pressureValue: 30 }] }]
+    expect(toTrendSeries(rows, 'P01')).toEqual([{ timestamp: '2026-10-07T16:00:00Z', value: 30, kpa: null }])
+  })
+
+  it('kpa 显式为 null（面积未配置）与 0（零压换算得 0）两种值都要如实带过去', () => {
+    const rows = [
+      { timestamp: '2026-10-07T16:00:00Z', points: [{ pointId: 'P01', pressureValue: 30, pressureKpa: null }] },
+      { timestamp: '2026-10-07T16:30:00Z', points: [{ pointId: 'P01', pressureValue: 0, pressureKpa: 0 }] },
+    ]
+    expect(toTrendSeries(rows, 'P01')).toEqual([
+      { timestamp: '2026-10-07T16:00:00Z', value: 30, kpa: null },
+      { timestamp: '2026-10-07T16:30:00Z', value: 0, kpa: 0 },
+    ])
+  })
+
+  it('门禁：util 里不出现换算式（N 除面积乘十＝第二套口径）', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../src/utils/trend-window.ts'), 'utf8')
+    expect(src).not.toMatch(/\/[^\S\n]*[\w$]*[Aa]rea[\w$]*/)
+    expect(src).not.toMatch(/\*[^\S\n]*10\b/)
+    expect(src).not.toMatch(/KpaFromN/)
   })
 })
 
