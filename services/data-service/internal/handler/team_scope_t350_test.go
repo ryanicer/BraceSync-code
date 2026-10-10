@@ -197,7 +197,7 @@ func t350DashRouter(t *testing.T, q DashboardQuerier, lookup PatientLookup) http
 func t350Querier() *mockQuerier {
 	return &mockQuerier{
 		kpi:        &service.DashboardKPIDTO{TotalPatients: 1},
-		wearTrend:  []service.WearTrendPoint{{Date: "09-20", AvgHours: 6}},
+		wearTrend:  []service.WearTrendPoint{{Date: "09-20", AvgHours: dashF64(6)}},
 		alertTrend: []service.AlertTrendPoint{{Date: "09-20", Count: 1}},
 		teamRank:   []service.TeamRankingDTO{{Rank: 1, TeamName: t350TeamA}},
 		docRank:    []service.DoctorRankingDTO{{Rank: 1, DoctorName: "王医生", TeamName: t350TeamA}},

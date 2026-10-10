@@ -454,8 +454,11 @@ export interface DashboardKPI {
   totalPatients: number;
   todayActiveWear: number;
   todayAlerts: number;
-  avgWearHours: number;
-  deviceOnlineRate: number;
+  // 🔴 T636 两态：窗口内无 daily_wear_stats 行 / 无已绑定设备 ⇒ null（「暂无数据」），
+  // 不是 0 —— 后端原以 COALESCE(...,0) 与 CASE ... ELSE 0 把「取不到」涂成「0 小时 / 0% 在线」。
+  // count 类四项无行时回 0 是实测事实，保持 number。
+  avgWearHours: number | null;
+  deviceOnlineRate: number | null;
   monthNewPatients: number;
 
   // T248 1.1 对比基准（PRD §7D.1「对比基准」列）。T418 归口：后端 09xx 起就随 KPI 同行返回，
