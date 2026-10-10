@@ -89,6 +89,12 @@ test('患者侧载荷即使带回医护姓名两枚字串，「我的」页也�
   expect(body).not.toContain('王医生')
   expect(body).not.toContain('脊柱侧弯矫正一组')
 
-  // 副文案只说绑定状态（teamId 在场 ⇒ 已绑定）
-  await expect(page.locator('.menu-sub').first()).toHaveText('已绑定')
+  // T641（PR 368，2026-10-11 合入 main）把原「我的医生」行整枚换成无副文案的「康复建议」行，
+  // 旧 doctorSubText 绑定态槽位随之消失（同 apps/patient-miniapp/tests/unit/profile-privacy-t646.spec.ts A2）。
+  // 故这里钉新形状：首枚菜单项 = 康复建议且不带副文案；页内首枚 .menu-sub 只可能是设备标识，
+  // 不是医护姓名——body 面的 notContain 之外再补一枚结构正对照，防空面假绿。
+  const adviceRow = page.locator('.menu-item').first()
+  await expect(adviceRow).toContainText('康复建议')
+  await expect(adviceRow.locator('.menu-sub'), '康复建议行不得带副文案（旧医护名槽位不得复活）').toHaveCount(0)
+  await expect(page.locator('.menu-sub').first(), '首枚副文案是设备标识，不是医护姓名').toHaveText('DEV-E2E')
 })
