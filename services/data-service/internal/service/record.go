@@ -556,6 +556,7 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 		Alerts:          []any{},
 		HeatmapMaxN:     th.HeatmapMaxN,
 		PressureHighN:   th.PressureHighN,
+		PressureLowN:    th.PressureLowN,
 	}
 
 	deviceID, dbStatus, areaCm2, exists, err := s.devices.GetDeviceByPatient(ctx, patientID)

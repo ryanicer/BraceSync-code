@@ -45,6 +45,7 @@ const (
 	keyWearingThreshold = "wearing_pressure_threshold"
 	keyHeatmapMax       = "heatmap_max_n"
 	keyPressureHigh     = "threshold_pressure_high"
+	keyPressureLow      = "threshold_pressure_low"
 )
 
 // configSnapshot 一次 sys_configs 读取的缓存负载
@@ -151,6 +152,10 @@ func applyConfigValue(key, value string, snap *configSnapshot) {
 	case keyPressureHigh:
 		if v, err := strconv.ParseFloat(value, 64); err == nil && v > 0 {
 			snap.th.PressureHighN = v
+		}
+	case keyPressureLow:
+		if v, err := strconv.ParseFloat(value, 64); err == nil && v > 0 {
+			snap.th.PressureLowN = v
 		}
 	}
 }

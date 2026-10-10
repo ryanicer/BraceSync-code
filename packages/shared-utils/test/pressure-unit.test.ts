@@ -23,6 +23,7 @@ import {
   heroRangeHintVisible,
   axisUnitText,
   kpaObservedMax,
+  heroRangeText,
 } from '../src/index'
 
 const srcOf = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
@@ -128,7 +129,7 @@ describe('areaHintVisible：提示行与格子数字必须同源（不许「提�
   })
 })
 
-describe('heroRangeHintVisible：hero「20-60N 正常范围」只在 N 档（Boss 09-30 裁定 c）', () => {
+describe('heroRangeHintVisible：hero 正常范围副文案只在 N 档（Boss 09-30 裁定 c）', () => {
   it('N 档保留、kPa 档隐藏', () => {
     expect(heroRangeHintVisible('N')).toBe(true)
     expect(heroRangeHintVisible('kPa')).toBe(false)
@@ -161,6 +162,30 @@ describe('T643 纵轴随档：轴字母与 kPa 档轴上界（PRD V3.44 把趋�
     expect(src).not.toMatch(/areaCm2/)
     expect(src).not.toMatch(/\*[^\S\n]*10\b/)
     expect(src).not.toMatch(/\/[^\S\n]*[\w$]*[Aa]rea[\w$]*/)
+  })
+})
+
+// T601：文案不再写死 20-60N —— 数值由快照下发的配置边界派生，断言「配置注入值出现在文案里」
+describe('heroRangeText：文案由配置边界派生（写死字面量与 sys_configs 漂移即缺陷）', () => {
+  it('现网配置 1N 到 5N → 文案逐字出现注入值', () => {
+    expect(heroRangeText(1, 5)).toBe('1-5N 正常范围')
+  })
+
+  it('边界带小数原样书写，不补零不取整', () => {
+    expect(heroRangeText(0.5, 4.5)).toBe('0.5-4.5N 正常范围')
+  })
+
+  it('任一边界缺失返回空串（调用方隐藏该行，不猜值不回落旧字面量）', () => {
+    expect(heroRangeText(null, 5)).toBe('')
+    expect(heroRangeText(1, undefined)).toBe('')
+    expect(heroRangeText(null, null)).toBe('')
+    expect(heroRangeText(NaN, 5)).toBe('')
+    expect(heroRangeText(1, Infinity)).toBe('')
+  })
+
+  it('源码不残留写死的 20-60 字面量（本卡缺陷本体不得回潮）', () => {
+    expect(srcOf('../src/pressureUnit.ts')).not.toContain('20-60N')
+    expect(srcOf('../src/pressureUnit.ts')).not.toMatch(/return `\d+-\d+N/)
   })
 })
 

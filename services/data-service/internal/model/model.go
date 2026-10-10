@@ -39,6 +39,9 @@ type PressureThresholds struct {
 	HeatmapMaxN float64
 	// PressureHighN 压力偏高告警阈值（sys_configs: threshold_pressure_high，T203 后默认 5）
 	PressureHighN float64
+	// PressureLowN 压力低压边界（sys_configs: threshold_pressure_low，迁移 000021 后默认 1；
+	// 与 user-service 系统参数 / 告警页 Tab2 同键。T601：患者端 hero 正常范围文案的下边界来源）
+	PressureLowN float64
 }
 
 // DefaultPressureThresholds T203 ÷10 后默认口径（配置缺失/非法时兜底）
@@ -47,6 +50,7 @@ func DefaultPressureThresholds() PressureThresholds {
 		WearingN:      WearingThresholdN,
 		HeatmapMaxN:   6.0, // T203: 60 → 6
 		PressureHighN: 5.0, // T203: 45 → 5
+		PressureLowN:  1.0, // 迁移 000021 / seed 同值（T281 量纲修复后的默认）
 	}
 }
 
@@ -671,6 +675,9 @@ type RealtimeSnapshot struct {
 	// 供前端色阶上界与分级渲染用——写死常量会与 sys_configs 漂移（T203 前端即因写死 60/45 滞后一个量级）。
 	HeatmapMaxN   float64 `json:"heatmapMaxN"`
 	PressureHighN float64 `json:"pressureHighN"`
+	// PressureLowN 低压边界（T601）：hero「正常范围」文案的下边界，与 PressureHighN 同链
+	// （sys_configs threshold_pressure_low）——文案写死会与告警配置差一个量级（T601 现网 20-60 对 1-5）。
+	PressureLowN float64 `json:"pressureLowN"`
 	// T508 双单位（N/kPa）展示档：三字段全部同源于 device-service 写的 devices.contact_area_cm2，
 	// 只在本响应内派生，不落库、不进告警与聚合（PRD 裁定四）。
 	//   - ContactAreaCm2：当前绑定设备的面积；null = 未配置（前端「未配置面积，暂无法换算」)

@@ -83,7 +83,7 @@ export function areaHintVisible(unit: PressureUnit, heatmapMaxKpa: number | null
   return unit === 'kPa' && (heatmapMaxKpa === null || heatmapMaxKpa === undefined)
 }
 
-/** hero 副文案「20-60N 正常范围」只在 N 档出现（Boss 2026-09-30 08:58:12 裁定 c） */
+/** hero 副文案「正常范围」只在 N 档出现（Boss 2026-09-30 08:58:12 裁定 c） */
 export function heroRangeHintVisible(unit: PressureUnit): boolean {
   return unit === 'N'
 }
@@ -110,4 +110,21 @@ export function kpaObservedMax(
     if (typeof v === 'number' && Number.isFinite(v) && v > max) max = v
   }
   return max > 0 ? max : null
+}
+
+/**
+ * hero 副文案「正常范围」的数值段（T601）：从快照下发的两条配置边界派生
+ * （pressureLowN / pressureHighN，与告警引擎同一条 sys_configs 链）。
+ * 🔴 绝不写死数值 —— 写死会与配置漂移（T601 现网页面写死「二十到六十 N」对配置 1N 到 5N
+ * 差一个量级，患者会把正常读数看成异常）。
+ * 任一边界缺失（快照未到 / 字段缺席）返回空串：调用方按空串隐藏该行，
+ * 不猜值、不回落旧字面量（旧字面量本身就是本卡缺陷）。
+ */
+export function heroRangeText(
+  low: number | null | undefined,
+  high: number | null | undefined,
+): string {
+  if (low === null || low === undefined || !Number.isFinite(low)) return ''
+  if (high === null || high === undefined || !Number.isFinite(high)) return ''
+  return `${low}-${high}N 正常范围`
 }
