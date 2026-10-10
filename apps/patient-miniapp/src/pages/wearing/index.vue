@@ -5,6 +5,8 @@
     hours/status 均为前端派生（T221 真机教训：不可直接消费不存在的字段）。
   - PT-19 提醒：后端零端点（T098-Q4 §2），本轮仅按设计呈现 UI，开关禁用 +「待开放」，
     不做假保存；存取 + 订阅消息链路另立卡。
+  - T634 汇总视图：按日（当日值 + 构成）与按周（本周值）两档切换，共用上面那一份 daily-wear 取数面，
+    切档只换聚合维度、不重新请求；时长换算与周界（东八区、周一起算）单点派生自 utils/wear-summary，本页不再各写一份。
 -->
 <template>
   <view class="page">
@@ -27,24 +29,75 @@
       </view>
     </view>
 
-    <!-- PT-18: 本周统计 -->
+    <!-- PT-18 + T634: 汇总视图（按日 / 按周）；两档共用同一份 daily-wear 取数面，切档不重新请求 -->
     <view class="section">
-      <text class="section-title">本周统计</text>
-      <view class="chart-card">
-        <canvas type="2d" id="weekChart" class="week-canvas" style="width: 100%; height: 160px"></canvas>
+      <view class="section-title-row">
+        <text class="section-title">汇总视图</text>
+        <text class="pending-tag">{{ viewMode === 'day' ? '按日' : '按周' }}</text>
       </view>
-      <view class="stats-row">
-        <view class="stat">
-          <text class="stat-label">日均佩戴</text>
-          <view class="stat-value">{{ avgText }}<text class="stat-unit">h</text></view>
+      <view class="segmented">
+        <view :class="['seg-btn', { 'seg-active': viewMode === 'day' }]" @click="switchViewMode('day')"><text>按日</text></view>
+        <view :class="['seg-btn', { 'seg-active': viewMode === 'week' }]" @click="switchViewMode('week')"><text>按周</text></view>
+      </view>
+
+      <view v-if="viewMode === 'day'">
+        <view class="day-picker">
+          <view
+            v-for="chip in dayChips"
+            :key="chip.key"
+            :class="['day-chip', { 'day-chip-active': chip.key === selectedDayKey }]"
+            @click="selectDay(chip.key)"
+          >
+            <text class="day-chip-week">{{ chip.weekday }}</text>
+            <text class="day-chip-date">{{ chip.date }}</text>
+          </view>
         </view>
-        <view class="stat">
-          <text class="stat-label">最高单日</text>
-          <view class="stat-value">{{ maxText }}<text class="stat-unit">h</text></view>
+        <view class="stats-row">
+          <view class="stat">
+            <text class="stat-label">当日佩戴</text>
+            <view class="stat-value">{{ dayHoursText }}<text class="stat-unit">h</text></view>
+          </view>
+          <view class="stat">
+            <text class="stat-label">达标率</text>
+            <view class="stat-value">{{ dayRateText }}<text class="stat-unit">%</text></view>
+          </view>
+          <view class="stat">
+            <text class="stat-label">佩戴分钟</text>
+            <view class="stat-value">{{ daySummary.wearMinutes }}<text class="stat-unit">min</text></view>
+          </view>
         </view>
-        <view class="stat">
-          <text class="stat-label">累计佩戴</text>
-          <view class="stat-value">{{ totalText }}<text class="stat-unit">h</text></view>
+        <view class="compose-card">
+          <text class="compose-title">{{ daySummary.key }} 构成</text>
+          <view class="compose-row">
+            <text class="compose-label">采集帧数</text>
+            <text class="compose-val">{{ dayFrameCountText }}</text>
+          </view>
+          <view class="compose-row">
+            <text class="compose-label">异常帧数</text>
+            <text class="compose-val">{{ dayAbnormalCountText }}</text>
+          </view>
+          <text v-if="!daySummary.hasRecord" class="compose-empty">该日无上报记录，数值按 0 呈现</text>
+        </view>
+      </view>
+
+      <view v-else>
+        <view class="chart-card">
+          <canvas type="2d" id="weekChart" class="week-canvas" style="width: 100%; height: 160px"></canvas>
+        </view>
+        <text class="week-range">{{ weekRangeText }}</text>
+        <view class="stats-row">
+          <view class="stat">
+            <text class="stat-label">日均佩戴</text>
+            <view class="stat-value">{{ avgText }}<text class="stat-unit">h</text></view>
+          </view>
+          <view class="stat">
+            <text class="stat-label">最高单日</text>
+            <view class="stat-value">{{ maxText }}<text class="stat-unit">h</text></view>
+          </view>
+          <view class="stat">
+            <text class="stat-label">累计佩戴</text>
+            <view class="stat-value">{{ totalText }}<text class="stat-unit">h</text></view>
+          </view>
         </view>
       </view>
     </view>
@@ -103,10 +156,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, getCurrentInstance } from 'vue'
+import { nextTick, ref, computed, watch, onMounted, getCurrentInstance } from 'vue'
 import { request } from '../../utils/request'
 import { useAuthStore } from '../../stores/auth'
 import { loadWearTarget, wearTargetHours } from '../../utils/wear-target'
+import {
+  WEEK_LABELS,
+  buildDaySummary,
+  cstTodayKey,
+  dateKey,
+  summaryWindowKeys,
+  visibleDayKeys,
+  weekAggregate,
+  weekDayKeys,
+  weekSlots,
+} from '../../utils/wear-summary'
+import type { SummaryViewMode } from '../../utils/wear-summary'
 
 // data-service DailyWearDayDTO（T076；T366 可解释性四字段为可选镜像，本页不消费）
 interface DailyWearDay {
@@ -125,72 +190,82 @@ interface DailyWearDay {
 
 const auth = useAuthStore()
 
-function pad(n: number): string {
-  return n < 10 ? '0' + n : '' + n
-}
-
 const now = new Date()
-const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+// 「今日」那枚键按裁定第二节维持设备本地时区（迁 CST 助手属独立事项，不在本卡）
+const todayKey = dateKey(now)
 
 const days = ref<DailyWearDay[]>([])
 
-function toHours(d: DailyWearDay): number {
-  return Math.round(d.wearMinutes / 6) / 10
-}
-
-const todayHours = computed(() => {
-  const rec = days.value.find((d) => d.date === todayKey)
-  return rec ? toHours(rec) : 0
-})
+const todayHours = computed(() => buildDaySummary(days.value, todayKey).hours)
 
 const todayHoursText = computed(() => todayHours.value.toFixed(1))
 const rateText = computed(() => String(Math.round((todayHours.value / wearTargetHours.value) * 100)))
 
+// T634 汇总视图档位：切档只改展示的聚合维度，取数面仍是下面 loadDailyWear 那一发
+const viewMode = ref<SummaryViewMode>('day')
+const selectedDayKey = ref(cstTodayKey(now))
+
+function switchViewMode(mode: SummaryViewMode) {
+  if (viewMode.value === mode) return
+  viewMode.value = mode
+}
+
+function selectDay(key: string) {
+  selectedDayKey.value = key
+}
+
+const dayChips = computed(() =>
+  visibleDayKeys(now).map((key, i) => ({ key, weekday: WEEK_LABELS[i], date: key.slice(5) }))
+)
+
+const daySummary = computed(() => buildDaySummary(days.value, selectedDayKey.value))
+const dayHoursText = computed(() => daySummary.value.hours.toFixed(1))
+const dayRateText = computed(() =>
+  String(Math.round((daySummary.value.hours / wearTargetHours.value) * 100))
+)
+const dayFrameCountText = computed(() =>
+  daySummary.value.frameCount == null ? '—' : String(daySummary.value.frameCount)
+)
+const dayAbnormalCountText = computed(() =>
+  daySummary.value.abnormalCount == null ? '—' : String(daySummary.value.abnormalCount)
+)
+
 // 本周（周一起）逐日：无记录/未到 → null
-const weekHours = computed<(number | null)[]>(() => {
-  const arr: (number | null)[] = [null, null, null, null, null, null, null]
-  const byDate = new Map(days.value.map((d) => [d.date, toHours(d)]))
-  const dow = now.getDay()
-  const todayIdx = dow === 0 ? 6 : dow - 1
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - todayIdx)
-  for (let i = 0; i <= todayIdx; i++) {
-    const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i)
-    const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-    arr[i] = byDate.has(key) ? byDate.get(key)! : null
-  }
-  return arr
+const weekHours = computed<(number | null)[]>(() => weekSlots(days.value, now))
+const weekAgg = computed(() => weekAggregate(weekHours.value))
+
+const weekRangeText = computed(() => {
+  const keys = weekDayKeys(now)
+  return `本周（周一开始）${keys[0].slice(5)} 至 ${keys[6].slice(5)} · 有记录 ${weekAgg.value.coveredDays} 天`
 })
 
-const withData = computed(() => weekHours.value.filter((v): v is number => v != null))
-
 const avgText = computed(() =>
-  withData.value.length === 0
+  weekAgg.value.coveredDays === 0
     ? '0.0'
-    : (withData.value.reduce((a, b) => a + b, 0) / withData.value.length).toFixed(1)
+    : (weekAgg.value.sumHours / weekAgg.value.coveredDays).toFixed(1)
 )
 const maxText = computed(() =>
-  withData.value.length === 0 ? '0.0' : Math.max(...withData.value).toFixed(1)
+  weekAgg.value.coveredDays === 0 ? '0.0' : weekAgg.value.maxHours.toFixed(1)
 )
 const totalText = computed(() =>
-  withData.value.length === 0 ? '0' : String(Math.round(withData.value.reduce((a, b) => a + b, 0)))
+  weekAgg.value.coveredDays === 0 ? '0' : String(Math.round(weekAgg.value.sumHours))
 )
 
-// 加载：本周范围（周一 → 今日，闭区间；后端 Asia/Shanghai 切日）
+// 加载：本周范围（东八区周一 → 今日，闭区间；后端 Asia/Shanghai 切日）
 async function loadDailyWear() {
   const patientId = auth.patientId
   if (!patientId) {
     days.value = []
     return
   }
+  const win = summaryWindowKeys(now)
   try {
-    const dow = now.getDay()
-    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (dow === 0 ? 6 : dow - 1))
     const list = await request<DailyWearDay[]>({
       url: `/api/v1/patients/${patientId}/daily-wear`,
       method: 'GET',
       data: {
-        start: `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`,
-        end: todayKey,
+        start: win.start,
+        end: win.end,
       },
     })
     days.value = Array.isArray(list) ? list : []
@@ -252,7 +327,7 @@ function renderWeekChart(ctx: any, w: number, h: number) {
     ctx.textAlign = 'right'
     ctx.fillText(val + 'h', pad.left - 8, y + 4)
   }
-  const labels = ['一', '二', '三', '四', '五', '六', '日']
+  const labels = WEEK_LABELS
   const barW = Math.min((cw / 7) * 0.6, 24)
   weekHours.value.forEach((v, i) => {
     const x = pad.left + (cw / 7) * i + (cw / 7 - barW) / 2
@@ -317,7 +392,8 @@ function drawCanvas(id: string, render: (ctx: any, w: number, h: number) => void
 
 function drawAll() {
   drawCanvas('wearRing', renderRing)
-  drawCanvas('weekChart', renderWeekChart)
+  // 柱状图 canvas 只在按周档在场（v-else 那格），按日档下没有节点可画
+  if (viewMode.value === 'week') drawCanvas('weekChart', renderWeekChart)
 }
 
 onMounted(() => {
@@ -328,6 +404,10 @@ onMounted(() => {
 })
 
 watch([days, wearTargetHours], () => drawAll())
+watch(viewMode, async () => {
+  await nextTick()
+  drawAll()
+})
 </script>
 
 <style scoped>
@@ -356,6 +436,25 @@ watch([days, wearTargetHours], () => drawAll())
 .stat-label { font-size: 22rpx; color: #94a3b8; margin-bottom: 8rpx; display: block; }
 .stat-value { font-size: 40rpx; font-weight: 500; color: #1e293b; }
 .stat-unit { font-size: 24rpx; color: #94a3b8; font-weight: 400; }
+
+.segmented { display: flex; background: #f1f5f9; border-radius: 20rpx; padding: 6rpx; gap: 4rpx; margin-bottom: 24rpx; }
+.seg-btn { flex: 1; text-align: center; padding: 14rpx 0; font-size: 26rpx; font-weight: 500; color: #64748b; border-radius: 16rpx; transition: all 0.2s; }
+.seg-active { background: #fff; color: #2563EB; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.08); }
+
+.day-picker { display: flex; flex-wrap: wrap; gap: 12rpx; margin-bottom: 16rpx; }
+.day-chip { flex: 1; min-width: 84rpx; background: #fff; border: 1rpx solid #e2e8f0; border-radius: 16rpx; padding: 12rpx 0; text-align: center; }
+.day-chip-active { border-color: #2563EB; background: #eff6ff; }
+.day-chip-week { display: block; font-size: 22rpx; color: #94a3b8; }
+.day-chip-date { display: block; font-size: 24rpx; color: #1e293b; margin-top: 4rpx; }
+
+.week-range { display: block; font-size: 22rpx; color: #94a3b8; margin-top: 16rpx; }
+
+.compose-card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); padding: 24rpx 32rpx; margin-top: 16rpx; }
+.compose-title { display: block; font-size: 26rpx; font-weight: 500; color: #1e293b; margin-bottom: 12rpx; }
+.compose-row { display: flex; align-items: center; justify-content: space-between; font-size: 26rpx; padding: 8rpx 0; }
+.compose-label { color: #94a3b8; }
+.compose-val { color: #1e293b; }
+.compose-empty { display: block; font-size: 22rpx; color: #f59e0b; margin-top: 12rpx; }
 
 .remind-list { display: flex; flex-direction: column; gap: 16rpx; }
 .remind-card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); padding: 32rpx; }

@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
-import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
+import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows, type AdminRole } from '../admin-helpers'
 
 /**
  * admin-web 矫形日志（T289 批次三 B 批 8.1 跨患者视图 + 8.2 佩戴感受两档）
@@ -220,8 +220,8 @@ test.describe('工作台 · T344 数据视图', () => {
  *  报告 周报 92.5% / 38.2N、月报 88.1%。
  * 写操作只改浏览器内存里的 mock，每条用例新开 context，不碰共享 seed。
  */
-async function openWorkspace(page: Page): Promise<Locator> {
-  await adminLogin(page, 'admin')
+async function openWorkspace(page: Page, role: AdminRole = 'admin'): Promise<Locator> {
+  await adminLogin(page, role)
   await page.goto(adminRoutes.orthosisLog)
   await expect(listRows(page).first()).toBeVisible({ timeout: 15_000 })
   await page.getByRole('tab', { name: '患者工作台' }).click()
@@ -271,7 +271,9 @@ test.describe('工作台 · 矫形方案 Tab（T301 G1）', () => {
     await expect(ws.getByRole('button', { name: '保存新方案' })).toBeDisabled()
   })
 
-  test('保存新方案后前插 v2.2，输入框清空', async ({ page }) => {
+  test('保存新方案后前插 v2.2，输入框清空（医生身份；T629 后非医生点不动这一枪）', async ({ page }) => {
+    ws = await openWorkspace(page, 'doctor')
+    await pickSelectOption(page, ws.locator('.patient-select'), '林小雨')
     await ws.locator('.page-card textarea').first().fill('T301 用例：夜间佩戴目标调整')
     await ws.getByRole('button', { name: '保存新方案' }).click()
     await expect(adminMessage(page)).toContainText('方案已保存')
@@ -280,6 +282,17 @@ test.describe('工作台 · 矫形方案 Tab（T301 G1）', () => {
     await expect(stamps.first()).toContainText('v2.2')
     await expect(ws.locator('.el-timeline-item').first()).toContainText('T301 用例：夜间佩戴目标调整')
     await expect(ws.locator('.page-card textarea').first()).toHaveValue('')
+  })
+
+  // T629 方案C：运营管理员点保存要看到「仅医生开放」的明确句，而不是链路那枚 403 的通用句。
+  // 本用例的 mock 层不调权限（真拒在后端 savePlan 的医生身份判定），它锁的是前端闸门那一步：
+  // 提示出得来 + POST 发不出（历史方案条数不动）。
+  test('运营管理员点保存新方案：出「仅对医生开放」提示，历史方案条数不动', async ({ page }) => {
+    await ws.locator('.page-card textarea').first().fill('T629 用例：非医生不应把这一枪打出去')
+    await ws.getByRole('button', { name: '保存新方案' }).click()
+    await expect(adminMessage(page)).toContainText('仅对医生开放')
+    await expect(ws.locator('.page-card-title').filter({ hasText: '历史方案' })).toHaveText('历史方案（2）')
+    await expect(ws.locator('.page-card textarea').first()).toHaveValue('T629 用例：非医生不应把这一枪打出去')
   })
 })
 

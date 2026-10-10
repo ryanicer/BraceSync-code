@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { adminRoutes, adminLogin, ADMIN_MOUNT } from '../admin-helpers'
+import { adminRoutes, adminLogin } from '../admin-helpers'
 
 /**
  * admin-web 系统配置输入边界：T270 补齐 README §5 第一类缺口 A-SET-03
@@ -233,39 +233,12 @@ test.describe('系统配置 · 压力阈值三档与医生默认阈值（T289 12
     expect(await num(page, '正常上限（N）'), '低压改成 2 后中间档须为 (偏高 + 2) ÷ 2').toBe((high + 2) / 2)
   })
 
-  test('医生默认阈值：20 点逐行等于统一上下限现值，编号/网格与设计稿同序', async ({ page }) => {
-    const rows = pointCard(page).locator('.point-table .el-table__body tbody tr')
-    await expect(rows).toHaveCount(20)
-    const high = await num(page, '偏高上限（N）')
-    const low = await num(page, '低压上限（N）')
-    const cells = await rows.evaluateAll((trs) =>
-      trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim())),
-    )
-    expect(cells.length).toBe(20)
-    cells.forEach((row, i) => {
-      // 设计稿 :109-128：P01/R1C1 … P20/R4C5，编号 =（行−1）×5 + 列
-      expect(row[0], `第 ${i + 1} 行采集点编号`).toBe(`P${String(i + 1).padStart(2, '0')}`)
-      expect(row[1], `第 ${i + 1} 行网格位置`).toBe(`R${Math.floor(i / 5) + 1}C${(i % 5) + 1}`)
-      expect(Number(row[2]), `第 ${i + 1} 行默认上限须回显偏高上限现值`).toBe(high)
-      expect(Number(row[3]), `第 ${i + 1} 行默认下限须回显低压上限现值`).toBe(low)
-    })
+  // T633（Boss 2026-10-09 报单）：「医生默认阈值」整卡不再挂载 ⇒ 原来逐点比稿面的那条判据作废，
+  // 换成「卡、标题与表格都不在场」的反向断言。压力三档那张卡的判据（beforeEach 与中间档推导）一条没动。
+  test('T633：医生默认阈值卡不挂载（标题与表格都不在场，页面无残留）', async ({ page }) => {
+    await expect(pointCard(page)).toHaveCount(0)
+    await expect(page.getByText('医生默认阈值')).toHaveCount(0)
+    await expect(page.locator('.point-table')).toHaveCount(0)
   })
 
-  test('默认阈值卡文案与承载位置对齐设计稿', async ({ page }) => {
-    // :105 说明句（含指向告警页网格的链接）；说明四条 :132-135（数值来源 / 点位命名 / 不列解剖名 / 量纲）
-    await expect(pointCard(page).locator('.page-card-title')).toHaveText('医生默认阈值')
-    await expect(pointCard(page).locator('.card-desc')).toContainText('未逐点改过时的回退默认值')
-    await expect(pointCard(page).locator('.card-link')).toHaveText('告警管理 · 告警规则配置')
-    // router-link 渲染的 href 自带挂载前缀（T336：vite base=/admin/），点它才到得了告警页
-    await expect(pointCard(page).locator('.card-link')).toHaveAttribute('href', `${ADMIN_MOUNT}/alerts`)
-    const notes = await pointCard(page).locator('.threshold-notes li').allInnerTexts()
-    expect(notes.some((n) => n.includes('不列解剖名'))).toBe(true)
-    expect(notes.some((n) => n.includes('T203'))).toBe(true)
-    // 🔴 PM 裁定 ③：稿面 45/10 是换算前旧值，「数值来源」一行必须写当前回显值
-    const high = await num(page, '偏高上限（N）')
-    const low = await num(page, '低压上限（N）')
-    const source = notes.find((n) => n.includes('threshold_pressure_high')) ?? ''
-    expect(source.replace(/\s+/g, ' ')).toContain(`threshold_pressure_high=${high}`)
-    expect(source.replace(/\s+/g, ' ')).toContain(`threshold_pressure_low=${low}`)
-  })
 })

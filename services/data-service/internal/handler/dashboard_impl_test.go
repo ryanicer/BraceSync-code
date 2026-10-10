@@ -119,11 +119,14 @@ func TestHandlerDashboardNilQuerier(t *testing.T) {
 	}
 }
 
+// dashF64 造 *float64 夹具（T636 起 avgWearHours/deviceOnlineRate/avgHours 是指针位）。
+func dashF64(v float64) *float64 { return &v }
+
 func TestHandlerDashboardHappyPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	q := &mockQuerier{
 		kpi:        &service.DashboardKPIDTO{TotalPatients: 100, TodayActiveWear: 80, TodayAlerts: 50},
-		wearTrend:  []service.WearTrendPoint{{Date: "08-05", AvgHours: 7.8}},
+		wearTrend:  []service.WearTrendPoint{{Date: "08-05", AvgHours: dashF64(7.8)}},
 		alertTrend: []service.AlertTrendPoint{{Date: "08-05", Count: 52}},
 		teamRank:   []service.TeamRankingDTO{{Rank: 1, TeamName: "TEAM-A"}},
 		docRank:    []service.DoctorRankingDTO{{Rank: 1, DoctorName: "DR-X"}},
