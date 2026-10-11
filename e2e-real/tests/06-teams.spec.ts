@@ -8,6 +8,7 @@ import {
   uniqueName,
   getAuthToken,
 } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 06 团队管理（真实模式）
@@ -93,6 +94,13 @@ test.describe('06-团队管理', () => {
     test('6.1b T658：列表只显医护团队，维护班组（TEAM04/TEAM05）不出现在表格', async ({ page }) => {
       const table = page.locator('.page-card .el-table')
       await expect(table.first()).toBeVisible()
+      // 部署腿：e2e-real 打 staging 现网包，PR 合入 ≠ 现网包已更新；旧包仍显示维护班组，
+      // 走显式跳过（同 08-settings 8.4 口径），Andy 部署追平后自动转验。
+      await requireDeployedBuild(page, {
+        marker: 'T658-teams-hide-maintenance',
+        why: '团队管理页列表隐藏维护班组（T658 PR 合入并部署后生效）',
+        probe: async (p) => (await p.locator('.page-card .el-table').filter({ hasText: '维护班组' }).count()) === 0,
+      })
       // 维护班组标签一个都不许出现（隐藏是全量的，不是只藏 TEAM04/05 两个编号）
       await expect(table).not.toContainText('维护班组')
       // 口径提示常驻，解释统计卡全量与列表的差异
