@@ -259,6 +259,12 @@ test.describe('流程设计器', () => {
     // §9.3：通知方式/超时升级后端本期没有消费者，不标注就是骗 admin
     await expect(formItem(page, '通知方式').locator('.fd-declared')).toHaveText('本期仅配置，不自动执行')
     await expect(formItem(page, '处理角色').locator('.fd-declared')).toHaveCount(0)
+    // T664：通知方式只开放系统通知，短信/邮件/微信三个未实现通道 UI 隐藏（防复活断言）
+    const notifyItem = formItem(page, '通知方式')
+    await expect(notifyItem.getByText('系统通知')).toBeVisible()
+    for (const hiddenName of ['短信', '邮件', '微信']) {
+      await expect(notifyItem.getByText(hiddenName, { exact: true })).toHaveCount(0)
+    }
 
     await propsPanel(page).locator('input').first().fill('医生确认')
     await page.keyboard.press('Tab')
@@ -483,7 +489,7 @@ test.describe('流程设计器', () => {
     // 且运行态键（status/assigneeName）与标红用的 invalid 都不落库
     expect(stored.props).toMatchObject({
       kind: 'process', assigneeRole: '主治医生', timeLimit: 30, timeUnit: 'minutes',
-      channels: ['system', 'sms'], width: 140, height: 48,
+      channels: ['system'], width: 140, height: 48,
     })
     expect(stored.props.invalid).toBeUndefined()
     expect(stored.props.assigneeName).toBeUndefined()

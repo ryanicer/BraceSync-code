@@ -35,14 +35,27 @@
         <el-form-item v-if="has('notify')" label="通知方式">
           <div class="fd-chips">
             <el-check-tag
-              v-for="c in NOTIFY_CHANNELS"
+              v-for="c in VISIBLE_NOTIFY_CHANNELS"
               :key="c.value"
               :checked="form.channels.includes(c.value)"
               @change="toggleChannel(c.value)"
             >
               {{ c.label }}
             </el-check-tag>
+            <!-- T664：旧模板携带的短信/邮件/微信历史值只读回显，不可勾选、保存原样保留 -->
+            <el-tag
+              v-for="c in legacyChannels"
+              :key="`legacy-${c.value}`"
+              type="info"
+              effect="plain"
+              size="small"
+              class="fd-chip-legacy"
+              title="历史通道：当前版本不可配置，保存时原样保留"
+            >
+              {{ c.label }}（历史）
+            </el-tag>
           </div>
+          <p v-if="legacyChannels.length" class="fd-legacy-note">含历史通道，当前版本不可配置，保存时原样保留</p>
           <p class="fd-declared">{{ DECLARED_ONLY_TEXT }}</p>
         </el-form-item>
 
@@ -113,7 +126,8 @@
 import { computed } from 'vue'
 import { Setting } from '@element-plus/icons-vue'
 import {
-  ESCALATION_TARGETS, NOTIFY_CHANNELS, ROLE_OPTIONS, TIME_UNITS,
+  ESCALATION_TARGETS, HIDDEN_NOTIFY_CHANNELS, ROLE_OPTIONS, TIME_UNITS,
+  VISIBLE_NOTIFY_CHANNELS,
   kindDef, type FlowKind, type NodeForm, type NotifyChannel, type PropGroup,
 } from './kinds'
 import type { Issue } from './validateGraph'
@@ -132,6 +146,14 @@ const errorCount = computed(() => issues.value.filter((i) => i.level === 'error'
 
 /** T285 §9.3：这四项后端本期没有消费者，不标注的话 admin 会以为配了就会执行 */
 const DECLARED_ONLY_TEXT = '本期仅配置，不自动执行'
+
+/**
+ * T664：当前节点已携带、但 UI 已隐藏的历史通道（短信/邮件/微信），按 form.channels 现序只读回显；
+ * 不提供任何勾选/取消入口，toggleChannel 只服务可见项 ⇒ 这些值保存时由 propsFromForm 原样保留。
+ */
+const legacyChannels = computed(() =>
+  HIDDEN_NOTIFY_CHANNELS.filter((c) => props.form.channels.includes(c.value)),
+)
 
 /** 设计稿的属性类型标签是浅底描边胶囊，Element Plus 的 el-tag 没有类别色变体，这里按色值算个浅底 */
 function tint(color: string): string {
@@ -192,7 +214,14 @@ function toggleChannel(key: NotifyChannel) {
 .fd-time { flex: 1; }
 .fd-time :deep(.el-input__inner) { text-align: left; }
 .fd-unit { width: 84px; }
-.fd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fd-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.fd-chip-legacy { cursor: default; }
+.fd-legacy-note {
+  font-size: 11px;
+  color: #64748B;
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
 .fd-declared {
   font-size: 11px;
   color: #B45309;
