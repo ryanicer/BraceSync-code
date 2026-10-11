@@ -89,6 +89,15 @@ test.describe('06-团队管理', () => {
       // 至少出现"成员"或"人"（成员数/患者数列头）
       expect(allText).toMatch(/成员|患者|负责人|医生/)
     })
+
+    test('6.1b T658：列表只显医护团队，维护班组（TEAM04/TEAM05）不出现在表格', async ({ page }) => {
+      const table = page.locator('.page-card .el-table')
+      await expect(table.first()).toBeVisible()
+      // 维护班组标签一个都不许出现（隐藏是全量的，不是只藏 TEAM04/05 两个编号）
+      await expect(table).not.toContainText('维护班组')
+      // 口径提示常驻，解释统计卡全量与列表的差异
+      await expect(page.locator('.page-toolbar')).toContainText('维护班组')
+    })
   })
 
   test.describe('新建团队（写）', () => {
