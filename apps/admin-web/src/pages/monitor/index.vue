@@ -70,7 +70,13 @@
         </div>
         <div class="peak-cell">
           <div class="peak-label">最大压力采集点</div>
-          <div class="peak-text">{{ todayPeak ? todayPeak.pointId + ' (' + todayPeak.label + ')' : '--' }}</div>
+          <!-- T600 方案一（PM 卡评 1133005753001005052）：点位与数值同取服务端今日峰值
+               snapshot.maxPoint / maxPressure（stat:today 全天口径），不再消费前端会话内逐帧
+               累计的会话峰值 —— 今日量不随刷新 / 换会话 / 换患者清零。kPa 档取同点位本帧
+               派生 pressureKpa，当前无帧（heatmap 空）时 fail-closed 显 --。 -->
+          <div class="peak-text">
+            {{ todayMax ? todayMax.pointId + ' (' + todayMax.label + ') · ' + todayMaxText : '--' }}
+          </div>
         </div>
         <div class="peak-cell">
           <div class="peak-label">今日异常事件</div>
@@ -285,7 +291,8 @@ const BLUE_ALPHA = 'rgba(26,109,181,0.08)'
 // ====== 类型辅助 ======
 interface PatientOption { patientId: string; name: string; deviceId: string | null }
 type HistoryPoint = { t: string; v: number; kpa: number | null }
-interface TodayPeak { value: number; pointId: string; label: string; time: string; dateKey: string }
+/** T600：今日峰值格的展示模型，唯一来源是服务端 snapshot.maxPoint/maxPressure */
+interface TodayMax { pointId: string; label: string; value: number; kpa: number | null }
 
 // ====== 状态 ======
 const patients = ref<PatientOption[]>([])
@@ -299,7 +306,6 @@ const pressureHistory = ref<HistoryPoint[]>([])
 const heatmapSelected = ref<PressureHeatmapPoint | null>(null)
 const chartReady = ref(false)
 const chartRef = ref<InstanceType<typeof Line> | null>(null)
-const todayPeak = ref<TodayPeak | null>(null)
 const curFrameValue = ref(0)
 // T513：本帧最大点的 kPa 派生值（快照下发，前端不换算）；null = 面积缺失/非法
 const curFrameKpa = ref<number | null>(null)
@@ -420,6 +426,38 @@ const heatmapRows = computed<PressureHeatmapPoint[][]>(() => {
   }
   return [pts.slice(0, 5), pts.slice(5, 10), pts.slice(10, 15), pts.slice(15, 20)]
 })
+
+/** P01..P20 → R{行}C{列}（与 heatmapRows 兜底点的拼法同源）；非法编号原样返回 */
+function pointLabelOf(pointId: string): string {
+  const n = Number(pointId.slice(1))
+  if (!/^P\d{2}$/.test(pointId) || !Number.isInteger(n) || n < 1 || n > 20) return pointId
+  return `R${Math.floor((n - 1) / 5) + 1}C${((n - 1) % 5) + 1}`
+}
+
+/**
+ * T600 方案一：「最大压力采集点」格只认服务端今日峰值（snapshot.maxPoint + maxPressure，
+ * 后端 stat:today 当日全量口径，刷新/换会话不变），不再由前端会话内逐帧比较生成。
+ * 无绑定 / 今日无上报（maxPoint 空串、maxPressure 非正）⇒ null，模板给占位，不显示 0.0 N。
+ * label 优先取当前帧同点位对象（服务端下发），取不到（如当前无帧、heatmap 为空）按编号拼；
+ * kPa 展示档取同点位本帧派生 pressureKpa（同设备面积同源换算），取不到给 null 走 fail-closed。
+ */
+const todayMax = computed<TodayMax | null>(() => {
+  const pointId = String(snapshot.value?.maxPoint ?? '').trim()
+  const v = snapshot.value?.maxPressure
+  if (!pointId || typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return null
+  const same = (snapshot.value?.pressureHeatmap ?? []).find((p) => p.pointId === pointId)
+  return {
+    pointId,
+    label: same?.label ?? pointLabelOf(pointId),
+    value: v,
+    kpa: same?.pressureKpa === undefined ? null : same.pressureKpa,
+  }
+})
+
+/** 今日峰值格的压力文本，随 N/kPa 档切换；无同源 kPa 派生时只出 --（T513 fail-closed） */
+const todayMaxText = computed(() =>
+  todayMax.value ? unitValueText(unit.value, `${fmtN(todayMax.value.value)} N`, todayMax.value.kpa) : '--',
+)
 
 const heatmapDetail = computed(() => {
   if (!showFrame.value) return emptyFrameText.value
@@ -603,7 +641,6 @@ function pushHistory(val: number, kpa: number | null, atMs: number | null) {
 function resetHistory() {
   pressureHistory.value = []
   heatmapSelected.value = null
-  todayPeak.value = null
   curFrameValue.value = 0
   curFrameKpa.value = null
   lastFrameAt = undefined
@@ -651,36 +688,20 @@ async function refreshTick() {
     const isNewFrame = frame.value.collectedAt !== lastFrameAt
     lastFrameAt = frame.value.collectedAt
 
-    // ===== T079 逐帧 max：一律以 heatmap 20 点最大值为基准，弃用 snap.maxPressure =====
+    // 「当前最大压力」格 = 本帧口径：一律以本帧 heatmap 20 点最大值为准（T079）。
+    // 🔸 与「最大压力采集点」格分层（T600 方案一）：那一格是今日口径，只听服务端
+    //    snap.maxPoint / snap.maxPressure（见 todayMax computed），前端不再会话内累计。
     const hm = snap.pressureHeatmap ?? []
     const curMaxPt = hm.reduce<PressureHeatmapPoint | null>((max, p) => {
       if (!max || p.pressureValue > max.pressureValue) return p
       return max
     }, null)
     const curV = curMaxPt?.pressureValue ?? 0
-    // 无帧时后端给的是 seed 兜底值，不参与任何显示与统计
+    // 无帧时不显示兜底数值（T325：无真帧时 heatmap 为空数组）
     curFrameValue.value = frame.value.state === 'none' ? 0 : curV
     // kPa 档取快照里该点的派生值（T508 同响应下发）。无帧 / 面积缺失一律 null，页面出 --
     curFrameKpa.value =
       frame.value.state === 'none' ? null : curMaxPt?.pressureKpa === undefined ? null : curMaxPt.pressureKpa
-
-    // ===== 今日峰值累计（跨日自动重置、仅 curV > 0 才写入，避免 0N 占位） =====
-    const dateKey = `${new Date(pullAt).getFullYear()}-${String(new Date(pullAt).getMonth() + 1).padStart(2, '0')}-${String(new Date(pullAt).getDate()).padStart(2, '0')}`
-    if (todayPeak.value && todayPeak.value.dateKey !== dateKey) {
-      // 跨日：清零昨日峰值
-      todayPeak.value = null
-    }
-    const peakTime = formatClock(frame.value.collectedAt ?? pullAt)
-    // 无帧患者的 heatmap 是 seed 兜底 ⇒ 不许进峰值，否则「最大压力采集点」会显示一个示例点位号
-    if (isNewFrame && frame.value.state !== 'none' && curV > 0 && curV > (todayPeak.value?.value ?? -1) && curMaxPt) {
-      todayPeak.value = {
-        value: curV,
-        pointId: curMaxPt.pointId,
-        label: curMaxPt.label,
-        time: peakTime,
-        dateKey,
-      }
-    }
 
     // 曲线只收「未过期的新帧」；过期/无帧时宁可不画，也不制造在动的样子
     if (isNewFrame && frame.value.state === 'fresh') pushHistory(curV, curFrameKpa.value, frame.value.collectedAt)
