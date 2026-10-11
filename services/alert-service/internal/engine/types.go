@@ -62,12 +62,13 @@ type PointRule struct {
 //
 // 阈值语义（由 engine_test.go 契约决定）：字段为**零值表示该规则不启用**，
 // 生产调用方应通过 NewDefaultRuleEvaluator() 获取默认阈值
-// （压力偏高 45N / 波动 30% / 中断 60min / 漂移 2.8N / 去重 30min）。
+// （压力偏高 45N / 中断 60min / 传感器标定异常 0.3N / 去重 30min；
+// 传感器标定异常阈值 T661 起与 config.DefaultThresholds 同值，生产口径以 sys_configs 热刷新为准）。
 type RuleEvaluator struct {
 	PressureHighThreshold   float64 // 压力偏高阈值 (N)，默认 45
 	FluctuationThresholdPct float64 // 已停用（T257 2.6 停产生压力波动）；字段保留：冻结契约 engine_test.go 仍按字面量构造
 	WearInterruptMinutes    int     // 佩戴中断判定（分钟），默认 60
-	SensorDriftThreshold    float64 // 传感器漂移阈值 (N)，默认 2.8
+	SensorDriftThreshold    float64 // 传感器标定异常阈值 (N)，默认 0.3（T661 收口；双向对称容差，正负读数按 |p| 比此键）
 	DedupWindowMinutes      int     // 去重窗口（分钟），默认 30；<=0 表示不去重
 	CollectionIntervalMin   int     // 采集间隔（分钟），默认 30
 

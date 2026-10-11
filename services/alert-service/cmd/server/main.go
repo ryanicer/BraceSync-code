@@ -149,6 +149,18 @@ func main() {
 	}
 	cons.SetFlowStarter(flowStarter) // T653：补偿队列告警自动建实例
 
+	// T010：/internal/evaluate（data-service 内联评估）+ /metrics + /healthz
+	// T028：/api/v1/alerts 公开查询 + /api/v1/alerts/{alertId}/process（经 gateway 代理）
+	// T661：Handler 必须在 scheduler.Start 前装配——Start 会同步补跑一轮，回调里要向 h
+	// 注入佩戴阈值（同 T202 对 cons 的装配顺序要求，延后即 nil 指针启动 panic）。
+	h := handler.New(eval, alertRepo, notifier)
+	h.SetPublicStore(alertRepo)
+	h.SetLogger(log.Logger)
+	h.SetFlowStarter(flowStarter) // T653：内联告警自动建实例
+	if loadedTh.WearingN > 0 {
+		h.SetWearingThreshold(loadedTh.WearingN) // T661 H 项：启动配置的佩戴阈值先注内联链路
+	}
+
 	// 调度：每 5min（Asia/Shanghai），启动即补跑一轮
 	spec := envOr("SCAN_CRON", "*/5 * * * *")
 	sched, err := scheduler.New(spec, func(scanCtx context.Context) {
@@ -159,7 +171,8 @@ func main() {
 			log.Error().Err(cfgErr).Msg("alert threshold config hot refresh failed, keep previous effective values")
 		} else {
 			cons.SetWearingThreshold(t.WearingN)
-			log.Info().Float64("wearing_n", t.WearingN).Msg("wearing threshold injected into pending consumer")
+			h.SetWearingThreshold(t.WearingN) // T661 H 项：内联链路与补偿链路同注一枚佩戴阈值
+			log.Info().Float64("wearing_n", t.WearingN).Msg("wearing threshold injected into inline handler and pending consumer")
 		}
 		report, scanErr := scan.Scan(scanCtx)
 		if scanErr != nil {
@@ -227,12 +240,7 @@ func main() {
 	// T019：通知重试消费者（排空 alert:notify_pending 队列，2s 轮询）
 	go notifier.RunRetry(ctx, 2*time.Second)
 
-	// T010：/internal/evaluate（data-service 内联评估）+ /metrics + /healthz
-	// T028：/api/v1/alerts 公开查询 + /api/v1/alerts/{alertId}/process（经 gateway 代理）
-	h := handler.New(eval, alertRepo, notifier)
-	h.SetPublicStore(alertRepo)
-	h.SetLogger(log.Logger)
-	h.SetFlowStarter(flowStarter) // T653：内联告警自动建实例
+	// h 已在调度器之前装配（含佩戴阈值初注，见上方 T661 注释）；此处仅起 HTTP。
 	port := envOr("PORT", "8080")
 	server := &http.Server{Addr: ":" + port, Handler: h.Router()}
 	go func() {
