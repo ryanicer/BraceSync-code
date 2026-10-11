@@ -3,6 +3,8 @@
 # push main：同上三端 mock 用例再跑一次（T381 要求②：合并后的 main 必须有最小回归，
 #   不能只信「各 PR 各自绿」）；打 staging 的 e2e-real-staging 不在 push 上跑
 # 定时/手动：真实模式（e2e-real/）打 staging 全量回归 + 契约冒烟
+#   （T609 甲案 2026-10-11 起：每日北京 20:00 真实档由值班席外部定时腿 workflow_dispatch source=external-cron 触发，
+#     不再走 GitHub schedule；schedule 仅剩 02:00Z mock 巡检。手动 dispatch 与 PR 门禁照常）
 # 对齐：docs/ §4 · docs/ §6.3
 #
 # ─── T324：真实模式门禁与「staging 部署顺序」解耦 ──────────────────────────────
@@ -83,8 +85,12 @@ on:
       - 'playwright.config.ts'
       - '.github/workflows/e2e.yml'
   schedule:
+    # T609 甲案（Boss 2026-10-11 10:5x 裁决，joe 实施）：12:00Z 真实档不再走 GitHub schedule。
+    #   实测 GitHub 对 schedule 事件的投递延迟 275-370 分钟（连续 14 发越线，T609 卡内读数），
+    #   延迟整段落在 GitHub 投递侧、仓内无法修；真实档改由值班席 automation 的外部定时腿在
+    #   北京 20:00（UTC 12:00）准点打 workflow_dispatch（inputs.source=external-cron），见下方输入。
+    #   schedule 段只保留 02:00Z 的 mock 巡检；若谁把 "0 12 * * *" 加回本处，cron-attribution-guard 会判 mismatch。
     - cron: "0 2 * * *"  # 每日 02:00 UTC（mock 巡检，不受 paths 限制）
-    - cron: "0 12 * * *" # 每日 20:00 北京时间：真实模式打 staging（会写 T053 前缀造数行，避开白天人工测试窗口）
   workflow_dispatch:
     inputs:
       target:
@@ -98,6 +104,18 @@ on:
         options:
           - staging
           - tst
+      source:
+        # T609 甲案：dispatch 事件没有 github.event.schedule，真实档的「名义档点」必须由输入自带，
+        # 否则外部定时腿、值班席探针（run 38106780618）、T651 手动 tst run 在 Actions 名册里无法区分，
+        # 守时三档对表（连续三档起跑 ≤ 北京 21:00）会失去取证锚点。
+        # 外部定时腿（值班席 automation 承载，duty PAT）固定传 external-cron；人手触发留缺省 manual。
+        description: 触发来源（外部定时腿传 external-cron；手动触发留 manual。T609 守时档只认 external-cron）
+        required: false
+        default: manual
+        type: choice
+        options:
+          - manual
+          - external-cron
 
 # 成本优化（T045）：同一 PR/分支并发 push 只保留最新一次，取消旧 run（巡检/手动不受限）
 # T381：group 里加 event_name —— schedule 的 github.ref 也是 refs/heads/main，
@@ -108,6 +126,15 @@ concurrency:
 
 env:
   NODE_VERSION: "20"
+  # T609 甲案：触发来源归因（供 run 日志/守时尺区分外部定时腿与手动触发；用例侧不读，对行为零影响）。
+  #   schedule 02:00Z 巡检 ⇒ github-schedule；dispatch+external-cron ⇒ external-cron（守时档唯一认的形态）；
+  #   dispatch 缺省/其他 ⇒ manual；PR/push ⇒ ci。
+  E2E_TRIGGER_SOURCE: |-
+    ${{
+      github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.source == 'external-cron' && 'external-cron' || 'manual')
+      || (github.event_name == 'schedule' && 'github-schedule' || 'ci')
+    }}
   # T651（Boss 2026-10-10 批 A，解锁 2026-10-08 那句「TARGET 门不授权改」）：CI 侧目标开关。
   #   · E2E_TARGET 只作自曝与预检尺的入参，用例侧一律不读它 —— 换目标仍由下面三颗变量决定，
   #     这样「入口变量名」与其读者（e2e-real 的两个 config、tests/22、tests/24、h5-origin.ts）一枚没改，
@@ -281,8 +308,10 @@ jobs:
   playwright-e2e:
     name: Playwright E2E (mock，本地 webServer，不打 staging)
     runs-on: ubuntu-latest
-    # T609 甲案：定时臂加 cron 字面量判别 —— 本 job 只认领 02:00Z 那档，12:00Z（打 staging 那档）不再放行它。
-    if: (github.event_name == 'schedule' && github.event.schedule == '0 2 * * *') || github.event_name == 'workflow_dispatch'
+    # T609：本 job 只认领 02:00Z schedule 巡检与「手动」dispatch；
+    # 外部定时腿（source=external-cron）是真实档，结构与旧 12:00Z schedule 档镜像（mock 本就 skipped），
+    # 不顺带多跑一次本地 mock —— 也让守时 run 的 job 名册与旧档逐格可比。
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 2 * * *') || (github.event_name == 'workflow_dispatch' && github.event.inputs.source != 'external-cron')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -324,9 +353,12 @@ jobs:
     #   不是补一条 main 上的最小回归路径。判据要求的那半「别处不缺覆盖」的实证（三面 paths 覆盖清单 +
     #   逐条执行行 + 两档清单集合差）已升格成可检索的流程条款：docs 仓 docs/tasks/_board/流程规范.md
     #   「真实模式（e2e-real）的触发面是三面不是四面」一节（2026-10-05 第 59 轮补裁，待 PM 复核）。
-    # T609 甲案（duty 2026-10-08 17:18 裁定，执行腿 winner）：schedule 臂加 cron 字面量判别，本 job 只认领
-    #   12:00Z 档；pull_request 与 workflow_dispatch 两臂原样不动。三面承诺不变，只是 schedule 那一面变窄。
-    if: github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.event.schedule == '0 12 * * *') || github.event_name == 'workflow_dispatch'
+    # T609 沿革：2026-10-08 甲案前序（duty 17:18 裁定）曾让 schedule 臂只认领 12:00Z 档；
+    #   2026-10-11 Boss 终裁（GitHub schedule 投递侧迟到 275-370 分不可修）：真实档整体改外部定时腿 dispatch。
+    # T609 甲案（2026-10-11 Boss 裁决，joe 实施）：真实档触发面由 schedule 0 12 改为 workflow_dispatch。
+    #   pull_request（改动命中 paths）+ 外部定时腿/手动 dispatch 两臂；main push 仍显式不跑（下方旧理由不变）。
+    #   12:00Z 的准点责任在值班席 automation 外部定时腿（inputs.source=external-cron），仓内不再有 schedule 真实档。
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     # T304：真实模式过去在 CI 里只有 tsc + --list，从未真跑过一条用例。
     # 现在 PR（改动命中 paths）+ 每日 20:00 北京时间 + 手动都真跑；失败即判红，
     # 不加 continue-on-error / `|| true`，以免又变成「CI 绿但真环境没人验」。
@@ -429,13 +461,13 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - name: 守时自记（T609 乙案，实测迟到分钟数进 job summary）
+      - name: 守时自记（T609：迟到分钟数进 job summary；甲案起外部定时腿按 UTC 12:00 档点判）
         # 只读 API、只写 summary：不碰 cron / concurrency / schedule / workflow_dispatch，不打 staging。
-        # 名义触发时刻 GitHub 不给，只能由 github.event.schedule 的「分 时」两格推；形不支持就明写不判。
-        # PR 触发时本步照跑但判语是 NOT_SCHEDULE_EVENT —— 留的是「run 内取数通路跑通」这一格，
-        # 定时档的真读数要等下一次 schedule 真触发才出得来（本卡交付面 3 的三档实测窗）。
+        # 甲案前名义时刻由 github.event.schedule 推；甲案后真实档是外部定时腿 dispatch（无 event.schedule），
+        # 由 inputs.source=external-cron 标识，脚本对该形态按固定档 UTC 12:00（北京 20:00）判，手动 dispatch 不判。
         env:
           SCHEDULE_CRON: ${{ github.event.schedule }}
+          TRIGGER_SOURCE: ${{ github.event.inputs.source }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/ci/e2e-real-lateness-summary.mjs >> "$GITHUB_STEP_SUMMARY"
       - name: Install dependencies
@@ -483,7 +515,7 @@ jobs:
     name: 小程序冒烟（占位，未实跑；miniprogram-automator 需 devtools）
     runs-on: ubuntu-latest
     # T609 甲案：占位 job 随两枚真实 job 归 12:00Z 档（承接笔 4491 第三节第 4 条的倾向，duty 未单列；要归 02:00Z 请回一句即改）。
-    if: (github.event_name == 'schedule' && github.event.schedule == '0 12 * * *') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - name: 自曝：本 job 未执行任何断言
@@ -511,7 +543,7 @@ jobs:
     name: Real Backend Smoke（真实后端冒烟，T144 P1）
     runs-on: ubuntu-latest
     # T609 甲案：本 job 打 staging，定时臂只认领 12:00Z 档（02:00Z 那档不得再放行它）。
-    if: (github.event_name == 'schedule' && github.event.schedule == '0 12 * * *') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - name: 目标面预检（T651 双通道，只读 GET）
@@ -562,41 +594,65 @@ jobs:
           path: e2e-real/playwright-report/
           retention-days: 14
 
-  # T609 甲案的守卫腿（duty 2026-10-08 17:18 裁定第四节：硬条件，不是建议）。
-  # 为什么是一枚独立 job 而不是塞进上面某枚 job 的第一步：四枚 if 现在逐字比较 cron 串，
-  #   将来谁把两档合并（如 "0 2,14 * * *"）或改了空格数，比较静默不命中 ⇒「该跑的没跑」而不是报错，
-  #   而守卫步若挂在那些 job 里，job 被 skip 时守卫步一起不跑 ⇒ 报警面为零。
-  #   本 job 的 if 只判事件名不含 cron 字面量，所以任何定时事件它都出场，能把原值打进步面摘要并自曝名册不符。
+  # T609 甲案的归属守卫腿（duty 2026-10-08 17:18 裁定第四节硬条件；2026-10-11 甲案实施时随触发面迁移改版）。
+  # 为什么是一枚独立 job 而不是塞进上面某枚 job 的第一步：守卫步若挂在业务 job 里，job 被 skip 时
+  #   守卫步一起不跑 ⇒ 报警面为零。本 job 的 if 只判事件名，任何定时/派发事件它都出场并自曝归属。
+  # 甲案后的归属名册：
+  #   · schedule 只应有 02:00Z 一档（"0 2 * * *"，mock 巡检）；收到 "0 12 * * *" 即真实档 schedule 复活，判 mismatch；
+  #   · workflow_dispatch 是真实档与手动档的共同入口，由 inputs.source 区分：
+  #     external-cron = 值班席 automation 外部定时腿（守时档唯一认的形态），manual = 人手触发。
   # 零写动作：不 checkout、不 npm ci、不打 staging，只读 github 上下文并写 $GITHUB_STEP_SUMMARY。
   cron-attribution-guard:
     name: Cron 归属守卫（T609 只读，零 staging 动作）
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
-      - name: Print event attribution and check cron roster
+      - name: Print event attribution and check trigger roster
         env:
           GH_EVENT_NAME: ${{ github.event_name }}
           GH_EVENT_SCHEDULE: ${{ github.event.schedule }}
+          GH_DISPATCH_SOURCE: ${{ github.event.inputs.source }}
         run: |
           SCHED="$GH_EVENT_SCHEDULE"
+          SRC="$GH_DISPATCH_SOURCE"
           [ -z "$SCHED" ] && SCHED="(non-schedule-event, no such key)"
+          [ -z "$SRC" ] && SRC="(no such input)"
           {
-            echo "## T609 cron 归属守卫（只读）"
+            echo "## T609 归属守卫（只读，甲案后名册）"
             echo ""
             echo "- github.event_name：$GH_EVENT_NAME"
             echo "- github.event.schedule：$SCHED"
-            echo "- 名册：02:00Z 档 \"0 2 * * *\" 归 playwright-e2e；12:00Z 档 \"0 12 * * *\" 归 e2e-real-staging / miniapp-smoke / real-backend-smoke"
+            echo "- inputs.source：$SRC"
+            echo "- 名册：schedule 唯一档 \"0 2 * * *\"（02:00Z mock 巡检，归 playwright-e2e）；"
+            echo "  真实档（e2e-real-staging / miniapp-smoke / real-backend-smoke）12:00Z 由外部定时腿"
+            echo "  workflow_dispatch + source=external-cron 触发；source=manual 为人手触发。"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$GH_EVENT_NAME" = "schedule" ]; then
             case "$SCHED" in
-              "0 2 * * *"|"0 12 * * *")
+              "0 2 * * *")
                 echo "GUARD_MATCH cron=$SCHED"
                 ;;
+              "0 12 * * *")
+                echo "::error::T609 守卫命中已退役档：12:00Z 真实档已于甲案迁出 GitHub schedule（外部定时腿 dispatch+external-cron）。该 cron 复活会造成 schedule 与外部腿双跑、staging 造数翻倍，请立即从 schedule 段移除。"
+                echo "GUARD_RETIRED_CRON cron=$SCHED"
+                exit 1
+                ;;
               *)
-                echo "::warning::T609 守卫不命中：定时事件收到的 cron 原值是 [$SCHED]，不在名册两枚字面量之内 —— 若主册 schedule 段被合并档或改了空格数，打 staging 的 job 会静默不跑（该跑的没跑）。请核对 e2e.yml 的 schedule 段与四枚 job 级 if。"
+                echo "::warning::T609 守卫不命中：定时事件收到的 cron 原值是 [$SCHED]，不在名册（仅 0 2 一枚）。请核对 e2e.yml 的 schedule 段与 job 级 if。"
                 echo "GUARD_MISMATCH cron=$SCHED"
                 ;;
             esac
           else
-            echo "GUARD_NOT_SCHEDULE event_name=$GH_EVENT_NAME"
+            case "$SRC" in
+              external-cron)
+                echo "GUARD_EXTERNAL_CRON source=external-cron（值班席 automation 定时腿，守时档认这一枚）"
+                ;;
+              manual|"(no such input)")
+                echo "GUARD_MANUAL_DISPATCH source=$SRC（人手触发，不计守时达标）"
+                ;;
+              *)
+                echo "::warning::T609 守卫不认识的 dispatch source [$SRC]（允许值 external-cron/manual；缺省按 manual）。"
+                echo "GUARD_UNKNOWN_SOURCE source=$SRC"
+                ;;
+            esac
           fi

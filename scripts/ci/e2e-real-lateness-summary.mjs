@@ -1,12 +1,18 @@
-// T609 乙案（值班 PM 2026-10-07 裁定，卡 1133005753001004202）：
-// 把「本 run 相对名义 cron 时刻迟到了多少分钟」打进 e2e-real-staging 的 job summary。
+// T609 守时自记（乙案 2026-10-07 立，甲案 2026-10-11 Boss 裁决后迁移归因面）：
+// 把「本 run 相对名义档点时刻迟到了多少分钟」打进 e2e-real-staging 的 job summary。
 // 边界：只读 Actions API 里本 run 自己那一格、只往 stdout 打 summary 行；
-// 不改触发面（cron / concurrency / schedule / workflow_dispatch 一概不碰）、不打 staging、不碰用例。
+// 不改调度、不打 staging、不碰用例。
 //
-// 名义时刻只能由 github.event.schedule 的「分 时」两格推出 —— GitHub 不给定时事件的名义触发时刻。
-// 两格中任一不是单一整数，或日/月/周任一格不是 * ⇒ 明写不判，不猜。
+// 甲案前：真实档由 GitHub schedule 触发，名义时刻只能由 github.event.schedule 的「分 时」两格推出
+//   —— GitHub 不给定时事件的名义触发时刻；两格中任一不是单一整数，或日/月/周任一格不是 * ⇒ 明写不判。
+// 甲案后（2026-10-11）：真实档改由值班席 automation 外部定时腿在 UTC 12:00（北京 20:00）打
+//   workflow_dispatch（inputs.source=external-cron）。dispatch 事件没有 event.schedule，
+//   外部腿的名义档点固定为 0 12 * * *；手动 dispatch（source=manual/缺省）不参与守时达标。
 
 const DAY_MS = 86400000;
+
+/** 甲案：外部定时腿的固定名义档（UTC），与已退役的 schedule "0 12 * * *" 同一时刻 */
+export const EXTERNAL_CRON_NOMINAL = "0 12 * * *";
 
 export function parseDailyCron(cron) {
   const f = String(cron || "").trim().split(/\s+/);
@@ -34,8 +40,22 @@ export function judge(opts) {
   const eventName = opts.eventName;
   const lineHour = opts.lineHour;
   const maxMinutes = opts.maxMinutes;
+  const source = opts.source || "";
+  // 甲案：外部定时腿的 dispatch 与旧 schedule 12 档共用同一判定路径（固定名义档 UTC 12:00）
+  if (eventName === "workflow_dispatch" && source === "external-cron") {
+    const n = nominalFromCron(EXTERNAL_CRON_NOMINAL, opts.createdMs);
+    if (!n.judged) return { verdict: "CRON_SHAPE_UNSUPPORTED", lateMinutes: null, nominalMs: null, detail: "外部档常量形不支持：" + n.why };
+    const lateMinutes = Math.floor((opts.createdMs - n.nominalMs) / 60000);
+    return {
+      verdict: lateMinutes <= maxMinutes ? "ON_TIME" : "OVER_LIMIT",
+      lateMinutes,
+      nominalMs: n.nominalMs,
+      detail: "外部定时腿（external-cron）名义档 UTC " + n.hour + ":" + String(n.minute).padStart(2, "0")
+        + (lateMinutes <= maxMinutes ? "，达标线内（≤ " + maxMinutes + " 分）" : "，越界（> " + maxMinutes + " 分）")
+    };
+  }
   if (eventName !== "schedule") {
-    return { verdict: "NOT_SCHEDULE_EVENT", lateMinutes: null, nominalMs: null, detail: "触发器是 " + eventName + "，本步不判迟到（只证明取数通路在 run 内跑通过）" };
+    return { verdict: "NOT_SCHEDULE_EVENT", lateMinutes: null, nominalMs: null, detail: "触发器是 " + eventName + (eventName === "workflow_dispatch" ? "（source=" + (source || "manual") + "，手动 dispatch 不计守时）" : "") + "，本步不判迟到（只证明取数通路在 run 内跑通过）" };
   }
   const n = nominalFromCron(opts.cron, opts.createdMs);
   if (!n.judged) return { verdict: "CRON_SHAPE_UNSUPPORTED", lateMinutes: null, nominalMs: null, detail: "cron 形不支持单点推导：" + n.why + "，原值 [" + opts.cron + "]" };
@@ -60,13 +80,18 @@ const FIXTURES = [
   { name: "分钟格是步长形 ⇒ 不判", eventName: "schedule", cron: "*/15 0 * * *", createdMs: Date.UTC(2026, 9, 4, 12, 2), expect: { verdict: "CRON_SHAPE_UNSUPPORTED", lateMinutes: null } },
   { name: "带日期限定 ⇒ 非每日形，不判", eventName: "schedule", cron: "0 12 1 * *", createdMs: Date.UTC(2026, 9, 4, 12, 2), expect: { verdict: "CRON_SHAPE_UNSUPPORTED", lateMinutes: null } },
   { name: "分钟格越界 ⇒ 不判", eventName: "schedule", cron: "61 12 * * *", createdMs: Date.UTC(2026, 9, 4, 12, 2), expect: { verdict: "CRON_SHAPE_UNSUPPORTED", lateMinutes: null } },
-  { name: "巡检档（名义 2 时）只报数不判线", eventName: "schedule", cron: "0 2 * * *", createdMs: Date.UTC(2026, 9, 4, 3, 0), expect: { verdict: "NO_LINE", lateMinutes: 60 } }
+  { name: "巡检档（名义 2 时）只报数不判线", eventName: "schedule", cron: "0 2 * * *", createdMs: Date.UTC(2026, 9, 4, 3, 0), expect: { verdict: "NO_LINE", lateMinutes: 60 } },
+  { name: "甲案外部定时腿准点（12:02，2 分）", eventName: "workflow_dispatch", source: "external-cron", cron: "", createdMs: Date.UTC(2026, 9, 11, 12, 2), expect: { verdict: "ON_TIME", lateMinutes: 2 } },
+  { name: "甲案外部定时腿迟到 90 分判越界", eventName: "workflow_dispatch", source: "external-cron", cron: "", createdMs: Date.UTC(2026, 9, 11, 13, 30), expect: { verdict: "OVER_LIMIT", lateMinutes: 90 } },
+  { name: "甲案外部定时腿跨 UTC 零点回退当天档", eventName: "workflow_dispatch", source: "external-cron", cron: "", createdMs: Date.UTC(2026, 9, 12, 0, 30), expect: { verdict: "OVER_LIMIT", lateMinutes: 750 } },
+  { name: "手动 dispatch（manual）不判守时", eventName: "workflow_dispatch", source: "manual", cron: "", createdMs: Date.UTC(2026, 9, 11, 12, 2), expect: { verdict: "NOT_SCHEDULE_EVENT", lateMinutes: null } },
+  { name: "缺省 source 的 dispatch 按 manual 不判守时", eventName: "workflow_dispatch", source: "", cron: "", createdMs: Date.UTC(2026, 9, 11, 12, 2), expect: { verdict: "NOT_SCHEDULE_EVENT", lateMinutes: null } }
 ];
 
 function selftest() {
   let bad = 0;
   for (const fx of FIXTURES) {
-    const got = judge({ eventName: fx.eventName, cron: fx.cron, createdMs: fx.createdMs, lineHour: 12, maxMinutes: 60 });
+    const got = judge({ eventName: fx.eventName, cron: fx.cron, source: fx.source, createdMs: fx.createdMs, lineHour: 12, maxMinutes: 60 });
     const ok = got.verdict === fx.expect.verdict && got.lateMinutes === fx.expect.lateMinutes;
     if (!ok) bad++;
     console.log((ok ? "PASS " : "FAIL ") + fx.name + " => verdict=" + got.verdict + " late=" + got.lateMinutes + " expect=" + fx.expect.verdict + "/" + fx.expect.lateMinutes);
@@ -82,12 +107,14 @@ async function live() {
   const token = process.env.GITHUB_TOKEN || "";
   const eventName = process.env.GITHUB_EVENT_NAME || "";
   const cron = process.env.SCHEDULE_CRON || "";
+  const source = process.env.TRIGGER_SOURCE || "";
   const maxMinutes = Number(process.env.E2E_ON_TIME_MAX_MINUTES || 60);
   const lineHour = Number(process.env.E2E_ON_TIME_LINE_HOUR_UTC || 12);
 
-  console.log("### e2e-real 守时自记（T609 乙案）");
+  console.log("### e2e-real 守时自记（T609）");
   console.log("- 触发器（github.event_name）：" + eventName);
   console.log("- cron（github.event.schedule）：" + (cron === "" ? "（非定时触发，无此格）" : cron));
+  console.log("- 来源（inputs.source，甲案守时档认 external-cron）：" + (source === "" ? "（未提供，按 manual）" : source));
 
   let createdMs = null;
   let createdAt = null;
@@ -107,8 +134,8 @@ async function live() {
     return 0;
   }
   console.log("- 本 run created_at（Actions API 现读，run " + runId + "）：" + createdAt + "（run_started_at " + runStartedAt + "）");
-  const r = judge({ eventName, cron, createdMs, lineHour, maxMinutes });
-  if (r.nominalMs != null) console.log("- 名义触发时刻（cron 分/时两格推，早于 created_at 才用当日，否则回退一天）：" + new Date(r.nominalMs).toISOString());
+  const r = judge({ eventName, cron, source, createdMs, lineHour, maxMinutes });
+  if (r.nominalMs != null) console.log("- 名义触发时刻（" + (eventName === "workflow_dispatch" ? "external-cron 固定档 UTC 12:00" : "cron 分/时两格推") + "，早于 created_at 才用当日，否则回退一天）：" + new Date(r.nominalMs).toISOString());
   console.log("- 实测迟到：" + (r.lateMinutes == null ? "不判" : r.lateMinutes + " 分") + "；判语：" + r.detail);
   console.log("LATE_MINUTES=" + (r.lateMinutes == null ? "NA" : r.lateMinutes) + " VERDICT=" + r.verdict);
   return 0;
