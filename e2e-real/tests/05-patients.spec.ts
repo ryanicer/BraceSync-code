@@ -9,6 +9,7 @@ import {
   uniqueName,
   getAuthToken,
 } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 05 患者管理（真实模式）
@@ -184,10 +185,18 @@ test.describe('05-患者管理', () => {
       // T289 4.2 后本列的表头文案是「绑定团队」（设计稿 患者管理.html:88 口径）
       const teamIdx = await headerIndex(page, '绑定团队')
       await headerIndex(page, '患者ID') // 列存在性也在契约内（定位行靠它，取不到行即计入跳过）
-      // T657：主治医生列已移除，表头不应再出现
-      await expect(
-        patientTable(page).locator('.el-table__header th').filter({ hasText: '主治医生' }),
-      ).toHaveCount(0)
+      // T657：主治医生列已移除，表头不应再出现。
+      // 部署腿：e2e-real 打 staging 现网包，PR 合入 ≠ 现网包已更新（Andy 部署后才生效），
+      // 旧包仍有该列 ⇒ 走显式跳过（同 08-settings 8.4 口径），部署追平后自动转验。
+      await requireDeployedBuild(page, {
+        marker: 'T657-patients-hide-doctor-col',
+        why: '患者管理列表移除主治医生列（PR383 合入并部署后生效）',
+        probe: async (p) =>
+          (await p
+            .locator('.patient-list-card .el-table__header th')
+            .filter({ hasText: '主治医生' })
+            .count()) === 0,
+      })
 
       async function cellsOfRow(patientId: string): Promise<string[] | null> {
         const row = patientTable(page)
