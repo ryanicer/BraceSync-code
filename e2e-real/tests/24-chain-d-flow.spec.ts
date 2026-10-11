@@ -64,7 +64,7 @@ import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
  */
 
 const ENTRY = process.env.E2E_STAGING_URL ?? 'http://localhost:2080'
-if (/api\.hbksd\.com\.cn|49\.235\.137\.217/.test(ENTRY)) {
+if (/api\.hbksd\.com\.cn/.test(ENTRY)) { // 49.235.137.217 自 2026-10-11 起为 TST（Boss 口径，TST 写段经批 A 授权）；生产针保留 api.hbksd.com.cn
   throw new Error(`T574 链 D 命中生产入口，红线拒绝：${ENTRY}`)
 }
 
