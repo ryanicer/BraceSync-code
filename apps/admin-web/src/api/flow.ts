@@ -163,3 +163,39 @@ export async function submitFlowNodeActionApi(instanceId: string, nodeId: string
     data: data as unknown as Record<string, unknown>,
   })
 }
+
+// ─────────────── T653 告警类型 ↔ 流程模板绑定（Tab4 顶部）───────────────
+
+/** 一行类型绑定（未绑定时 templateId/templateName/updatedBy/updatedByName/updatedAt 均为 null） */
+export interface FlowTypeBinding {
+  alertType: string
+  /** 后端给的中文名（压力偏高/设备离线/传感器标定异常/佩戴时长不足），前端不硬编码 */
+  alertTypeName: string
+  templateId: string | null
+  templateName: string | null
+  updatedBy: string | null
+  updatedByName: string | null
+  updatedAt: string | null
+}
+
+/** GET /api/v1/admin/flow/type-bindings（固定四行，未绑定补 null 行；adminOnly） */
+export async function fetchFlowTypeBindings(): Promise<FlowTypeBinding[]> {
+  if (USE_MOCK) { await delay(); return flowMock.mockListTypeBindings() }
+  const res = await request<{ list: FlowTypeBinding[] }>({ url: '/api/v1/admin/flow/type-bindings' })
+  return res.list
+}
+
+/**
+ * PUT /api/v1/admin/flow/type-bindings（adminOnly；部分覆盖，仅提交项落库）。
+ * templateId 空串 = 解绑；后端逐项审计 target=flow_binding/<alertType>。
+ * 语义：无绑定不自动建实例（告警照常通知）；一告警一实例幂等；绑定变更不追溯在途。
+ */
+export async function saveFlowTypeBindingsApi(bindings: Array<{ alertType: string; templateId: string }>): Promise<FlowTypeBinding[]> {
+  if (USE_MOCK) { await delay(); return flowMock.mockSaveTypeBindings(bindings) }
+  const res = await request<{ list: FlowTypeBinding[] }>({
+    url: '/api/v1/admin/flow/type-bindings',
+    method: 'PUT',
+    data: { bindings },
+  })
+  return res.list
+}

@@ -264,6 +264,9 @@ const REGISTERED_DIVERGENCES: Divergence[] = [
   { role: 'doctor', page: '/alerts', method: 'POST', path: '/api/v1/admin/flow/templates', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/index.vue:191 流程配置 Tab v-if="canConfigure"（T274 设计器写路由 admin-only）', why: 'Tab4 整块摘掉；Tab3 运行态的两条读已在 T359 移入 staffOnlyPatterns' },
   { role: 'doctor', page: '/alerts', method: 'PUT', path: '/api/v1/admin/flow/templates/:p', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/index.vue:191', why: '同上' },
   { role: 'doctor', page: '/alerts', method: 'DELETE', path: '/api/v1/admin/flow/templates/:p', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/index.vue:191', why: '同上' },
+  // T653：告警类型↔流程模板绑定区在流程配置 Tab 顶部，与设计器同档（GET/PUT 均 admin-only）
+  { role: 'doctor', page: '/alerts', method: 'GET', path: '/api/v1/admin/flow/type-bindings', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/index.vue:203 流程配置 Tab v-if="canConfigure"，FlowTypeBindings 组件仅该 Tab 激活时挂载', why: '绑定决定未来告警是否自动起流程，属配置面；非 admin Tab 不渲染、onMounted 拉取不发' },
+  { role: 'doctor', page: '/alerts', method: 'PUT', path: '/api/v1/admin/flow/type-bindings', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/index.vue:203 流程配置 Tab v-if="canConfigure"', why: '同上：保存按钮在绑定区内，非 admin 无入口' },
   { role: 'doctor', page: '/alerts', method: 'GET', path: '/api/v1/doctors', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/flow/FlowRuntime.vue:433 if (!canReadRoster.value) return', why: 'T359：转派候选人名录是 admin 域端点，非 admin 手输账号 ID' },
   { role: 'doctor', page: '/orthosis-log', method: 'GET', path: '/api/v1/teams', kind: 'guarded', at: 'apps/admin-web/src/pages/orthosis-log/index.vue:660 if (auth.role === \'admin\') fetchTeams()', why: 'T348 同类处置：团队名映射非 admin 不发' },
   // 门禁上线当天抓到的第一条真缺陷：无角色守卫，医护打开「数据视图」必吃 403 红条 + 图空白（现网实测见 T379 卡内交件）

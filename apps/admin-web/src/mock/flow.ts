@@ -3,6 +3,7 @@
 // confirm 推进后继、reject 置 skipped 不推进、transfer 只改 assignee、urge 只留痕。
 import type {
   FlowGraphEdge, FlowGraphNode, FlowInstance, FlowNodeAction, FlowNodeActionRequest, FlowNodeState, FlowTemplate,
+  FlowTypeBinding,
 } from '../api/flow'
 
 const NODES: FlowGraphNode[] = [
@@ -310,4 +311,66 @@ export function mockSubmitAction(instanceId: string, nodeId: string, data: FlowN
     state.assigneeName = data.targetOperator
   }
   return action
+}
+
+// ========== T653 告警类型 ↔ 流程模板绑定（Tab4 顶部）==========
+// 口径同后端 GET：固定四类型（000018 现行四类），未绑定补 null 行；PUT 部分覆盖、空 templateId 解绑。
+// 中文名后端给（alertTypeName 不硬编码在组件），mock 照抄此口径。
+
+const BIND_TYPES: Array<{ alertType: string; alertTypeName: string }> = [
+  { alertType: 'pressure_high', alertTypeName: '压力偏高' },
+  { alertType: 'wear_interrupt', alertTypeName: '设备离线' },
+  { alertType: 'sensor_drift', alertTypeName: '传感器标定异常' },
+  { alertType: 'wear_duration_short', alertTypeName: '佩戴时长不足' },
+]
+
+interface MockBinding {
+  templateId: string
+  updatedBy: string
+  updatedByName: string
+  updatedAt: string
+}
+
+// 初始：压力偏高绑定默认模板（演示黄标/已绑定两态），其余三类未绑定
+const TYPE_BINDINGS = new Map<string, MockBinding>([
+  ['pressure_high', {
+    templateId: TEMPLATE.templateId, updatedBy: 'ops_admin', updatedByName: '运营管理员',
+    updatedAt: '2026-10-11T09:30:00+08:00',
+  }],
+])
+
+function snapshotBindings(): FlowTypeBinding[] {
+  return BIND_TYPES.map((t) => {
+    const b = TYPE_BINDINGS.get(t.alertType)
+    const tpl = b ? TEMPLATES.get(b.templateId) : undefined
+    return {
+      alertType: t.alertType,
+      alertTypeName: t.alertTypeName,
+      templateId: b?.templateId ?? null,
+      templateName: tpl?.name ?? null,
+      updatedBy: b?.updatedBy ?? null,
+      updatedByName: b?.updatedByName ?? null,
+      updatedAt: b?.updatedAt ?? null,
+    }
+  })
+}
+
+export function mockListTypeBindings(): FlowTypeBinding[] {
+  return structuredClone(snapshotBindings())
+}
+
+export function mockSaveTypeBindings(items: Array<{ alertType: string; templateId: string }>): FlowTypeBinding[] {
+  for (const it of items) {
+    if (!BIND_TYPES.some((t) => t.alertType === it.alertType)) throw new Error(`未知告警类型：${it.alertType}`)
+    const tid = it.templateId.trim()
+    if (!tid) {
+      TYPE_BINDINGS.delete(it.alertType)
+      continue
+    }
+    if (!TEMPLATES.has(tid)) throw new Error('流程模板不存在（mock）')
+    TYPE_BINDINGS.set(it.alertType, {
+      templateId: tid, updatedBy: 'ops_admin', updatedByName: '运营管理员', updatedAt: new Date().toISOString(),
+    })
+  }
+  return structuredClone(snapshotBindings())
 }

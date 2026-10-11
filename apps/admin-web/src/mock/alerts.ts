@@ -110,12 +110,14 @@ export interface AlertPointRuleUpdate {
   lowerN?: number | null
 }
 
-/** 全局告警规则四项（设计稿 Tab2 第二卡） */
+/** 全局告警规则五项（设计稿 Tab2 第二卡；T653 R2 增传感器标定阈值） */
 export interface AlertGlobalRules {
   deviceOfflineMinutes: number
   dailyWearMinHours: number
   continuousWearMaxHours: number
   reportTimeoutMinutes: number
+  /** T653 R2：传感器标定异常阈值 threshold_sensor_drift（N，量程 0.1-20，默认 0.3） */
+  sensorDriftN: number
 }
 
 /** 规则配置聚合视图（一次 GET 渲染整个 Tab2） */
@@ -136,9 +138,11 @@ const DEFAULT_GLOBAL_RULES: AlertGlobalRules = {
   // 该值落 sys_configs 的 threshold_wear_interrupt_minutes（≡ 系统配置页「设备离线判定时间」同键，T257 12.4），
   // 旧键 device_offline_minutes 已由 T257 作废，不得复辟。
   deviceOfflineMinutes: 60,
-  dailyWearMinHours: 18,
+  // T653 R3：佩戴目标 22h（旧 18h 废止，与后端 settingsDefaults.DailyWearTargetHours 对齐）
+  dailyWearMinHours: 22,
   continuousWearMaxHours: 23,
   reportTimeoutMinutes: 5,
+  sensorDriftN: 0.3, // T653 R2：传感器标定阈值编辑位唯一落点本卡（系统配置页已摘 UI）
 }
 
 function buildDefaultPoints(unifiedUpper: number, unifiedLower: number): AlertPointRule[] {

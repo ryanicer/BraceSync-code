@@ -184,6 +184,11 @@
             <el-input-number v-model="globalRules.reportTimeoutMinutes" :min="1" :max="1440" :precision="0" controls-position="right" />
             <span class="unit">分钟</span>
           </div>
+          <div class="config-row">
+            <span class="config-label">传感器标定阈值</span>
+            <el-input-number v-model="globalRules.sensorDriftN" :min="0.1" :max="20" :step="0.1" :precision="1" controls-position="right" />
+            <span class="unit">N</span>
+          </div>
           <div class="rule-actions">
             <el-button type="primary" :loading="savingGlobal" @click="saveGlobalRules">保存全局规则</el-button>
           </div>
@@ -196,7 +201,11 @@
       </el-tab-pane>
 
       <el-tab-pane v-if="canConfigure" label="流程配置" name="designer">
-        <FlowDesigner v-if="activeTab === 'designer'" />
+        <template v-if="activeTab === 'designer'">
+          <!-- T653：绑定区在设计器上方；未绑定黄标，仅 admin 可见（本 Tab 已 v-if canConfigure） -->
+          <FlowTypeBindings />
+          <FlowDesigner />
+        </template>
       </el-tab-pane>
     </el-tabs>
 
@@ -245,6 +254,7 @@ import { useAuthStore } from '../../stores/auth'
 import { canConfigureAlerts } from '../../utils/alertPageAccess'
 import { formatCstMonthDayTime } from '../../utils/formatTime'
 import FlowRuntime from './flow/FlowRuntime.vue'
+import FlowTypeBindings from './flow/FlowTypeBindings.vue'
 import FlowDesigner from './flow/designer/FlowDesigner.vue'
 
 const activeTab = ref('list')
@@ -364,7 +374,7 @@ const rules = ref<{ unifiedUpperN: number; unifiedLowerN: number; points: AlertP
   unifiedUpperN: 45,
   unifiedLowerN: 10,
   points: [],
-  globalRules: { deviceOfflineMinutes: 60, dailyWearMinHours: 18, continuousWearMaxHours: 23, reportTimeoutMinutes: 5 },
+  globalRules: { deviceOfflineMinutes: 60, dailyWearMinHours: 22, continuousWearMaxHours: 23, reportTimeoutMinutes: 5, sensorDriftN: 0.3 },
 })
 const unifiedUpper = ref(45)
 const unifiedLower = ref(10)
