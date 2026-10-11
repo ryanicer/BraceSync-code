@@ -233,8 +233,10 @@ export function mockPatientRealtime(patientId: string): RealtimeSnapshot {
   return {
     status,
     todayHours: offline ? 0 : 6.5 + (patientId.charCodeAt(4) % 40) / 10,
-    maxPressure: abnormal ? 68.5 : 42.3,
-    maxPoint: abnormal ? 'P10' : 'P05',
+    // T600：今日峰值对齐真后端 record.go GetRealtime —— 未绑定/无上报时初始快照
+    // MaxPoint="" / MaxPressure=0（今日尚无统计），不是 seed 派生值；有帧才给今日峰值。
+    maxPressure: offline ? 0 : abnormal ? 68.5 : 42.3,
+    maxPoint: offline ? '' : abnormal ? 'P10' : 'P05',
     events: abnormal ? 3 : patientId === 'PT-002' ? 1 : 0,
     pressureRecords: offline ? [] : [record],
     alerts: [],
