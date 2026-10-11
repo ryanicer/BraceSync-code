@@ -132,14 +132,32 @@ type DashboardCache interface {
 
 // DashboardService Dashboard 查询编排（store 由 main 注入 repo.DashboardRepo）
 type DashboardService struct {
-	store repo.DashboardStore
-	cache DashboardCache
-	now   func() time.Time
+	store      repo.DashboardStore
+	cache      DashboardCache
+	thresholds repo.ThresholdStore // T595：可选；今日 live 聚合的佩戴阈值源（nil 回退默认，与 rollup 同）
+	now        func() time.Time
 }
 
 // NewDashboardService 组装 DashboardService
 func NewDashboardService(store repo.DashboardStore, cache DashboardCache) *DashboardService {
 	return &DashboardService{store: store, cache: cache, now: time.Now}
+}
+
+// WithThresholdStore 注入 sys_configs 阈值源（T595）：main 装配时链式设置；
+// 不设时今日 live 聚合用 model.WearingThresholdN 默认值（与 rollup 服务的回退分支同源）。
+func (s *DashboardService) WithThresholdStore(ts repo.ThresholdStore) *DashboardService {
+	s.thresholds = ts
+	return s
+}
+
+// wearingThresholdN 今日 live 聚合的佩戴阈值，读不到配置回退默认（与 RollupService.wearingThresholdN 同式）。
+func (s *DashboardService) wearingThresholdN(ctx context.Context) float64 {
+	if s.thresholds != nil {
+		if th, err := s.thresholds.GetPressureThresholds(ctx); err == nil {
+			return th.WearingN
+		}
+	}
+	return model.WearingThresholdN
 }
 
 // periodWindow period 枚举 → 窗口起点与天数（CST 切日；today=当日，week=近7日，month=近30日）。
@@ -187,6 +205,21 @@ func (s *DashboardService) GetKPI(ctx context.Context, period string, scope mode
 	if err != nil {
 		log.Error().Err(err).Str("period", period).Msg("query dashboard kpi failed")
 		return nil, model.ErrInternal("query dashboard kpi failed")
+	}
+	// T595：period=today 时「活跃佩戴/平均佩戴」两格改从当日明细同源聚合（rollup 每日 00:10
+	// 只聚合昨日，日切表白天无当日行导致两格恒 0）。其余指标与 week/month 仍走日切表。
+	// 查询失败降级保留日切值并记日志（看板可用性优先，不让 live 通道故障带崩整块 KPI）。
+	if period == "today" {
+		nowCST := s.now().In(model.CSTZone())
+		todayStart := time.Date(nowCST.Year(), nowCST.Month(), nowCST.Day(), 0, 0, 0, 0, model.CSTZone())
+		live, liveErr := s.store.KPILiveToday(ctx, todayStart, todayStart.AddDate(0, 0, 1),
+			float32(s.wearingThresholdN(ctx)), scope)
+		if liveErr != nil {
+			log.Warn().Err(liveErr).Msg("dashboard live-today aggregation failed, fallback to rollup row")
+		} else if live != nil {
+			row.ActiveWear = live.ActiveWear
+			row.AvgWearMinutes = live.AvgWearMinutes
+		}
 	}
 	dto := &DashboardKPIDTO{
 		TotalPatients:    row.TotalPatients,

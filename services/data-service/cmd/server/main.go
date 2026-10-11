@@ -167,7 +167,9 @@ func main() {
 	h.SetPatientLookup(repo.NewPatientRepo(pool))
 
 	// T033：admin Dashboard 6 聚合查询端点（daily_wear_stats + kpi:dashboard 缓存）
-	dashboardSvc := service.NewDashboardService(repo.NewDashboardRepo(pool), repo.NewDashboardCache(rdbClient))
+	// T595：注入 sys_configs 阈值源，period=today 两格的当日明细聚合与 rollup 同阈值（读不到配置内部回退默认）
+	dashboardSvc := service.NewDashboardService(repo.NewDashboardRepo(pool), repo.NewDashboardCache(rdbClient)).
+		WithThresholdStore(configRepo)
 	h.SetDashboardQuerier(dashboardSvc)
 
 	// T076：患者日佩戴聚合端点（数据源 daily_wear_stats，患者自查 + admin 任意）

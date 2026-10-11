@@ -119,7 +119,7 @@ func TestT498_GateOnWritesStampedFrameAndStopsCountingStat(t *testing.T) {
 	// 刻意差异：lastseen 与 rt:frame 保留（佩戴中断判定 + 实时页），stat:today 不写
 	assert.True(t, env.cache.lastseen[testDevice].Equal(fixedNow), "注入帧要能推进 lastseen，否则触发不了佩戴中断")
 	assert.NotEmpty(t, env.cache.rtFrame[testDevice])
-	assert.Empty(t, env.cache.stat, "注入帧不得累计 stat:today 的佩戴分钟数/峰值")
+	assert.Empty(t, env.cache.stat, "注入帧不得累计 stat:today 的佩戴原始量（帧数/首末时刻）/峰值")
 	assert.True(t, env.svc.MockIngestEnabled())
 }
 
@@ -136,7 +136,7 @@ func TestT498_AlertHitStillIncrementsAbnormalCount(t *testing.T) {
 	require.Len(t, env.cache.stat, 1)
 	e := env.cache.stat[testPatient]
 	assert.Equal(t, 1, e.abn, "注入帧触发的告警必须计入异常数，否则告警列表与概览自相矛盾")
-	assert.Equal(t, 0, e.wear, "佩戴分钟数不累计（countStat=false）")
+	assert.Equal(t, 0, e.frames, "佩戴帧不累计（countStat=false）")
 	assert.Equal(t, float64(0), e.max, "峰值不累计（countStat=false）")
 }
 

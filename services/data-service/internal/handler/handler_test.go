@@ -88,7 +88,7 @@ func (stubCache) SetRealtimeFrame(context.Context, string, string) error { retur
 func (stubCache) GetRealtimeFrame(context.Context, string) (string, error) {
 	return "", nil
 }
-func (stubCache) ApplyStatToday(context.Context, string, int, float64, string, int, time.Time) error {
+func (stubCache) ApplyStatToday(context.Context, string, bool, time.Time, float64, string, int, time.Time) error {
 	return nil
 }
 func (stubCache) GetStatToday(context.Context, string) (map[string]string, error) {

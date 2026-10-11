@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -84,29 +85,43 @@ func TestRedisCache_StatTodayLua(t *testing.T) {
 	cache, mr := startMiniRedis(t)
 	ctx := context.Background()
 	expireAt := time.Now().Add(time.Hour)
+	base := time.Date(2026, 10, 11, 8, 0, 0, 0, time.UTC)
 
-	// 佩戴帧：wear+30，max 刷新
-	require.NoError(t, cache.ApplyStatToday(ctx, "P1", 30, 25.5, "P03", 0, expireAt))
+	// 佩戴帧 1：frames=1，首末时刻=本帧，max 刷新
+	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base, 25.5, "P03", 0, expireAt))
 	stat, err := cache.GetStatToday(ctx, "P1")
 	require.NoError(t, err)
-	assert.Equal(t, "30", stat["wear_minutes"])
+	assert.Equal(t, "1", stat["wear_frames"])
+	assert.Equal(t, strconv.FormatInt(base.Unix(), 10), stat["wear_first_ts"])
+	assert.Equal(t, strconv.FormatInt(base.Unix(), 10), stat["wear_last_ts"])
 	assert.Equal(t, "25.5", stat["max_pressure"])
 	assert.Equal(t, "P03", stat["max_point"])
 
-	// 非佩戴帧：wear 不加；更小的 max 不覆盖
-	require.NoError(t, cache.ApplyStatToday(ctx, "P1", 0, 10.0, "P01", 0, expireAt))
+	// 非佩戴帧：frames/首末时刻不动；更小的 max 不覆盖
+	require.NoError(t, cache.ApplyStatToday(ctx, "P1", false, base.Add(time.Minute), 10.0, "P01", 0, expireAt))
 	stat, _ = cache.GetStatToday(ctx, "P1")
-	assert.Equal(t, "30", stat["wear_minutes"])
+	assert.Equal(t, "1", stat["wear_frames"])
+	assert.Equal(t, strconv.FormatInt(base.Unix(), 10), stat["wear_first_ts"], "非佩戴帧不动首时刻")
 	assert.Equal(t, "25.5", stat["max_pressure"])
 	assert.Equal(t, "P03", stat["max_point"], "较小压力不得覆盖最大点位")
 
-	// 更大 max 覆盖 + 异常数增量
-	require.NoError(t, cache.ApplyStatToday(ctx, "P1", 30, 40.2, "P07", 1, expireAt))
+	// 佩戴帧 2（+30min）：frames=2，last 推进、first 不动
+	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base.Add(30*time.Minute), 40.2, "P07", 1, expireAt))
 	stat, _ = cache.GetStatToday(ctx, "P1")
-	assert.Equal(t, "60", stat["wear_minutes"])
+	assert.Equal(t, "2", stat["wear_frames"])
+	assert.Equal(t, strconv.FormatInt(base.Unix(), 10), stat["wear_first_ts"])
+	assert.Equal(t, strconv.FormatInt(base.Add(30*time.Minute).Unix(), 10), stat["wear_last_ts"])
 	assert.Equal(t, "40.2", stat["max_pressure"])
 	assert.Equal(t, "P07", stat["max_point"])
 	assert.Equal(t, "1", stat["abnormal_count"])
+
+	// T594 乱序保护：补传一枚更早的佩戴帧（-10min）→ first 回退，last 不回退、frames 照计
+	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base.Add(-10*time.Minute), 5.0, "P01", 0, expireAt))
+	stat, _ = cache.GetStatToday(ctx, "P1")
+	assert.Equal(t, "3", stat["wear_frames"])
+	assert.Equal(t, strconv.FormatInt(base.Add(-10*time.Minute).Unix(), 10), stat["wear_first_ts"], "补传旧帧要回退 first")
+	assert.Equal(t, strconv.FormatInt(base.Add(30*time.Minute).Unix(), 10), stat["wear_last_ts"], "旧帧不得回退 last")
+	assert.Equal(t, "40.2", stat["max_pressure"], "较小压力不覆盖峰值")
 
 	// 过期时间到达后 key 失效（生产为今日 24:00 Asia/Shanghai）
 	mr.FastForward(2 * time.Hour)
