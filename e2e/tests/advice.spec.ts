@@ -53,41 +53,43 @@ function recordAdviceRequests(page: Page): string[] {
   return seen
 }
 
-test('团队两列与时间轴：徽标 + 职称 + 时间与正文渲染，长正文才给「展开全文」', async ({ page }) => {
+test('T659 按稿：团队横排头像+职称、时间轴日期行头、展开控件恒显与全文切换', async ({ page }) => {
   await setupPatientE2E(page, { withLogin: true })
   await mockAdviceReads(page, [
     advice({}),
     advice({
       adviceId: 'ADV-002',
       title: '护士',
-      content: `复查提醒：10 月 16 日上午门诊复查，请携带支具与近 7 日佩戴记录。${'补充说明用于把正文推过摘要上限，从而出现展开这一档。'.repeat(3)}`,
+      content: `复查提醒：10 月 16 日上午门诊复查，请携带支具与近 7 日佩戴记录。${'补充说明用于把正文推过两行摘要截断，从而展开后能看到被收住的后半段文字。'.repeat(3)}`,
     }),
     advice({ adviceId: 'ADV-003', title: '医护团队', content: '调整方案后无不适，继续观察一周。' }),
   ])
   await page.goto(ADVICE_PATH)
 
-  const rows = page.locator('.team-row')
-  await expect(rows).toHaveCount(3)
-  await expect(rows.nth(0).locator('.team-role-doctor')).toHaveText('医护')
-  await expect(rows.nth(0).locator('.team-title')).toHaveText('主治医师')
-  await expect(rows.nth(2).locator('.team-role-tech')).toHaveText('技术支撑')
-  // 稿面 advice.html:56：技师无职称列 ⇒ 画「——」，同一行不把「技术支撑」说两遍
-  await expect(rows.nth(2).locator('.team-title-empty')).toHaveText('——')
+  // T659：横排头像 strip（稿面 advice.html:45-58），无角色文字胶囊
+  const members = page.locator('.team-strip .team-member')
+  await expect(members).toHaveCount(3)
+  await expect(members.nth(0).locator('.team-avatar-doctor')).toBeVisible()
+  await expect(members.nth(0).locator('.team-title')).toHaveText('主治医师')
+  await expect(members.nth(2).locator('.team-avatar-tech')).toBeVisible()
+  // 技师职称恒为「技术支撑」，不再折成破折号（Boss 截图回归点）
+  await expect(members.nth(2).locator('.team-title')).toHaveText('技术支撑')
+  await expect(page.locator('.team-role, .team-title-empty')).toHaveCount(0)
 
   const items = page.locator('.advice-item')
   await expect(items).toHaveCount(3)
-  await expect(items.nth(0).locator('.advice-meta')).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} · 主治医师$/)
+  // 行头只到日期（稿面 :72 形 2026-10-09 · 主治医师），不带时分
+  await expect(items.nth(0).locator('.advice-meta')).toHaveText(/^\d{4}-\d{2}-\d{2} · 主治医师$/)
   await expect(items.nth(0).locator('.advice-summary')).toContainText('这两周胸段压力偏高')
-  // 短正文不给展开这一档（不给患者一个点了没反应的假控件）
-  await expect(items.nth(0).locator('.advice-toggle')).toHaveCount(0)
+  // T659：稿面四条 seed（含短正文）均恒显展开控件
+  await expect(items.nth(0).locator('.advice-toggle')).toHaveText('展开全文 ▾')
+  await expect(items.nth(2).locator('.advice-toggle')).toHaveText('展开全文 ▾')
 
   const longItem = items.nth(1)
   await expect(longItem.locator('.advice-toggle')).toHaveText('展开全文 ▾')
-  const summaryText = await longItem.locator('.advice-summary').textContent()
-  expect((summaryText ?? '').length).toBeLessThan(120)
   await longItem.click()
   await expect(longItem.locator('.advice-toggle')).toHaveText('收起 ▴')
-  await expect(longItem.locator('.advice-full')).toContainText('推过摘要上限')
+  await expect(longItem.locator('.advice-full')).toContainText('被收住的后半段')
   await longItem.click()
   await expect(longItem.locator('.advice-full')).toHaveCount(0)
 })
