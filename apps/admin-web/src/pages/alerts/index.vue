@@ -215,10 +215,15 @@
 
       <el-tab-pane v-if="canConfigure" label="流程配置" name="designer">
         <template v-if="activeTab === 'designer'">
-          <!-- T653：绑定区在设计器上方；未绑定黄标，仅 admin 可见（本 Tab 已 v-if canConfigure） -->
-          <FlowTypeBindings />
           <FlowDesigner />
         </template>
+      </el-tab-pane>
+
+      <!-- T666：告警↔流程绑定独立成 Tab（Boss 2026-10-11 提案）。
+           三重收益：与告警参数视觉解耦；v-if 让组件切走即销毁、切回重新挂载 ⇒
+           模板列表每次进 Tab 都重新 fetch，根治「新建模板后下拉不刷新」；职责与设计器分离。 -->
+      <el-tab-pane v-if="canConfigure" label="流程绑定" name="bindings">
+        <FlowTypeBindings v-if="activeTab === 'bindings'" />
       </el-tab-pane>
     </el-tabs>
 

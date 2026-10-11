@@ -68,7 +68,19 @@ type PendingItem struct {
 
 // ToPressureFrame 帧引用 → 引擎输入。Wearing 按 PRD §8.1 由最大压力推导（默认占位阈值）。
 func (f FrameRef) ToPressureFrame() (engine.PressureFrame, error) {
-	return f.toPressureFrame(DefaultWearingThresholdN)
+	return f.ToPressureFrameWithThreshold(DefaultWearingThresholdN)
+}
+
+// ToPressureFrameWithThreshold 用调用方注入的佩戴阈值推导 Wearing。
+// T661（T621 §4.3 H 项）：内联评估链路原来只走 DefaultWearingThresholdN，
+// 运营在 sys_configs 改 wearing_pressure_threshold 后内联判定不生效；
+// 现由 alert-service 装配侧（Handler/Consumer）经配置热更新注入同一枚生效值。
+// 传非正值（未注入/配置缺失）回退默认兜底，语义与补偿链路一致。
+func (f FrameRef) ToPressureFrameWithThreshold(wearingThresholdN float64) (engine.PressureFrame, error) {
+	if wearingThresholdN <= 0 {
+		wearingThresholdN = DefaultWearingThresholdN
+	}
+	return f.toPressureFrame(wearingThresholdN)
 }
 
 // toPressureFrame 佩戴阈值可注入的内部实现（T173 可配置化）

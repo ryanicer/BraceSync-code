@@ -1,16 +1,16 @@
 // Package engine — T625 盲区用例：传感器漂移（sensor_drift，T621 规则）的空载/停用/选取口径
 //
-// 本文件是**新增**测试文件，不改动 engine_test.go（T002 Ella 冻结契约）、
-// engine_supplement_test.go（T003 Winner）与 engine_pointrules_test.go（T252）。
-// 契约出处：engine.go:74 checkSensorDrift（守卫 :76，触发表达式 :82）。
+// 本文件为 T625 新增、T661 转绿：engine_test.go 的 T002 冻结已于 T661 按卡面解除（补强断言），
+// engine_supplement_test.go（T003 Winner）与 engine_pointrules_test.go（T252）仍不改动（本文件内）。
+// 契约出处：engine.go checkSensorDrift（空载守卫 + 触发式）。
 //
-// 现读实现的判定式（engine.go:82）：
+// T661 收口后的判定式（engine.go）：
 //
-//	if (p > e.SensorDriftThreshold || p < 0) && math.Abs(p) > maxAbs
+//	if a := math.Abs(p); a > e.SensorDriftThreshold && a > maxAbs
 //
-// 两个要害：
-//  1. 「任何负值都触发」——负值不受阈值幅值约束，-0.2 在阈值 2.8 下同样命中；
-//     这不是「按幅值对称」的漂移判定，校准后的轻微负偏会被当成传感器故障上报（类 7 同族缺陷，待 T621 收口）。
+// 口径：
+//  1. 双向对称容差——正负读数按 |p| 比同一枚 threshold_sensor_drift（T661，Boss 物理模型），
+//     容差带内的校准负偏（应力释放）不再误报；负向越界走独立文案（应力释放异常+重新校准建议）。
 //  2. 多点位命中时 SensorPoint 取**绝对值最大**的点（不是「最超阈」也不是「首个命中」），
 //     负值因此能压过同号幅值更大的正超阈读数——本文件把这个选取口径钉住。
 package engine_test
@@ -69,7 +69,7 @@ func t625OnlyDriftHit(t *testing.T, hits []*engine.AlertResult) *engine.AlertRes
 // ─────────────────────────────────────────────────────────────
 
 func TestT625_SensorDrift_WearingFramesAreSilent(t *testing.T) {
-	evaluator := t625DriftEvaluator(2.8) // 与 NewDefaultRuleEvaluator 的默认阈值同值
+	evaluator := t625DriftEvaluator(2.8) // 显式阈值：本用例钉佩戴守卫，阈值取值不影响结论
 
 	cases := []struct {
 		name      string
@@ -164,14 +164,12 @@ func TestT625_SensorDrift_PositiveAndNegativeBothTriggerAndPickMaxAbsPoint(t *te
 }
 
 // ─────────────────────────────────────────────────────────────
-// 4) 类 7：校准后的轻微负偏（-0.2N）不应报故障 —— 现实现必报，故 pending
+// 4) 类 7：校准后的轻微负偏（-0.2N）不应报故障 —— T661 已收口（双向对称容差）
 // ─────────────────────────────────────────────────────────────
 
 func TestT625_SensorDrift_SmallNegativeAfterCalibrationShouldNotAlert(t *testing.T) {
-	reason := "T621 未合入：checkSensorDrift 需把负值判据从「p < 0 即故障」（engine.go:82）改为按幅值对称 " +
-		"|p| > 阈值（或引入 threshold_calibration_offset 容差，user-service 已有该键 handler.go:2028）；" +
-		"合入后去掉本行即转绿"
-	t.Skip(reason)
+	// T661 已按 Boss 物理模型收口：判据 = |p| > 阈值（复用 threshold_sensor_drift 单键），
+	// 容差带内的应力释放负偏是合理现象；本 skip 于 T661 去除。
 
 	// 期望（PRD 口径）：-0.2N 是校准容差内的正常负偏，不是传感器故障。
 	frame := t625DriftFrame(false, map[int]float64{3: -0.2})
@@ -184,32 +182,18 @@ func TestT625_SensorDrift_SmallNegativeAfterCalibrationShouldNotAlert(t *testing
 }
 
 // ─────────────────────────────────────────────────────────────
-// 5) 阈值口径冲突：配置键默认 0.3 vs 引擎默认 2.8 —— pending（缺陷待新卡收口）
+// 5) 跨层默认值唯一：threshold_sensor_drift 引擎兜底默认 == 配置层默认 —— T661 已收口
 // ─────────────────────────────────────────────────────────────
 
-// 现状三个「默认值」各处一说（file:line 为 2026-10-08 现读 grep 结果）：
-//   - services/alert-service/internal/engine/engine.go:21           SensorDriftThreshold: 2.8（NewDefaultRuleEvaluator）
-//   - services/alert-service/internal/config/config.go:61           SensorDriftN: 0.3（DefaultThresholds，注释 :55 却写着
-//     「PRD 默认阈值口径（与 engine.NewDefaultRuleEvaluator 一致）」—— 该注释与数值直接矛盾）
-//   - services/user-service/internal/handler/handler.go:2048        SensorDriftN: 0.3（settingsDefaults，键 :2021）
-//   - services/user-service/internal/handler/handler.go:2173        入参校验区间 [0.1,20]：2.8 合法、0.3 亦合法，
-//     ⇒ 校验拦不住口径分裂，两个值都能被写进 sys_configs
-//   - scripts/db/migrations/000019_t203_threshold_div10_winner.up.sql:12 把库值 2.8 改成 0.3，
-//     但没同步引擎默认值，也没在 engine.go 的阈值语义注释（types.go:65 「漂移 2.8N」）留痕
-//
-// 后果：config.Manager.Refresh 走 ApplyThresholds（manager.go:149）时线上生效 0.3；
-// 任何未经 Refresh 的评估器（NewDefaultRuleEvaluator 直接构造的调用方、单测替身）走 2.8，
-// 同一份数据两口径 ⇒ 空载正读数在 (0.3, 2.8] 区间内时报时不报，无固定答案。
+// 沿革（T625 登记时三处默认值打架：引擎 2.8 / config 0.3 / user-service 0.3）。
+// T661 把 NewDefaultRuleEvaluator 的兜底改为 0.3，与 config.DefaultThresholds、
+// seed.sql、迁移 000019、user-service 设置默认收成一个权威值；本用例转为常驻跨层门禁，
+// 防止任何一层再私改默认导致 (0.3, 旧值] 区间判定无固定答案。
 func TestT625_SensorDriftThreshold_OneDocumentedDefaultAcrossLayers(t *testing.T) {
-	reason := "T625 新卡（阈值口径收口）未合入：threshold_sensor_drift 要只有一个权威默认值" +
-		"（engine.go:21 的 2.8 与 config.go:61 / user-service handler.go:2048 的 0.3 收成一个，" +
-		"并把 config.go:55 那句「与 engine.NewDefaultRuleEvaluator 一致」的注释与实现对齐）；" +
-		"合入后去掉本行即转绿"
-	t.Skip(reason)
-
 	engineDefault := engine.NewDefaultRuleEvaluator().SensorDriftThreshold
 	configDefault := config.DefaultThresholds().SensorDriftN
 
 	assert.InDelta(t, configDefault, engineDefault, 0.0001,
 		"引擎默认值必须与配置层默认值同口径（现值：engine %v vs config %v）", engineDefault, configDefault)
+	assert.InDelta(t, 0.3, engineDefault, 0.0001, "T203 后唯一权威默认 = 0.3N")
 }

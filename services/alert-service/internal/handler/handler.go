@@ -65,7 +65,10 @@ type Handler struct {
 	notifier consumer.Notifier
 	flow     flowstarter.Starter // T653：告警入库后按绑定自动建实例（SetFlowStarter 注入，默认 Noop）
 	public   PublicAlertStore    // T028 公开端点数据源（SetPublicStore 注入，可空）
-	log      zerolog.Logger
+	// wearingThresholdN 内联评估佩戴判定阈值（T661 H 项）：由 sys_configs
+	// wearing_pressure_threshold 热更新注入；零值走 consumer.DefaultWearingThresholdN 兜底。
+	wearingThresholdN float64
+	log               zerolog.Logger
 }
 
 // New 组装 Handler；notifier 传 nil 使用 NoopNotifier（一期未接 msg-service）
@@ -86,6 +89,12 @@ func (h *Handler) SetFlowStarter(s flowstarter.Starter) {
 		h.flow = s
 	}
 }
+
+// SetWearingThreshold 注入 sys_configs 热更新后的佩戴阈值（T661 H 项）。
+// 内联 /internal/evaluate 原来把 FrameRef.ToPressureFrame 写死为 0.05N 兜底，
+// 运营改 wearing_pressure_threshold 后内联链路不生效；与补偿 consumer.SetWearingThreshold
+// 同口径注入（main.go 启动加载 + 每轮扫描刷新各调一次）。传非正值由转换层回退默认。
+func (h *Handler) SetWearingThreshold(n float64) { h.wearingThresholdN = n }
 
 // Router 组装路由（可测试）
 func (h *Handler) Router() *http.ServeMux {
@@ -116,7 +125,8 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "invalid json: "+err.Error())
 		return
 	}
-	frame, err := req.ToPressureFrame()
+	// T661 H 项：佩戴阈值走注入的 sys_configs 生效值（与补偿链路同源），不再写死 0.05N。
+	frame, err := req.ToPressureFrameWithThreshold(h.wearingThresholdN)
 	if err != nil || frame.PatientID == "" || frame.DeviceID == "" {
 		metrics.InlineEvaluatedTotal.WithLabelValues(metrics.OutcomeDropped).Inc()
 		h.reject(w, r, http.StatusBadRequest, codeInvalidParam, "invalid frame ref (need device_id/patient_id/20 points)")

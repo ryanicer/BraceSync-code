@@ -139,6 +139,33 @@ func TestFrameRef_ToPressureFrame(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestFrameRef_ToPressureFrameWithThreshold T661 H 项：佩戴判定阈值可注入，
+// 同一帧在不同阈值下 Wearing 翻转——内联链路据此吃到 sys_configs 的运营调整值。
+func TestFrameRef_ToPressureFrameWithThreshold(t *testing.T) {
+	points := make([]float64, PointCount)
+	points[2] = 0.2 // 最大压力 0.2N
+	f := FrameRef{DeviceID: "DEV1", PatientID: "P1", Timestamp: time.Unix(1000, 0), Points: points}
+
+	// 注入 0.3N：0.2 ≤ 0.3 → 空载
+	frame, err := f.ToPressureFrameWithThreshold(0.3)
+	require.NoError(t, err)
+	assert.False(t, frame.Wearing, "最大压力未超过注入佩戴阈值 → 空载")
+
+	// 注入 0.1N：0.2 > 0.1 → 佩戴
+	frame, err = f.ToPressureFrameWithThreshold(0.1)
+	require.NoError(t, err)
+	assert.True(t, frame.Wearing, "同一帧在更低阈值下应判佩戴（证明阈值真被读取）")
+
+	// 非正值回退默认兜底 0.05N：0.2 > 0.05 → 佩戴
+	frame, err = f.ToPressureFrameWithThreshold(0)
+	require.NoError(t, err)
+	assert.True(t, frame.Wearing, "未注入时回退 DefaultWearingThresholdN")
+
+	// 点数校验不绕过
+	_, err = FrameRef{Points: []float64{1, 2}}.ToPressureFrameWithThreshold(0.3)
+	require.Error(t, err)
+}
+
 // ─────────────────────────────────────────────────────────────
 // DrainOnce：各结果分支
 // ─────────────────────────────────────────────────────────────

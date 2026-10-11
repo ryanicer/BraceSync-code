@@ -1,7 +1,8 @@
 // Package engine — 告警规则引擎实现（T003）
 //
-// 行为契约：engine_test.go（T002 Ella，禁止修改）——各用例断言是唯一行为契约。
-// 阈值口径：压力偏高 45N / 中断 60min / 漂移 2.8N（架构 §7D.12 / 协议 §4.1）。
+// 行为契约：engine_test.go（T002 Ella；T661 起按卡面口径补强断言）——各用例断言是唯一行为契约。
+// 阈值口径：压力偏高 45N / 中断 60min / 传感器标定异常 0.3N（T203 ÷10 调 0.3；
+// 与 config.DefaultThresholds、seed、迁移 000019、user-service 设置默认四处同值）。
 // T257 2.6（方案A）：按帧规则摘除「压力波动」，新增按自然日的「佩戴时长不足」
 // （EvaluateWearDurationShort，由扫描器调用）；波动 30% 阈值仅保留配置键供历史数据解释。
 package engine
@@ -18,7 +19,7 @@ func NewDefaultRuleEvaluator() *RuleEvaluator {
 	return &RuleEvaluator{
 		PressureHighThreshold: 45,
 		WearInterruptMinutes:  60,
-		SensorDriftThreshold:  2.8,
+		SensorDriftThreshold:  0.3, // T661：兜底默认与 config.DefaultThresholds 收口同值（T203 由 2.8 调 0.3）
 		DedupWindowMinutes:    30,
 		CollectionIntervalMin: 30,
 		// T257 2.6：不再注入 FluctuationThresholdPct（压力波动规则已摘除）。
@@ -70,8 +71,15 @@ func (e *RuleEvaluator) checkPressureHigh(frame PressureFrame, _ *PressureFrame)
 	}
 }
 
-// checkSensorDrift 传感器漂移：仅空载（Wearing=false）时判定（A4）。
-// 空载读数严格大于阈值，或出现负值读数（传感器故障），均触发。
+// checkSensorDrift 传感器标定异常：仅空载（Wearing=false）时判定（A4）。
+//
+// T661（Boss 物理模型，T621 调研收敛）：读侧减校准基线后，压力片应力释放会产出负值，
+// 容差带内的负偏是合理物理现象而非故障。判据改为**双向对称容差**——读数绝对值严格
+// 大于标定阈值（复用 threshold_sensor_drift 单键，正负同向）才告警：
+//   - 正向越界 = 漂移超标；
+//   - 负向越界 = 应力释放异常，提示检查佩戴/考虑重新校准。
+//
+// 边界（|p| 恰好等于阈值）不触发，与全引擎严格大于口径一致。
 func (e *RuleEvaluator) checkSensorDrift(frame PressureFrame, _ *PressureFrame) *AlertResult {
 	if e.SensorDriftThreshold <= 0 || frame.Wearing {
 		return nil
@@ -79,8 +87,9 @@ func (e *RuleEvaluator) checkSensorDrift(frame PressureFrame, _ *PressureFrame) 
 	maxIdx := -1
 	maxAbs := 0.0
 	for i, p := range frame.Pressures {
-		if (p > e.SensorDriftThreshold || p < 0) && math.Abs(p) > maxAbs {
-			maxAbs = math.Abs(p)
+		// 对称容差：正/负双向都按绝对值比同一枚阈值（T661）。
+		if a := math.Abs(p); a > e.SensorDriftThreshold && a > maxAbs {
+			maxAbs = a
 			maxIdx = i
 		}
 	}
@@ -89,6 +98,14 @@ func (e *RuleEvaluator) checkSensorDrift(frame PressureFrame, _ *PressureFrame) 
 	}
 	point := sensorPointName(maxIdx)
 	actual := frame.Pressures[maxIdx]
+	message := ""
+	if actual > 0 {
+		message = fmt.Sprintf("传感器标定异常：空载采集点 %s 读数 %.1fN 超阈值 %.1fN（漂移超标），通知技师+运营",
+			point, actual, e.SensorDriftThreshold)
+	} else {
+		message = fmt.Sprintf("传感器标定异常：空载采集点 %s 读数 %.1fN 负向超出容差 %.1fN（应力释放异常），建议检查佩戴或考虑重新校准，通知技师+运营",
+			point, actual, e.SensorDriftThreshold)
+	}
 	return &AlertResult{
 		ShouldAlert:    true,
 		AlertType:      TypeSensorDrift,
@@ -96,8 +113,7 @@ func (e *RuleEvaluator) checkSensorDrift(frame PressureFrame, _ *PressureFrame) 
 		ThresholdValue: e.SensorDriftThreshold,
 		ActualValue:    actual,
 		Severity:       "medium",
-		Message: fmt.Sprintf("传感器标定异常：空载采集点 %s 读数 %.1fN 异常（阈值 %.1fN），通知技师+运营",
-			point, actual, e.SensorDriftThreshold),
+		Message:        message,
 	}
 }
 

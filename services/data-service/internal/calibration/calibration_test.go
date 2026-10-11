@@ -60,6 +60,28 @@ func TestApply_WithBaseline_SubtractsOffsets(t *testing.T) {
 	assert.InDelta(t, 1.0, res.Points[2], 0.0001, "无偏移点位原值透传")
 }
 
+// TestApply_WithBaseline_CanProduceNegative T661（Boss 物理模型）：应力释放场景下，
+// 读侧减基线后产出负值是**合法结果**——原读数小于该点偏移时 out[i] 为负，
+// Apply 不得夹断/取零。这类负偏交由 alert-service 按对称容差（|p| > 阈值）判定。
+func TestApply_WithBaseline_CanProduceNegative(t *testing.T) {
+	store := &fakeStore{baselines: map[string]Baseline{
+		// P02 基线偏移 0.9N（贴合时该点承压），应力释放后原读数仅 0.2N
+		"DEV1": {BaselineID: 7, Offsets: mkOffsets(0.9)},
+	}}
+	c := NewCalibrator(store)
+
+	res, err := c.Apply(context.Background(), "DEV1", mkOffsets(0.2))
+	require.NoError(t, err)
+	assert.True(t, res.Applied)
+	assert.InDelta(t, -0.7, res.Points[0], 0.0001,
+		"减偏移后的负值必须原样保留，不得夹断为 0")
+
+	// 边界：原读数恰好等于偏移 → 0.0（不是负值，但同属应力释放本底）
+	zero, err := c.Apply(context.Background(), "DEV1", mkOffsets(0.9))
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0, zero.Points[0], 0.0001)
+}
+
 func TestApply_StoreErrorPropagates(t *testing.T) {
 	store := &fakeStore{err: errors.New("db down")}
 	c := NewCalibrator(store)

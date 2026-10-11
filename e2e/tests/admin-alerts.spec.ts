@@ -325,16 +325,20 @@ test.describe('医护角色进告警管理（T351）', () => {
     await expect(page.getByRole('tab', { name: '处理流程' })).toBeVisible()
     await expect(page.getByRole('tab', { name: '告警规则配置' })).toHaveCount(0)
     await expect(page.getByRole('tab', { name: '流程配置' })).toHaveCount(0)
+    // T666：流程绑定独立 Tab，同属 admin 配置面，医护同样不可见
+    await expect(page.getByRole('tab', { name: '流程绑定' })).toHaveCount(0)
     // 页面级准入没被一起摘掉 ⇒ 也不该冒出一条错误提示
     await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
 
-  // 反证：上一条的「配置 Tab 数为 0」不能是选择器写错的永真断言 —— 运营角色下这四张 Tab
+  // 反证：上一条的「配置 Tab 数为 0」不能是选择器写错的永真断言 —— 运营角色下这五张 Tab
   // 必须全在（且第一张之外的能点出 20 格网格，见上面「告警规则配置」段）。
-  test('反证：运营角色四张 Tab 齐全（同一段选择器在 admin 下数到 4）', async ({ page }) => {
+  // T666 起 admin 为五张：告警列表 / 告警规则配置 / 处理流程 / 流程配置 / 流程绑定。
+  test('反证：运营角色五张 Tab 齐全（同一段选择器在 admin 下数到 5）', async ({ page }) => {
     await adminLogin(page, 'admin')
     await page.goto(adminRoutes.alerts)
-    await expect(page.getByRole('tab')).toHaveCount(4)
+    await expect(page.getByRole('tab')).toHaveCount(5)
+    await expect(page.getByRole('tab', { name: '流程绑定' })).toBeVisible()
     await page.getByRole('tab', { name: '告警规则配置' }).click()
     await expect(page.locator('.alert-grid .grid-cell')).toHaveCount(20)
   })

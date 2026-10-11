@@ -21,7 +21,7 @@ func TestSupplement_DefaultEvaluatorThresholds(t *testing.T) {
 	e := engine.NewDefaultRuleEvaluator()
 	assert.Equal(t, 45.0, e.PressureHighThreshold)
 	assert.Equal(t, 60, e.WearInterruptMinutes)
-	assert.Equal(t, 2.8, e.SensorDriftThreshold)
+	assert.Equal(t, 0.3, e.SensorDriftThreshold, "T661：引擎兜底默认与 config.DefaultThresholds 收口同值（T203）")
 	assert.Equal(t, 30, e.DedupWindowMinutes)
 	assert.Equal(t, 30, e.CollectionIntervalMin)
 	// T257 2.6：默认评估器不再携带波动阈值（规则已摘除，字段仅为冻结契约保留）
