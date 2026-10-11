@@ -16,6 +16,7 @@
 //	SCAN_CRON        扫描 cron 表达式，默认 "*/5 * * * *"（架构 §3.6）
 //	PORT             HTTP 监听端口，默认 8080（prometheus.yml 抓取端口）
 //	PENDING_POLL_MS  降级队列轮询间隔（毫秒），默认 500
+//	USER_SERVICE_URL T653 user-service 基址（告警入库后按绑定自动建流程实例），默认 http://user-service:8081
 package main
 
 import (
@@ -35,6 +36,7 @@ import (
 	"github.com/bracesync/bracesync/services/alert-service/internal/config"
 	"github.com/bracesync/bracesync/services/alert-service/internal/consumer"
 	"github.com/bracesync/bracesync/services/alert-service/internal/engine"
+	"github.com/bracesync/bracesync/services/alert-service/internal/flowstarter"
 	"github.com/bracesync/bracesync/services/alert-service/internal/handler"
 	"github.com/bracesync/bracesync/services/alert-service/internal/repo"
 	"github.com/bracesync/bracesync/services/alert-service/internal/scanner"
@@ -102,6 +104,12 @@ func main() {
 			Msg("alert threshold config loaded")
 	}
 
+	// T653：告警入库后按「类型↔模板绑定」自动建流程实例的服务间客户端（三条告警路径共用；
+	// 与通知链解耦，失败仅日志不阻塞）。USER_SERVICE_URL 缺省 compose 服务名。
+	userSvcURL := envOr("USER_SERVICE_URL", "http://user-service:8081")
+	flowStarter := flowstarter.New(userSvcURL, flowstarter.DefaultTimeout,
+		log.Logger.With().Str("component", "flowstarter").Logger())
+
 	// 组装扫描器：阈值口径由 cfgMgr 热更新注入（上方 eval）
 	alertRepo := repo.NewAlertRepo(pool)
 	scan := scanner.New(
@@ -113,6 +121,7 @@ func main() {
 	scan.SetLogger(log.Logger)
 	// T257 2.6：每日「佩戴时长不足」判定所需的 rollup 来源（daily_wear_stats 只读）。
 	scan.SetWearStore(repo.NewWearRepo(pool))
+	scan.SetFlowStarter(flowStarter) // T653：定时告警（wear_interrupt / wear_duration_short）自动建实例
 
 	// T010：alert:pending 常驻消费者（服务可用即排空积压，不依赖重启触发）。
 	// T019：Notifier 接入 msg-service HTTP 推送（超时/失败进 Redis 重试队列，不阻塞落库）。
@@ -138,6 +147,7 @@ func main() {
 	if loadedTh.WearingN > 0 {
 		cons.SetWearingThreshold(loadedTh.WearingN)
 	}
+	cons.SetFlowStarter(flowStarter) // T653：补偿队列告警自动建实例
 
 	// 调度：每 5min（Asia/Shanghai），启动即补跑一轮
 	spec := envOr("SCAN_CRON", "*/5 * * * *")
@@ -222,6 +232,7 @@ func main() {
 	h := handler.New(eval, alertRepo, notifier)
 	h.SetPublicStore(alertRepo)
 	h.SetLogger(log.Logger)
+	h.SetFlowStarter(flowStarter) // T653：内联告警自动建实例
 	port := envOr("PORT", "8080")
 	server := &http.Server{Addr: ":" + port, Handler: h.Router()}
 	go func() {

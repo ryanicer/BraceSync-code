@@ -146,14 +146,7 @@
     {
       "role": "ROLE_ADMIN",
       "method": "GET",
-      "path": "/api/v1/admin/notification-logs",
-      "deny": false,
-      "why": "admin 全放行"
-    },
-    {
-      "role": "ROLE_ADMIN",
-      "method": "GET",
-      "path": "/api/v1/admin/notify-rules",
+      "path": "/api/v1/admin/flow/type-bindings",
       "deny": false,
       "why": "admin 全放行"
     },
@@ -566,7 +559,7 @@
     {
       "role": "ROLE_ADMIN",
       "method": "PUT",
-      "path": "/api/v1/admin/notify-rules/S1",
+      "path": "/api/v1/admin/flow/type-bindings",
       "deny": false,
       "why": "admin 全放行"
     },
@@ -751,6 +744,13 @@
       "path": "/api/v1/admin/flow/templates/S1",
       "deny": false,
       "why": "staff-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/admin/flow/type-bindings",
+      "deny": true,
+      "why": "admin-only"
     },
     {
       "role": "ROLE_DOCTOR",
@@ -966,6 +966,13 @@
       "role": "ROLE_DOCTOR",
       "method": "PUT",
       "path": "/api/v1/admin/flow/templates/S1",
+      "deny": true,
+      "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "PUT",
+      "path": "/api/v1/admin/flow/type-bindings",
       "deny": true,
       "why": "admin-only"
     },

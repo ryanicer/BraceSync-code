@@ -138,6 +138,8 @@ services:
       - REDIS_URL=${REDIS_URL}
       # T231：alert-service → msg-service 推送端口默认值（8086）
       - MSG_SERVICE_URL=http://msg-service:8086
+      # T653：告警入库后按「类型↔模板绑定」调 user-service 自动建流程实例（失败仅日志，不阻塞告警/通知）
+      - USER_SERVICE_URL=http://user-service:8081
     depends_on:
       postgres:
         condition: service_healthy

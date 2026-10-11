@@ -99,23 +99,17 @@ function numberField(page: Page, label: string, scope = '.settings-form') {
     .first()
 }
 
-/** 全局系统参数卡（写 sys_configs 的常规键） */
+/**
+ * 全局系统参数卡（写 sys_configs 的常规键）。
+ * T653（T642 R2/R3 甲）：本卡瘦身至 3 个平台参数——每日佩戴目标 / 设备离线 / 传感器标定
+ * 三编辑位归「告警管理 · Tab2 全局规则」（同键），压力三档卡整卡摘 UI（统一上下限归 Tab2）。
+ * 被摘字段的 GET 仍回显、PUT 仍原值回传（隐藏键有区间校验，缺键 ⇒ 0 ⇒ 400），
+ * 载荷侧由 apps/admin-web/test/settings-visible-terms.spec.ts 钉。
+ */
 const FORM_FIELDS: { label: string; key: keyof Settings }[] = [
   { label: '数据采集间隔（秒）', key: 'collectIntervalSeconds' },
   { label: '数据保留天数', key: 'retentionDays' },
   { label: '最大患者数', key: 'maxPatients' },
-  { label: '每日佩戴目标时长（h）', key: 'dailyWearTargetHours' },
-  // T419 S-6：「压力波动幅度阈值」表单项已按已停用口径下线 ⇒ 这里不能再按 label 取它。
-  // 该键的载荷回显（GET 现值原样 PUT 回去）由 apps/admin-web/test/settings-visible-terms.spec.ts 守，
-  // 缺键会被后端按 [1,100] 判 400，所以下线只能停在 UI 层。
-  { label: '设备离线判定时间（分钟）', key: 'wearInterruptMinutes' },
-  { label: '传感器标定异常告警阈值（N）', key: 'sensorDriftN' },
-]
-
-/** 压力阈值配置卡（T289 12.4 三档；label 也随拆卡改名：压力偏高阈值（N）→ 偏高上限（N）） */
-const TIER_FIELDS: { label: string; key: keyof Settings }[] = [
-  { label: '低压上限（N）', key: 'pressureLowThresholdN' },
-  { label: '偏高上限（N）', key: 'pressureHighThresholdN' },
 ]
 
 test.describe('08-系统配置（真实模式）', () => {
@@ -124,41 +118,31 @@ test.describe('08-系统配置（真实模式）', () => {
     await openSettings(page)
   })
 
-  test('8.1 表单回显逐字段 == GET /admin/settings（库→接口→页面链路）', async ({ page }) => {
+  test('8.1 表单回显逐字段 == GET /admin/settings（库→接口→页面链路；T653 后 3 个平台参数）', async ({ page }) => {
+    // T653：旧包「设备离线判定时间」编辑位还在 .settings-form 里；新包已摘 UI（归告警页 Tab2）。
     await requireDeployedBuild(page, {
-      marker: 'T419-settings-labels',
-      why: '本条按收口后的 label 取字段（含「压力波动幅度阈值」已从表单下线），旧包结构对不上',
+      marker: 'T653-settings-slim',
+      why: '本条按 T653 瘦身后的 3 字段取控件（佩戴目标/设备离线/传感器/压力卡均已摘 UI），旧包结构对不上',
       probe: async (p) =>
         (await p
           .locator('.settings-form .el-form-item')
           .filter({ hasText: '设备离线判定时间（分钟）' })
-          .count()) > 0,
+          .count()) === 0,
     })
 
     const api = await readSettings(page)
 
     // 逐字段比对（不是「页面有数字」这种弱断言）
     const seen: Record<string, { ui: string; api: number }> = {}
-    for (const group of [
-      { scope: '.settings-form', fields: FORM_FIELDS },
-      { scope: '.pressure-tier-form', fields: TIER_FIELDS },
-    ]) {
-      for (const f of group.fields) {
-        const ui = await numberField(page, f.label, group.scope).inputValue()
-        seen[f.key] = { ui, api: api[f.key] as number }
-        expect(ui.trim(), `字段 ${f.label} 回显`).not.toBe('')
-        expect(Number(ui), `字段 ${f.label} 应等于接口值 ${api[f.key]}`).toBe(api[f.key])
-      }
+    for (const f of FORM_FIELDS) {
+      const ui = await numberField(page, f.label, '.settings-form').inputValue()
+      seen[f.key] = { ui, api: api[f.key] as number }
+      expect(ui.trim(), `字段 ${f.label} 回显`).not.toBe('')
+      expect(Number(ui), `字段 ${f.label} 应等于接口值 ${api[f.key]}`).toBe(api[f.key])
     }
 
     // 接口少给任何一个字段，上面的比对就会 NaN ≠ undefined 而失败
-    expect(Object.keys(seen)).toHaveLength(FORM_FIELDS.length + TIER_FIELDS.length)
-
-    // 中间档「正常上限」后端不落库（三档合两键），页面按契约推导 =（偏高上限 + 低压上限）÷ 2；
-    // 这条断言守的是「拆卡后推导算法没被顺手改掉」。
-    const normalUpperUi = await numberField(page, '正常上限（N）', '.pressure-tier-form').inputValue()
-    const derived = (api.pressureHighThresholdN + (api.pressureLowThresholdN ?? 0)) / 2
-    expect(Number(normalUpperUi), `正常上限应等于推导值 ${derived}`).toBe(derived)
+    expect(Object.keys(seen)).toHaveLength(FORM_FIELDS.length)
   })
 
   test('8.2 保存配置 → 真发 PUT → GET 回读值确实变了 → 还原回改前值', async ({ page }) => {
@@ -249,5 +233,33 @@ test.describe('08-系统配置（真实模式）', () => {
     })
     await expect(page.locator('.page-card').filter({ hasText: 'WiFi 预设列表' })).toHaveCount(0)
     await expect(page.locator('.default-threshold-card')).toHaveCount(0)
+  })
+
+  test('8.4 T653 系统配置瘦身：阈值编辑位/压力卡/通知两 Tab 不在场（反向断言；未部署走显式跳过）', async ({ page }) => {
+    // T653（T642 R2/R3/R4 甲）：佩戴目标、设备离线、传感器标定三编辑位与压力阈值整卡摘 UI
+    // （归告警页 Tab2，同键），通知规则/发送记录两 Tab 退场。probe 以「设备离线编辑位消失」为新包信号。
+    await requireDeployedBuild(page, {
+      marker: 'T653-settings-slim',
+      why: '系统配置页瘦身至 3 个平台参数，阈值编辑位与压力卡/通知两 Tab 已摘 UI',
+      probe: async (p) =>
+        (await p
+          .locator('.settings-form .el-form-item')
+          .filter({ hasText: '设备离线判定时间（分钟）' })
+          .count()) === 0,
+    })
+    // 三个摘 UI 的表单编辑位
+    for (const label of ['每日佩戴目标时长（h）', '设备离线判定时间（分钟）', '传感器标定异常告警阈值（N）']) {
+      await expect(
+        page.locator('.el-form-item__label', { hasText: label }),
+        `${label} 不应再渲染`,
+      ).toHaveCount(0)
+    }
+    // 压力阈值配置整卡
+    await expect(page.locator('.pressure-tier-card')).toHaveCount(0)
+    await expect(page.getByText('压力阈值配置')).toHaveCount(0)
+    // 通知规则 / 发送记录两 Tab
+    const tabs = await page.locator('.el-tabs__item').allInnerTexts()
+    expect(tabs.map((t) => t.trim())).not.toContain('通知规则')
+    expect(tabs.map((t) => t.trim())).not.toContain('发送记录')
   })
 })

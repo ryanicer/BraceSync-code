@@ -22,6 +22,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/bracesync/bracesync/services/alert-service/internal/engine"
+	"github.com/bracesync/bracesync/services/alert-service/internal/flowstarter"
 )
 
 // devices.status 状态机取值（PRD §8.1）
@@ -114,7 +115,8 @@ type Scanner struct {
 	devices  DeviceStore
 	alerts   AlertStore
 	lastseen LastSeenReader
-	wear     WearStore // T257 2.6：可选（SetWearStore 注入）；nil 时跳过每日佩戴时长扫描
+	wear     WearStore           // T257 2.6：可选（SetWearStore 注入）；nil 时跳过每日佩戴时长扫描
+	flow     flowstarter.Starter // T653：定时告警入库后按绑定自动建实例（SetFlowStarter，默认 Noop）
 	eval     *engine.RuleEvaluator
 	now      func() time.Time
 	log      zerolog.Logger
@@ -126,6 +128,7 @@ func New(devices DeviceStore, alerts AlertStore, lastseen LastSeenReader, eval *
 		devices:  devices,
 		alerts:   alerts,
 		lastseen: lastseen,
+		flow:     flowstarter.Noop{},
 		eval:     eval,
 		now:      time.Now,
 		log:      zerolog.Nop(),
@@ -138,6 +141,13 @@ func (s *Scanner) SetLogger(l zerolog.Logger) { s.log = l }
 // SetWearStore 注入每日佩戴时长来源（T257 2.6）。未注入 ⇒ ScanDailyWear 直接空转返回，
 // 保持 scanner.New 四参数签名不变（冻结契约 engine_test.go 直接调用该构造函数）。
 func (s *Scanner) SetWearStore(w WearStore) { s.wear = w }
+
+// SetFlowStarter T653：注入 user-service 自动建实例客户端（不注入 = 定时告警不自动建，告警本身照产）。
+func (s *Scanner) SetFlowStarter(f flowstarter.Starter) {
+	if f != nil {
+		s.flow = f
+	}
+}
 
 // bizDayOf 给定时刻 → 所属业务日零点（loc 由调用方给 Asia/Shanghai，架构 §3.5）
 func bizDayOf(t time.Time, loc *time.Location) time.Time {
@@ -212,7 +222,7 @@ func (s *Scanner) ScanDailyWear(ctx context.Context, targetDay time.Time, target
 			report.AboveTarget++
 			continue
 		}
-		_, created, err := s.alerts.CreateAlert(ctx, NewAlert{
+		alertID, created, err := s.alerts.CreateAlert(ctx, NewAlert{
 			PatientID:      patientID,
 			DeviceID:       deviceID,
 			Type:           result.AlertType,
@@ -231,6 +241,8 @@ func (s *Scanner) ScanDailyWear(ctx context.Context, targetDay time.Time, target
 			report.Deduped++ // 唯一约束保底（并发副本等极端场景）
 			continue
 		}
+		// T653：佩戴时长不足告警入库后按绑定自动建实例（失败仅日志，不影响扫描口径）。
+		s.flow.AutoStart(ctx, alertID, string(result.AlertType))
 		report.AlertCreated++
 		s.log.Warn().Str("patient_id", patientID).Str("device_id", deviceID).
 			Str("biz_date", bizDate).Int("wear_minutes", minutes).
@@ -334,7 +346,7 @@ func (s *Scanner) raiseInterrupt(ctx context.Context, dev Device, lastSeen, now 
 	}
 
 	result := s.eval.EvaluateWearInterrupt(dev.DeviceID, lastSeen, now)
-	_, created, err := s.alerts.CreateAlert(ctx, NewAlert{
+	alertID, created, err := s.alerts.CreateAlert(ctx, NewAlert{
 		PatientID:      dev.PatientID,
 		DeviceID:       dev.DeviceID,
 		Type:           result.AlertType,
@@ -352,6 +364,8 @@ func (s *Scanner) raiseInterrupt(ctx context.Context, dev Device, lastSeen, now 
 		report.Deduped++ // 唯一约束保底命中（并发扫描等极端场景）
 		return
 	}
+	// T653：设备离线（wear_interrupt）告警入库后按绑定自动建实例（失败仅日志）。
+	s.flow.AutoStart(ctx, alertID, string(result.AlertType))
 	report.AlertCreated++
 	s.log.Warn().Str("device_id", dev.DeviceID).
 		Float64("gap_minutes", result.ActualValue).

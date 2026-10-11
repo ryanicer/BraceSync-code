@@ -82,6 +82,10 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPost, "/api/v1/admin/flow/templates"),
 	rbacOf(http.MethodPut, "/api/v1/admin/flow/templates/:templateId"),
 	rbacOf(http.MethodDelete, "/api/v1/admin/flow/templates/:templateId"),
+	// T653 告警类型 ↔ 流程模板绑定（告警页 Tab4）：绑定决定未来告警是否自动起流程，属配置变更，
+	// GET/PUT 均收口 admin-only（与 alert-rules 同级；医护在 Tab4 只看设计器，绑定区仅 admin）。
+	rbacOf(http.MethodGet, "/api/v1/admin/flow/type-bindings"),
+	rbacOf(http.MethodPut, "/api/v1/admin/flow/type-bindings"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notify-rules"),
 	rbacOf(http.MethodPut, "/api/v1/admin/notify-rules/:type"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notification-logs"),

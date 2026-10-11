@@ -228,6 +228,10 @@ func (h *Handler) Router() *gin.Engine {
 	})
 	r.GET("/metrics", gin.WrapH(promhttp.Handler())) // T234 Prometheus 采集端点
 
+	// T653 服务间端点：alert-service 告警入库后按绑定自动建实例。
+	// 挂 v1 组之外 = 不挂 auditTrail、不鉴 JWT（不经网关，docker 内网白名单，同 data-service→alert-service /internal/evaluate 范式）。
+	r.POST("/internal/flow/auto-start", h.autoStartFlow)
+
 	v1 := r.Group("/api/v1")
 	// T252 12.3 操作日志：表驱动埋点（auditRoutes 命中的路由在 HTTP<400 时写 audit_logs）
 	v1.Use(h.auditTrail())
@@ -343,6 +347,10 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/admin/flow/instances/:instanceId/nodes", h.getFlowNodeStates)
 		v1.POST("/admin/flow/instances/:instanceId/nodes/:nodeId/actions", h.submitFlowNodeAction)
 		v1.GET("/admin/flow/instances/:instanceId/actions", h.getFlowInstanceActions)
+
+		// T653 告警类型 ↔ 流程模板绑定（Tab4 顶部绑定区；GET/PUT 均 adminOnly，网关 RBAC 双登记）
+		v1.GET("/admin/flow/type-bindings", h.getFlowTypeBindings)
+		v1.PUT("/admin/flow/type-bindings", h.saveFlowTypeBindings)
 
 		// T130 复查记录（合同患者端「复查管理」）
 		v1.POST("/admin/review-records", h.createReviewRecord)

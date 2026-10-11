@@ -23,6 +23,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/bracesync/bracesync/services/alert-service/internal/engine"
+	"github.com/bracesync/bracesync/services/alert-service/internal/flowstarter"
 	"github.com/bracesync/bracesync/services/alert-service/internal/metrics"
 	"github.com/bracesync/bracesync/services/alert-service/internal/scanner"
 )
@@ -133,6 +134,7 @@ type Consumer struct {
 	alerts            AlertCreator
 	eval              *engine.RuleEvaluator
 	notifier          Notifier
+	flow              flowstarter.Starter // T653：入库后按绑定自动建实例（SetFlowStarter，默认 Noop）
 	staleThreshold    time.Duration
 	maxBatch          int
 	now               func() time.Time
@@ -151,6 +153,7 @@ func New(queue Queue, dedup EvalDeduper, alerts AlertCreator, eval *engine.RuleE
 		alerts:            alerts,
 		eval:              eval,
 		notifier:          notifier,
+		flow:              flowstarter.Noop{},
 		staleThreshold:    DefaultStaleThreshold,
 		maxBatch:          DefaultMaxBatch,
 		now:               time.Now,
@@ -170,6 +173,13 @@ func (c *Consumer) SetNow(now func() time.Time) { c.now = now }
 
 // SetWearingThreshold 注入 sys_configs 热更新后的佩戴阈值（T203 ÷10 后默认 0.05N）
 func (c *Consumer) SetWearingThreshold(n float64) { c.wearingThresholdN = n }
+
+// SetFlowStarter T653：注入 user-service 自动建实例客户端（不注入 = 不自动建，告警/通知不受影响）。
+func (c *Consumer) SetFlowStarter(s flowstarter.Starter) {
+	if s != nil {
+		c.flow = s
+	}
+}
 
 // Run 常驻轮询直至 ctx 取消（服务可用即排空积压，不依赖重启）
 func (c *Consumer) Run(ctx context.Context, interval time.Duration) {
@@ -290,6 +300,9 @@ func (c *Consumer) processItem(ctx context.Context, payload string) {
 		return
 	}
 	alert.AlertID = alertID // 落库后回填，Notify 时使用
+
+	// T653：新建告警即按绑定自动建实例（与是否推送解耦：积压陈旧帧仅跳过通知，流程照建）。
+	c.flow.AutoStart(ctx, alertID, string(result.AlertType))
 
 	if stale {
 		// >1h 积压帧：仅补告警记录不推送（避免过时骚扰，架构 §3.4）

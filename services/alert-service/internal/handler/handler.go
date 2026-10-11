@@ -25,6 +25,7 @@ import (
 
 	"github.com/bracesync/bracesync/services/alert-service/internal/consumer"
 	"github.com/bracesync/bracesync/services/alert-service/internal/engine"
+	"github.com/bracesync/bracesync/services/alert-service/internal/flowstarter"
 	"github.com/bracesync/bracesync/services/alert-service/internal/metrics"
 	"github.com/bracesync/bracesync/services/alert-service/internal/scanner"
 )
@@ -62,7 +63,8 @@ type Handler struct {
 	eval     *engine.RuleEvaluator
 	alerts   consumer.AlertCreator
 	notifier consumer.Notifier
-	public   PublicAlertStore // T028 公开端点数据源（SetPublicStore 注入，可空）
+	flow     flowstarter.Starter // T653：告警入库后按绑定自动建实例（SetFlowStarter 注入，默认 Noop）
+	public   PublicAlertStore    // T028 公开端点数据源（SetPublicStore 注入，可空）
 	log      zerolog.Logger
 }
 
@@ -71,11 +73,19 @@ func New(eval *engine.RuleEvaluator, alerts consumer.AlertCreator, notifier cons
 	if notifier == nil {
 		notifier = consumer.NoopNotifier{}
 	}
-	return &Handler{eval: eval, alerts: alerts, notifier: notifier, log: zerolog.Nop()}
+	return &Handler{eval: eval, alerts: alerts, notifier: notifier,
+		flow: flowstarter.Noop{}, log: zerolog.Nop()}
 }
 
 // SetLogger 注入日志器（生产使用；默认 Nop）
 func (h *Handler) SetLogger(l zerolog.Logger) { h.log = l }
+
+// SetFlowStarter T653：注入 user-service 自动建实例客户端（不注入 = 不自动建，告警与通知不受影响）。
+func (h *Handler) SetFlowStarter(s flowstarter.Starter) {
+	if s != nil {
+		h.flow = s
+	}
+}
 
 // Router 组装路由（可测试）
 func (h *Handler) Router() *http.ServeMux {
@@ -131,7 +141,7 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 		Ts:             frame.Timestamp,
 		IngestSource:   req.IngestSource, // T498 来源印章，空 → 落 NULL（见迁移 000033）
 	}
-	alertID, _, err := h.alerts.CreateAlert(r.Context(), alert)
+	alertID, created, err := h.alerts.CreateAlert(r.Context(), alert)
 	if err != nil {
 		// 落库失败 → 非 0 码触发调用方降级入队，补偿评估兜底（不丢告警）
 		metrics.InlineEvaluatedTotal.WithLabelValues(metrics.OutcomeEvalError).Inc()
@@ -143,6 +153,10 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 
 	metrics.InlineEvaluatedTotal.WithLabelValues(metrics.OutcomeAlerted).Inc()
 	h.notifier.Notify(r.Context(), alert)
+	// T653：新建告警入库后按绑定自动建流程实例（与通知链解耦，失败仅日志；去重命中不重复触发）。
+	if created && alertID != "" {
+		h.flow.AutoStart(r.Context(), alertID, string(result.AlertType))
+	}
 	h.log.Info().Str("device_id", frame.DeviceID).
 		Str("alert_type", string(result.AlertType)).
 		Str("sensor_point", result.SensorPoint).

@@ -55,6 +55,12 @@ type fakeFlowState struct {
 
 	actions    []repo.FlowNodeActionRow
 	actionsErr error
+
+	// T653 类型绑定：bindings 为现存绑定行（key=alertType），Get 缺行回 (nil,nil)；
+	// Replace 按项写 map（空 templateId 删除），failReplace=true 时返回 ErrFlowTemplateNotFound。
+	bindings      map[string]repo.FlowTypeBindingRow
+	failReplace   bool
+	replacedItems []repo.FlowTypeBindingSet
 }
 
 func (f *fakeStore) ListFlowTemplates(_ context.Context, _ string, _, _ int) ([]repo.FlowTemplateRow, int64, error) {
