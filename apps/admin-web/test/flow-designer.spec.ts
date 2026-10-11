@@ -8,7 +8,7 @@ import {
   DECLARED_ONLY_GROUPS, DESIGN_SHAPE_TYPE, NOTE_MAX, RUNTIME_ONLY_KEYS, canConnect, deserializeGraph,
   emptyForm, filterKinds, formFromProps, fromMinutes, graphCount, kindDef, kindOf, nodeName, nodeGeom,
   paletteIcon, paletteItems, persistType, propsFromForm, reshapeProps, serializeGraph, designerTypeOf,
-  stripRuntimeProps, toMinutes, FLOW_KIND_DEFS,
+  stripRuntimeProps, toMinutes, FLOW_KIND_DEFS, HIDDEN_NOTIFY_CHANNELS, NOTIFY_CHANNELS, VISIBLE_NOTIFY_CHANNELS,
   type FlowShape, type NotifyChannel,
 } from '../src/pages/alerts/flow/designer/kinds'
 import { buildRuntimeGraph, deadlineOf } from '../src/pages/alerts/flow/flowGraph'
@@ -126,7 +126,7 @@ describe('属性面板写回（卡片 ⑤：按类别动态渲染并写 properti
     const props = propsFromForm('process', { ...emptyForm('医生确认'), assigneeRole: '主治医生', timeLimit: 2, timeUnit: 'hours' })
     expect(props).toEqual({
       kind: 'process', assigneeRole: '主治医生', timeLimit: 2, timeUnit: 'hours',
-      channels: ['system', 'sms'],
+      channels: ['system'],
     })
     expect(props.escalation).toBeUndefined()
     // 时限文本由 2.3 现算（flowGraph.deadlineOf），模板里不留冗余字段
@@ -171,16 +171,37 @@ describe('属性面板写回（卡片 ⑤：按类别动态渲染并写 properti
     expect(propsFromForm('archive', { ...emptyForm(), note: '   ' }).note).toBeUndefined()
   })
 
-  it('读回表单：缺字段回落默认值（30 分钟 + 系统/短信），脏 timeUnit 不采信', () => {
+  it('读回表单：缺字段回落默认值（30 分钟 + 仅系统通知），脏 timeUnit 不采信', () => {
     const form = formFromProps('process', { kind: 'process', timeUnit: '秒针', assigneeRole: '护士' }, '医生确认')
     expect(form).toMatchObject({ name: '医生确认', assigneeRole: '护士', timeLimit: 30, timeUnit: 'minutes' })
-    expect(form.channels).toEqual(['system', 'sms'])
+    expect(form.channels).toEqual(['system'])
   })
 
   it('读回延时节点：delayMinutes 拆成数值 + 单位；脏 channels 项被丢掉', () => {
     const form = formFromProps('delay', { kind: 'delay', delayMinutes: 360 }, '复核等待')
     expect(form).toMatchObject({ name: '复核等待', timeLimit: 6, timeUnit: 'hours' })
     expect(formFromProps('notice', { kind: 'notice', channels: ['sms', 'carrier-pigeon'] }, '').channels).toEqual(['sms'])
+  })
+
+  it('T664 UI 可见通道只剩系统通知，但全量枚举与历史通道值一个不删', () => {
+    expect(NOTIFY_CHANNELS.map((c) => c.value)).toEqual(['system', 'sms', 'email', 'wechat'])
+    expect(VISIBLE_NOTIFY_CHANNELS.map((c) => c.value)).toEqual(['system'])
+    expect(HIDDEN_NOTIFY_CHANNELS.map((c) => c.value)).toEqual(['sms', 'email', 'wechat'])
+    // 新建节点默认只携带系统通知，不再默认带短信
+    expect(emptyForm().channels).toEqual(['system'])
+  })
+
+  it('T664 旧模板历史通道兼容读：formFromProps 全保留、propsFromForm 往返不丢（UI 隐藏≠删数据）', () => {
+    const legacy = ['system', 'sms', 'email', 'wechat'] as NotifyChannel[]
+    const form = formFromProps('notice', { kind: 'notice', channels: legacy }, '旧通知节点')
+    expect(form.channels).toEqual(legacy)
+    // 面板上没有任何勾选/取消入口能碰到隐藏值，保存时落库体必须逐字带回
+    const props = propsFromForm('notice', form)
+    expect(props.channels).toEqual(legacy)
+    // 部分历史值（无系统通知）的更旧模板同样保留，不被「UI 只开放系统通知」悄悄改写
+    const form2 = formFromProps('process', { kind: 'process', channels: ['wechat'] }, '')
+    expect(form2.channels).toEqual(['wechat'])
+    expect(propsFromForm('process', form2).channels).toEqual(['wechat'])
   })
 
   it('升级开关只认 true，其他脏值（字符串/缺省）都算关', () => {

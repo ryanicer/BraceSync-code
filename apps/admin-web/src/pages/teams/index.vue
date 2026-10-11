@@ -4,20 +4,10 @@
     <div v-if="mode === 'list'">
       <div class="page-toolbar">
         <el-button type="success" @click="openCreate">新建团队</el-button>
-        <!-- T627 方案乙：?teamType= 由后端过滤（本端点不分页，handler 侧筛）。
-             筛选生效时下面四张统计卡仍是全量口径，这一格必须写在页面上，
-             否则又变回 T385 修过的那种「卡数与各行之和对不上」的同页打脸。 -->
-        <el-select
-          v-model="typeFilter"
-          clearable
-          placeholder="全部类型"
-          style="width: 130px; margin-left: 12px"
-          @change="loadTeams"
-        >
-          <el-option label="医护团队" value="medical" />
-          <el-option label="维护班组" value="maintenance" />
-        </el-select>
-        <span v-if="typeFilter" class="filter-hint">已按类型筛选，上方四张统计卡仍为全量口径</span>
+        <!-- T658（Boss 12:2x 澄清选 A）：维护班组在团队管理页列表隐藏（技师归类 T627 后端仍用，
+             技师编辑页归属下拉不过本页），类型筛选下拉随之退场；新建团队弹窗的类型选项保留维护班组。
+             统计卡仍是全量口径，必须把差异写明，否则就是 T385 修过的「卡数与各行之和对不上」。 -->
+        <span class="filter-hint">列表仅显示医护团队；维护班组（技师归类 T627）已隐藏，上方统计卡仍为全量口径</span>
       </div>
 
       <!-- T289 5.1：设计稿 团队管理.html:88-92 四张统计卡，数据源 GET /api/v1/admin/teams/stats（T256 #1） -->
@@ -48,7 +38,8 @@
       </div>
 
       <div class="page-card">
-        <el-table :data="teams" size="small" v-loading="loading">
+        <!-- T658：列表只渲染医护团队；维护班组（TEAM04/TEAM05 等）不在本页出现 -->
+        <el-table :data="visibleTeams" size="small" v-loading="loading">
           <el-table-column prop="teamId" label="团队编号" width="120" />
           <el-table-column prop="name" label="团队名称" min-width="160" />
           <el-table-column label="类型" width="100">
@@ -125,9 +116,10 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="160" fixed="right">
+          <!-- T658：成员「编辑」入口移除（职称唯一维护入口=医护账号页），只保留移除；
+               启用/停用在医护账号页维护，本页不设该动作。 -->
+          <el-table-column label="操作" width="100" fixed="right">
             <template #default="{ row }">
-              <el-button size="small" link type="primary" @click="openEditMember(row)">编辑</el-button>
               <el-button size="small" link type="danger" @click="confirmRemoveMember(row)">移除</el-button>
             </template>
           </el-table-column>
@@ -194,23 +186,6 @@
       </template>
     </el-dialog>
 
-    <!-- 编辑成员弹窗 -->
-    <el-dialog v-model="editMemberVisible" title="编辑成员" width="420px" :close-on-click-modal="false">
-      <el-form label-width="80px">
-        <el-form-item label="成员">
-          <el-input :model-value="editMemberForm.name" disabled />
-        </el-form-item>
-        <el-form-item label="职称">
-          <el-select v-model="editMemberForm.role" placeholder="请选择角色" clearable>
-            <el-option v-for="r in ROLE_OPTIONS" :key="r" :label="r" :value="r" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="editMemberVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editMemberSaving" @click="confirmEditMember">保存</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -224,15 +199,18 @@ import { phoneDisplay } from '../../utils/phoneField'
 import {
   fetchTeams, fetchDoctors, fetchTeamStats,
   createTeamApi, updateTeamApi, deleteTeamApi,
-  fetchTeamMembersApi, addTeamMemberApi, updateTeamMemberApi, removeTeamMemberApi,
+  fetchTeamMembersApi, addTeamMemberApi, removeTeamMemberApi,
 } from '../../api'
 
 const ROLE_OPTIONS = ['主任医师', '副主任医师', '主治医师', '住院医师', '护士', '康复师']
 
 const mode = ref<'list' | 'members'>('list')
 const teams = ref<Team[]>([])
-/** T627：'' = 不过滤（api 层把空值剔出 query string）；筛选走后端 ?teamType=，统计卡不受它影响 */
-const typeFilter = ref<'' | TeamType>('')
+/**
+ * T658：团队管理页只显示医护团队（Boss 12:2x 选 A）。维护班组仍由后端保留、技师编辑页归属下拉
+ * 仍按 T627 取维护班组，两条腿都不经过本页，故这里只做前端展示收口。
+ */
+const visibleTeams = computed(() => teams.value.filter((t) => t.teamType !== 'maintenance'))
 const doctors = ref<Doctor[]>([])
 const loading = ref(false)
 // T289 5.1：团队统计卡
@@ -272,11 +250,6 @@ const addMemberVisible = ref(false)
 const addMemberSaving = ref(false)
 const addMemberForm = ref({ memberId: '', role: '' })
 
-// 编辑成员
-const editMemberVisible = ref(false)
-const editMemberSaving = ref(false)
-const editMemberForm = ref({ memberId: '', memberType: 'doctor' as 'doctor' | 'technician', name: '', role: '' })
-
 function formatDate(iso: string): string {
   return iso ? iso.slice(0, 10) : '-'
 }
@@ -284,7 +257,8 @@ function formatDate(iso: string): string {
 async function loadTeams() {
   loading.value = true
   try {
-    teams.value = await fetchTeams(typeFilter.value ? { teamType: typeFilter.value } : {})
+    // 全量拉取，维护班组的隐藏在 visibleTeams 展示层收口（T658）
+    teams.value = await fetchTeams({})
   } catch (e: unknown) {
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载失败' }))
   } finally {
@@ -302,7 +276,11 @@ async function loadStats() {
   }
 }
 
-// 候选成员：不在当前团队的 doctors/technicians（按 id 去重）
+/**
+ * 候选成员：仅医护账号（doctors），且不在当前团队内。
+ * T658 ①（Boss 拍板，医护与技师/运维禁混编）：候选源只取 doctors，
+ * 技师/运维账号不出现；技师归维护班组走技师编辑页（T627），不进本弹窗。
+ */
 const candidateMembers = computed(() => {
   const inTeam = new Set(memberList.value.map((m) => m.memberId))
   const list: { id: string; name: string }[] = []
@@ -445,38 +423,6 @@ async function confirmAddMember() {
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '添加失败' }))
   } finally {
     addMemberSaving.value = false
-  }
-}
-
-// 编辑成员
-function openEditMember(row: TeamMember) {
-  editMemberForm.value = {
-    memberId: row.memberId,
-    memberType: row.memberType,
-    name: row.name,
-    role: row.role ?? '',
-  }
-  editMemberVisible.value = true
-}
-
-async function confirmEditMember() {
-  if (!currentTeam.value) return
-  editMemberSaving.value = true
-  try {
-    const result = await updateTeamMemberApi(
-      currentTeam.value.teamId,
-      editMemberForm.value.memberId,
-      { memberType: editMemberForm.value.memberType, role: editMemberForm.value.role || undefined },
-    )
-    // 乐观更新本地行
-    const idx = memberList.value.findIndex((m) => m.memberId === editMemberForm.value.memberId)
-    if (idx >= 0) memberList.value[idx] = result
-    ElMessage.success('更新成功')
-    editMemberVisible.value = false
-  } catch (e: unknown) {
-    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '更新失败' }))
-  } finally {
-    editMemberSaving.value = false
   }
 }
 

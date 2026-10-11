@@ -4,7 +4,8 @@
 // 同 kinds.ts：不 import @logicflow/core，否则 CI 的 Node 18 会 ERR_REQUIRE_ESM 让整个 spec 零收集。
 import { describe, it, expect } from 'vitest'
 import {
-  GRAPH_LIMITS, issueNodeIds, validateGraph, type IssueCode, type ValidateResult,
+  detachedNodeIds, GRAPH_LIMITS, isDetachedOnlyFailure, issueNodeIds, validateGraph,
+  type IssueCode, type ValidateResult,
 } from '../src/pages/alerts/flow/designer/validateGraph'
 import type { FlowKind, RawEdge, RawGraph, RawNode } from '../src/pages/alerts/flow/designer/kinds'
 
@@ -204,5 +205,79 @@ describe('校验器自身的边界', () => {
     const r = validateGraph(g)
     expect(r.errors.map((i) => i.code)).toEqual(['V6_NO_OUTGOING'])
     expect(r.warnings.map((i) => i.code)).toEqual(['V8_JOIN_ARITY'])
+  })
+})
+
+describe('T663 游离节点识别与一键清理判据', () => {
+  /** Boss 亲测形态：触发-处理-处理-归档主链 3 边全连，模型里多 1 个无边的第 5 节点 */
+  function bossGraph(): { nodes: RawNode[]; edges: RawEdge[] } {
+    return {
+      nodes: [
+        node('t', 'trigger'), node('p1', 'process'), node('p2', 'process'),
+        node('a', 'archive'), node('x', 'process'),
+      ],
+      edges: [edge('e1', 't', 'p1'), edge('e2', 'p1', 'p2'), edge('e3', 'p2', 'a')],
+    }
+  }
+
+  it('无边节点计入游离；trigger 即使无边也不计入（它的对错归 V2/V3/V9）', () => {
+    const g = bossGraph()
+    expect(detachedNodeIds(g)).toEqual(['x'])
+    expect(detachedNodeIds({ nodes: [node('t', 'trigger')], edges: [] })).toEqual([])
+  })
+
+  it('Boss 形态：V5+V6 双错误都只指向游离点，isDetachedOnlyFailure=true', () => {
+    const g = bossGraph()
+    const r = validateGraph(g)
+    expect(r.errors.map((i) => i.code)).toEqual(['V5_UNREACHABLE', 'V6_NO_OUTGOING'])
+    expect(isDetachedOnlyFailure(r, g)).toBe(true)
+  })
+
+  it('多个游离节点同时成立；删掉它们后基准主链零错误（清理语义自证）', () => {
+    const g = bossGraph()
+    g.nodes.push(node('y', 'notice'))
+    expect(detachedNodeIds(g)).toEqual(['x', 'y'])
+    const cleaned = { nodes: g.nodes.filter((n) => !['x', 'y'].includes(n.id)), edges: g.edges }
+    expect(validateGraph(cleaned).errors).toEqual([])
+  })
+
+  it('游离点之外还藏着真错误时不许一键清理（守卫零放宽）：判断缺分支 / 环 / 悬空边', () => {
+    // 游离点 x + 判断节点被砍到只剩一条出边（V7），且 n 变成有边但不可达（V5 不只指 x）
+    let g = okGraph()
+    g.nodes.push(node('x', 'process'))
+    g.edges = g.edges.filter((e) => e.id !== 'e3') // 删掉 c→n 的「正常」分支
+    const r1 = validateGraph(g)
+    expect(r1.errors.some((i) => i.code === 'V7_CONDITION_EDGES')).toBe(true)
+    expect(isDetachedOnlyFailure(r1, g)).toBe(false)
+
+    // 游离点 + 环（V4）
+    g = bossGraph()
+    g.edges.push(edge('e9', 'p2', 'p1'))
+    const r2 = validateGraph(g)
+    expect(r2.errors.some((i) => i.code === 'V4_CYCLE')).toBe(true)
+    expect(isDetachedOnlyFailure(r2, g)).toBe(false)
+
+    // 游离点 + 悬空边（V13）
+    g = bossGraph()
+    g.edges.push(edge('e9', 'p1', 'ghost'))
+    const r3 = validateGraph(g)
+    expect(r3.errors.some((i) => i.code === 'V13_EDGE_DANGLING')).toBe(true)
+    expect(isDetachedOnlyFailure(r3, g)).toBe(false)
+  })
+
+  it('主链自身断链（无游离点）时 isDetachedOnlyFailure=false，照常硬拦', () => {
+    // t→p1→p2→a 与孤立子链 p3→a？构造一个有边但不可达的节点（不是无边游离）
+    const g = {
+      nodes: [node('t', 'trigger'), node('p1', 'process'), node('a', 'archive'), node('z', 'process')],
+      edges: [edge('e1', 't', 'p1'), edge('e2', 'p1', 'a'), edge('e3', 'z', 'a')],
+    }
+    const r = validateGraph(g)
+    expect(r.errors.map((i) => i.code)).toContain('V5_UNREACHABLE')
+    expect(detachedNodeIds(g)).toEqual([]) // z 有出边，不算游离
+    expect(isDetachedOnlyFailure(r, g)).toBe(false)
+  })
+
+  it('校验通过的图不触发清理判据', () => {
+    expect(isDetachedOnlyFailure(validateGraph(okGraph()), okGraph())).toBe(false)
   })
 })

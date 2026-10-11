@@ -11,8 +11,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { CareTeamMember } from '@bracesync/shared-types'
 import {
-  adviceExcerpt, adviceMetaLabel, adviceRuneCount, adviceTimeLabel,
-  careTeamRoleLabel, careTeamTitleLabel, CARE_TEAM_TITLE_PLACEHOLDER,
+  adviceMetaLabel, adviceRuneCount, adviceDateLabel,
+  careTeamAvatar, careTeamTitleLabel,
 } from '../../src/utils/advice'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -22,69 +22,48 @@ const apiFile = readFileSync(join(srcRoot, 'api/advice.ts'), 'utf8')
 const profileFile = readFileSync(join(srcRoot, 'pages/profile/index.vue'), 'utf8')
 const pagesJson = JSON.parse(readFileSync(join(srcRoot, 'pages.json'), 'utf8'))
 
-describe('A 纯层：团队区两列（角色 + 职称，无姓名）', () => {
-  it('角色列 = memberType 的两枚封闭值', () => {
-    expect(careTeamRoleLabel('doctor')).toBe('医护')
-    expect(careTeamRoleLabel('technician')).toBe('技术支撑')
+describe('A 纯层：团队区头像 + 职称（T659 按稿 advice.html:45-63 改形）', () => {
+  it('角色只由装饰头像 emoji 承担：doctor/technician 两枚封闭值', () => {
+    expect(careTeamAvatar('doctor')).toBe('👨‍⚕️')
+    expect(careTeamAvatar('technician')).toBe('👨‍🔧')
   })
 
-  it('职称列原样展示服务端算好的回落结果；空职称画稿面的「——」', () => {
+  it('职称列原样直通后端 DTO：前端不做同词折损、不画破折号', () => {
     expect(careTeamTitleLabel({ memberType: 'doctor', title: '主治医师' })).toBe('主治医师')
-    expect(careTeamTitleLabel({ memberType: 'doctor', title: '' })).toBe(CARE_TEAM_TITLE_PLACEHOLDER)
-    expect(careTeamTitleLabel({ memberType: 'doctor', title: '   ' })).toBe(CARE_TEAM_TITLE_PLACEHOLDER)
-    // 反证（针有牙）：有职称的医生行不许被折成占位符
-    expect(careTeamTitleLabel({ memberType: 'doctor', title: '护士' })).not.toBe(CARE_TEAM_TITLE_PLACEHOLDER)
-  })
-
-  it('技师行：后端按 R6 甲把固定标签放进职称槽，角色列同一行已说过这个词 ⇒ 职称列折成「——」，不重复一遍', () => {
-    expect(careTeamTitleLabel({ memberType: 'technician', title: '技术支撑' })).toBe(CARE_TEAM_TITLE_PLACEHOLDER)
+    expect(careTeamTitleLabel({ memberType: 'doctor', title: '护士' })).toBe('护士')
+    // T659 前的回归点：技师固定词不得再被折成「——」（Boss 真机截图实证）
+    expect(careTeamTitleLabel({ memberType: 'technician', title: '技术支撑' })).toBe('技术支撑')
+    // 空串 trim 后仍为空也不前端造词（回落 title→department→医护团队 在后端 DTO 已组好）
+    expect(careTeamTitleLabel({ memberType: 'doctor', title: '   ' })).toBe('')
   })
 })
 
-describe('A 纯层：时间轴行的时间与摘要', () => {
-  it('UTC 串按本地时区呈现到分钟，不是把 UTC 串直接截断（同 replyTimeLabel 的坑）', () => {
+describe('A 纯层：时间轴行的时间（T659 稿面只到日期）与撰写字数', () => {
+  it('UTC 串按本地时区呈现到日，不是把 UTC 串直接截成前 10 位（那会早 8 小时跨日）', () => {
     const iso = '2026-10-09T14:20:00Z'
     const offMin = -new Date(iso).getTimezoneOffset()
-    const localMinutes = (14 * 60 + 20 + offMin + 1440) % 1440
-    const got = adviceTimeLabel(iso)
-    expect(got).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
-    expect(Number(got.slice(11, 13))).toBe(Math.floor(localMinutes / 60))
-    expect(got.slice(14, 16)).toBe(String(localMinutes % 60).padStart(2, '0'))
-    if (offMin !== 0) expect(got).not.toBe('2026-10-09 14:20')
+    const got = adviceDateLabel(iso)
+    expect(got).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    // UTC 14:20 在东八区是次日 10-10，截串会停在 10-09
+    if (offMin === -480) expect(got).toBe('2026-10-10')
   })
 
   it('无时刻 / 非法时刻不编造时间', () => {
-    expect(adviceTimeLabel(null)).toBe('')
-    expect(adviceTimeLabel(undefined)).toBe('')
-    expect(adviceTimeLabel('not-a-time')).toBe('not-a-time')
+    expect(adviceDateLabel(null)).toBe('')
+    expect(adviceDateLabel(undefined)).toBe('')
+    expect(adviceDateLabel('not-a-time')).toBe('not-a-time')
   })
 
-  it('行头 = 「时间 · 职称」，职称用服务端回落结果，不拼姓名', () => {
+  it('行头 = 「日期 · 职称」，不带时分，职称用服务端回落结果，不拼姓名', () => {
     const meta = adviceMetaLabel({
       adviceId: '1', patientId: 'PAT-001', title: '主治医师',
       content: 'x', createdAt: '2026-10-09T00:00:00Z', updatedAt: '2026-10-09T00:00:00Z', editable: false,
     })
-    expect(meta).toMatch(/^2026-\d{2}-\d{2} \d{2}:\d{2} · 主治医师$/)
+    expect(meta).toMatch(/^\d{4}-\d{2}-\d{2} · 主治医师$/)
+    expect(meta).not.toMatch(/\d{2}:\d{2}/)
   })
 
-  it('上限内的正文不折、不出现「展开全文」这一档', () => {
-    const short = adviceExcerpt('复查提醒：10 月 16 日上午门诊复查。')
-    expect(short.expandable).toBe(false)
-    expect(short.text).toBe('复查提醒：10 月 16 日上午门诊复查。')
-    expect(adviceExcerpt('')).toEqual({ text: '', expandable: false })
-    expect(adviceExcerpt(null)).toEqual({ text: '', expandable: false })
-  })
-
-  it('超长正文按 rune 折（不按 UTF-16 码元、更不按字节）', () => {
-    const cjk = '方'.repeat(120) // 360 字节：按字节数会把一行截成半个字
-    const got = adviceExcerpt(cjk, 60)
-    expect(got.expandable).toBe(true)
-    expect(Array.from(got.text)).toHaveLength(61) // 60 枚正文 + 省略号
-    expect(got.text.endsWith('…')).toBe(true)
-
-    const astral = '😀'.repeat(61) // .length = 122，按码元取 60 会劈开末枚代理对
-    const wide = adviceExcerpt(astral, 60)
-    expect(wide.text).toBe(`${'😀'.repeat(60)}…`)
+  it('撰写字数仍按 rune（不按 UTF-16 码元、更不按字节）', () => {
     expect(adviceRuneCount('😀'.repeat(10))).toBe(10)
     expect(adviceRuneCount('方'.repeat(500))).toBe(500)
   })
@@ -143,6 +122,34 @@ describe('B 路由注册与入口直连（§十二 行 ⑥ 的三件）', () => 
     expect(pageFile).not.toMatch(/readAt|isRead|markRead|unread/)
     // 取数只有 api/advice.ts 那两枚读口，页面不绕过它直接发请求（绕过就没有类型面可依）
     expect(pageFile).not.toContain("from '../../utils/request'")
+  })
+
+  it('T659 按 advice.html：区块②标题=「康复建议」，无旧的「医护建议」区块标题', () => {
+    const titles = [...pageFile.matchAll(/class="section-title">([^<]+)</g)].map((m) => m[1])
+    expect(titles).toContain('康复建议')
+    expect(titles).not.toContain('医护建议')
+  })
+
+  it('T659 团队区=横排头像 strip：class 锚点在场，旧的角色文字胶囊与纵向行零残留', () => {
+    expect(pageFile).toContain('class="card team-strip"')
+    expect(pageFile).toContain('careTeamAvatar(')
+    expect(pageFile).toContain('team-avatar-doctor')
+    expect(pageFile).toContain('team-avatar-tech')
+    expect(pageFile, '角色文字胶囊已随稿退场').not.toContain('team-role')
+    expect(pageFile, '纵向团队行已随稿退场').not.toContain('team-row')
+    // 破折号占位只查模板渲染区（注释里的中文破折号是语义用法不算）
+    const tpl = pageFile.slice(pageFile.indexOf('<template>'), pageFile.indexOf('</template>'))
+    expect(tpl, '破折号占位已随稿退场').not.toContain('——')
+  })
+
+  it('T659 摘要两行截断走 CSS line-clamp（非 JS 字符切），展开控件恒显（稿面四条 seed 同形）', () => {
+    expect(pageFile).toContain('-webkit-line-clamp: 2')
+    // toggle 不再挂 v-if 条件
+    const toggleBlock = pageFile.slice(pageFile.indexOf('class="advice-toggle"') - 200, pageFile.indexOf('class="advice-toggle"') + 80)
+    expect(toggleBlock).not.toContain('v-if')
+    // 摘要直接渲染原文，不经 rune 截断函数
+    expect(pageFile).toMatch(/class="advice-summary">\{\{\s*item\.content\s*\}\}/)
+    expect(pageFile).not.toContain('adviceExcerpt')
   })
 })
 

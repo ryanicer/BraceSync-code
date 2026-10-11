@@ -9,58 +9,40 @@
  */
 import type { Advice, CareTeamMember } from '@bracesync/shared-types'
 
-/** 时间轴摘要一行的长度上限（rune，不按字节：正文是中文，按字节会把一行截成半个字） */
-export const ADVICE_SUMMARY_MAX_RUNES = 60
-
-/** 角色列（memberType 那一维）的两枚展示词 */
-const ROLE_LABEL: Record<CareTeamMember['memberType'], string> = {
-  doctor: '医护',
-  technician: '技术支撑',
+/** 角色的两枚装饰头像 emoji（稿面 advice.html:45-57：角色由头像+底色承担，无文字标签） */
+const ROLE_AVATAR: Record<CareTeamMember['memberType'], string> = {
+  doctor: '👨‍⚕️',
+  technician: '👨‍🔧',
 }
 
-/** 稿面 advice.html:56：无职称可展示时画「——」，不留白、更不用姓名兜底 */
-export const CARE_TEAM_TITLE_PLACEHOLDER = '——'
-
-export function careTeamRoleLabel(memberType: CareTeamMember['memberType']): string {
-  return ROLE_LABEL[memberType] ?? memberType
+/** T659：团成员头像 emoji 按 memberType 映射（稿面 👩‍⚕️「护士」是多名医生的 seed 示意，
+ *  memberType 只有 doctor/technician 两值、无性别维度，医生统一一枚）。 */
+export function careTeamAvatar(memberType: CareTeamMember['memberType']): string {
+  return ROLE_AVATAR[memberType] ?? ROLE_AVATAR.doctor
 }
 
 /**
- * 职称列。技师表没有 title 列（000001:53-65），后端按 R6 甲把固定标签「技术支撑」放进
- * title 槽位；而角色列同一行已经写了这个词 ⇒ 这里折成稿面的「——」，
- * 否则患者屏幕上那行长成「技术支撑 · 技术支撑」。
+ * 职称列直接取后端 DTO 的 title：技师恒为固定词「技术支撑」（toCareTeamDTO R6 甲），
+ * 医生走 title → department →「医护团队」回落链（adviceDisplayTitle）——空值不留白在
+ * 服务端组 DTO 时已保证，前端不做同词折损（T659 前那版把「技术支撑」折成「——」与稿不符）。
  */
 export function careTeamTitleLabel(member: CareTeamMember): string {
-  const title = (member?.title ?? '').trim()
-  if (title === '' || title === careTeamRoleLabel(member?.memberType)) return CARE_TEAM_TITLE_PLACEHOLDER
-  return title
+  return (member?.title ?? '').trim()
 }
 
-/** 「2026-10-09T14:20:00Z」→ 本地「2026-10-09 22:20」；后端下发 UTC（toAdviceDTO 的 .UTC()），截串会早 8 小时 */
-export function adviceTimeLabel(iso?: string | null): string {
+/** 「2026-10-09T14:20:00Z」→ 本地「2026-10-09」；后端下发 UTC（toAdviceDTO 的 .UTC()），截串会早 8 小时。
+ *  T659：稿面 advice.html 时间轴 meta 只到日期（不带时分）。 */
+export function adviceDateLabel(iso?: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-/** 稿面 advice.html:70 行头一行 = 「时间 · 职称」 */
+/** 稿面 advice.html:72 行头一行 = 「日期 · 职称」 */
 export function adviceMetaLabel(item: Advice): string {
-  return `${adviceTimeLabel(item?.createdAt)} · ${item?.title ?? ''}`
-}
-
-/** 摘要一行的两枚出参：折好的文本 + 需不需要「展开全文」这一档 */
-export interface AdviceExcerpt {
-  text: string
-  expandable: boolean
-}
-
-export function adviceExcerpt(content?: string | null, maxRunes = ADVICE_SUMMARY_MAX_RUNES): AdviceExcerpt {
-  const raw = content ?? ''
-  const runes = Array.from(raw)
-  if (runes.length <= maxRunes) return { text: raw, expandable: false }
-  return { text: `${runes.slice(0, maxRunes).join('')}…`, expandable: true }
+  return `${adviceDateLabel(item?.createdAt)} · ${item?.title ?? ''}`
 }
 
 /** 撰写/编辑框的字数计数（与后端同一把 rune 尺，前端不用 .length，那按 UTF-16 码元数） */

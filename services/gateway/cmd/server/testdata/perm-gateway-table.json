@@ -599,13 +599,6 @@
       "why": "admin 全放行"
     },
     {
-      "role": "ROLE_ADMIN",
-      "method": "PUT",
-      "path": "/api/v1/teams/S1/members/S1",
-      "deny": false,
-      "why": "admin 全放行"
-    },
-    {
       "role": "ROLE_CS",
       "method": "GET",
       "path": "/api/v1/feedbacks",

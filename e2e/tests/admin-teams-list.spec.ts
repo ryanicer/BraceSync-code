@@ -62,7 +62,8 @@ test.describe('团队管理 · 列表渲染（T270 A-FLOW-14）', () => {
       expect(teamId, `${where} 团队编号非空`).not.toBe('')
       expect(name, `${where} 团队名称非空`).not.toBe('')
       // T627：类型列只认两值（库里是 CHECK 收两枚字面量）；「未知团队」是读侧兜底文案，不该在列表出现
-      expect(['医护团队', '维护班组'], `${where} 类型文案`).toContain(teamType)
+      // T658：维护班组从本页列表隐藏，故可见行类型必须逐行是医护团队
+      expect(teamType, `${where} 可见行必须是医护团队（维护班组 T658 已隐藏）`).toBe('医护团队')
       expect(memberCount, `${where} 成员数须为整数`).toMatch(/^\d+$/)
       expect(patientCount, `${where} 管理患者数须为整数`).toMatch(/^\d+$/)
       // 未落地列允许 '-'，但不许漏 undefined/NaN
@@ -108,10 +109,15 @@ test.describe('团队统计卡（T289 5.1）', () => {
     }
   })
 
-  test('团队总数卡与列表行数自洽', async ({ page }) => {
+  test('团队总数卡＝列表医护团队行数＋隐藏的维护班组数（mock 夹具 TEAM-201/202 共 2 个）', async ({ page }) => {
     const value = page.locator('.stats-grid .stat-card').first().locator('.value')
     await expect(value).toHaveText(/^\d+$/, { timeout: 15_000 })
-    expect(Number(await value.innerText()), '统计卡团队总数').toBe(await tableRows(page).count())
+    // T658：统计卡是全量口径，列表隐藏维护班组 ⇒ 差额须由隐藏行解释（mock 夹具固定 2 个维护班组）
+    expect(Number(await value.innerText()), '团队总数应=可见行数+2 个隐藏维护班组').toBe(
+      (await tableRows(page).count()) + 2,
+    )
+    // 口径差异必须写在页面上（防 T385 卡数与行和对不上）
+    await expect(page.locator('.page-toolbar .filter-hint')).toContainText('维护班组')
   })
 
   test('待分配患者卡带口径说明（PRD §7D.4:1104 防与患者状态混淆）', async ({ page }) => {
@@ -165,6 +171,81 @@ test.describe('团队成员搜索与角色筛选（T289 5.3）', () => {
     const hit = await rows.count()
     for (let i = 0; i < hit; i++) {
       await expect(rows.nth(i).locator('td').nth(1)).toHaveText(role)
+    }
+  })
+})
+
+/**
+ * T658 团队管理治理（Boss 2026-10-11 拍板）：
+ * ① 医护团队添加成员候选源只有医护账号；② 成员「编辑」入口/职称编辑弹窗移除；
+ * ④ 列表隐藏维护班组（新建团队类型下拉保留维护选项）。
+ */
+test.describe('T658 团队治理', () => {
+  test.beforeEach(async ({ page }) => {
+    await adminLogin(page, 'admin')
+    await page.goto(adminRoutes.teams)
+    await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('列表不出现维护班组，类型筛选下拉已退场', async ({ page }) => {
+    // mock 夹具 TEAM-201/202=设备维护一组/二组（T627 新增）
+    await expect(page.locator('.page-card .el-table')).not.toContainText('设备维护一组')
+    await expect(page.locator('.page-card .el-table')).not.toContainText('设备维护二组')
+    await expect(page.locator('.page-card .el-table')).not.toContainText('TEAM-201')
+    await expect(page.locator('.page-card .el-table')).not.toContainText('TEAM-202')
+    // 工具栏类型筛选下拉随隐藏一并退场
+    await expect(page.locator('.page-toolbar .el-select')).toHaveCount(0)
+    // 永久口径提示在场
+    await expect(page.locator('.page-toolbar .filter-hint')).toContainText('维护班组')
+  })
+
+  test('新建团队弹窗的类型下拉仍保留维护班组选项（技师归类 T627 依赖）', async ({ page }) => {
+    await page.locator('.page-toolbar').getByRole('button', { name: '新建团队' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '新建团队' })
+    await expect(dialog).toBeVisible()
+    // el-select 自身不含 form-item 的 label 文本，必须从 form-item 锚定（与 06-teams 真实规格同法）
+    const typeSelect = dialog.locator('.el-form-item').filter({ hasText: '类型' }).locator('.el-select')
+    await typeSelect.click()
+    const opts = page.locator('.el-select-dropdown:visible .el-select-dropdown__item')
+    await expect(opts.filter({ hasText: '医护团队' })).toHaveCount(1)
+    await expect(opts.filter({ hasText: '维护班组' })).toHaveCount(1)
+  })
+
+  test('成员表操作列只有移除，无编辑入口与编辑成员弹窗', async ({ page }) => {
+    await tableRows(page).first().getByRole('button', { name: '成员' }).click()
+    await expect(page.locator('.member-panel-header')).toBeVisible()
+    const rows = tableRows(page)
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 })
+    const count = await rows.count()
+    expect(count).toBeGreaterThan(0)
+    for (let i = 0; i < count; i++) {
+      const ops = rows.nth(i).locator('td').last()
+      await expect(ops.getByRole('button', { name: '移除' })).toBeVisible()
+      await expect(ops.getByRole('button', { name: '编辑' })).toHaveCount(0)
+    }
+    // 页面上不应存在「编辑成员」弹窗
+    await expect(page.locator('.el-dialog').filter({ hasText: '编辑成员' })).toHaveCount(0)
+  })
+
+  test('添加成员候选只列医护账号：全部带（医生）后缀，技师姓名不出现', async ({ page }) => {
+    await tableRows(page).first().getByRole('button', { name: '成员' }).click()
+    await expect(page.locator('.member-panel-header')).toBeVisible()
+    await page.getByRole('button', { name: '添加成员' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '添加成员' })
+    await expect(dialog).toBeVisible()
+    await dialog.locator('.el-select').first().click()
+    const opts = page.locator('.el-select-dropdown:visible .el-select-dropdown__item')
+    await expect(opts.first()).toBeVisible({ timeout: 5_000 })
+    const texts = await opts.allInnerTexts()
+    expect(texts.length, '候选列表非空').toBeGreaterThan(0)
+    for (const t of texts) {
+      expect(t.trim(), `候选「${t}」必须是医生（带（医生）后缀）`).toMatch(/（医生）$/)
+    }
+    const joined = texts.join('|')
+    expect(joined).toContain('刘医生')
+    // 技师账号（夹具 TECH-001~006）一律不得进候选
+    for (const tech of ['周师傅', '吴师傅', '郑师傅', '冯师傅', '孙师傅', '马师傅']) {
+      expect(joined, `技师 ${tech} 不得出现在医护团队候选`).not.toContain(tech)
     }
   })
 })

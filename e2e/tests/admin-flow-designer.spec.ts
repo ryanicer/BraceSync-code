@@ -259,6 +259,12 @@ test.describe('流程设计器', () => {
     // §9.3：通知方式/超时升级后端本期没有消费者，不标注就是骗 admin
     await expect(formItem(page, '通知方式').locator('.fd-declared')).toHaveText('本期仅配置，不自动执行')
     await expect(formItem(page, '处理角色').locator('.fd-declared')).toHaveCount(0)
+    // T664：通知方式只开放系统通知，短信/邮件/微信三个未实现通道 UI 隐藏（防复活断言）
+    const notifyItem = formItem(page, '通知方式')
+    await expect(notifyItem.getByText('系统通知')).toBeVisible()
+    for (const hiddenName of ['短信', '邮件', '微信']) {
+      await expect(notifyItem.getByText(hiddenName, { exact: true })).toHaveCount(0)
+    }
 
     await propsPanel(page).locator('input').first().fill('医生确认')
     await page.keyboard.press('Tab')
@@ -483,11 +489,66 @@ test.describe('流程设计器', () => {
     // 且运行态键（status/assigneeName）与标红用的 invalid 都不落库
     expect(stored.props).toMatchObject({
       kind: 'process', assigneeRole: '主治医生', timeLimit: 30, timeUnit: 'minutes',
-      channels: ['system', 'sms'], width: 140, height: 48,
+      channels: ['system'], width: 140, height: 48,
     })
     expect(stored.props.invalid).toBeUndefined()
     expect(stored.props.assigneeName).toBeUndefined()
     // 自建模板用完即删，不留残留
+    await page.getByRole('button', { name: '删除模板' }).click()
+    await page.locator('.el-message-box').getByRole('button', { name: '删除' }).click()
+    await expect(adminMessage(page)).toContainText('已删除模板')
+  })
+
+  // T663（Boss 2026-10-11 亲测缺陷）：主链全连但模型里多出一个无边的游离节点时，
+  // 保存不再死拦逼用户重建模板——弹「清理并保存」，确认后剔除游离点、主链原样保存。
+  // 复现路径（duty 14:01 给法）：拖入节点后，让一个节点不参与任何连线（模拟创建中断遗留的模型孤儿；
+  // Boss 现场那颗在画布上不可见，但图数据形态与本用例的可见无边节点逐字同构：degree=0）。
+  test('T663 游离节点：可「返回」保持未保存，也可「清理并保存」只留主链', async ({ page }) => {
+    const name = `T663 游离清理 ${Date.now()}`
+    await openDesigner(page)
+    await createTemplate(page, name)
+    // 四类不同标签的主链节点，避免 dragConnect 同名 .first() 歧义；延时节点是故意留下的游离点
+    // 坐标避右栏（320px）与缩略图：现有用例验证过 x<=440、y<=320 落点有效
+    await dragNode(page, '触发节点', 80, 80)
+    await dragNode(page, '通知节点', 260, 80)
+    await dragNode(page, '处理节点', 440, 80)
+    await dragNode(page, '归档节点', 440, 240)
+    await dragNode(page, '延时节点', 80, 300)
+    await dragConnect(page, '触发节点', '通知节点')
+    await dragConnect(page, '通知节点', '处理节点')
+    await dragConnect(page, '处理节点', '归档节点')
+    await expect(page.locator('.fd-count')).toContainText('节点 5')
+    await expect(page.locator('.fd-count')).toContainText('连线 3')
+
+    // 第一次保存：选「返回」，不清理也不保存
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    const box = page.locator('.el-message-box')
+    await expect(box.locator('.el-message-box__title')).toContainText('清理 1 个游离节点并保存')
+    await expect(box.locator('.el-message-box__message')).toContainText('未与任何连线相连的游离节点')
+    await box.getByRole('button', { name: '返回' }).click()
+    // 返回即安静退出（不重复报错）：模板未保存，问题红标还在画布上
+    await expect(box).toBeHidden()
+    await expect(page.locator('.fd-topbar-meta')).toContainText('版本：v1')
+    await expect(page.locator('.fd-dirty')).toHaveCount(1)
+    await expect(page.locator('.fd-issues .is-error')).toHaveCount(2)
+
+    // 第二次保存：清理并保存 → 主链 4 节点 3 边落库
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await expect(page.locator('.el-message-box .el-message-box__title')).toContainText('清理 1 个游离节点并保存')
+    await page.locator('.el-message-box').getByRole('button', { name: '清理并保存' }).click()
+    await expect(adminMessage(page)).toContainText('流程模板已保存')
+    await expect(adminMessage(page)).toContainText('节点 4 / 连线 3')
+    await expect(page.locator('.fd-count')).toContainText('节点 4')
+
+    // 回读：落库图没有游离节点，主链三类业务边一条不少
+    const stored = await page.evaluate(async ({ modPath, tplName }) => {
+      const mod = await import(modPath)
+      const row = (await mod.fetchFlowTemplates(tplName)).find((t: { name: string }) => t.name === tplName)
+      const tpl = row ? await mod.fetchFlowTemplate(row.templateId) : null
+      return { nodes: tpl?.nodes.length ?? 0, edges: tpl?.edges.length ?? 0 }
+    }, { modPath: `${ADMIN_MOUNT}/src/api/flow.ts`, tplName: name })
+    expect(stored).toEqual({ nodes: 4, edges: 3 })
+
     await page.getByRole('button', { name: '删除模板' }).click()
     await page.locator('.el-message-box').getByRole('button', { name: '删除' }).click()
     await expect(adminMessage(page)).toContainText('已删除模板')
