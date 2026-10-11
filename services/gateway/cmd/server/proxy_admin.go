@@ -200,6 +200,10 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/admin/flow/instances/:instanceId/nodes/:nodeId/actions"},
 	{http.MethodGet, "/admin/flow/instances/:instanceId/actions"},
 
+	// T653 告警类型 ↔ 流程模板绑定（告警页 Tab4 顶部；GET/PUT 均 adminOnly，RBAC 见 rbac.go）
+	{http.MethodGet, "/admin/flow/type-bindings"},
+	{http.MethodPut, "/admin/flow/type-bindings"},
+
 	// T130 复查记录（合同患者端「复查管理」）
 	{http.MethodPost, "/admin/review-records"},              // 医生/管理员创建复查记录
 	{http.MethodGet, "/patients/:patientId/review-records"}, // 患者复查记录列表（含报告下载URL）

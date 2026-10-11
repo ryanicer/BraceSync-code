@@ -21,7 +21,7 @@ type AlertPointRuleDTO struct {
 	EffectiveLowerN float64  `json:"effectiveLowerN"`
 }
 
-// AlertGlobalRulesDTO 全局告警规则四项（设计稿 Tab2 第二卡）
+// AlertGlobalRulesDTO 全局告警规则五项（设计稿 Tab2 第二卡；T653/R2 增传感器标定阈值）
 type AlertGlobalRulesDTO struct {
 	// DeviceOfflineMinutes T257 12.4：与 §7D.12 wearInterruptMinutes 同键
 	// （sys_configs threshold_wear_interrupt_minutes），字段名沿用设计稿不改契约
@@ -29,6 +29,9 @@ type AlertGlobalRulesDTO struct {
 	DailyWearMinHours      float64 `json:"dailyWearMinHours"`
 	ContinuousWearMaxHours float64 `json:"continuousWearMaxHours"`
 	ReportTimeoutMinutes   float64 `json:"reportTimeoutMinutes"`
+	// SensorDriftN T653（T642 R2 甲）：传感器标定异常告警阈值，键 threshold_sensor_drift（N）。
+	// 编辑位唯一落点 = 本卡；系统配置页只摘 UI，settings PUT 仍回传现值（防零值覆盖）。
+	SensorDriftN float64 `json:"sensorDriftN"`
 }
 
 // AlertRulesDTO 规则聚合视图（一次 GET 渲染整个 Tab2）
@@ -61,6 +64,7 @@ type UpdateAlertGlobalRulesRequest struct {
 	DailyWearMinHours      *float64 `json:"dailyWearMinHours"`
 	ContinuousWearMaxHours *float64 `json:"continuousWearMaxHours"`
 	ReportTimeoutMinutes   *float64 `json:"reportTimeoutMinutes"`
+	SensorDriftN           *float64 `json:"sensorDriftN"` // T653 R2：threshold_sensor_drift，量程 0.1-20
 }
 
 // ─────────────────────────────────────────────────────────────

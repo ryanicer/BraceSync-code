@@ -83,6 +83,7 @@ func (h *Handler) loadAlertRules(ctx context.Context) (*model.AlertRulesDTO, *mo
 	keys := []string{
 		keyPressureHigh, keyPressureLow, keyWearInterrupt,
 		keyWearTarget, keyContinuousWearMaxHours, keyReportTimeoutMinutes,
+		keySensorDrift, // T653 R2：传感器标定阈值（同键 threshold_sensor_drift）
 	}
 	kvs, err := h.store.GetConfigs(ctx, keys)
 	if err != nil {
@@ -130,6 +131,8 @@ func (h *Handler) loadAlertRules(ctx context.Context) (*model.AlertRulesDTO, *mo
 			DailyWearMinHours:      numOr(kvs[keyWearTarget], settingsDefaults.DailyWearTargetHours),
 			ContinuousWearMaxHours: numOr(kvs[keyContinuousWearMaxHours], 23),
 			ReportTimeoutMinutes:   numOr(kvs[keyReportTimeoutMinutes], 5),
+			// T653 R2：传感器标定异常告警阈值（0.3N），编辑位唯一落点本卡
+			SensorDriftN: numOr(kvs[keySensorDrift], settingsDefaults.SensorDriftN),
 		},
 	}, nil
 }
@@ -326,6 +329,8 @@ func (h *Handler) updateAlertGlobalRules(c *gin.Context) {
 		{keyWearTarget, req.DailyWearMinHours, current.GlobalRules.DailyWearMinHours, "dailyWearMinHours", 1, 24},
 		{keyContinuousWearMaxHours, req.ContinuousWearMaxHours, current.GlobalRules.ContinuousWearMaxHours, "continuousWearMaxHours", 1, 24},
 		{keyReportTimeoutMinutes, req.ReportTimeoutMinutes, current.GlobalRules.ReportTimeoutMinutes, "reportTimeoutMinutes", 1, 1440},
+		// T653 R2：量程与 settings validateSettings 同档 [0.1,20]
+		{keySensorDrift, req.SensorDriftN, current.GlobalRules.SensorDriftN, "sensorDriftN", 0.1, 20},
 	}
 
 	var kvs []repo.ConfigKV

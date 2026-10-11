@@ -731,4 +731,9 @@ type Store interface {
 	// ApplyFlowNodeAction 状态机唯一写入点（图遍历结果由 handler 传入，repo 不读模板 JSON）。
 	ApplyFlowNodeAction(ctx context.Context, in FlowActionWrite) (*FlowNodeActionRow, error)
 	ListFlowNodeActions(ctx context.Context, instanceID string) ([]FlowNodeActionRow, error)
+
+	// T653 告警类型 ↔ 流程模板绑定（migration 000037；sentinel 复用 ErrFlowTemplateNotFound）。
+	ListFlowTypeBindings(ctx context.Context) ([]FlowTypeBindingRow, error)
+	GetFlowTypeBinding(ctx context.Context, alertType string) (*FlowTypeBindingRow, error)
+	ReplaceFlowTypeBindings(ctx context.Context, items []FlowTypeBindingSet) error
 }

@@ -400,3 +400,50 @@ func TestT257_GlobalRules_DeviceOfflineRangeMatchesSettingsPage(t *testing.T) {
 		assert.Nil(t, e.store.savedKVs)
 	}
 }
+
+// ── T653 R2：传感器标定阈值（threshold_sensor_drift）编辑位收口 Tab2 ──
+
+func TestT653_GlobalRules_SensorDriftRead(t *testing.T) {
+	t.Run("库内现值透传", func(t *testing.T) {
+		e := newEnv(t, true, true)
+		e.store.configs = map[string]string{keySensorDrift: "1.5"}
+
+		w, resp := e.do(http.MethodGet, t252RulesPath, nil, t252AdminHdr())
+		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		dto := decodeRules(t, resp.Data)
+		assert.InDelta(t, 1.5, dto.GlobalRules.SensorDriftN, 1e-9)
+	})
+
+	t.Run("缺键回 0.3N 默认（与 settingsDefaults.SensorDriftN 同源）", func(t *testing.T) {
+		e := newEnv(t, true, true)
+
+		w, resp := e.do(http.MethodGet, t252RulesPath, nil, t252AdminHdr())
+		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		dto := decodeRules(t, resp.Data)
+		assert.InDelta(t, 0.3, dto.GlobalRules.SensorDriftN, 1e-9, "T203: 2.8 → 0.3")
+	})
+}
+
+func TestT653_GlobalRules_SensorDriftWrite(t *testing.T) {
+	e := newEnv(t, true, true)
+
+	w, resp := e.do(http.MethodPut, t252GlobalPath, map[string]any{"sensorDriftN": 0.3}, t252AdminHdr())
+	require.Equal(t, http.StatusOK, w.Code, resp.Message)
+
+	require.Len(t, e.store.savedKVs, 1, "只提交这一项就只写一个键")
+	assert.Equal(t, keySensorDrift, e.store.savedKVs[0].Key)
+	assert.Equal(t, "0.3", e.store.savedKVs[0].Value)
+	dto := decodeRules(t, resp.Data)
+	assert.InDelta(t, 0.3, dto.GlobalRules.SensorDriftN, 1e-9)
+}
+
+func TestT653_GlobalRules_SensorDriftRange(t *testing.T) {
+	// 量程与 settings validateSettings 同档 [0.1,20]，防止两入口写出互相拒收的值
+	for _, v := range []float64{0.05, 0, 20.1, 99} {
+		e := newEnv(t, true, true)
+		w, _ := e.do(http.MethodPut, t252GlobalPath, map[string]any{"sensorDriftN": v}, t252AdminHdr())
+		assert.Equal(t, http.StatusBadRequest, w.Code, "sensorDriftN=%g 应被量程 [0.1,20] 拦住", v)
+		assert.Nil(t, e.store.savedKVs, "被拒不得触达写通道")
+		assert.Empty(t, e.store.auditRows)
+	}
+}
