@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
- * admin-web 关键页抽查：设备管理（筛选）/ 技师管理（启停）/ 系统配置（阈值+通知规则）
+ * admin-web 关键页抽查：设备管理（筛选）/ 技师管理（启停）/ 系统配置（T653 后 3 平台参数+操作日志）
  * mock 对齐：devices.ts（6 台，online 3 / abnormal 1 / offline 1 / unbound 1）、
  * org.ts（4 技师，冯师傅禁用）、system.ts（阈值默认值 + 4 条通知规则）
  */
@@ -137,78 +137,12 @@ test.describe('系统配置', () => {
     await expect(page.getByText('Hospital-WiFi')).toHaveCount(0)
   })
 
-  test('通知规则 tab：4 类告警规则与渠道/对象勾选', async ({ page }) => {
-    await page.getByRole('tab', { name: '通知规则' }).click()
-    const card = page.locator('.page-card').filter({ hasText: '告警通知规则' })
-    await expect(card.locator('.el-table__body-wrapper tbody tr')).toHaveCount(4)
-    // 压力偏高：微信+短信 双渠道勾选
-    const pressureRow = card.locator('tbody tr').filter({ hasText: '压力偏高' })
-    await expect(pressureRow.locator('.el-checkbox.is-checked')).toHaveCount(4) // 渠道2 + 对象2
-  })
-
-  test('通知规则切换勾选后提示更新成功', async ({ page }) => {
-    await page.getByRole('tab', { name: '通知规则' }).click()
-    const card = page.locator('.page-card').filter({ hasText: '告警通知规则' })
-    // T289 2.6：wear_interrupt 的显示术语全站收口为「设备离线」（shared-utils ALERT_TYPE_LABELS）
-    const wearRow = card.locator('tbody tr').filter({ hasText: '设备离线' })
-    // 设备离线行默认只勾了「微信 + 患者」两档；这里追加勾选短信渠道
-    await wearRow.locator('.el-checkbox').filter({ hasText: '短信' }).click()
-    await expect(adminMessage(page)).toContainText('通知渠道已更新')
-  })
-
-  /**
-   * T270 假绿 #6 订正（README §5 第二类 / A-SET-08）：
-   * 原用例「发送记录 tab：4 条记录与状态 tag」断的是 **mock 常量**（mockNotificationLogs
-   * 硬编码 4 条），真实后端 total=28 → 条数断言在 mock 下没有信息量，且完全没碰
-   * A-SET-08 的判据（表头七列、渠道中文化、状态文案↔颜色、时间格式、内容 tooltip）。
-   * 这里换成**逐行格式契约**：行数只要求 >0，每行按列验语义，换一批数据依然成立。
-   *
-   * 登记（不在本卡边界内修）：该 Tab **无分页控件**（pages/settings/index.vue:85-109 未放
-   * el-pagination，onMounted 固定拉 page=1,pageSize=20）⇒ 真实 28 条只能看前 20 条、无法翻页；
-   * 另「患者」列真实模式显示患者 ID（api/index.ts 回落 patientId，即 D1 同族）。
-   */
-  test('发送记录 tab：七列表头 + 逐行格式契约（T270 假绿#6 / A-SET-08）', async ({ page }) => {
-    await page.getByRole('tab', { name: '发送记录' }).click()
-    // el-tabs 各 pane 同时挂载，仅可见 pane 的表格参与断言
-    const table = page.locator('.el-table:visible')
-    const rows = table.locator('.el-table__body-wrapper tbody tr')
-    await expect(rows.first()).toBeVisible({ timeout: 15_000 })
-
-    const headers = await table.locator('.el-table__header-wrapper thead th').evaluateAll((ths) =>
-      ths.map((th) => (th.textContent ?? '').trim()),
-    )
-    expect(headers, '表头七列（顺序即契约）').toEqual(['记录ID', '患者', '告警类型', '渠道', '内容', '状态', '发送时间'])
-
-    const count = await rows.count()
-    expect(count, '应有数据行（条数不作常量断言：mock 4 / 真实 total=28）').toBeGreaterThan(0)
-
-    for (let i = 0; i < count; i++) {
-      const cells = await rows.nth(i).evaluate((el) =>
-        Array.from(el.querySelectorAll('td')).map((td) => ({
-          text: (td.textContent ?? '').trim(),
-          cls: (td.querySelector('.cell') ?? td).className,
-          tag: td.querySelector('.el-tag')?.className ?? '',
-        })),
-      )
-      expect(cells, `第 ${i + 1} 行应有 7 列`).toHaveLength(7)
-      const [recordId, patient, alertType, channel, content, status, sentAt] = cells.map((c) => c.text)
-      const where = `第 ${i + 1} 行（${recordId || '(空)'}）`
-
-      expect(recordId, `${where} 记录ID 非空`).not.toBe('')
-      expect(patient, `${where} 患者列不得漏 undefined/NaN`).not.toMatch(/undefined|NaN/)
-      // T289 2.6：告警类型术语收口（shared-utils ALERT_TYPE_LABELS），「佩戴中断/传感器漂移」已作废
-      expect(['压力偏高', '压力波动', '设备离线', '佩戴时长不足', '传感器标定异常', '非告警'], `${where} 告警类型须中文枚举`).toContain(alertType)
-      expect(['微信', '短信'], `${where} 渠道须中文，不得漏 wechat/sms 原文`).toContain(channel)
-      expect(content, `${where} 内容非空`).not.toBe('')
-      // 内容列 show-overflow-tooltip：EP 会给单元格加 .el-tooltip（悬停出全文的前提）
-      expect(cells[4].cls, `${where} 内容列应可悬停 tooltip`).toContain('el-tooltip')
-      expect(['待发送', '已发送', '失败', '降级短信'], `${where} 状态文案`).toContain(status)
-      // 状态必须是带颜色 tag，且颜色与文案对应（logStatusType 的契约）
-      const wantClass = { 待发送: 'el-tag--info', 已发送: 'el-tag--success', 失败: 'el-tag--danger', 降级短信: 'el-tag--warning' }[status]!
-      expect(cells[5].tag, `${where} 状态应为 tag 且颜色与文案对应`).toContain(wantClass)
-      // 发送时间：未发送显示 '-'，否则 MM-DD HH:mm（formatTime 的契约，不是原始 ISO）
-      expect(sentAt, `${where} 发送时间格式`).toMatch(/^-|\d{2}-\d{2} \d{2}:\d{2}$/)
-    }
+  // T653（T642 R4）：通知规则 / 发送记录两 Tab 已从系统配置页退场（通知配置不在本期收编范围，
+  // 旧三用例随之删除）。保留反向断言防回潮；操作日志 Tab 不受影响（见下一个 describe）。
+  test('T653：通知规则 / 发送记录两 Tab 不在场（反向断言）', async ({ page }) => {
+    await expect(page.getByRole('tab', { name: '通知规则' })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: '发送记录' })).toHaveCount(0)
+    await expect(page.locator('.page-card').filter({ hasText: '告警通知规则' })).toHaveCount(0)
   })
 })
 
