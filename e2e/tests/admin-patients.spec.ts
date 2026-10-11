@@ -28,7 +28,8 @@ test.describe('列表渲染', () => {
     await expect(first).toContainText('林小雨')
     await expect(first).toContainText('28°')
     await expect(first).toContainText('脊柱侧弯一组')
-    await expect(first).toContainText('张建国')
+    // T657：主治医生列已移除，医生名不再出现在列表行（仍在详情抽屉）
+    await expect(first).not.toContainText('张建国')
     await expect(first).toContainText('DEV-A3F312')
     await expect(first).toContainText('可登录')
   })
@@ -65,8 +66,9 @@ test.describe('列表渲染', () => {
   })
 
   // T289 4.1：设计稿 患者管理.html:88 列序 = ID/姓名/性别/年龄/诊断/绑定设备/绑定团队/状态/操作。
-  // 「操作」列属 4.3（尚未派到前端），本用例只锁已落地的设计稿列名与相对顺序，
-  // 并允许 PRD §7D.3 多出、T245 明令「不自行判删」的 Cobb角 / 主治医生 两列插在诊断之后。
+  // 「操作」列属 4.3（尚未派到前端），本用例只锁已落地的设计稿列名与相对顺序。
+  // Cobb角 为 PRD §7D.3 多出、T245 明令「不自行判删」，插在诊断之后保留；
+  // 「主治医生」列 T657 Boss 拍板移除（团队制护理只显示绑定团队；详情抽屉仍保留该格）。
   // 设计稿该 thead 无复选框列 ⇒ 4.2 已把列表勾选撤掉，这里用 filter(Boolean) 兜住空表头。
   test('列名与列序对齐设计稿（绑定设备/绑定团队/状态 相邻且同序）', async ({ page }) => {
     await expect(listRows(page).first()).toBeVisible({ timeout: 15_000 })
@@ -80,7 +82,6 @@ test.describe('列表渲染', () => {
       '年龄',
       '诊断',
       'Cobb角',
-      '主治医生',
       '绑定设备',
       '绑定团队',
       '状态',
@@ -146,10 +147,11 @@ test.describe('详情抽屉', () => {
    * 逐格值一律与「所点那一行」的列交叉核对（行↔详情同源），不写死 mock 里的具体患者，
    * 所以换一批数据依然成立，也不是「把现状当期望」。
    *
-   * ⚠️ 受 D1 影响的只有「所属团队 / 主治医生」两格的**取值**：mock 下 teamNameOf/doctorNameOf
+   * ⚠️ 受 D1 影响的只有「所属团队」格的**取值**：mock 下 teamNameOf
    * 恒查 mock 表，本条只断两侧同源一致 —— 抓不住 D1 本身。值级判据已在真实模式补齐：
-   * e2e-real/tests/05-patients.spec.ts 的 5.6（逐行比对 /api/v1/teams、/doctors 字典与后端 join 出参，
+   * e2e-real/tests/05-patients.spec.ts 的 5.6（逐行比对 /api/v1/teams 字典与后端 join 出参，
    * 并禁止回落成原始编号）+ apps/admin-web/test/contract-drift-gate.spec.ts（API 层，后端 ID 命名空间夹具）。
+   * T657 起列表无「主治医生」列，抽屉该格不再有行可对（字段保留，仅断已渲染且非空形态）。
    */
   test('A-FLOW-10 抽屉字段契约：标题=所点行 + 8 项逐格对齐列表 + 底部动作 + 关闭后列表不变', async ({ page }) => {
     const rows = listRows(page)
@@ -160,8 +162,9 @@ test.describe('详情抽屉', () => {
     // 取第 2 行（避开上一条用例钉死的首行）
     const target = rows.nth(1)
     const cells = await target.evaluate((el) => Array.from(el.querySelectorAll('td')).map((td) => (td.textContent ?? '').trim()))
-    // T289 4.1/4.2 列序（设计稿 患者管理.html:88，无复选框列）：患者ID / 姓名 / 性别 / 年龄 / 诊断 / Cobb角 / 主治医生 / 绑定设备 / 绑定团队 / 状态
-    const [patientId, name, gender, age, diagnosis, cobb, doctor, device, team] = cells
+    // T289 4.1/4.2 列序（设计稿 患者管理.html:88，无复选框列）：患者ID / 姓名 / 性别 / 年龄 / 诊断 / Cobb角 / 绑定设备 / 绑定团队 / 状态
+    // T657 移除主治医生列，行格由 10 列变 9 列（抽屉仍有主治医生格，见下）。
+    const [patientId, name, gender, age, diagnosis, cobb, device, team] = cells
 
     await target.locator('td').nth(1).click() // 点姓名单元格
     const drawer = page.locator('.el-drawer')
@@ -183,7 +186,8 @@ test.describe('详情抽屉', () => {
     expect(shown['诊断']).toBe(diagnosis)
     expect(shown['Cobb角']).toBe(cobb)
     expect(shown['所属团队']).toBe(team)
-    expect(shown['主治医生']).toBe(doctor)
+    // T657：列表已无主治医生列，抽屉该格保留但不做行↔详情同源对值
+    expect(shown['主治医生'], '抽屉主治医生格须已渲染（空值为 -，不得缺格）').toBeTruthy()
     expect(shown['绑定设备'], '无设备显示「未绑定」').toBe(device)
     expect(shown['建档时间'], '建档时间渲染成日期，不是原始 ISO / undefined').toMatch(/^\d{4}-\d{2}-\d{2}$|^—$|^－$|^-$|^\/$/)
     for (const f of fields) expect(f.value, `字段「${f.label}」不得是 undefined/NaN`).not.toMatch(/undefined|NaN|\[object/)
