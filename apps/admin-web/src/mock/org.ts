@@ -292,11 +292,6 @@ export interface AddMemberInput {
   role?: string
 }
 
-export interface UpdateMemberInput {
-  memberType: 'doctor' | 'technician'
-  role?: string
-}
-
 /** mock 团队自增序号（TEAM-200 起，避开预置） */
 let teamSeq = 200
 
@@ -389,26 +384,6 @@ export function mockAddTeamMember(teamId: string, input: AddMemberInput): TeamMe
   }
   if (t.teamId === teamId) {
     throw new Error('成员已在本团队')
-  }
-  return toTechMember(t, team.createdAt)
-}
-
-/** 编辑成员：返回更新后的 TeamMember（role 更新，mock 不持久化） */
-export function mockUpdateTeamMember(teamId: string, memberId: string, input: UpdateMemberInput): TeamMember {
-  const team = TEAMS.find((t) => t.teamId === teamId)
-  if (!team) {
-    throw new Error('团队不存在')
-  }
-  if (input.memberType === 'doctor') {
-    const d = DOCTORS.find((x) => x.doctorId === memberId && x.teamId === teamId)
-    if (!d) {
-      throw new Error('成员不存在')
-    }
-    return toDoctorMember({ ...d, title: input.role || d.title }, team.createdAt)
-  }
-  const t = TECHNICIANS.find((x) => x.techId === memberId && x.teamId === teamId)
-  if (!t) {
-    throw new Error('成员不存在')
   }
   return toTechMember(t, team.createdAt)
 }

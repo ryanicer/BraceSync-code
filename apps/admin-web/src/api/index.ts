@@ -396,11 +396,6 @@ export async function addTeamMemberApi(teamId: string, input: orgMock.AddMemberI
   return request<TeamMember>({ url: `/api/v1/teams/${teamId}/members`, method: 'POST', data: input as unknown as Record<string, unknown> })
 }
 
-export async function updateTeamMemberApi(teamId: string, memberId: string, input: orgMock.UpdateMemberInput): Promise<TeamMember> {
-  if (USE_MOCK) { await delay(); return orgMock.mockUpdateTeamMember(teamId, memberId, input) }
-  return request<TeamMember>({ url: `/api/v1/teams/${teamId}/members/${memberId}`, method: 'PUT', data: input as unknown as Record<string, unknown> })
-}
-
 export async function removeTeamMemberApi(teamId: string, memberId: string, memberType: 'doctor' | 'technician'): Promise<void> {
   if (USE_MOCK) { await delay(); return orgMock.mockRemoveTeamMember(teamId, memberId, memberType) }
   // DELETE 无 body：memberType 走 query（对齐规格端点 6）

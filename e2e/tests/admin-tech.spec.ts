@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { adminRoutes, adminLogin, adminMessage, tableRows } from '../admin-helpers'
+import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
  * admin-web 技师管理：T270 补齐 README §5 第一类缺口 A-TECH-02 / 03 / 04 / 05 / 07 / 08
@@ -285,7 +285,7 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     await expect(restored.locator('td').nth(1), '还原后手机号列回到基线脱敏值').toHaveText(phoneBefore)
   })
 
-  test('A-TECH-07 团队下拉数据来源：占位文案 + 选项与「团队管理」页的维护班组一支一致 + 列表列取自同一来源', async ({ page }) => {
+  test('A-TECH-07 团队下拉数据来源（T658 后）：占位文案 + 选项＝维护班组一支（与技师页维护筛选同源、与团队页医护一支互斥）+ 列表列落在两支并集内', async ({ page }) => {
     await page.getByRole('button', { name: '新建技师' }).click()
     const dialog = page.locator('.el-dialog:visible')
     // T627 方案乙 R1：占位文案跟着筛后的名单走（下拉里已经没有医护团队，文案再写「请选择团队」就是假面）
@@ -293,7 +293,7 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
 
     const items = await openTeamOptions(page, dialog)
     const dropdownNames = (await items.allInnerTexts()).map((s) => s.trim())
-    expect(dropdownNames.length).toBeGreaterThan(0)
+    expect(dropdownNames.length, '维护班组一支须非空，否则这一格退化成「下拉恒空」的假绿').toBeGreaterThan(0)
     // 不得出现设计稿里写死的示例团队（技师管理.html:163 硬编码三项）
     for (const hardcoded of ['矫形团队A组', '矫形团队B组', '西南区域组']) {
       expect(dropdownNames, '团队下拉不应是设计稿写死名单').not.toContain(hardcoded)
@@ -301,8 +301,8 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
     await dialog.locator('.el-select').click() // 再点一次收起下拉（勿用 Escape：会连带关掉弹窗）
     await dialog.getByRole('button', { name: '取消' }).click()
 
-    // 与团队管理页同源，但只同源到「维护班组」那一支：两侧的名字+类型逐行取回，
-    // 下拉集合 == 类型列为「维护班组」的那一组名字（旧口径「与全量名单一致」已被 T627 R1 取代）
+    // T658 后团队管理页已隐藏维护班组（只剩医护一支），该页从「全量基准」改作「医护一支基准」。
+    // 两侧同源关系不变（都取自 GET /api/v1/teams），只是维护班组不再出现在这个页面。
     await page.goto(adminRoutes.teams)
     const teamRows = tableRows(page)
     await expect(teamRows.first()).toBeVisible({ timeout: 15_000 })
@@ -312,25 +312,43 @@ test.describe('技师管理（T270 A-TECH-02/03/04/05/07/08）', () => {
         return { name: td[1]?.textContent?.trim() ?? '', type: td[2]?.textContent?.trim() ?? '' }
       }),
     )
-    expect(roster.length, '团队管理页应至少有一个团队').toBeGreaterThan(0)
-    const pageNames = roster.map((r) => r.name).filter(Boolean)
-    const maintNames = roster.filter((r) => r.type === '维护班组').map((r) => r.name)
-    expect(maintNames.length, '维护班组一支须非空，否则这一格退化成「下拉恒空」的假绿').toBeGreaterThan(0)
-    expect([...dropdownNames].sort(), '技师归属下拉与团队页的维护班组一支不同名').toEqual([...maintNames].sort())
-    // 医护团队不得出现在技师下拉里（判据 3 的页面面：不是排在后面，是不在面板里）
-    for (const r of roster.filter((x) => x.type === '医护团队')) {
-      expect(dropdownNames, `医护团队「${r.name}」不应进技师归属下拉`).not.toContain(r.name)
+    expect(roster.length, '团队管理页应至少有一个医护团队').toBeGreaterThan(0)
+    const medicalNames = [...new Set(roster.map((r) => r.name).filter(Boolean))]
+    // T658：可见行必须清一色医护团队（隐藏行为本身在 admin-teams-list 另有专守）
+    for (const r of roster) {
+      expect(r.type, `团队页可见行「${r.name}」必须是医护团队（维护班组 T658 已隐藏）`).toBe('医护团队')
+    }
+    // 判据：医护团队一个都不得出现在技师归属下拉里（不是排在后面，是不在面板里）
+    for (const name of medicalNames) {
+      expect(dropdownNames, `医护团队「${name}」不应进技师归属下拉`).not.toContain(name)
     }
 
-    // 技师列表「所属团队」列的取值必须落在同一份团队名单里（D1 类展示错配的守卫）
+    // 维护班组一支改从技师页自己的「维护班组」类型筛选取（同源于 GET /api/v1/teams 与 ?teamType=maintenance）。
+    // T627 mock 种子给每个维护班组各放一名技师（孙师傅→设备维护一组、马师傅→设备维护二组），
+    // 故筛选名单与下拉全量同名；若以后加了零技师的维护班组，本断言会提醒作者同步种子口径。
     await page.goto(adminRoutes.technicians)
-    await expect(tableRows(page).first()).toBeVisible({ timeout: 15_000 })
+    await pickSelectOption(page, page.locator('.type-filter'), '维护班组')
+    const maintRows = tableRows(page)
+    await expect(maintRows.first(), '维护班组筛选下应至少一行（种子每组一名技师）').toBeVisible({ timeout: 15_000 })
+    const maintFromTech = [...new Set(
+      await maintRows.evaluateAll((rows) =>
+        rows.map((r) => (r as HTMLElement).querySelectorAll('td')[2]?.textContent?.trim() ?? ''),
+      ),
+    )].filter(Boolean)
+    expect(maintFromTech.length, '维护班组筛选出的班组名须非空').toBeGreaterThan(0)
+    const maintCount = await maintRows.count()
+    expect([...maintFromTech].sort(), '技师归属下拉与技师页维护筛选出的班组不同名').toEqual([...dropdownNames].sort())
+
+    // D1 类展示错配守卫：清空筛选回到全量技师，所属团队列每个名字必须落在「医护一支 ∪ 维护一支」并集内。
+    await page.locator('.type-filter .el-select__clear').click()
+    await expect.poll(async () => tableRows(page).count(), { timeout: 10_000, message: '清空类型筛选后行数应恢复（多于维护筛选行）' }).toBeGreaterThan(maintCount)
+    const allNames = new Set([...medicalNames, ...dropdownNames])
     const columnNames = await tableRows(page).evaluateAll((rows) =>
       rows.map((r) => (r as HTMLElement).querySelectorAll('td')[2]?.textContent?.trim() ?? ''),
     )
     expect(columnNames.length).toBeGreaterThan(0)
     for (const shown of columnNames) {
-      expect(pageNames, `技师列显示的「${shown}」不在团队名单内`).toContain(shown)
+      expect([...allNames], `技师列显示的「${shown}」不在团队两支名单内`).toContain(shown)
     }
   })
 
