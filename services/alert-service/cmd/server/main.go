@@ -109,6 +109,8 @@ func main() {
 	userSvcURL := envOr("USER_SERVICE_URL", "http://user-service:8081")
 	flowStarter := flowstarter.New(userSvcURL, flowstarter.DefaultTimeout,
 		log.Logger.With().Str("component", "flowstarter").Logger())
+	// T668：告警 process/processing 的节点执法守卫（与 auto-start 同基址；fail-closed）。
+	processGuard := flowstarter.NewProcessGuard(userSvcURL, flowstarter.DefaultTimeout)
 
 	// 组装扫描器：阈值口径由 cfgMgr 热更新注入（上方 eval）
 	alertRepo := repo.NewAlertRepo(pool)
@@ -156,7 +158,8 @@ func main() {
 	h := handler.New(eval, alertRepo, notifier)
 	h.SetPublicStore(alertRepo)
 	h.SetLogger(log.Logger)
-	h.SetFlowStarter(flowStarter) // T653：内联告警自动建实例
+	h.SetFlowStarter(flowStarter)   // T653：内联告警自动建实例
+	h.SetProcessGuard(processGuard) // T668：告警处理节点执法
 	if loadedTh.WearingN > 0 {
 		h.SetWearingThreshold(loadedTh.WearingN) // T661 H 项：启动配置的佩戴阈值先注内联链路
 	}
