@@ -30,8 +30,9 @@
 # 地址来源：staging 的 Nginx 公开入口 = 服务器 106.52.39.208 的 81 端口
 #   （域名等价写法 http://hbksd.com.cn:81，见 scripts/wechat/lib-target.js）。
 #   admin-web 挂在 /admin/ 下，API 走 /api/，由同一条 location 反代到 staging gateway。
-# 🔴 只打测试环境（staging，或 T651 起的 tst 档）：生产是同一台机器的 80/443 与另一台 49.235.137.217，
+# 🔴 只打测试环境（staging，或 T651 起的 tst 档）：生产是同一台机器的 80/443 与 api.hbksd.com.cn 域，
 #    本 workflow 任何 job 都不得指向它们（生产零操作红线，见 docs/tasks/TAPD-agent-规则.md；
+#    49.235.137.217 自 2026-10-11 起 Boss 口径为 TST 环境，已移出生产针；
 #    这条红线在 T651 切档后一格没松 —— 地址门里那枚生产入口针是硬判红，见预检尺）。
 # 本机调试：ssh -N -L 2080:127.0.0.1:81 ubuntu@106.52.39.208
 #           再 E2E_STAGING_URL=http://localhost:2080 npx playwright test --config=e2e-real/playwright.real.config.ts
@@ -40,7 +41,7 @@
 # ─── T651：CI 侧 TARGET 门可切换 TST lane（双通道，Boss 2026-10-10 批 A 解锁）────────────
 # 面名先说清楚，免得下一位把「CI 的 TST lane」当成「已经能跑」：
 #   本卡交付的是【开关 + 三颗注入变量同源切档 + 两 lane 各自独立排队 + 目标面预检尺】，代码面完整；
-#   而 TST 那枚基址 http://192.168.5.41:91 是【站内地址】（仓内在册口径 = apps/*/.env.tst 里那串），
+#   而 TST 基址自 2026-10-11 起为云上入口 http://49.235.137.217:81（旧内网 192.168.5.41:91 弃用，Boss 口径；
 #   本 workflow 全部 job 都跑在 GitHub 云上 ubuntu-latest（本仓 self-hosted runner 注册数 0，
 #   2026-10-10 现读：GET /repos/ryanicer/BraceSync-code/actions/runners 的 total_count=0），
 #   云上 runner 到不了那枚内网地址 ⇒ 云上手动触发 tst 档，预检尺的「可达门」会当场判红并点名 origin
@@ -48,7 +49,7 @@
 #   要拿 TST 的真实读数，两条路选一条，都归值班席/PM 裁（本席不自选也不代跑）：
 #     甲：给本仓接一枚可达 TST 的 self-hosted runner（或把 TST 经隧道/反代发布成云上可达的入口）
 #     乙：在 LAN 内那台机器上按 runbook 跑（既有写法，T616 就是这么取到 87 颗分母的）：
-#         E2E_TARGET=tst E2E_STAGING_URL=http://192.168.5.41:91 E2E_TECH_H5_URL=<同串> \
+#         E2E_TARGET=tst E2E_STAGING_URL=http://49.235.137.217:81 E2E_TECH_H5_URL=<同串> \
 #         E2E_PATIENT_H5_URL=<同串> npx playwright test --config=./e2e-real/playwright.real.config.ts
 #         跑前先过同一把尺：node scripts/ci/e2e-real-target-preflight.mjs（三格门 + 探针，零凭据）
 # ──────────────────────────────────────────────────────────────────────────────
@@ -117,15 +118,15 @@ env:
   #   🔴 E2E_STAGING_URL 这颗名字按 T304 口径是「e2e-real 的唯一入口变量」，tst 档下它装的是 TST 入口
   #   —— 名字不改（改它要连带动五处读者与判据，越出本卡边界），一致性由预检尺的三格门钉住。
   E2E_TARGET: ${{ github.event.inputs.target == 'tst' && 'tst' || 'staging' }}
-  E2E_STAGING_URL: ${{ github.event.inputs.target == 'tst' && 'http://192.168.5.41:91' || 'http://106.52.39.208:81' }}
+  E2E_STAGING_URL: ${{ github.event.inputs.target == 'tst' && 'http://49.235.137.217:81' || 'http://106.52.39.208:81' }}
   # T614：链 B / 链 C 的 H5 源。两条 H5 腿不能跟着 E2E_STAGING_URL 走 —— 技师端/患者端产物把 API
   #   基址在构建期写死（apps/*/.env.staging 经 define 注入 __API_BASE_URL__，全仓无 CORS 放行），
   #   页面必须从那个源打开，否则应用自己的请求跨源被浏览器拦掉。此前这两颗只在用例里留了默认值、
   #   CI 侧没有注入位 ⇒ 换环境时无从显式指定（2026-10-07 真打 TST 的 4 条红就是这么来的）。
   #   口径：换目标环境时三颗一起换 —— T651 起这一「一起」由下面的 target 判别保证（三颗同源切档），
   #   只改第一颗而这两颗仍留 staging 那一形，由预检尺的同源门当场判红。
-  E2E_TECH_H5_URL: ${{ github.event.inputs.target == 'tst' && 'http://192.168.5.41:91' || 'http://hbksd.com.cn:81' }}
-  E2E_PATIENT_H5_URL: ${{ github.event.inputs.target == 'tst' && 'http://192.168.5.41:91' || 'http://hbksd.com.cn:81' }}
+  E2E_TECH_H5_URL: ${{ github.event.inputs.target == 'tst' && 'http://49.235.137.217:81' || 'http://hbksd.com.cn:81' }}
+  E2E_PATIENT_H5_URL: ${{ github.event.inputs.target == 'tst' && 'http://49.235.137.217:81' || 'http://hbksd.com.cn:81' }}
 
 jobs:
   patient-miniapp-e2e:
