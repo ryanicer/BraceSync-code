@@ -57,7 +57,7 @@ func TestCalibration_UploadSingle_WearingJudgedOnCalibrated(t *testing.T) {
 
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 0, st.wear, "佩戴判定用减偏移后值：0.04N ≤ 0.05N 不计佩戴")
+	assert.Equal(t, 0, st.frames, "佩戴判定用减偏移后值：0.04N ≤ 0.05N 不计佩戴")
 	assert.InDelta(t, 0.04, st.max, 0.001, "stat:today max 记校准后值")
 
 	// rt:frame 存入口 ÷1000 后的 raw（N），偏移减法只发生在读侧
@@ -147,7 +147,7 @@ func TestCalibration_BaselineLookupFail_ServesRaw(t *testing.T) {
 	// raw 0.6 > 0.5 → 佩戴帧（fail-open 语义：宁可多计不误判为未佩戴）
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 30, st.wear)
+	assert.Equal(t, 1, st.frames, "raw 0.6 fail-open 判为佩戴帧")
 	assert.InDelta(t, 0.6, st.max, 0.001)
 }
 

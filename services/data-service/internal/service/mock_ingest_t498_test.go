@@ -136,7 +136,7 @@ func TestT498_AlertHitStillIncrementsAbnormalCount(t *testing.T) {
 	require.Len(t, env.cache.stat, 1)
 	e := env.cache.stat[testPatient]
 	assert.Equal(t, 1, e.abn, "注入帧触发的告警必须计入异常数，否则告警列表与概览自相矛盾")
-	assert.Equal(t, 0, e.wear, "佩戴分钟数不累计（countStat=false）")
+	assert.Equal(t, 0, e.frames, "佩戴帧不累计（countStat=false）")
 	assert.Equal(t, float64(0), e.max, "峰值不累计（countStat=false）")
 }
 
