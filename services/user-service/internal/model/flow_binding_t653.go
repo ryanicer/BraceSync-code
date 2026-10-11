@@ -11,9 +11,9 @@ package model
 // pressure_fluctuation 已砍（000018 保留 CHECK 仅为历史告警行可读），不入绑定；
 // 无 data_timeout 类型（数据上报超时仅阈值参数，不产生告警）。
 const (
-	FlowBindAlertTypePressureHigh     = "pressure_high"        // 压力偏高
-	FlowBindAlertTypeWearInterrupt    = "wear_interrupt"       // 设备离线（000018：「设备离线」≡ wear_interrupt）
-	FlowBindAlertTypeSensorDrift      = "sensor_drift"         // 传感器标定异常
+	FlowBindAlertTypePressureHigh      = "pressure_high"       // 压力偏高
+	FlowBindAlertTypeWearInterrupt     = "wear_interrupt"      // 设备离线（000018：「设备离线」≡ wear_interrupt）
+	FlowBindAlertTypeSensorDrift       = "sensor_drift"        // 传感器标定异常
 	FlowBindAlertTypeWearDurationShort = "wear_duration_short" // 佩戴时长不足
 )
 

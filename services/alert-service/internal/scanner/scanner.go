@@ -115,7 +115,7 @@ type Scanner struct {
 	devices  DeviceStore
 	alerts   AlertStore
 	lastseen LastSeenReader
-	wear     WearStore // T257 2.6：可选（SetWearStore 注入）；nil 时跳过每日佩戴时长扫描
+	wear     WearStore           // T257 2.6：可选（SetWearStore 注入）；nil 时跳过每日佩戴时长扫描
 	flow     flowstarter.Starter // T653：定时告警入库后按绑定自动建实例（SetFlowStarter，默认 Noop）
 	eval     *engine.RuleEvaluator
 	now      func() time.Time
