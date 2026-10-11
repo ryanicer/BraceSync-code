@@ -1,66 +1,17 @@
-// T629 方案C：非医生点「保存新方案」要看到「仅医生开放」的明确提示，且请求不发出。
+// T629 方案C：非医生调 orthosis-plans 写动作的前端闸门与提示（纯层真值表）。
 //
-// 现场（派发单 §一）：运营管理员在「矫形日志·患者工作台」点保存 → 横幅「没有该操作的权限，
-// 请联系管理员」。这一句是展示层按信封码 10403 查表（packages/shared-utils/src/errorCopy.ts:40）
-// 得到的通用句：网关 rbac.go 的 doctorAdminOnlyPatterns 放 admin 过，真正拒的是 user-service
-// savePlan 的医生身份判定（handler.go:1577-1585，doctors.admin_id 查不到行即 403）。
-// ⇒ 按钮保留、权限矩阵不动，点击时按角色就地说明并阻止这一枪（utils/doctorOnlyAccess.ts）。
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
-import { createPinia, setActivePinia } from 'pinia'
-import ElementPlus, { ElMessage, ElSelect } from 'element-plus'
+// 现场（派发单 §一）：运营管理员保存矫形方案 → 网关 doctorAdminOnlyPatterns 放 admin 过，
+// 真正拒的是 user-service savePlan 的医生身份判定（10403 通用句读不出所以然），
+// T629 当时在「矫形方案」tab 的保存按钮前加了 canSaveOrthosisPlan 闸门 + DOCTOR_ONLY_HINT。
+//
+// T660（2026-10-11 Boss 拍板①）：「矫形方案」tab 从患者工作台下架（患者端无消费方），
+// 原页面级 mount 用例随入口删除；但后端 orthosis-plans 端点、网关 doctorAdminOnly 矩阵、
+// 前端 util 闸门与 10403 码表都保留（将来任何 UI 重新接线仍用同一判据），故本份收敛为纯层测。
+import { describe, it, expect } from 'vitest'
 import { userErrorCopy } from '@bracesync/shared-utils'
-import type { RoleKey } from '../src/router/permissions'
 import { canSaveOrthosisPlan, DOCTOR_ONLY_HINT } from '../src/utils/doctorOnlyAccess'
 
-vi.mock('../src/api', () => ({
-  fetchTeams: vi.fn(async () => []),
-  fetchPatients: vi.fn(async () => ({ list: [], total: 0, page: 1, pageSize: 50 })),
-  fetchPatientDetail: vi.fn(async () => null),
-  fetchAlerts: vi.fn(async () => ({ list: [], total: 0, page: 1, pageSize: 10 })),
-  fetchSystemSettings: vi.fn(async () => ({ wearingTargetHours: 8 })),
-  fetchOrthosisPlans: vi.fn(async () => []),
-  saveOrthosisPlanApi: vi.fn(async () => ({
-    planId: 'PLAN-T629',
-    patientId: 'PAT-T629',
-    doctorId: 'DOC-T629',
-    content: '新版方案',
-    version: 'v1',
-    createdAt: '2026-10-09T00:00:00.000Z',
-  })),
-  fetchFeelingLogs: vi.fn(async () => []),
-  fetchFeelingLogsAdmin: vi.fn(async () => ({ list: [], total: 0, page: 1, pageSize: 20 })),
-  fetchPatientDailyWear: vi.fn(async () => []),
-  fetchHealthReports: vi.fn(async () => []),
-  replyFeelingLogApi: vi.fn(async () => ({})),
-  patientNameOf: (id: string) => id,
-  teamNameOf: (id: string) => id,
-}))
-
-import * as api from '../src/api'
-import { useAuthStore } from '../src/stores/auth'
-import OrthosisLogPage from '../src/pages/orthosis-log/index.vue'
-
-/** 进页 → 选中患者（工作台面板 v-if="patientId" 才渲染）→ 填方案正文 → 点「保存新方案」 */
-async function clickSaveAs(role: RoleKey | null) {
-  const pinia = createPinia()
-  setActivePinia(pinia)
-  const auth = useAuthStore(pinia)
-  auth.user = role ? { name: '验收账号', role } : null
-  const wrapper = mount(OrthosisLogPage, { global: { plugins: [pinia, ElementPlus] } })
-  for (let i = 0; i < 5; i++) await flushPromises()
-
-  const select = wrapper.findAllComponents(ElSelect).find((s) => s.classes('patient-select'))
-  if (!select) throw new Error('患者下拉未渲染（工作台面板的入口条件变了？）')
-  await select.vm.$emit('update:modelValue', 'PAT-T629')
-  for (let i = 0; i < 3; i++) await flushPromises()
-  await wrapper.find('textarea').setValue('新版矫形方案：夜间佩戴 10 小时')
-  await wrapper.find('.save-btn').trigger('click')
-  for (let i = 0; i < 3; i++) await flushPromises()
-  return wrapper
-}
-
-describe('T629 闸门判据 · canSaveOrthosisPlan', () => {
+describe('T629 闸门判据 · canSaveOrthosisPlan（T660 UI 下架后 util 仍在册）', () => {
   it('只有 doctor 放行（真值表逐格）', () => {
     expect(canSaveOrthosisPlan('doctor')).toBe(true)
     expect(canSaveOrthosisPlan('admin')).toBe(false)
@@ -72,47 +23,10 @@ describe('T629 闸门判据 · canSaveOrthosisPlan', () => {
     expect(canSaveOrthosisPlan(null)).toBe(false)
     expect(canSaveOrthosisPlan(undefined)).toBe(false)
   })
-})
 
-describe('T629 患者工作台 · 非医生点「保存新方案」', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    localStorage.clear()
-    document.body.innerHTML = ''
-  })
-
-  it('运营管理员：出「仅医生开放」提示，且 POST 请求不发出', async () => {
-    const warnSpy = vi.spyOn(ElMessage, 'warning')
-    await clickSaveAs('admin')
-
-    expect(warnSpy).toHaveBeenCalledTimes(1)
-    expect(warnSpy.mock.calls[0][0]).toBe(DOCTOR_ONLY_HINT)
+  it('提示语明确含「仅对医生开放」，不是 10403 通用句', () => {
     expect(DOCTOR_ONLY_HINT).toContain('仅对医生开放')
-    expect(vi.mocked(api.saveOrthosisPlanApi)).not.toHaveBeenCalled()
-    warnSpy.mockRestore()
-  })
-
-  it('客服同样被挡（他进不了本页，这里锁的是同一判据）', async () => {
-    const warnSpy = vi.spyOn(ElMessage, 'warning')
-    await clickSaveAs('cs')
-
-    expect(vi.mocked(api.saveOrthosisPlanApi)).not.toHaveBeenCalled()
-    expect(warnSpy).toHaveBeenCalledTimes(1)
-    warnSpy.mockRestore()
-  })
-
-  // 反证：闸门不能是「恒拦」——医生那一枪照旧要打出去
-  it('医生行为不变：请求照发、成功提示照出', async () => {
-    const successSpy = vi.spyOn(ElMessage, 'success')
-    const warnSpy = vi.spyOn(ElMessage, 'warning')
-    await clickSaveAs('doctor')
-
-    expect(vi.mocked(api.saveOrthosisPlanApi)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(api.saveOrthosisPlanApi)).toHaveBeenCalledWith('PAT-T629', '新版矫形方案：夜间佩戴 10 小时')
-    expect(successSpy).toHaveBeenCalledWith('方案已保存')
-    expect(warnSpy).not.toHaveBeenCalled()
-    successSpy.mockRestore()
-    warnSpy.mockRestore()
+    expect(DOCTOR_ONLY_HINT).not.toBe(userErrorCopy({ code: 10403 }, { scope: 'admin' }))
   })
 })
 

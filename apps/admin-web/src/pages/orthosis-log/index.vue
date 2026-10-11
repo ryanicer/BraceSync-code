@@ -79,10 +79,8 @@
               <el-option v-for="p in patients" :key="p.patientId" :label="`${p.name}（${p.patientId}）`" :value="p.patientId" />
             </el-select>
             <el-tag v-if="auth.role === 'doctor'" type="info" effect="plain">医护工作台：仅本团队患者（PRD §7D.11）</el-tag>
-            <!-- T344 第 4 块 · T641 落地：稿面（矫形日志.html #wsSendAdvice）定的形态与位置不动
-                 （未选患者禁用），点击从「占位提示」换成真写 —— 与撰写区共用同一份草稿与同一条写路径。
-                 admin 隐藏这一颗（他不是发送主体，见 canWriteAdvice 注释），:disabled 仍是前端约束不是安全边界。 -->
-            <el-button v-if="canWriteAdvice" class="send-advice-btn" type="primary" :disabled="!patientId" @click="sendAdvice">发送建议给患者</el-button>
+            <!-- T660（Boss 拍板③）：右上角「发送建议给患者」按钮移除——发送语义唯一化，
+                 撰写建议区（workspace 内「康复建议」tab）的「发送」是唯一发送动作。 -->
           </div>
 
           <template v-if="patientId">
@@ -102,26 +100,8 @@
               <el-empty v-else description="暂无患者档案" :image-size="60" />
             </div>
             <el-tabs v-model="activeTab" @tab-change="onWsTabChange">
-              <!-- 矫形方案 -->
-              <el-tab-pane label="矫形方案" name="plans">
-                <div class="page-card">
-                  <div class="page-card-title">方案调整</div>
-                  <el-input v-model="newPlanContent" type="textarea" :rows="3" placeholder="填写新版矫形方案（如：佩戴目标、加压区、复查计划）" />
-                  <el-button type="primary" class="save-btn" :loading="savingPlan" :disabled="!newPlanContent.trim()" @click="savePlan">
-                    保存新方案
-                  </el-button>
-                </div>
-                <div class="page-card">
-                  <div class="page-card-title">历史方案（{{ plans.length }}）</div>
-                  <el-timeline v-if="plans.length > 0">
-                    <el-timeline-item v-for="plan in plans" :key="plan.planId" :timestamp="`${plan.version} · ${plan.createdAt.slice(0, 10)}`">
-                      {{ plan.content }}
-                    </el-timeline-item>
-                  </el-timeline>
-                  <el-empty v-else description="暂无方案记录" :image-size="60" />
-                </div>
-              </el-tab-pane>
-
+              <!-- T660（Boss 拍板①）：「矫形方案」tab 下架——其内容患者端无消费方。
+                   后端 orthosis plan 端点与数据不删，仅移除本 UI 入口与撰写/历史展示。 -->
               <!-- 佩戴感受日志 -->
               <el-tab-pane label="佩戴感受" name="feelings">
                 <div class="page-card workspace-feelings-card">
@@ -287,7 +267,8 @@
                    内层页签按本页既有约定「追加末位不重排」，故排在数据视图之后。
                    🔴 admin 隐藏而非禁用：ROLE_PAGE_MATRIX.admin 含 /orthosis-log（permissions.ts:48），
                    但运营管理员在 doctors 表无行、不是发送主体（稿面 §七 + 服务端 403 才是判据）。 -->
-              <el-tab-pane v-if="canWriteAdvice" label="医护建议" name="advice">
+              <!-- T660（Boss 拍板②）：tab 改名「康复建议」，与患者端口径完全一致（name 不变） -->
+              <el-tab-pane v-if="canWriteAdvice" label="康复建议" name="advice">
                 <div class="page-card">
                   <div class="page-card-title">撰写建议</div>
                   <el-input
@@ -377,10 +358,9 @@ import {
   alertTypeLabel, areaLabel, feelingLevelLabel, userErrorCopy,
   AREA_MISSING_HINT, PRESSURE_UNITS, axisUnitText, type PressureUnit,
 } from '@bracesync/shared-utils'
-import type { Advice, Alert, FeelingLog, HealthReport, OrthosisPlan, Patient } from '@bracesync/shared-types'
+import type { Advice, Alert, FeelingLog, HealthReport, Patient } from '@bracesync/shared-types'
 import {
   fetchPatients, fetchPatientDetail, fetchTeams, fetchAlerts, fetchSystemSettings,
-  fetchOrthosisPlans, saveOrthosisPlanApi,
   fetchFeelingLogs, fetchFeelingLogsAdmin, fetchPatientDailyWear, fetchHealthReports, replyFeelingLogApi,
   fetchPatientAdvice, sendAdviceApi, updateAdviceApi, deleteAdviceApi,
   patientNameOf, teamNameOf,
@@ -392,7 +372,6 @@ import {
 } from '../../utils/workbenchData'
 import { persistUnit, readStoredUnit } from '../../utils/unitPref'
 import { formatCstDateTime } from '../../utils/formatTime'
-import { canSaveOrthosisPlan, DOCTOR_ONLY_HINT } from '../../utils/doctorOnlyAccess'
 import { useAuthStore } from '../../stores/auth'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler)
@@ -401,12 +380,10 @@ const auth = useAuthStore()
 const viewMode = ref<'logs' | 'workspace'>('logs')
 const patients = ref<Patient[]>([])
 const patientId = ref('')
-const activeTab = ref('plans')
-const plans = ref<OrthosisPlan[]>([])
+// T660：「矫形方案」tab 下架后，内层默认落首枚 tab「佩戴感受」
+const activeTab = ref('feelings')
 const feelings = ref<FeelingLog[]>([])
 const reports = ref<HealthReport[]>([])
-const newPlanContent = ref('')
-const savingPlan = ref(false)
 const replyDrafts = ref<Record<string, string>>({})
 const replyingId = ref<string | null>(null)
 
@@ -530,12 +507,11 @@ async function loadPatientData() {
   advices.value = []
   if (!patientId.value) return
   try {
-    const [plansRes, feelingsRes, reportsRes] = await Promise.all([
-      fetchOrthosisPlans(patientId.value),
+    // T660：矫形方案 tab 下架，不再拉 orthosis plans（后端端点保留，仅前端无消费入口）
+    const [feelingsRes, reportsRes] = await Promise.all([
       fetchFeelingLogs(patientId.value),
       fetchHealthReports(patientId.value),
     ])
-    plans.value = plansRes
     feelings.value = feelingsRes
     reports.value = reportsRes
   } catch (e: unknown) {
@@ -744,14 +720,13 @@ function processStatusType(status: string): 'warning' | 'primary' | 'success' {
 }
 
 /**
- * T641：工具栏那颗「发送建议给患者」由占位换成真写（稿面 §四 要点 1「按钮位置不动、语义变实」）。
- * 它与撰写区的「发送」共用同一份草稿、同一个写路径（doSendAdvice）——两处各写一遍发送逻辑必漂。
- * 草稿为空时不静默失败：切到撰写区并提示。
+ * 撰写区「发送」的处理（T660 后唯一发送入口：工具栏那颗「发送建议给患者」已移除）。
+ * 按钮自身 :disabled 已挡住空草稿；空分支为双保险，提示文案用现 tab 名「康复建议」。
  */
 async function sendAdvice() {
   if (!adviceDraft.value.trim()) {
     activeTab.value = 'advice'
-    ElMessage.info('请先在「医护建议」页填写要发给患者的话')
+    ElMessage.info('请先在「康复建议」页填写要发给患者的话')
     return
   }
   await doSendAdvice()
@@ -831,26 +806,7 @@ async function loadAdvice() {
   }
 }
 
-async function savePlan() {
-  // T629 方案C：后端 savePlan 要医生身份，非医生这一枪必 403，而 10403 查表只得通用句
-  // 「没有该操作的权限，请联系管理员」。按钮保留可用（Boss 裁「不动权限矩阵」），点击时
-  // 就地说明「仅医生开放」并阻止请求发起；判据见 utils/doctorOnlyAccess.ts。
-  if (!canSaveOrthosisPlan(auth.role)) {
-    ElMessage.warning(DOCTOR_ONLY_HINT)
-    return
-  }
-  savingPlan.value = true
-  try {
-    const saved = await saveOrthosisPlanApi(patientId.value, newPlanContent.value.trim())
-    if (saved) plans.value = [saved, ...plans.value]
-    newPlanContent.value = ''
-    ElMessage.success('方案已保存')
-  } catch (e: unknown) {
-    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
-  } finally {
-    savingPlan.value = false
-  }
-}
+// T660：savePlan 随「矫形方案」tab 一并下架（后端保存端点保留，仅删前端入口与函数）
 
 // T247 8.3: 医生回复感受日志
 async function submitReply(row: FeelingLog) {
@@ -976,9 +932,6 @@ onMounted(async () => {
   color: #1a6db5;
   font-size: 13px;
   line-height: 1.5;
-}
-.send-advice-btn {
-  margin-left: auto;
 }
 .advice-content {
   white-space: pre-wrap;
