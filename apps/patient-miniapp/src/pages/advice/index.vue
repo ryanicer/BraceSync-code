@@ -14,22 +14,23 @@
       <view v-else-if="team.length === 0" class="card state-card">
         <text class="state-text">尚未绑定医护团队</text>
       </view>
-      <view v-else class="card team-card">
-        <!-- 团队可以有第二枚以上在职医生（SQL 按团队逐医生出行），故键带下标，不只按角色 -->
-        <view v-for="(member, idx) in team" :key="member.memberType + '-' + idx" class="team-row">
-          <view :class="['team-role', member.memberType === 'technician' ? 'team-role-tech' : 'team-role-doctor']">
-            <text>{{ careTeamRoleLabel(member.memberType) }}</text>
+      <view v-else class="card team-strip">
+        <!-- T659 按稿 advice.html:45-63：横排单行，每成员一列＝装饰 emoji 圆头像（角色+底色承担，
+             无文字角色标签、无姓名）＋下方职称；团队可有多枚在职医生（SQL 逐医生出行），故键带下标 -->
+        <view v-for="(member, idx) in team" :key="member.memberType + '-' + idx" class="team-member">
+          <view :class="['team-avatar', member.memberType === 'technician' ? 'team-avatar-tech' : 'team-avatar-doctor']">
+            <text class="team-avatar-emoji">{{ careTeamAvatar(member.memberType) }}</text>
           </view>
-          <text :class="['team-title', { 'team-title-empty': isPlaceholderTitle(member) }]">
+          <text :class="['team-title', { 'team-title-tech': member.memberType === 'technician' }]">
             {{ careTeamTitleLabel(member) }}
           </text>
         </view>
       </view>
     </view>
 
-    <!-- ===== 区块②：建议时间轴（倒序由后端保证；默认摘要一行，点击展开全文；稿面 :65-101）===== -->
+    <!-- ===== 区块②：建议时间轴（倒序由后端保证；摘要 CSS 两行截断、点击展开全文；稿面 :66-104）===== -->
     <view class="section">
-      <text class="section-title">医护建议</text>
+      <text class="section-title">康复建议</text>
 
       <view v-if="listLoading" class="card state-card">
         <text class="state-text">加载中...</text>
@@ -50,10 +51,12 @@
           @click="toggleExpand(item.adviceId)"
         >
           <text class="advice-meta">{{ adviceMetaLabel(item) }}</text>
+          <!-- T659 按稿：摘要恒渲染原文，两行截断交给 CSS line-clamp；展开显全文 -->
           <text v-if="expanded[item.adviceId]" class="advice-full">{{ item.content }}</text>
-          <text v-else class="advice-summary">{{ excerpt(item).text }}</text>
-          <!-- 稿面 advice.html:170 toggleAdvice：本页唯一的点击行为，纯前端展示切换，不落服务端、不产生已读态 -->
-          <text v-if="excerpt(item).expandable" class="advice-toggle">
+          <text v-else class="advice-summary">{{ item.content }}</text>
+          <!-- 稿面 advice.html:71-97 四条（含短正文）均恒显展开控件；本页唯一点击行为，
+               纯前端展示切换，不落服务端、不产生已读态 -->
+          <text class="advice-toggle">
             {{ expanded[item.adviceId] ? '收起 ▴' : '展开全文 ▾' }}
           </text>
         </view>
@@ -88,9 +91,7 @@ import { userErrorCopy } from '@bracesync/shared-utils'
 import type { Advice, CareTeamMember } from '@bracesync/shared-types'
 import { getCareTeam, listPatientAdvice } from '../../api/advice'
 import { useAuthStore } from '../../stores/auth'
-import {
-  adviceExcerpt, adviceMetaLabel, careTeamRoleLabel, careTeamTitleLabel, CARE_TEAM_TITLE_PLACEHOLDER,
-} from '../../utils/advice'
+import { adviceMetaLabel, careTeamAvatar, careTeamTitleLabel } from '../../utils/advice'
 
 const auth = useAuthStore()
 
@@ -104,14 +105,6 @@ const listError = ref('')
 
 /** adviceId → 是否展开全文；键存在与否即展开态，收起时删键（不留 false 那种「记得我折过」的状态） */
 const expanded = reactive<Record<string, boolean>>({})
-
-function excerpt(item: Advice) {
-  return adviceExcerpt(item.content)
-}
-
-function isPlaceholderTitle(member: CareTeamMember): boolean {
-  return careTeamTitleLabel(member) === CARE_TEAM_TITLE_PLACEHOLDER
-}
 
 function toggleExpand(adviceId: string) {
   if (expanded[adviceId]) {
@@ -199,38 +192,47 @@ onMounted(() => {
   color: #9ca3af;
 }
 
-/* 稿面 app-team-card / app-team-row：一行两列，行间细分隔线 */
-.team-row {
+/* T659 按稿 app-team-strip：横排单行，每成员一列＝圆头像 + 下方职称（advice.html:186-192） */
+.team-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+  padding: 28rpx 20rpx;
+}
+.team-member {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12rpx;
+  min-width: 0;
+}
+.team-avatar {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
   display: flex;
   align-items: center;
-  gap: 20rpx;
-  padding: 24rpx 0;
-}
-.team-row + .team-row {
-  border-top: 1rpx solid #f1f5f9;
-}
-.team-role {
-  padding: 4rpx 16rpx;
-  border-radius: 24rpx;
+  justify-content: center;
   flex-shrink: 0;
-  text {
-    font-size: 20rpx;
-  }
 }
-.team-role-doctor {
+.team-avatar-emoji {
+  font-size: 40rpx;
+  line-height: 1;
+}
+.team-avatar-doctor {
   background: #dbeafe;
-  text { color: #2563EB; }
 }
-.team-role-tech {
+.team-avatar-tech {
   background: #f1f5f9;
-  text { color: #64748b; }
 }
 .team-title {
-  font-size: 28rpx;
+  font-size: 24rpx;
   color: #1e293b;
+  white-space: nowrap;
 }
-.team-title-empty {
-  color: #cbd5e1;
+.team-title-tech {
+  color: #64748b;
 }
 
 /* 稿面 app-timeline：左侧竖线 + 每枚圆点；小程序里用容器边框与条目 ::before 画同一形状 */
@@ -277,6 +279,11 @@ onMounted(() => {
   font-size: 26rpx;
   color: #475569;
   line-height: 1.6;
+  /* T659 按稿 advice.html:201：两行截断（视觉截断，不做 JS 字符切；展开看全文） */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .advice-full {
   font-size: 26rpx;
