@@ -208,3 +208,42 @@ export function issueNodeIds(result: ValidateResult): string[] {
   }
   return [...ids]
 }
+
+/**
+ * T663：游离节点 = 不与任何一条边相连的节点（无入边且无出边）。
+ *
+ * 背景（Boss 2026-10-11 亲测，T663 卡面）：新建模板拖入「触发-处理-处理-归档」并全部连线后，
+ * 模型里多出一个画布不可见的第 5 节点（创建拖拽中断/画布与模型不同步遗留），保存被 V5+V6 拦下，
+ * 用户看不见也选不中、无法手动删除，只能整模板重建。
+ *
+ * 边界：trigger 永不列入——它是法定唯一起点，空主图的对错继续由 V2/V3/V9 判；
+ * 本函数只「识别」，不改图，删除动作归调用方（LogicFlow deleteNode 会级联删边）。
+ */
+export function detachedNodeIds(graph: RawGraph): string[] {
+  const nodes = graph.nodes ?? []
+  const edges = graph.edges ?? []
+  const linked = new Set<string>()
+  for (const e of edges) {
+    linked.add(e.sourceNodeId)
+    linked.add(e.targetNodeId)
+  }
+  return nodes.filter((n) => !linked.has(n.id) && kindOfNode(n) !== 'trigger').map((n) => n.id)
+}
+
+/**
+ * T663：当前 error 是否「全部且仅」由游离节点造成。
+ *
+ * 只有这种形态才允许「一键清理游离节点后保存」：删掉这些无边节点后 V5/V6 必然消失；
+ * 而环（V4）、悬空边（V13）、判断节点分支缺失（V7）、多触发（V3）等真错误一个都不许被掩盖，
+ * 结构校验的守卫口径零放宽——T663 处置的是「画布与模型不同步的脏数据」，不是放宽流程合法性。
+ */
+export function isDetachedOnlyFailure(result: ValidateResult, graph: RawGraph): boolean {
+  if (!result.errors.length) return false
+  const detached = new Set(detachedNodeIds(graph))
+  if (!detached.size) return false
+  const CLEANABLE = new Set<IssueCode>(['V5_UNREACHABLE', 'V6_NO_OUTGOING'])
+  return result.errors.every((iss) => {
+    if (!CLEANABLE.has(iss.code) || !iss.nodeIds?.length) return false
+    return iss.nodeIds.every((id) => detached.has(id))
+  })
+}
