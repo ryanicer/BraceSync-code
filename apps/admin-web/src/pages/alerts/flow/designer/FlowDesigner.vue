@@ -94,7 +94,7 @@ import {
   emptyForm, formFromProps, graphCount, kindOf, nodeName, paletteItems, reshapeProps,
   deserializeGraph, serializeGraph, type FlowKind, type NodeForm, type RawGraph, type RawNode,
 } from './kinds'
-import { issueNodeIds, validateGraph, type Issue } from './validateGraph'
+import { detachedNodeIds, isDetachedOnlyFailure, issueNodeIds, validateGraph, type Issue } from './validateGraph'
 import NodePropsPanel from './NodePropsPanel.vue'
 
 const canvasRef = ref<HTMLDivElement | null>(null)
@@ -399,6 +399,27 @@ async function saveTemplate() {
   issues.value = [...result.errors, ...result.warnings]
   markInvalid(issueNodeIds(result))
   if (result.errors.length) {
+    // T663：错误全部且仅由游离节点（无任何连线、画布上可能不可见的拖拽/删除遗留）造成时，
+    // 给「清理并保存」出口，不再逼用户整模板重建；其余结构错误维持硬拦截（守卫不放宽）。
+    const detached = detachedNodeIds(graphData())
+    if (isDetachedOnlyFailure(result, graphData())) {
+      try {
+        await ElMessageBox.confirm(
+          `检测到 ${detached.length} 个未与任何连线相连的游离节点（多由拖拽中断遗留，画布上可能不可见）。`
+          + '清理这些节点不影响已连成的主流程，清理后自动保存。',
+          `清理 ${detached.length} 个游离节点并保存？`,
+          { type: 'warning', confirmButtonText: '清理并保存', cancelButtonText: '返回' },
+        )
+      } catch {
+        return
+      }
+      // LogicFlow deleteNode 模型级联（先删 source/target 边再删节点，2.2.5 GraphModel.deleteNode）
+      for (const id of detached) lf.deleteNode(id)
+      clearIssues()
+      refreshCount()
+      // 重走完整校验与保存：游离点已清空故不会再进本分支（不递归）；藏着的真错误这一轮照常硬拦
+      return saveTemplate()
+    }
     ElMessage.error(`结构校验未通过：${result.errors.length} 处错误已在画布标红，右栏问题清单可点选定位`)
     return
   }
