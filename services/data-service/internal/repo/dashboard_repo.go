@@ -154,9 +154,9 @@ WITH sp AS (
   SELECT patient_id FROM patients WHERE $4::bool = FALSE OR team_id = $5::text
 )
 SELECT COUNT(*) FILTER (WHERE max_pressure > $3)::int AS wearing_frames,
-       COALESCE(EXTRACT(EPOCH FROM (
+       COALESCE((EXTRACT(EPOCH FROM (
          MAX(ts) FILTER (WHERE max_pressure > $3) - MIN(ts) FILTER (WHERE max_pressure > $3)
-       )))::float8 AS wear_span_seconds
+       )))::float8, 0) AS wear_span_seconds
 FROM pressure_records
 WHERE patient_id IN (SELECT patient_id FROM sp)
   AND ts >= $1 AND ts < $2
