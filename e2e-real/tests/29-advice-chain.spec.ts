@@ -22,11 +22,11 @@ import { realLogin, getAuthToken } from '../real-helpers'
  *   - 教训锚（T641 写腿 run3-scope.txt）：患者现网 teamId 可能被历轮测试改派（P20260005
  *     已不在 seed 的 TEAM03），所以患者不许写死，必须动态按 doctor_li 的团队解析。
  *
- * 生产零写：入口守卫照抄 22 号（命中生产域名/IP 直接抛）。
+ * 生产零写：入口守卫命中生产域名直接抛（生产针 = api.hbksd.com.cn；TST 基址 49.235.137.217 放行，口径同 PR382）。
  */
 
 const ENTRY = process.env.E2E_STAGING_URL ?? 'http://localhost:2080'
-if (/api\.hbksd\.com\.cn|49\.235\.137\.217/.test(ENTRY)) {
+if (/api\.hbksd\.com\.cn/.test(ENTRY)) { // 49.235.137.217 自 2026-10-11 起为 TST（Boss 口径，TST dispatch 由本链承运）；生产针保留 api.hbksd.com.cn。合序说明：本件随 PR380 合入时照抄了 22 号旧姿势，晚于 PR382 摘 IP，成了 main 唯一残留（alex 20261011-1734 escalation 指认），本笔对齐 382 同款。
   throw new Error(`T654 advice 全链命中生产入口，红线拒绝：${ENTRY}`)
 }
 
