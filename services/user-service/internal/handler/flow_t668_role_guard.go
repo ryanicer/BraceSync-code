@@ -15,10 +15,8 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 )
 
-// flowAssigneeRoleProp T653 设计器落库键（apps/admin-web/.../designer/kinds.ts:199）。
-const flowAssigneeRoleProp = "assigneeRole"
-
 // flowGraphNodeProps 只取执法要读的属性；其余业务属性后端仍不解析（迁移 000020 口径不变）。
+// JSON 键 "assigneeRole" = T653 设计器落库键（apps/admin-web/.../designer/kinds.ts:199）。
 type flowGraphNodeProps struct {
 	AssigneeRole string `json:"assigneeRole"`
 }
@@ -38,13 +36,9 @@ var flowNodeRoleMembers = map[string]map[string]bool{
 	"系统自动": {},
 }
 
-// X-Role 网关实际词形（services/gateway/cmd/server/rbac.go:42-45；技师登录签发小写 technician）。
-const (
-	flowXRoleAdmin  = "ROLE_ADMIN"
-	flowXRoleDoctor = "ROLE_DOCTOR"
-	flowXRoleCs     = "ROLE_CS"
-	flowXRoleTech   = "technician"
-)
+// flowXRoleAdmin 管理员角色头（网关 X-Role 词形见 services/gateway/cmd/server/rbac.go:42-45；
+// 技师为小写 technician、医生/客服为 ROLE_DOCTOR/ROLE_CS——非 admin 角色经 normalizeFlowXRole 归一比较）。
+const flowXRoleAdmin = "ROLE_ADMIN"
 
 // normalizeFlowXRole 把 X-Role 归一为比较形：去 ROLE_ 前缀、转小写。
 // 同时兼容历史混形（staffRoles 表里 admin 与 ROLE_ADMIN 并存）。
@@ -64,8 +58,8 @@ func flowNodeAllowsRole(configuredRole, xRole string) bool {
 	if cfg == "" {
 		return true
 	}
-	// 码值形（ROLE_ADMIN/ROLE_DOCTOR/ROLE_CS/technician）直接归一比对。
-	if strings.HasPrefix(strings.ToUpper(cfg), "ROLE_") || cfg == flowXRoleTech {
+	// 码值形（ROLE_ADMIN/ROLE_DOCTOR/ROLE_CS 或技师登录的小写 technician）直接归一比对。
+	if strings.HasPrefix(strings.ToUpper(cfg), "ROLE_") || cfg == "technician" {
 		return normalizeFlowXRole(cfg) == normalizeFlowXRole(xRole)
 	}
 	if members, ok := flowNodeRoleMembers[cfg]; ok {

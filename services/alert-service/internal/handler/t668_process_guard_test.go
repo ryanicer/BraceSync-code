@@ -29,12 +29,6 @@ func (g *t668FakeGuard) CheckProcess(_ context.Context, alertID int64, operatorI
 	return g.d, g.err
 }
 
-func t668GuardedHandler(g flowstarter.Guard) *Handler {
-	h := newPublicHandler(&fakePublicStore{exists: true})
-	h.SetProcessGuard(g)
-	return h
-}
-
 func t668Do(h *Handler, path, role string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, path, nil)
