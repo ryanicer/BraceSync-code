@@ -267,6 +267,33 @@ test.describe('告警规则配置（T253-2.2）', () => {
     await page.getByRole('button', { name: '保存全局规则' }).click()
     await expect(adminMessage(page)).toContainText('全局规则保存成功')
   })
+
+  // T667：设备离线阈值下限 = 2× 采集间隔（mock 采集间隔 60s=1 分钟，硬下限 10 取大）
+  test('设备离线阈值与采集间隔联动：hint 自曝边界，输入框 min 动态为 10', async ({ page }) => {
+    const globalCard = page.locator('.page-card').filter({ hasText: '全局告警规则' })
+    const hint = globalCard.locator('.global-rule-hint')
+    await expect(hint).toBeVisible()
+    await expect(hint).toContainText('当前采集间隔 1 分钟')
+    await expect(hint).toContainText('下限 10 分钟')
+    await expect(hint).toContainText('[10,720]')
+    await expect(hint).toContainText('系统配置')
+    // el-input-number 的 min 与后端硬下限一致（不再是旧的 1）
+    const offlineInput = globalCard.locator('.config-row').filter({ hasText: '设备离线阈值' }).locator('input').first()
+    await expect(offlineInput).toHaveAttribute('min', '10')
+  })
+
+  // T667：低于联动下限的值在失焦时即被 el-input-number 钳到动态 min（源头不给填非法值，不产生 400 往返）
+  test('设备离线阈值填 3 失焦即钳到下限 10，保存按 10 成功', async ({ page }) => {
+    const globalCard = page.locator('.page-card').filter({ hasText: '全局告警规则' })
+    // 等采集间隔加载完（mock 60s=1 分钟 → 下限 10），避免与设置请求的竞态
+    await expect(globalCard.locator('.global-rule-hint')).toContainText('当前采集间隔 1 分钟')
+    const offlineInput = globalCard.locator('.config-row').filter({ hasText: '设备离线阈值' }).locator('input').first()
+    await offlineInput.fill('3')
+    await offlineInput.blur()
+    await expect(offlineInput).toHaveValue('10')
+    await page.getByRole('button', { name: '保存全局规则' }).click()
+    await expect(adminMessage(page)).toContainText('全局规则保存成功')
+  })
 })
 
 /**

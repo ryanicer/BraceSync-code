@@ -166,9 +166,22 @@
           <div class="card-title">全局告警规则</div>
           <div class="config-row">
             <span class="config-label">设备离线阈值</span>
-            <el-input-number v-model="globalRules.deviceOfflineMinutes" :min="1" :max="1440" :precision="0" controls-position="right" />
+            <el-input-number
+              v-model="globalRules.deviceOfflineMinutes"
+              :min="deviceOfflineMinMinutes"
+              :max="720"
+              :precision="0"
+              controls-position="right"
+            />
             <span class="unit">分钟</span>
           </div>
+          <!-- T667：后端链式校验下限 = 2× 数据采集间隔（user-service alert_rules_t252.go），
+               旧 UI 写死 min=1，Boss 填 3/10 被后端 400 拦却只看到通用文案。源头联动 + 数值自曝。 -->
+          <p v-if="collectIntervalMinutes !== null" class="global-rule-hint">
+            下限 = 2 × 数据采集间隔（当前采集间隔 {{ collectIntervalMinutes }} 分钟，下限 {{ deviceOfflineMinMinutes }} 分钟；
+            量程 [10,720]）。如需更低，请先到「系统配置」页调低数据采集间隔。
+          </p>
+          <p v-else class="global-rule-hint">正在读取数据采集间隔以计算设备离线阈值下限（量程 [10,720]）…</p>
           <div class="config-row">
             <span class="config-label">佩戴时长下限</span>
             <el-input-number v-model="globalRules.dailyWearMinHours" :min="1" :max="24" :precision="1" controls-position="right" />
@@ -248,6 +261,7 @@ import { alertTypeLabel, formatAlertValue, isHiddenAlertType, userErrorCopy } fr
 import {
   fetchAlerts, processAlertApi, startProcessingAlertApi, patientNameOf,
   fetchAlertRules, saveAlertPointRulesApi, resetAlertPointRulesApi, saveAlertGlobalRulesApi,
+  fetchSystemSettings,
 } from '../../api'
 import type { AlertPointRule, AlertGlobalRules } from '../../mock/alerts'
 import { useAuthStore } from '../../stores/auth'
@@ -379,6 +393,12 @@ const rules = ref<{ unifiedUpperN: number; unifiedLowerN: number; points: AlertP
 const unifiedUpper = ref(45)
 const unifiedLower = ref(10)
 const globalRules = ref<AlertGlobalRules>({ ...rules.value.globalRules })
+// T667：设备离线阈值的链式下限跟随「系统配置」里的数据采集间隔（后端 alert_rules_t252.go：
+// deviceOfflineMinutes 必须 ≥ 2× 采集间隔，且量程 [10,720]）。
+// 起始 null = 尚未读到（与规则同批加载，避免先用缺省 30 渲染出错误下限再闪变）；缺省 30 分钟（§7D.12 1800 秒）。
+const collectIntervalMinutes = ref<number | null>(null)
+/** el-input-number 的 min：加载完成前先按后端硬下限 10；加载后为 max(10, 2× 采集间隔) */
+const deviceOfflineMinMinutes = computed(() => Math.max(10, 2 * (collectIntervalMinutes.value ?? 5)))
 const pointEditorVisible = ref(false)
 const editing = ref<AlertPointRule | null>(null)
 const editingUpper = ref<number | null>(null)
@@ -394,8 +414,15 @@ async function loadRules() {
   if (!canConfigure.value) return
   rulesLoading.value = true
   try {
-    const res = await fetchAlertRules()
+    const [res, settings] = await Promise.all([
+      fetchAlertRules(),
+      // T667：采集间隔决定设备离线阈值的动态下限；失败不阻塞规则加载（hint 退回 30 分钟缺省）
+      fetchSystemSettings().catch(() => null),
+    ])
     applyRules(res)
+    if (settings?.collectIntervalSeconds) {
+      collectIntervalMinutes.value = Math.round((settings.collectIntervalSeconds / 60) * 100) / 100
+    }
   } catch (e: unknown) {
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '加载告警规则失败' }))
   } finally {
@@ -514,13 +541,32 @@ async function resetRules() {
 }
 
 async function saveGlobalRules() {
+  // T667：前端先做一次与后端同口径的本地拦（2× 采集间隔 / [10,720]），把具体边界直接给在页面上，
+  // 不等 400 往返；后端拒因（链式校验是真相源）仍在 catch 里原文透传，不再只给「提交的信息有误」。
+  if (globalRules.value.deviceOfflineMinutes < deviceOfflineMinMinutes.value
+    || globalRules.value.deviceOfflineMinutes > 720) {
+    ElMessage.error(
+      `设备离线阈值须在 [${deviceOfflineMinMinutes.value},720] 分钟内（= 2 × 采集间隔 ${collectIntervalMinutes.value} 分钟）；`
+      + '如需更低请先到「系统配置」调低采集间隔。',
+    )
+    return
+  }
   savingGlobal.value = true
   try {
     const res = await saveAlertGlobalRulesApi({ ...globalRules.value })
     applyRules(res)
     ElMessage.success('全局规则保存成功')
   } catch (e: unknown) {
-    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
+    // request.ts 抛出的 Error.message 即后端信封原文（如 "deviceOfflineMinutes must be >= 2x collect interval (60)"）
+    const raw = e instanceof Error ? e.message : ''
+    ElMessageBox.alert(
+      (raw ? `服务端拒因：${raw}` : userErrorCopy(e, { scope: 'admin', fallback: '保存失败' }))
+        + '\n\n设备离线阈值的下限 = 2 × 数据采集间隔'
+        + `（当前采集间隔 ${collectIntervalMinutes.value} 分钟，下限 ${deviceOfflineMinMinutes.value} 分钟，量程 [10,720]）；`
+        + '如需更低，请先到「系统配置」页调低数据采集间隔后再保存。',
+      '全局告警规则未保存',
+      { type: 'error', confirmButtonText: '知道了' },
+    ).catch(() => { /* 用户关闭弹框，无后续动作 */ })
   } finally {
     savingGlobal.value = false
   }
@@ -705,5 +751,14 @@ onMounted(() => {
 .flow-empty {
   font-size: 13px;
   color: #666;
+}
+.global-rule-hint {
+  margin: -2px 0 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
+  background: #f4f6f9;
+  border-radius: 4px;
 }
 </style>
