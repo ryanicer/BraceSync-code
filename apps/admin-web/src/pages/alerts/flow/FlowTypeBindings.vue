@@ -1,5 +1,6 @@
 <template>
-  <!-- T653 Tab4 顶部：告警类型 ↔ 流程模板绑定（仅 admin 可见，父级 v-if canConfigure 已收口） -->
+  <!-- T653 建档、T666 起独立为「流程绑定」Tab（仅 admin 可见，父级 pane v-if canConfigure 收口）。
+       组件在切走 Tab 时被父级 v-if 销毁、切回重新挂载，load() 随之重跑 —— 模板列表恒为进 Tab 时的最新值。 -->
   <div v-loading="loading" class="ftb-card">
     <div class="ftb-head">
       <div class="ftb-title">告警类型 ↔ 流程模板绑定</div>
@@ -29,7 +30,7 @@
       </div>
     </div>
     <div v-if="!templates.length && !loading" class="ftb-no-tpl">
-      尚无流程模板，请先在下方设计器新建并保存。
+      尚无流程模板：请先到「流程配置」Tab 新建并保存模板，再回本 Tab 选择绑定（每次进入本页都会重新拉取模板列表）。
     </div>
     <div class="ftb-actions">
       <el-button type="primary" :loading="saving" :disabled="!changedCount" @click="save">保存绑定</el-button>
