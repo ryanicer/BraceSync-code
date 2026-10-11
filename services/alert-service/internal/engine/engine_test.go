@@ -1,20 +1,22 @@
 // Package engine — 告警规则引擎测试用例（测试先行 / TDD）
 //
-// TDD 说明：
+// 沿革：
 //
 //	本文件包含告警规则引擎的全部测试用例（src: docs/ §3.1 A1-A10）。
-//	当前阶段（T002）用例 **允许红**——RuleEvaluator.Evaluate() 为桩返回 nil。
-//	T003 实现阶段 Winner 将据此使用例转绿，目标 ≥90% 分支覆盖。
+//	T002 阶段用例允许红（Evaluate 为桩），T003 实现后转绿；T257 2.6 摘除压力波动规则，
+//	A3 三条翻为「不再产生波动」门禁；T661 把原 if result != nil 弱断言全部补成实牙，
+//	KNOWN_RED 标记全数清除（A10 降级队列不属 engine 行为，改 t.Skip 并指路实现位置）。
 //
 // 覆盖规则类型：
 //   - 压力偏高 (pressure_high)
-//   - 压力波动 (pressure_fluctuation)
+//   - 压力波动 (pressure_fluctuation)（T257 2.6 起引擎不再产生，本组钉回归）
 //   - 佩戴中断 (wear_interrupt)
-//   - 传感器漂移 (sensor_drift)
+//   - 传感器标定异常 (sensor_drift)
 package engine_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,16 +52,12 @@ func TestA1_PressureHigh_OverThreshold(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil)
 
-	// T002: 桩返回 nil，标记为 KNOWN_RED
-	t.Log("KNOWN_RED (T002): RuleEvaluator.Evaluate() is a stub, returns nil. Expected: AlertType=pressure_high, SensorPoint=P03")
-	_ = result
-	if result != nil {
-		require.NotNil(t, result, "should produce an alert result")
-		assert.Equal(t, engine.TypePressureHigh, result.AlertType)
-		assert.Equal(t, "P03", result.SensorPoint)
-		assert.True(t, result.ShouldAlert)
-		assert.Equal(t, "压力偏高：采集点 P03 压力 47.2N 超阈值 45.0N", result.Message)
-	}
+	// T661：T002 桩期的弱断言补成实牙（T003 早已实现，此处钉死完整契约）
+	require.NotNil(t, result, "should produce an alert result")
+	assert.Equal(t, engine.TypePressureHigh, result.AlertType)
+	assert.Equal(t, "P03", result.SensorPoint)
+	assert.True(t, result.ShouldAlert)
+	assert.Equal(t, "压力偏高：采集点 P03 压力 47.2N 超阈值 45.0N", result.Message)
 }
 
 // A1-Boundary: 临界值 45.0N（等于阈值不触发——严格大于）
@@ -81,11 +79,7 @@ func TestA2_PressureHigh_AtBoundary(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil)
 
-	t.Log("KNOWN_RED: expected ShouldAlert=false for exactly-at-boundary 45.0N")
-	_ = result
-	if result != nil {
-		assert.False(t, result.ShouldAlert, "exactly 45.0N should NOT trigger (> 严格大于)")
-	}
+	assert.Nil(t, result, "exactly 45.0N should NOT trigger (> 严格大于)")
 }
 
 // A1-Boundary: 压力 44.9N（低于阈值不触发）
@@ -106,11 +100,7 @@ func TestPressureHigh_BelowThreshold(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil)
 
-	t.Log("KNOWN_RED: expected ShouldAlert=false for below-threshold 44.9N")
-	_ = result
-	if result != nil {
-		assert.False(t, result.ShouldAlert)
-	}
+	assert.Nil(t, result, "below-threshold 44.9N should NOT trigger")
 }
 
 // A1-Edge: 多传感器点同时超阈值（取最大值）
@@ -133,15 +123,13 @@ func TestPressureHigh_MultiplePointsOverThreshold(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil)
 
-	t.Log("KNOWN_RED: multiple points exceeded, should report the max (P06=50.1N)")
-	_ = result
-	if result != nil {
-		assert.Equal(t, "P06", result.SensorPoint, "should report the point with highest pressure")
-	}
+	require.NotNil(t, result, "multiple points over threshold should still produce one result")
+	assert.Equal(t, engine.TypePressureHigh, result.AlertType)
+	assert.Equal(t, "P06", result.SensorPoint, "should report the point with highest pressure")
 }
 
 // ============================================================
-// A3: 压力波动 — 相邻帧变化 >30%
+// A3: 压力波动 — T257 2.6（方案A）起规则已从引擎摘除，本组翻为「不再产生」回归门禁。
 // ============================================================
 func TestA3_PressureFluctuation_OverThreshold(t *testing.T) {
 	evaluator := &engine.RuleEvaluator{
@@ -169,13 +157,9 @@ func TestA3_PressureFluctuation_OverThreshold(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, prevFrame)
 
-	t.Log("KNOWN_RED: expected AlertType=pressure_fluctuation for +50% change at P03")
-	_ = result
-	if result != nil {
-		require.NotNil(t, result)
-		assert.Equal(t, engine.TypePressureFluctuation, result.AlertType)
-		assert.True(t, result.ShouldAlert)
-	}
+	// T257 2.6：+50% 跳变也不再产生 pressure_fluctuation（规则已摘除）；
+	// 30N 低于压力偏高阈值 45N，故整帧无命中。
+	assert.Nil(t, result)
 }
 
 // A3-Boundary: 变化刚好 30%（非严格大于，边界行为）
@@ -196,11 +180,8 @@ func TestA3_PressureFluctuation_AtBoundary(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, prevFrame)
 
-	t.Log("KNOWN_RED: 30% exact boundary — behavior TBD (should not trigger if > strict)")
-	_ = result
-	if result != nil {
-		assert.False(t, result.ShouldAlert, "exactly 30% should NOT trigger if > strict")
-	}
+	// T257 2.6：规则已摘除，30% 边界帧同样无任何命中
+	assert.Nil(t, result)
 }
 
 // A3-NoPrev: 无前一帧时不评估波动
@@ -218,15 +199,13 @@ func TestPressureFluctuation_NoPreviousFrame(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil) // prevFrame = nil
 
-	t.Log("KNOWN_RED: no previous frame, fluctuation check should be skipped")
-	_ = result
-	if result != nil && result.AlertType == engine.TypePressureFluctuation {
-		t.Error("should NOT trigger fluctuation without previous frame")
-	}
+	// T257 2.6：无前一帧且本帧空载零读数（其余规则均未启用）→ 无命中
+	assert.Nil(t, result)
 }
 
 // ============================================================
-// A4: 传感器漂移 — 空载偏移 >2.8N
+// A4: 传感器标定异常 — 空载读数 |p| 严格大于阈值（T661 起双向对称容差）
+// 本组用显式 2.8N 构造，钉「判定形状与阈值取值无关」；生产默认 0.3N 另见 t661/t625 组。
 // ============================================================
 func TestA4_SensorDrift_OverThreshold(t *testing.T) {
 	evaluator := &engine.RuleEvaluator{
@@ -246,14 +225,16 @@ func TestA4_SensorDrift_OverThreshold(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil)
 
-	t.Log("KNOWN_RED: expected AlertType=sensor_drift, notify tech+ops")
-	_ = result
-	if result != nil {
-		require.NotNil(t, result)
-		assert.Equal(t, engine.TypeSensorDrift, result.AlertType)
-		assert.Equal(t, "P08", result.SensorPoint)
-		assert.True(t, result.ShouldAlert)
-	}
+	// T661：正向越界文案钉死（漂移超标；前缀仍是「传感器标定异常：」）
+	require.NotNil(t, result)
+	assert.True(t, result.ShouldAlert)
+	assert.Equal(t, engine.TypeSensorDrift, result.AlertType)
+	assert.Equal(t, "P08", result.SensorPoint)
+	assert.InDelta(t, 3.5, result.ActualValue, 0.001)
+	assert.InDelta(t, 2.8, result.ThresholdValue, 0.001)
+	assert.Equal(t, "medium", result.Severity)
+	assert.Equal(t, "传感器标定异常：空载采集点 P08 读数 3.5N 超阈值 2.8N（漂移超标），通知技师+运营",
+		result.Message)
 }
 
 // A4-Boundary: 空载时偏移刚好 2.8N
@@ -273,21 +254,18 @@ func TestSensorDrift_AtBoundary(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil)
 
-	t.Log("KNOWN_RED: exactly 2.8N boundary — should NOT trigger if > strict")
-	_ = result
-	if result != nil {
-		assert.False(t, result.ShouldAlert)
-	}
+	assert.Nil(t, result, "exactly 2.8N boundary should NOT trigger (|p| > 阈值 严格大于)")
 }
 
-// A4-Negative: 传感器负值异常
+// A4-Negative: 负向越界（应力释放异常）——T661 双向对称容差口径。
+// 用生产阈值 0.3N：-1.0N 幅值越界，必须告警且走负向文案。
 func TestSensorDrift_NegativeSensorValue(t *testing.T) {
 	evaluator := &engine.RuleEvaluator{
-		SensorDriftThreshold: 2.8,
+		SensorDriftThreshold: 0.3,
 	}
 
 	pressures := [20]float64{}
-	pressures[7] = -1.0 // 负值传感器故障
+	pressures[7] = -1.0 // 应力释放导致的大幅负偏（超容差，需重新校准）
 	frame := engine.PressureFrame{
 		DeviceID:  "DEV001",
 		Timestamp: time.Now(),
@@ -297,11 +275,54 @@ func TestSensorDrift_NegativeSensorValue(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil)
 
-	t.Log("KNOWN_RED: negative sensor value — should trigger sensor_drift or device_fault")
-	_ = result
-	if result != nil {
-		assert.True(t, result.ShouldAlert)
+	require.NotNil(t, result, "负向幅值超容差必须告警")
+	assert.True(t, result.ShouldAlert)
+	assert.Equal(t, engine.TypeSensorDrift, result.AlertType)
+	assert.Equal(t, "P08", result.SensorPoint)
+	assert.InDelta(t, -1.0, result.ActualValue, 0.001)
+	assert.InDelta(t, 0.3, result.ThresholdValue, 0.001)
+	assert.Contains(t, result.Message, "应力释放异常", "负向文案须区分物理含义，实测：%q", result.Message)
+	assert.Contains(t, result.Message, "建议检查佩戴或考虑重新校准")
+	assert.True(t, strings.HasPrefix(result.Message, "传感器标定异常："), "前缀门禁（T419）不破")
+}
+
+// A4-Negative-WithinTolerance: 容差带内负偏不告警（Boss 物理模型：应力释放的正常负偏）。
+// 现网分布（T661 前置 SELECT）：36 条负值样本中 34 条 |p| ≤ 0.2536N，0.3N 容差下止报。
+func TestSensorDrift_SmallNegativeWithinTolerance(t *testing.T) {
+	evaluator := &engine.RuleEvaluator{
+		SensorDriftThreshold: 0.3,
 	}
+
+	for _, v := range []float64{-0.1, -0.2536} {
+		pressures := [20]float64{}
+		pressures[7] = v
+		frame := engine.PressureFrame{
+			DeviceID:  "DEV001",
+			Timestamp: time.Now(),
+			Pressures: pressures,
+			Wearing:   false,
+		}
+		assert.Nil(t, evaluator.Evaluate(frame, nil),
+			"容差带内负偏 %.4fN 是合理物理现象，不得告警", v)
+	}
+}
+
+// A4-Negative-Boundary: -0.3 恰在边界（|p| == 阈值）不触发，与正向边界同口径。
+func TestSensorDrift_NegativeAtBoundary(t *testing.T) {
+	evaluator := &engine.RuleEvaluator{
+		SensorDriftThreshold: 0.3,
+	}
+
+	pressures := [20]float64{}
+	pressures[7] = -0.3
+	frame := engine.PressureFrame{
+		DeviceID:  "DEV001",
+		Timestamp: time.Now(),
+		Pressures: pressures,
+		Wearing:   false,
+	}
+
+	assert.Nil(t, evaluator.Evaluate(frame, nil))
 }
 
 // ============================================================
@@ -349,11 +370,10 @@ func TestA6_WearInterrupt_ThresholdLinkage(t *testing.T) {
 	assert.Equal(t, 80, requiredMinInterrupt,
 		"wear interrupt threshold must be >= 2× collection interval")
 
-	// 如果中断阈值设为 60min 但采集间隔改为 40min → 拒绝
-	interruptThreshold := 60
-	assert.True(t, interruptThreshold >= requiredMinInterrupt || true,
-		"KNOWN_RED: config validation should reject interrupt=60 when collection=40")
-	_ = interruptThreshold
+	// T661：T002 期的占位假断言删除。60 < 80 这格的拒绝动作不属 engine，
+	// 由 config.ValidateThresholds 承载（纯函数，config 包有专测钉 90712 拒因）。
+	assert.False(t, 60 >= requiredMinInterrupt, "60min 不满足 2×40min，应由配置校验层拒绝")
+	assert.True(t, 80 >= requiredMinInterrupt, "恰好 2× 边界放行（PRD ≥ 语义）")
 }
 
 // ============================================================
@@ -374,14 +394,13 @@ func TestA7_DedupWindow(t *testing.T) {
 		Pressures: pressures,
 	}
 
-	result := evaluator.Evaluate(frame, nil)
+	first := evaluator.Evaluate(frame, nil)
+	require.NotNil(t, first, "首次超阈值应产生告警")
 
-	t.Log("KNOWN_RED: dedup window check — should not alert if same type+device within 30min")
-	_ = result
-	if result != nil {
-		// 实现后：查询最近 30min 内同 device+type 的告警
-		t.Log("would check: SELECT COUNT(*) FROM alerts WHERE device_id=? AND type=? AND ts > now()-30min")
-	}
+	// 10 分钟后同设备同类型再次超阈值 → 30min 窗口内抑制
+	frame.Timestamp = frame.Timestamp.Add(10 * time.Minute)
+	second := evaluator.Evaluate(frame, nil)
+	assert.Nil(t, second, "same type+device within 30min window should be deduplicated")
 }
 
 // A7-Edge: 去重窗口刚好过期（应触发新告警）
@@ -400,10 +419,14 @@ func TestDedupWindow_Expired(t *testing.T) {
 		Pressures: pressures,
 	}
 
-	result := evaluator.Evaluate(frame, nil)
+	first := evaluator.Evaluate(frame, nil)
+	require.NotNil(t, first, "首次超阈值应产生告警")
 
-	t.Log("KNOWN_RED: dedup window expired (31min > 30min), should allow new alert")
-	_ = result
+	// 31 分钟后窗口已过 → 允许新告警（A7-Edge 语义）
+	frame.Timestamp = frame.Timestamp.Add(31 * time.Minute)
+	result := evaluator.Evaluate(frame, nil)
+	require.NotNil(t, result, "dedup window expired (31min > 30min), should allow new alert")
+	assert.True(t, result.ShouldAlert)
 }
 
 // ============================================================
@@ -507,28 +530,18 @@ func TestA9_BackfillSkip(t *testing.T) {
 
 	result := evaluator.Evaluate(frame, nil)
 
-	t.Log("KNOWN_RED: backfill frame should skip real-time alert evaluation")
-	_ = result
-	if result != nil && frame.IsBackfill {
-		assert.False(t, result.ShouldAlert, "backfill frames should not trigger real-time alerts")
-	}
+	// A9：补传帧短路在 EvaluateAll 入口，50N 明显超阈值也不得产生实时告警
+	assert.Nil(t, result, "backfill frames should not trigger real-time alerts")
 }
 
 // ============================================================
 // A10: alert-service 降级 → 帧入 pending 队列
 // ============================================================
 func TestA10_AlertServiceDegradation(t *testing.T) {
-	// 告警服务降级时，帧入 Redis alert:pending 队列，恢复后补偿评估
-	// 此用例验证降级标识与 pending 队列逻辑
-	t.Log("KNOWN_RED: degraded mode — frames should go to alert:pending queue, not lost")
-	t.Log("TODO(T003): implement degraded mode with Redis broker pattern")
-
-	// 时间窗上限：补传帧超过 7 天的应拒绝（数据过期）
-	oldFrame := engine.PressureFrame{
-		DeviceID:   "DEV001",
-		Timestamp:  time.Now().Add(-8 * 24 * time.Hour),
-		IsBackfill: true,
-	}
-	_ = oldFrame
-	t.Log("KNOWN_RED: backfill >7 days old should be rejected")
+	// T661：T002 桩期的 KNOWN_RED 占位清除。降级队列行为从来不属于 engine 包
+	// （引擎只做单帧判定），最终架构落在两处并各有专测：
+	//   - 入队：data-service 内联评估失败时 LPUSH alert:pending（data-service 侧）
+	//   - 补偿：alert-service/internal/consumer.Consumer.DrainOnce（consumer_test 专测）
+	// 故此处显式 Skip 指路，不用无断言空测假装覆盖。
+	t.Skip("A10 行为属 data-service 入队 + alert-service consumer 补偿，engine 包无对应判定可测；见 consumer.Consumer.DrainOnce")
 }

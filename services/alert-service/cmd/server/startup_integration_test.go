@@ -184,8 +184,10 @@ func TestStartupSurvivesImmediateScan(t *testing.T) {
 
 	// 断言走到过阈值注入分支：sys_configs 读失败时该分支被跳过，panic 也不会发生，
 	// 只断言 /healthz 会在 seed/migration 变化后退化成假绿。
-	require.Contains(t, logs.String(), "wearing threshold injected into pending consumer",
-		"启动补跑轮未执行佩戴阈值注入，测试未覆盖缺陷路径，输出:\n%s", logs.String())
+	// T661：启动补跑轮同时注入补偿 consumer 与内联 handler（H 项），日志串含双腿名。
+	require.Contains(t, logs.String(), "wearing threshold injected into inline handler and pending consumer",
+		"启动补跑轮未执行佩戴阈值注入（内联 handler + 补偿 consumer 双腿），测试未覆盖缺陷路径，输出:\n%s",
+		logs.String())
 
 	// 补跑轮之后的持续存活：崩溃（panic 后进程退出）在这里被抓
 	select {
