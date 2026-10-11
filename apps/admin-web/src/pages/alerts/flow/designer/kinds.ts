@@ -166,12 +166,27 @@ export const TIME_UNITS: { value: TimeUnit; label: string }[] = [
   { value: 'hours', label: '小时' },
   { value: 'days', label: '天' },
 ]
+/**
+ * 全量通道枚举（T285 §2.3 落库值域）：formFromProps 的白名单校验与旧数据兼容读继续用本数组，
+ * 一个值都不许删——T664（Boss 2026-10-11 拍板，duty 14:07 口径）只收 UI 可见面，不动枚举与契约。
+ */
 export const NOTIFY_CHANNELS: { value: NotifyChannel; label: string }[] = [
   { value: 'system', label: '系统通知' },
   { value: 'sms', label: '短信' },
   { value: 'email', label: '邮件' },
   { value: 'wechat', label: '微信' },
 ]
+
+/**
+ * T664：节点属性面板「通知方式」当前只开放系统通知。短信/邮件/微信三项下游通道未实现，
+ * UI 隐藏（非删除）：不出可勾选项，但枚举、落库值与旧模板数据全部保留；
+ * 已存模板若带历史通道，formFromProps 仍把它们读进 form、propsFromForm 原样写回（兼容读）。
+ * 未来通道实现后，把对应值加回本数组即可放出，无需动类型与数据。
+ */
+export const VISIBLE_NOTIFY_CHANNELS = NOTIFY_CHANNELS.filter((c) => c.value === 'system')
+
+/** 旧模板里可能读到、但当前 UI 不开放勾选的历史通道（仅供面板只读回显） */
+export const HIDDEN_NOTIFY_CHANNELS = NOTIFY_CHANNELS.filter((c) => !VISIBLE_NOTIFY_CHANNELS.includes(c))
 
 export type TimeUnit = 'minutes' | 'hours' | 'days'
 export type NotifyChannel = 'system' | 'sms' | 'email' | 'wechat'
@@ -194,14 +209,14 @@ export interface NodeForm {
   note: string
 }
 
-/** 设计稿默认值：时限 30 分钟、通知走系统 + 短信 */
+/** 设计稿默认值：时限 30 分钟、通知走系统通知（T664：短信等三通道 UI 隐藏后新节点不再默认携带） */
 export function emptyForm(name = ''): NodeForm {
   return {
     name,
     assigneeRole: '',
     timeLimit: 30,
     timeUnit: 'minutes',
-    channels: ['system', 'sms'],
+    channels: ['system'],
     escalationEnabled: false,
     escalationTargetRole: '',
     expression: '',
