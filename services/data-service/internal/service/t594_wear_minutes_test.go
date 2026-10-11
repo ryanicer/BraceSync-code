@@ -32,8 +32,8 @@ func TestT594StatTodayWearMinutes_SameSourceAsRollup(t *testing.T) {
 			expect: 0,
 		},
 		{
-			name: "两帧跨度 1.5h = 180min（跨度+一个实测帧间隔：5400*2/1/60=180；不看配置间隔）",
-			stats: map[string]string{"wear_frames": "2", "wear_first_ts": "1000", "wear_last_ts": "6400"},
+			name:   "两帧跨度 1.5h = 180min（跨度+一个实测帧间隔：5400*2/1/60=180；不看配置间隔）",
+			stats:  map[string]string{"wear_frames": "2", "wear_first_ts": "1000", "wear_last_ts": "6400"},
 			expect: 180,
 		},
 		{

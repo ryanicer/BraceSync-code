@@ -239,7 +239,12 @@ func TestIT_SingleFrame_IdempotentAndRedisKeys(t *testing.T) {
 
 	stat, err := itRedis.HGetAll(ctx, "stat:today:"+itPatient).Result()
 	require.NoError(t, err)
-	assert.Equal(t, "30", stat["wear_minutes"], "佩戴帧累计一个采集间隔")
+	// T594 甲案：写侧只维护佩戴帧数与首末帧时刻（单帧不构成时长，今日分钟由读侧
+	// WearMinutesFromSpan 现算），不再有 wear_minutes 字段
+	assert.Equal(t, "1", stat["wear_frames"], "单枚佩戴帧计数=1")
+	assert.Equal(t, fmt.Sprintf("%d", ts.Unix()), stat["wear_first_ts"])
+	assert.Equal(t, fmt.Sprintf("%d", ts.Unix()), stat["wear_last_ts"])
+	assert.NotContains(t, stat, "wear_minutes")
 	assert.Equal(t, "32.5", stat["max_pressure"])
 	assert.Equal(t, "P03", stat["max_point"])
 
@@ -256,7 +261,9 @@ func TestIT_SingleFrame_IdempotentAndRedisKeys(t *testing.T) {
 		`SELECT count(*) FROM pressure_records WHERE device_id = $1`, itDevice).Scan(&count))
 	assert.Equal(t, 1, count)
 	stat, _ = itRedis.HGetAll(ctx, "stat:today:"+itPatient).Result()
-	assert.Equal(t, "30", stat["wear_minutes"], "重复帧不得重复累计佩戴分钟")
+	assert.Equal(t, "1", stat["wear_frames"], "重复帧不得重复计数")
+	assert.Equal(t, fmt.Sprintf("%d", ts.Unix()), stat["wear_first_ts"], "重复帧不破坏首末时刻")
+	assert.Equal(t, fmt.Sprintf("%d", ts.Unix()), stat["wear_last_ts"])
 	pendingLen, _ = itRedis.LLen(ctx, "alert:pending").Result()
 	assert.EqualValues(t, 1, pendingLen, "重复帧不重复评估/入队")
 }

@@ -40,22 +40,25 @@ const (
 // C：建档当日无任何帧 ⇒ 不出 GROUP 行（证明不进均值分母）。
 func seedT595LiveToday(ctx context.Context, t *testing.T) {
 	t.Helper()
-	stmts := []string{
-		`INSERT INTO teams (team_id, name) VALUES ('` + t595Team + `', 'T595 IT 科')
-		 ON CONFLICT (team_id) DO NOTHING`,
-		fmt.Sprintf(`INSERT INTO patients (patient_id, name, phone_enc, phone_hash, status, team_id)
-		 VALUES ('%s', 'T595 A', '\x00'::bytea, 't595a' || repeat('0', 59), 'active', '%[1]s'),
-		        ('%s', 'T595 B', '\x00'::bytea, 't595b' || repeat('0', 59), 'active', '%[1]s'),
-		        ('%s', 'T595 C', '\x00'::bytea, 't595c' || repeat('0', 59), 'active', '%[1]s')
-		 ON CONFLICT (patient_id) DO NOTHING`,
-			t595Team, t595PatA, t595PatB, t595PatC),
-		fmt.Sprintf(`INSERT INTO devices (device_id, device_secret_enc, patient_id, status)
-		 VALUES ('%s', '\x00'::bytea, '%s', 'online'),
-		        ('%s', '\x00'::bytea, '%s', 'online')
-		 ON CONFLICT (device_id) DO NOTHING`, t595DevA, t595PatA, t595DevB, t595PatB),
+	// 全部参数化（曾用 fmt.Sprintf 混位置动词把患者 ID 插错，CI 真库 FK 23503 抓出）
+	stmts := []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO teams (team_id, name) VALUES ($1, 'T595 IT 科')
+		 ON CONFLICT (team_id) DO NOTHING`, []any{t595Team}},
+		{`INSERT INTO patients (patient_id, name, phone_enc, phone_hash, status, team_id)
+		 VALUES ($1, 'T595 A', '\x00'::bytea, 't595a' || repeat('0', 59), 'active', $4),
+		        ($2, 'T595 B', '\x00'::bytea, 't595b' || repeat('0', 59), 'active', $4),
+		        ($3, 'T595 C', '\x00'::bytea, 't595c' || repeat('0', 59), 'active', $4)
+		 ON CONFLICT (patient_id) DO NOTHING`, []any{t595PatA, t595PatB, t595PatC, t595Team}},
+		{`INSERT INTO devices (device_id, device_secret_enc, patient_id, status)
+		 VALUES ($1, '\x00'::bytea, $2, 'online'),
+		        ($3, '\x00'::bytea, $4, 'online')
+		 ON CONFLICT (device_id) DO NOTHING`, []any{t595DevA, t595PatA, t595DevB, t595PatB}},
 	}
 	for _, s := range stmts {
-		_, err := dashPool.Exec(ctx, s)
+		_, err := dashPool.Exec(ctx, s.sql, s.args...)
 		require.NoError(t, err, "t595 seed")
 	}
 	// A：乱序入库 + 窗口外帧（2026-08-16 00:30+08 = UTC 16:30，落在右端 16:00 之外）

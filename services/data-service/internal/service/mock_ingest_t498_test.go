@@ -119,7 +119,7 @@ func TestT498_GateOnWritesStampedFrameAndStopsCountingStat(t *testing.T) {
 	// 刻意差异：lastseen 与 rt:frame 保留（佩戴中断判定 + 实时页），stat:today 不写
 	assert.True(t, env.cache.lastseen[testDevice].Equal(fixedNow), "注入帧要能推进 lastseen，否则触发不了佩戴中断")
 	assert.NotEmpty(t, env.cache.rtFrame[testDevice])
-	assert.Empty(t, env.cache.stat, "注入帧不得累计 stat:today 的佩戴分钟数/峰值")
+	assert.Empty(t, env.cache.stat, "注入帧不得累计 stat:today 的佩戴原始量（帧数/首末时刻）/峰值")
 	assert.True(t, env.svc.MockIngestEnabled())
 }
 
