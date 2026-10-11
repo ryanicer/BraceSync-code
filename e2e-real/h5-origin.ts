@@ -9,7 +9,7 @@
  *
  * 三条判据，一条都不放宽：
  *   1) 形状：仍要求 http + 显式端口（沿用两条链原话，摘掉显式端口会判红）。
- *   2) 生产红线：仍拒绝 api.hbksd.com.cn / 49.235.137.217。
+ *   2) 生产红线：仍拒绝 api.hbksd.com.cn（49.235.137.217 已转 TST，2026-10-11 Boss 口径）。
  *   3) 新增·跨环境点名：E2E_STAGING_URL 指向的不是 staging、也不是回环隧道，而该链的 H5 变量没设
  *      ⇒ 抛红并点名该设哪一颗。回环（localhost/127.0.0.1）不点名：那是 runbook 里既有的
  *      「ssh -L 隧道 + 产物写死的 staging 域名源」姿势，H5 腿走默认值才是对的。
@@ -51,7 +51,7 @@ export function resolveH5Origin(varName: string, chainLabel: string): string {
   if (!/^http:\/\/[^/]+:\d+$/.test(origin)) {
     throw new Error(`${chainLabel}源应是 http + 显式端口的 staging 入口，实得 ${origin}`)
   }
-  if (/api\.hbksd\.com\.cn|49\.235\.137\.217/.test(origin)) {
+  if (/api\.hbksd\.com\.cn/.test(origin)) { // 49.235.137.217 自 2026-10-11 起为 TST（Boss 口径），移出生产针
     throw new Error(`${chainLabel}命中生产入口，红线拒绝：${origin}`)
   }
 

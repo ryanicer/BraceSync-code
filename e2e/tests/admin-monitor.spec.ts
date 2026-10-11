@@ -156,7 +156,8 @@ test.describe('患者摘要与点位（T270 A-MON-03/05/07/08）', () => {
             labels: cells.map((c) => c.label),
             hours: /^\d+\.\d h$/.test(cells[0]?.value ?? '') ? 'ok' : cells[0]?.value,
             pressure: /^\d+\.\d N$/.test(cells[1]?.value ?? '') ? 'ok' : cells[1]?.value,
-            peakPoint: /^(P\d{2} \(R\dC\d\)|--)$/.test(cells[2]?.value ?? '') ? 'ok' : cells[2]?.value,
+            // T600 方案一：第三格 = 服务端今日峰值「点位 (坐标) · 峰值 N」，不再只显点位
+            peakPoint: /^(P\d{2} \(R\dC\d\) · \d+\.\d N|--)$/.test(cells[2]?.value ?? '') ? 'ok' : cells[2]?.value,
             events: /^\d+$/.test(cells[3]?.value ?? '') ? 'ok' : cells[3]?.value,
           })
         },
@@ -453,7 +454,8 @@ test.describe('帧新鲜度三态（T322）', () => {
     await expect(page.locator('.hm-detail')).toContainText('无实时帧')
     // 帧派生摘要给占位，不给「0.0 N」这种看着像读数的值
     await expect(page.locator('.peak-cell.peak-value .peak-num')).toHaveText('--')
-    // 最大压力采集点同样不得留 seed 派生的点位号（曾漏判：seed 兜底值混进今日峰值统计）
+    // T600：无帧（未绑定/无上报）时服务端今日峰值即空（maxPoint="" / maxPressure=0），
+    // 第三格同样给占位，既不留 seed 点位号，也不显示 0.0 N
     await expect(page.locator('.peak-card .peak-text')).toHaveText('--')
     await expect(page.locator('.chart-empty')).toContainText('无实时帧，曲线不绘制示例数据')
   })

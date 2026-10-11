@@ -24,7 +24,7 @@ import http from 'node:http';
 
 const STAGING_ENTRY = 'http://106.52.39.208:81';
 const STAGING_H5_ORIGIN = 'http://hbksd.com.cn:81';
-const PROD_FORBIDDEN = /api\.hbksd\.com\.cn|49\.235\.137\.217/;
+const PROD_FORBIDDEN = /api\.hbksd\.com\.cn/; // 49.235.137.217 自 2026-10-11 起为 TST 环境（Boss 口径），移出生产针；生产面=同机 80/443 与 api.hbksd.com.cn
 const TST_ENV_FILES = ['apps/patient-miniapp/.env.tst', 'apps/tech-miniapp/.env.tst'];
 const URL_VARS = {
   entry: 'E2E_STAGING_URL',
@@ -189,16 +189,16 @@ function selftest() {
     { what: '未知 target ⇒ 红', env: { ...base, target: 'prod' }, expect: 1 },
     { what: '入口变量缺席 ⇒ 红', env: { ...base, entry: '' }, expect: 1 },
     { what: '入口指生产域名 ⇒ 红（生产红线）', env: { ...base, entry: 'http://api.hbksd.com.cn:81' }, expect: 1 },
-    { what: 'H5 腿指生产 IP ⇒ 红（生产红线）', env: { ...base, patient: 'http://49.235.137.217:81' }, expect: 1 },
+    { what: 'H5 腿指生产域 ⇒ 红（生产红线）', env: { ...base, patient: 'http://api.hbksd.com.cn:443' }, expect: 1 },
     { what: '缺显式端口 ⇒ 红（形状门）', env: { ...base, entry: 'http://106.52.39.208' }, expect: 1 },
     {
       what: '换档只换入口、链 B 的 H5 静默留 staging ⇒ 红（T614 那一形）',
-      env: { target: 'tst', entry: 'http://192.168.5.41:91', tech: STAGING_H5_ORIGIN, patient: 'http://192.168.5.41:91', tstRegistered: 'http://192.168.5.41:91' },
+      env: { target: 'tst', entry: 'http://49.235.137.217:81', tech: STAGING_H5_ORIGIN, patient: 'http://49.235.137.217:81', tstRegistered: 'http://49.235.137.217:81' },
       expect: 1,
     },
-    { what: 'tst 档三串齐 ⇒ 绿', env: { target: 'tst', entry: 'http://192.168.5.41:91', tech: 'http://192.168.5.41:91', patient: 'http://192.168.5.41:91', tstRegistered: 'http://192.168.5.41:91' }, expect: 0 },
-    { what: 'tst 档但在册基址取不到 ⇒ 红', env: { target: 'tst', entry: 'http://192.168.5.41:91', tech: 'http://192.168.5.41:91', patient: 'http://192.168.5.41:91', tstRegistered: '' }, expect: 1 },
-    { what: 'tst 档入口漂到另一枚地址（与在册不同源）⇒ 红', env: { target: 'tst', entry: 'http://192.168.5.41:9080', tech: 'http://192.168.5.41:91', patient: 'http://192.168.5.41:91', tstRegistered: 'http://192.168.5.41:91' }, expect: 1 },
+    { what: 'tst 档三串齐 ⇒ 绿', env: { target: 'tst', entry: 'http://49.235.137.217:81', tech: 'http://49.235.137.217:81', patient: 'http://49.235.137.217:81', tstRegistered: 'http://49.235.137.217:81' }, expect: 0 },
+    { what: 'tst 档但在册基址取不到 ⇒ 红', env: { target: 'tst', entry: 'http://49.235.137.217:81', tech: 'http://49.235.137.217:81', patient: 'http://49.235.137.217:81', tstRegistered: '' }, expect: 1 },
+    { what: 'tst 档入口漂到另一枚地址（与在册不同源）⇒ 红', env: { target: 'tst', entry: 'http://49.235.137.217:8081', tech: 'http://49.235.137.217:81', patient: 'http://49.235.137.217:81', tstRegistered: 'http://49.235.137.217:81' }, expect: 1 },
   ];
   let bad = 0;
   for (const c of cases) {
