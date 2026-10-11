@@ -63,6 +63,7 @@ export const CONTRACT_MAP = {
   FlowInstanceDTO: { ts: null, reason: '契约未声明（T274 流程实例）' },
   FlowNodeStateDTO: { ts: null, reason: '契约未声明（T274 流程节点状态）' },
   FlowNodeActionDTO: { ts: null, reason: '契约未声明（T274 流程节点操作）' },
+  FlowTypeBindingDTO: { ts: null, reason: '契约未声明（T653 告警类型↔流程模板绑定，admin-web 本地类型；守 T274 flow 类型不入 shared-types 的边界，docs/api/api-contracts.ts 已同步）' },
   BatchBindResultDTO: { ts: null, reason: '写响应（批量绑定结果信封），契约未声明' },
   BatchBindFailureDTO: { ts: null, reason: '写响应的子项，契约未声明' },
   DoctorAccountCreateDTO: { ts: null, reason: '写响应：整行 DoctorDTO + 一次性初始密码，契约未声明该信封' },
