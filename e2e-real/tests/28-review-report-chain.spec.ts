@@ -229,7 +229,7 @@ function resolvePageOrigin(): string {
     if (!/^http:\/\/[^/]+:\d+$/.test(injected)) {
       throw new Error(`E2E_T632_PAGE_ORIGIN 应是 http + 显式端口的源，实得 ${injected}`)
     }
-    if (/api\.hbksd\.com\.cn|49\.235\.137\.217/.test(injected)) {
+    if (/api\.hbksd\.com\.cn/.test(injected)) { // 49.235.137.217 自 2026-10-11 起为 TST（Boss 口径，TST 写段经批 A 授权）；生产针保留 api.hbksd.com.cn
       throw new Error(`T632 复查链命中生产入口，红线拒绝：${injected}`)
     }
     console.log(`[t632-复查链][页面源] E2E_T632_PAGE_ORIGIN 已注入 ⇒ 源=${injected}（负对照时这就是那把把手）`)
@@ -237,6 +237,12 @@ function resolvePageOrigin(): string {
   }
 
   const host = target ? new URL(target).hostname : 'hbksd.com.cn'
+  if (host === '49.235.137.217') {
+    // T651 双通道 tst 档（2026-10-11 Boss 口径）：TST admin 与入口同源投放，页面源=入口本体。
+    // 前置：COS 桶 CORS 放行面须含这枚源，否则浏览器直传 403（TST 基建就绪度由本链实跑出读数）。
+    console.log(`[t632-复查链][页面源] 目标=${target} 为 tst 档 ⇒ 页面源取 ${target}（桶 CORS 放行面须含 TST admin 源，未放行时直传腿红=基建读数非代码回归）`)
+    return target!
+  }
   if (host === 'hbksd.com.cn' || host === '106.52.39.208') {
     console.log(
       `[t632-复查链][页面源] 目标=${target || '<未设>'} ⇒ 页面源取 ${stagingDomain}` +
