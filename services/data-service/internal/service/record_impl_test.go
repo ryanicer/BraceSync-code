@@ -72,7 +72,7 @@ func (m *mockCacheStore) SetRealtimeFrame(_ context.Context, _, _ string) error 
 func (m *mockCacheStore) GetRealtimeFrame(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
-func (m *mockCacheStore) ApplyStatToday(_ context.Context, _ string, _ int, _ float64, _ string, _ int, _ time.Time) error {
+func (m *mockCacheStore) ApplyStatToday(_ context.Context, _ string, _ bool, _ time.Time, _ float64, _ string, _ int, _ time.Time) error {
 	return nil
 }
 func (m *mockCacheStore) GetStatToday(_ context.Context, _ string) (map[string]string, error) {
@@ -125,7 +125,11 @@ func TestGetRealtimeDBFirst_HasData(t *testing.T) {
 		&mockCacheStore{
 			lastseen:   now.Add(-30 * time.Minute), // 30min ago ≤ 2h
 			lastseenOk: true,
-			statToday:  map[string]string{"wear_minutes": "360", "abnormal_count": "2"},
+			// T594：360min 同源输入＝2 枚佩戴帧跨度 10800s（WearMinutesFromSpan(2,10800)=360）
+			statToday: map[string]string{
+				"wear_frames": "2", "wear_first_ts": "1725000000", "wear_last_ts": "1725010800",
+				"abnormal_count": "2",
+			},
 		},
 		now,
 	)

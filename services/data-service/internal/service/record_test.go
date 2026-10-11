@@ -229,8 +229,12 @@ func (f *fakeConfigs) GetDeviceConfig(context.Context) (int, int, error) {
 	return f.interval, f.version, nil
 }
 
+// statEntry T594 后 fake 侧与 Redis stat:today 同构：只累计佩戴原始量（帧数+首末帧时刻），
+// 不存算好的分钟；读侧 GetStatToday 出三字段，分钟由 service 的同源函数现算。
 type statEntry struct {
-	wear   int
+	frames int
+	first  time.Time
+	last   time.Time
 	max    float64
 	point  string
 	abn    int
@@ -302,7 +306,8 @@ func (f *fakeCache) GetRealtimeFrame(_ context.Context, deviceID string) (string
 	return f.rtFrame[deviceID], nil
 }
 
-func (f *fakeCache) ApplyStatToday(_ context.Context, patientID string, wearMinutes int, maxPressure float64, maxPoint string, abnormalDelta int, expireAt time.Time) error {
+func (f *fakeCache) ApplyStatToday(_ context.Context, patientID string, wearing bool, frameTs time.Time,
+	maxPressure float64, maxPoint string, abnormalDelta int, expireAt time.Time) error {
 	if f.errStat != nil {
 		return f.errStat
 	}
@@ -313,7 +318,15 @@ func (f *fakeCache) ApplyStatToday(_ context.Context, patientID string, wearMinu
 		e = &statEntry{}
 		f.stat[patientID] = e
 	}
-	e.wear += wearMinutes
+	if wearing {
+		e.frames++
+		if e.first.IsZero() || frameTs.Before(e.first) {
+			e.first = frameTs
+		}
+		if frameTs.After(e.last) {
+			e.last = frameTs
+		}
+	}
 	e.abn += abnormalDelta
 	if maxPressure > e.max {
 		e.max = maxPressure
@@ -331,7 +344,11 @@ func (f *fakeCache) GetStatToday(_ context.Context, patientID string) (map[strin
 	defer f.mu.Unlock()
 	out := map[string]string{}
 	if e, ok := f.stat[patientID]; ok {
-		out["wear_minutes"] = strconv.Itoa(e.wear)
+		out["wear_frames"] = strconv.Itoa(e.frames)
+		if e.frames > 0 {
+			out["wear_first_ts"] = strconv.FormatInt(e.first.Unix(), 10)
+			out["wear_last_ts"] = strconv.FormatInt(e.last.Unix(), 10)
+		}
 		out["max_pressure"] = strconv.FormatFloat(e.max, 'f', -1, 64)
 		out["max_point"] = e.point
 		out["abnormal_count"] = strconv.Itoa(e.abn)
@@ -577,7 +594,10 @@ func TestUploadSingle_Success(t *testing.T) {
 	assert.NotEmpty(t, env.cache.rtFrame[testDevice])
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 30, st.wear) // 佩戴帧累加一个采集间隔
+	// T594：佩戴维度累计原始量（1 帧、首末时刻=本帧），不再累加「间隔当分钟」
+	assert.Equal(t, 1, st.frames)
+	assert.True(t, st.first.Equal(ts))
+	assert.True(t, st.last.Equal(ts))
 	assert.InDelta(t, 30.2, st.max, 0.01)
 	assert.Equal(t, "P03", st.point)
 	assert.Equal(t, endOfTodayCST(fixedNow), st.expire)
@@ -595,7 +615,9 @@ func TestUploadSingle_NotWearing(t *testing.T) {
 	assert.False(t, resp.Duplicated)
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 0, st.wear) // ≤0.05N 非佩戴帧（T203 ÷10），不累计佩戴分钟
+	assert.Equal(t, 0, st.frames) // ≤0.05N 非佩戴帧（T203 ÷10），不计佩戴帧、首末时刻不设
+	assert.True(t, st.first.IsZero())
+	assert.True(t, st.last.IsZero())
 	assert.InDelta(t, 0.04, st.max, 0.001)
 }
 
@@ -613,7 +635,8 @@ func TestUploadSingle_IdempotentDuplicate(t *testing.T) {
 	assert.True(t, resp2.Duplicated)
 	assert.Len(t, env.records.rows, 1)
 	assert.Equal(t, 1, env.alerts.calls)
-	assert.Equal(t, 30, env.cache.stat[testPatient].wear)
+	// 重复帧不重复统计：仍只 1 枚佩戴帧
+	assert.Equal(t, 1, env.cache.stat[testPatient].frames)
 }
 
 func TestUploadSingle_DeviceErrors(t *testing.T) {
@@ -939,7 +962,8 @@ func TestGetRealtime_FullSnapshot(t *testing.T) {
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
 	require.Nil(t, appErr)
 	assert.Equal(t, "online", snap.Status) // lastseen 距今 1min ≤ 2h
-	assert.InDelta(t, 0.5, snap.TodayHours, 0.01)
+	// T594：仅 1 枚佩戴帧不构成时长（WearMinutesFromSpan frames<2 返 0），不再给 0.5h
+	assert.Zero(t, snap.TodayHours)
 	assert.InDelta(t, 25.5, snap.MaxPressure, 0.01)
 	assert.Equal(t, "P02", snap.MaxPoint)
 	assert.Zero(t, snap.Events)

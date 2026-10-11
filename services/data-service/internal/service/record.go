@@ -239,20 +239,50 @@ func (s *RecordService) applyRealtimeCache(ctx context.Context, deviceID, patien
 	}
 
 	if countStat {
-		wearMinutes := 0
-		if calibMaxP > s.pressureThresholds(ctx).WearingN { // PRD §8.1 佩戴帧判定（减偏移后值，T173）
-			interval, _, cfgErr := s.configs.GetDeviceConfig(ctx)
-			if cfgErr != nil {
-				interval = 30
-			}
-			wearMinutes = interval
-		}
-		if err := s.cache.ApplyStatToday(ctx, patientID, wearMinutes, calibMaxP, model.PointID(calibMaxIdx), 0, endOfTodayCST(now)); err != nil {
+		// T594 甲案：佩戴维度只交「本帧是否佩戴 + 帧时刻」两个原始量，Redis 侧 O(1) 维护
+		// 佩戴帧数与首末帧时间戳；今日分钟在读侧与日聚合同源现算（见 statTodayWearMinutes），
+		// 不再把设备配置上报间隔（秒）当分钟逐帧累加（旧口径放大约 60 倍）。
+		wearing := calibMaxP > s.pressureThresholds(ctx).WearingN // PRD §8.1（减偏移后值，T173）
+		if err := s.cache.ApplyStatToday(ctx, patientID, wearing, frame.Ts, calibMaxP, model.PointID(calibMaxIdx), 0, endOfTodayCST(now)); err != nil {
 			log.Error().Err(err).Str("patient_id", patientID).Msg("redis update stat:today failed")
 			return model.ErrInternal("redis unavailable")
 		}
 	}
 	return nil
+}
+
+// statTodayWearMinutes T594 甲案：今日佩戴分钟与日聚合同源。
+// Redis stat:today 只维护佩戴帧计数 wear_frames 与首/末佩戴帧 unix 秒（min/max，含乱序保护），
+// 读数走日聚合同一函数 repo.WearMinutesFromSpan——与 rollup_repo.aggregateDateSQL 里
+// COUNT(佩戴帧) + (MAX(ts)-MIN(ts)) 逐式同形（跨度×实测帧频）：帧数<2 返 0（单个瞬时样本
+// 不构成时长），上限夹物理日 1440（函数内）。这消灭了「实时快照一套口径、日聚合另一套」的缺陷类。
+func statTodayWearMinutes(stats map[string]string) int {
+	frames, err := strconv.Atoi(stats["wear_frames"])
+	if err != nil || frames < 2 {
+		return 0
+	}
+	first, err1 := strconv.ParseInt(stats["wear_first_ts"], 10, 64)
+	last, err2 := strconv.ParseInt(stats["wear_last_ts"], 10, 64)
+	if err1 != nil || err2 != nil || last <= first {
+		return 0
+	}
+	return repo.WearMinutesFromSpan(frames, float64(last-first))
+}
+
+// fillSnapshotFromStatToday 把 stat:today 原始量组装进实时快照（DB/Redis 两条读路共用）。
+// 保守填充：今日峰值/点位缺省时不覆盖（DB 读路在调用后另用最新帧兜底，Redis 读路保持零值，
+// 均与各自旧行为等价）；TodayHours 是 T594 甲案同源化的唯一行为变更点。
+func fillSnapshotFromStatToday(snapshot *model.RealtimeSnapshot, stats map[string]string) {
+	snapshot.TodayHours = float64(statTodayWearMinutes(stats)) / 60.0
+	if v, convErr := strconv.ParseFloat(stats["max_pressure"], 64); convErr == nil && v > 0 {
+		snapshot.MaxPressure = v
+	}
+	if stats["max_point"] != "" {
+		snapshot.MaxPoint = stats["max_point"]
+	}
+	if v, convErr := strconv.Atoi(stats["abnormal_count"]); convErr == nil {
+		snapshot.Events = v
+	}
 }
 
 // evaluateInline 内联告警评估（100ms 熔断 → alert:pending 降级，架构 §3.4）
@@ -283,8 +313,8 @@ func (s *RecordService) evaluateInline(ctx context.Context, deviceID, patientID 
 	s.markRecovered()
 
 	if result.ShouldAlert {
-		// 命中告警：今日异常数 +1（stat:today 增量，monitor/摘要卡展示）
-		if incErr := s.cache.ApplyStatToday(ctx, patientID, 0, 0, "", 1, endOfTodayCST(s.now())); incErr != nil {
+		// 命中告警：今日异常数 +1（stat:today 增量，monitor/摘要卡展示）；非佩戴统计，帧时刻传零值不使用
+		if incErr := s.cache.ApplyStatToday(ctx, patientID, false, time.Time{}, 0, "", 1, endOfTodayCST(s.now())); incErr != nil {
 			log.Warn().Err(incErr).Str("patient_id", patientID).Msg("incr abnormal_count failed")
 		}
 		log.Info().Str("device_id", deviceID).Str("alert_type", result.AlertType).Msg("inline alert hit")
@@ -601,32 +631,20 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 	snapshot.PressureRecords = []model.PressureRecordDTO{s.calibratedRecordDTO(ctx, th, areaCm2, rec)}
 	snapshot.PressureHeatmap = model.BuildHeatmap(res.Points, areaCm2)
 
-	// 一次性读 stat:today：wear_minutes / max_pressure / max_point / abnormal_count
+	// 一次性读 stat:today：T594 后为 wear_frames/wear_first_ts/wear_last_ts（同源算 TodayHours）
+	// + max_pressure / max_point / abnormal_count
 	if stats, stErr := s.cache.GetStatToday(ctx, patientID); stErr == nil {
-		if v, e := strconv.Atoi(stats["wear_minutes"]); e == nil {
-			snapshot.TodayHours = float64(v) / 60.0
-		}
-		if v, e := strconv.ParseFloat(stats["max_pressure"], 64); e == nil && v > 0 {
-			snapshot.MaxPressure = v
-		} else {
-			calibMaxP, calibMaxIdx := maxPoint(res.Points)
-			snapshot.MaxPressure = calibMaxP
-			snapshot.MaxPoint = model.PointID(calibMaxIdx)
-		}
-		if stats["max_point"] != "" {
-			snapshot.MaxPoint = stats["max_point"]
-		} else {
-			_, calibMaxIdx := maxPoint(res.Points)
-			snapshot.MaxPoint = model.PointID(calibMaxIdx)
-		}
-		if v, e := strconv.Atoi(stats["abnormal_count"]); e == nil {
-			snapshot.Events = v
-		}
-	} else {
-		// stat:today 回退：用最新帧兜底（防止首次上报当日无 rollup 时前端空白）
+		fillSnapshotFromStatToday(snapshot, stats)
+	}
+	// stat:today 缺今日峰值或读取失败：用最新帧兜底（防止首次上报当日无统计时前端空白）
+	if snapshot.MaxPressure <= 0 || snapshot.MaxPoint == "" {
 		calibMaxP, calibMaxIdx := maxPoint(res.Points)
-		snapshot.MaxPressure = calibMaxP
-		snapshot.MaxPoint = model.PointID(calibMaxIdx)
+		if snapshot.MaxPressure <= 0 {
+			snapshot.MaxPressure = calibMaxP
+		}
+		if snapshot.MaxPoint == "" {
+			snapshot.MaxPoint = model.PointID(calibMaxIdx)
+		}
 	}
 
 	// 状态推导：abnormal 优先；Redis lastseen ≤2h → online；否则 DB ts ≤2h → online
@@ -702,21 +720,12 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 		snapshot.PressureHeatmap = model.BuildHeatmap(hmPoints, areaCm2)
 	}
 
-	// 今日统计（stat:today）
+	// 今日统计（stat:today：T594 后佩戴分钟同源现算）
 	stats, err := s.cache.GetStatToday(ctx, patientID)
 	if err != nil {
 		return nil, model.ErrInternal("read stat:today: %v", err)
 	}
-	if v, convErr := strconv.Atoi(stats["wear_minutes"]); convErr == nil {
-		snapshot.TodayHours = float64(v) / 60.0
-	}
-	if v, convErr := strconv.ParseFloat(stats["max_pressure"], 64); convErr == nil {
-		snapshot.MaxPressure = v
-	}
-	snapshot.MaxPoint = stats["max_point"]
-	if v, convErr := strconv.Atoi(stats["abnormal_count"]); convErr == nil {
-		snapshot.Events = v
-	}
+	fillSnapshotFromStatToday(snapshot, stats)
 	return snapshot, nil
 }
 

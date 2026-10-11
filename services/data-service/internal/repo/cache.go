@@ -52,9 +52,13 @@ type CacheStore interface {
 	// GetRealtimeFrame 读最新帧 JSON；无记录返回空串
 	GetRealtimeFrame(ctx context.Context, deviceID string) (string, error)
 	// ApplyStatToday 增量更新 stat:today（Lua 原子执行）：
-	// wearMinutes>0 时累加佩戴分钟；maxPressure 大于现值时刷新最大压力与点位；
-	// abnormalDelta>0 时累加异常数；并续期至今日 24:00（Asia/Shanghai）
-	ApplyStatToday(ctx context.Context, patientID string, wearMinutes int, maxPressure float64, maxPoint string, abnormalDelta int, expireAt time.Time) error
+	// T594 甲案：wearing=true 时只 O(1) 维护三件原始量——佩戴帧计数 wear_frames、
+	// 首枚佩戴帧 wear_first_ts（min）、末枚 wear_last_ts（max），不再逐帧累加「配置间隔当分钟」
+	// （那是把秒当分钟、放大 ~60 倍的根因）；今日分钟改由读侧用与日聚合同源的
+	// WearMinutesFromSpan(frames, last-first) 现算。maxPressure 大于现值时刷新压力与点位；
+	// abnormalDelta>0 时累加异常数；并续期至今日 24:00（Asia/Shanghai，跨日新 key 自然重置）。
+	ApplyStatToday(ctx context.Context, patientID string, wearing bool, frameTs time.Time,
+		maxPressure float64, maxPoint string, abnormalDelta int, expireAt time.Time) error
 	// GetStatToday HGETALL stat:today:{patient_id}
 	GetStatToday(ctx context.Context, patientID string) (map[string]string, error)
 	// PushAlertPending 降级帧引用 LPUSH alert:pending（alert-service 常驻消费补偿）
@@ -66,24 +70,40 @@ type CacheStore interface {
 	DequeueRollup(ctx context.Context) (payloadJSON string, err error)
 }
 
-// statTodayScript 原子更新今日统计 Hash：
-// ARGV: 1=wear_minutes 增量 2=max_pressure 3=max_point 4=abnormal 增量 5=PEXPIREAT 毫秒
+// statTodayScript 原子更新今日统计 Hash（T594 甲案）：
+// ARGV: 1=本帧是否佩戴(1/0) 2=本帧 unix 秒 3=max_pressure 4=max_point 5=abnormal 增量 6=PEXPIREAT 毫秒
+//
+// 佩戴维度只累计原始量，不算分钟（分钟在读侧走 WearMinutesFromSpan，与日聚合 SQL 的
+// COUNT + MAX(ts)-MIN(ts) 同源；在写侧把秒当分钟 HINCRBY 是旧版放大 ~60 倍的根因）：
+//
+//	wear_frames   佩戴帧计数
+//	wear_first_ts 首枚佩戴帧（min；补传更早的帧也要回退，不能用 HSETNX 只记第一枚到达的）
+//	wear_last_ts  末枚佩戴帧（max；乱序延迟帧不得回退，与 lastSeen 单调哲学一致）
 var statTodayScript = redis.NewScript(`
 local key = KEYS[1]
-local wear = tonumber(ARGV[1])
-local maxp = tonumber(ARGV[2])
-local point = ARGV[3]
-local abn = tonumber(ARGV[4])
-local expireAt = tonumber(ARGV[5])
-if wear > 0 then
-  redis.call('HINCRBY', key, 'wear_minutes', wear)
+local wearing = tonumber(ARGV[1])
+local fts = tonumber(ARGV[2])
+local maxp = tonumber(ARGV[3])
+local point = ARGV[4]
+local abn = tonumber(ARGV[5])
+local expireAt = tonumber(ARGV[6])
+if wearing == 1 then
+  redis.call('HINCRBY', key, 'wear_frames', 1)
+  local first = tonumber(redis.call('HGET', key, 'wear_first_ts'))
+  if first == nil or fts < first then
+    redis.call('HSET', key, 'wear_first_ts', ARGV[2])
+  end
+  local last = tonumber(redis.call('HGET', key, 'wear_last_ts'))
+  if last == nil or fts > last then
+    redis.call('HSET', key, 'wear_last_ts', ARGV[2])
+  end
 end
 if abn > 0 then
   redis.call('HINCRBY', key, 'abnormal_count', abn)
 end
 local cur = tonumber(redis.call('HGET', key, 'max_pressure') or '0')
 if maxp > cur then
-  redis.call('HSET', key, 'max_pressure', ARGV[2], 'max_point', point)
+  redis.call('HSET', key, 'max_pressure', ARGV[3], 'max_point', point)
 end
 redis.call('PEXPIREAT', key, expireAt)
 return 1
@@ -142,9 +162,15 @@ func (c *RedisCache) GetRealtimeFrame(ctx context.Context, deviceID string) (str
 	return v, err
 }
 
-func (c *RedisCache) ApplyStatToday(ctx context.Context, patientID string, wearMinutes int, maxPressure float64, maxPoint string, abnormalDelta int, expireAt time.Time) error {
+func (c *RedisCache) ApplyStatToday(ctx context.Context, patientID string, wearing bool, frameTs time.Time,
+	maxPressure float64, maxPoint string, abnormalDelta int, expireAt time.Time) error {
+	wearingFlag := 0
+	if wearing {
+		wearingFlag = 1
+	}
 	_, err := statTodayScript.Run(ctx, c.rdb, []string{KeyStatToday(patientID)},
-		wearMinutes,
+		wearingFlag,
+		frameTs.Unix(),
 		strconv.FormatFloat(maxPressure, 'f', -1, 64),
 		maxPoint,
 		abnormalDelta,

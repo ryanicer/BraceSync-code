@@ -293,13 +293,6 @@
     {
       "role": "ROLE_ADMIN",
       "method": "GET",
-      "path": "/api/v1/patients/S1/orthosis-plans",
-      "deny": false,
-      "why": "admin 全放行"
-    },
-    {
-      "role": "ROLE_ADMIN",
-      "method": "GET",
       "path": "/api/v1/patients/S1/realtime",
       "deny": false,
       "why": "admin 全放行"
@@ -497,13 +490,6 @@
       "role": "ROLE_ADMIN",
       "method": "POST",
       "path": "/api/v1/patients/S1/advice",
-      "deny": false,
-      "why": "admin 全放行"
-    },
-    {
-      "role": "ROLE_ADMIN",
-      "method": "POST",
-      "path": "/api/v1/patients/S1/orthosis-plans",
       "deny": false,
       "why": "admin 全放行"
     },
@@ -818,13 +804,6 @@
     {
       "role": "ROLE_DOCTOR",
       "method": "GET",
-      "path": "/api/v1/patients/S1/orthosis-plans",
-      "deny": false,
-      "why": "public"
-    },
-    {
-      "role": "ROLE_DOCTOR",
-      "method": "GET",
       "path": "/api/v1/patients/S1/realtime",
       "deny": false,
       "why": "public"
@@ -931,13 +910,6 @@
       "role": "ROLE_DOCTOR",
       "method": "POST",
       "path": "/api/v1/patients/S1/advice",
-      "deny": false,
-      "why": "doctor-or-admin 专属"
-    },
-    {
-      "role": "ROLE_DOCTOR",
-      "method": "POST",
-      "path": "/api/v1/patients/S1/orthosis-plans",
       "deny": false,
       "why": "doctor-or-admin 专属"
     },

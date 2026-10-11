@@ -42,6 +42,14 @@ type mockDashboardStore struct {
 	// fromDates T489：各方法最近一次实收的窗口起点（YYYY-MM-DD），
 	// 供「排行/分布与 KPI 同口径」断言 —— period 若没换算到 fromDate，这里就会是上一个窗口的值。
 	fromDates map[string]string
+
+	// T595：period=today 两格的当日明细聚合假实现（调用捕获 + 罐头返回）
+	liveRow   *repo.LiveTodayRow
+	liveErr   error
+	liveCalls int
+	liveFrom  time.Time
+	liveTo    time.Time
+	liveThN   float32
 }
 
 // see 记录一次实收 scope（结构体以字面量构造，map 懒初始化）
@@ -67,6 +75,17 @@ func (m *mockDashboardStore) KPI(ctx context.Context, from string, alertFrom, mo
 		return nil, m.err
 	}
 	return m.kpiRow, nil
+}
+
+// KPILiveToday T595：记录调用实参（窗口/阈值/scope）并回罐头行；liveErr 非空模拟 live 通道故障
+func (m *mockDashboardStore) KPILiveToday(_ context.Context, from, to time.Time, wearingThresholdN float32, scope model.TeamScope) (*repo.LiveTodayRow, error) {
+	m.see("KPILiveToday", scope)
+	m.liveCalls++
+	m.liveFrom, m.liveTo, m.liveThN = from, to, wearingThresholdN
+	if m.liveErr != nil {
+		return nil, m.liveErr
+	}
+	return m.liveRow, nil
 }
 func (m *mockDashboardStore) WearTrend(ctx context.Context, fromDate, toDate string, scope model.TeamScope) ([]repo.TrendRow, error) {
 	m.see("WearTrend", scope)

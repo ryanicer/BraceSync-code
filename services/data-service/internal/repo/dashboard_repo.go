@@ -33,6 +33,12 @@ type KPIRow struct {
 	MonthNewPatients int64    // 本自然月新增患者
 }
 
+// LiveTodayRow T595「今日」两格的实时明细聚合投影（与 rollup 同源，不依赖当日 daily_wear_stats 行）。
+type LiveTodayRow struct {
+	ActiveWear     int64    // 当日佩戴分钟 > 0 的患者数
+	AvgWearMinutes *float64 // 当日有帧患者的平均佩戴分钟（含 0 分钟者做分母）；无帧患者群体 ⇒ nil
+}
+
 // KPICompareRow 上一周期对比基准投影（T248 1.1 · PRD §7D.1 KPI 表「对比基准」列）。
 // 窗口 = 与当前 period 等长、紧邻在前的一段（[prevFromDate, fromDate)）。
 // 🔴 不含设备在线率：devices.status 为当前态快照、无历史表，昨日在线率无从取（见 service 层注释）。
@@ -66,6 +72,11 @@ type RankingRow struct {
 type DashboardStore interface {
 	// KPI 六指标单趟查询；fromDate 为窗口起始日（YYYY-MM-DD），alertFrom 为告警时间窗起点
 	KPI(ctx context.Context, fromDate string, alertFrom, monthStart time.Time, scope model.TeamScope) (*KPIRow, error)
+	// KPILiveToday T595：「今日」两格不再只读昨日日切表，直接对当日 pressure_records 明细
+	// 按日聚合同式（佩戴帧 COUNT + 首末帧跨度）聚合，Go 侧走 WearMinutesFromSpan 与 rollup 同源。
+	// 窗口 [from,to) 由 service 按 Asia/Shanghai 当日给出；wearingThresholdN 与 rollup 同一阈值源。
+	// 返回「有佩戴分钟患者数」与「当日有帧患者的平均佩戴分钟」（无帧患者群体 ⇒ avg=nil，T636 同口径）。
+	KPILiveToday(ctx context.Context, from, to time.Time, wearingThresholdN float32, scope model.TeamScope) (*LiveTodayRow, error)
 	// KPICompare 上一等长周期的对比基准（T248 1.1）。prevFromDate/fromDate 为半开区间两端（YYYY-MM-DD），
 	// prevAlertFrom/alertFrom 为同一区间的 timestamptz 表达，monthStart/prevMonthStart 为自然月起点。
 	KPICompare(ctx context.Context, prevFromDate, fromDate string, prevAlertFrom, alertFrom, monthStart, prevMonthStart time.Time, scope model.TeamScope) (*KPICompareRow, error)
@@ -133,6 +144,59 @@ func (r *DashboardRepo) KPI(ctx context.Context, fromDate string, alertFrom, mon
 		return nil, fmt.Errorf("query dashboard kpi: %w", err)
 	}
 	return &row, nil
+}
+
+// kpiLiveTodaySQL T595：当日「活跃佩戴/平均佩戴」直接扫明细，与 rollup aggregateDateSQL 同式——
+// 佩戴帧 COUNT + MAX(ts)-MIN(ts) 跨度（阈值 $3 与 rollup 同一来源），T350 scope CTE 同 kpiSQL。
+// 逐患者出行后分钟在 Go 侧走 WearMinutesFromSpan（不在 SQL 里另抄折算，T411 禁第二套口径）。
+const kpiLiveTodaySQL = `
+WITH sp AS (
+  SELECT patient_id FROM patients WHERE $4::bool = FALSE OR team_id = $5::text
+)
+SELECT COUNT(*) FILTER (WHERE max_pressure > $3)::int AS wearing_frames,
+       COALESCE((EXTRACT(EPOCH FROM (
+         MAX(ts) FILTER (WHERE max_pressure > $3) - MIN(ts) FILTER (WHERE max_pressure > $3)
+       )))::float8, 0) AS wear_span_seconds
+FROM pressure_records
+WHERE patient_id IN (SELECT patient_id FROM sp)
+  AND ts >= $1 AND ts < $2
+GROUP BY patient_id`
+
+// KPILiveToday 当日明细同源聚合（T595 甲案配套）
+func (r *DashboardRepo) KPILiveToday(ctx context.Context, from, to time.Time,
+	wearingThresholdN float32, scope model.TeamScope) (*LiveTodayRow, error) {
+	rows, err := r.pool.Query(ctx, kpiLiveTodaySQL, from, to, wearingThresholdN,
+		scope.Scoped(), scope.TeamArg())
+	if err != nil {
+		return nil, fmt.Errorf("query dashboard live today: %w", err)
+	}
+	defer rows.Close()
+
+	out := &LiveTodayRow{}
+	var frames int
+	var span float64
+	var totalMin int
+	patients := 0
+	for rows.Next() {
+		if err := rows.Scan(&frames, &span); err != nil {
+			return nil, fmt.Errorf("scan live today row: %w", err)
+		}
+		wm := WearMinutesFromSpan(frames, span) // 与日聚合同一函数：frames<2 返 0、夹 1440
+		patients++
+		totalMin += wm
+		if wm > 0 {
+			out.ActiveWear++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 与日切 KPI 的 AVG(wear_minutes) 同分母：当日有帧患者全集（含 0 分钟者）；无帧群体 ⇒ nil
+	if patients > 0 {
+		avg := float64(totalMin) / float64(patients)
+		out.AvgWearMinutes = &avg
+	}
+	return out, nil
 }
 
 // kpiCompareSQL 上一等长周期的对比基准（T248 1.1）。日期口径与 kpiSQL 一致：

@@ -9,6 +9,7 @@ import {
   uniqueName,
   getAuthToken,
 } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 05 患者管理（真实模式）
@@ -157,7 +158,7 @@ test.describe('05-患者管理', () => {
   })
 
   test.describe('组织名字典契约（T270 收尾假绿#1：D1 值级判据）', () => {
-    test('5.6 团队/主治医生列＝后端字典名，不得回落成原始 ID', async ({ page }) => {
+    test('5.6 团队列＝后端字典名，不得回落成原始 ID（T657 后主治医生列已移除）', async ({ page }) => {
       const token = await getAuthToken(page)
       expect(token, 'beforeEach 已 realLogin，应拿到 JWT').toBeTruthy()
       const headers = { Authorization: `Bearer ${token}` }
@@ -177,19 +178,25 @@ test.describe('05-患者管理', () => {
           (t) => [String(t.teamId), String(t.name)] as [string, string],
         ),
       )
-      const doctorById = new Map(
-        (await apiData('/api/v1/doctors')).map(
-          (d) => [String(d.doctorId), String(d.name)] as [string, string],
-        ),
-      )
       // 与页面首屏完全同参（patients/index.vue: pageSize 默认 10、page 1），DOM 才可比
       const apiRows = await apiData('/api/v1/admin/patients?page=1&pageSize=10')
       expect(apiRows.length, 'staging seed 患者应 ≥1 行').toBeGreaterThanOrEqual(1)
 
       // T289 4.2 后本列的表头文案是「绑定团队」（设计稿 患者管理.html:88 口径）
       const teamIdx = await headerIndex(page, '绑定团队')
-      const docIdx = await headerIndex(page, '主治医生')
       await headerIndex(page, '患者ID') // 列存在性也在契约内（定位行靠它，取不到行即计入跳过）
+      // T657：主治医生列已移除，表头不应再出现。
+      // 部署腿：e2e-real 打 staging 现网包，PR 合入 ≠ 现网包已更新（Andy 部署后才生效），
+      // 旧包仍有该列 ⇒ 走显式跳过（同 08-settings 8.4 口径），部署追平后自动转验。
+      await requireDeployedBuild(page, {
+        marker: 'T657-patients-hide-doctor-col',
+        why: '患者管理列表移除主治医生列（PR383 合入并部署后生效）',
+        probe: async (p) =>
+          (await p
+            .locator('.patient-list-card .el-table__header th')
+            .filter({ hasText: '主治医生' })
+            .count()) === 0,
+      })
 
       async function cellsOfRow(patientId: string): Promise<string[] | null> {
         const row = patientTable(page)
@@ -201,14 +208,12 @@ test.describe('05-患者管理', () => {
       }
 
       let teamChecked = 0
-      let docChecked = 0
       let unassignedChecked = 0
       for (const p of apiRows) {
         const pid = String(p.patientId)
         const cells = await cellsOfRow(pid)
         if (!cells) continue
         const teamId = p.teamId ? String(p.teamId) : null
-        const doctorId = p.doctorId ? String(p.doctorId) : null
 
         if (teamId) {
           teamChecked++
@@ -226,23 +231,12 @@ test.describe('05-患者管理', () => {
           unassignedChecked++
           expect(cells[teamIdx], `${pid} 无团队时应显示 -`).toBe('-')
         }
-
-        if (doctorId) {
-          docChecked++
-          expect(cells[docIdx], `${pid} 主治医生列应等于字典值`).toBe(doctorById.get(doctorId))
-          if (p.doctorName) expect(cells[docIdx], `${pid} 主治医生列应等于后端 join 值`).toBe(String(p.doctorName))
-          expect(cells[docIdx], `${pid} 主治医生列回落成了编号`).not.toBe(doctorId)
-        } else {
-          unassignedChecked++
-          expect(cells[docIdx], `${pid} 无医生时应显示 -`).toBe('-')
-        }
         // 兜底：任何一格都不该把 undefined / null 直接印出来
         for (const c of cells) expect(c).not.toMatch(/undefined|null|\[object/)
       }
 
       // 防「零行也通过」：staging seed 至少各命中一次两类分支
       expect(teamChecked, '应至少命中 1 行有团队的患者').toBeGreaterThanOrEqual(1)
-      expect(docChecked, '应至少命中 1 行有主治医生的患者').toBeGreaterThanOrEqual(1)
       expect(unassignedChecked, '应至少命中 1 个未分配字段（否则「-」分支未被守）').toBeGreaterThanOrEqual(1)
     })
   })
