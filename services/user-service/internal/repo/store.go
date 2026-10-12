@@ -677,6 +677,9 @@ type Store interface {
 	// 系统配置
 	GetConfigs(ctx context.Context, keys []string) (map[string]string, error)
 	UpsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy string) error
+	// UpsertConfigsBumpDeviceVersion T669：与 UpsertConfigs 同事务，额外把 device_config_version
+	// 原子 +1（采集间隔实际变更时调用；固件靠版本差应用新配置，协议 §4.1）。
+	UpsertConfigsBumpDeviceVersion(ctx context.Context, kvs []ConfigKV, updatedBy string) error
 
 	// T252 2.2 逐采集点告警阈值（alert_point_rules，稀疏存放：未落库点由 handler 回默认）
 	ListAlertPointRules(ctx context.Context) ([]AlertPointRuleRow, error)
