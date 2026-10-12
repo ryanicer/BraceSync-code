@@ -354,6 +354,10 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/admin/flow/type-bindings", h.getFlowTypeBindings)
 		v1.PUT("/admin/flow/type-bindings", h.saveFlowTypeBindings)
 
+		// T679 医护待办（列表 + 详情合一；doctor/admin，网关 RBAC 见 rbac.go doctorAdminOnly）。
+		// 详情复用本端点 `?instanceId=`，不新增第二端点。
+		v1.GET("/todos", h.listMyTodos)
+
 		// T130 复查记录（合同患者端「复查管理」）
 		v1.POST("/admin/review-records", h.createReviewRecord)
 		v1.GET("/patients/:patientId/review-records", h.listReviewRecords)

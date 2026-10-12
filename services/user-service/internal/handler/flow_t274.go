@@ -99,6 +99,7 @@ type flowGraph struct {
 	successors   map[string][]string // node_id → 出边指向的 node_id（去重保序）
 	entryNodeID  map[string]bool     // 入边为 0 的节点（实例启动时置 current）
 	assigneeRole map[string]string   // T668：node_id → 模板配置的处理角色（properties.assigneeRole；无配置不入 map）
+	props        map[string]flowGraphNodeProps // T679：node_id → 节点业务属性（时限/指引；供待办读侧装配）
 }
 
 func newFlowGraph() *flowGraph {
@@ -107,6 +108,7 @@ func newFlowGraph() *flowGraph {
 		successors:   map[string][]string{},
 		entryNodeID:  map[string]bool{},
 		assigneeRole: map[string]string{},
+		props:        map[string]flowGraphNodeProps{},
 	}
 }
 
@@ -146,7 +148,8 @@ func parseFlowGraph(rawNodes, rawEdges json.RawMessage) (*flowGraph, *model.AppE
 		if role := strings.TrimSpace(n.Properties.AssigneeRole); role != "" {
 			g.assigneeRole[id] = role // T668：节点角色执法依据
 		}
-		g.successors[id] = nil // 保证每个节点都有 key（无出边时回空数组而非 null）
+		g.props[id] = n.Properties // T679：待办读侧取时限/指引（无配置即零值）
+		g.successors[id] = nil     // 保证每个节点都有 key（无出边时回空数组而非 null）
 	}
 
 	edges := flowGraphEdges{}
