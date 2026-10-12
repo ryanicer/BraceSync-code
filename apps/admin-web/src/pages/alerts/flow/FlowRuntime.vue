@@ -65,6 +65,12 @@
         <div class="rp-op-body">
           <!-- 当前节点：可操作 -->
           <template v-if="selectedState && selectedState.status === 'current'">
+            <!-- T668 无权处理：仅提示，拦截以后端 403 为准（本镜像只做 UX 置灰） -->
+            <div v-if="!canOperateCurrent" class="rp-op-forbidden">
+              <el-icon><Warning /></el-icon>
+              <span>当前账号无权处理该节点{{ operateRoleHint }}，如需处理请联系管理员转派</span>
+            </div>
+            <template v-else>
             <div class="rp-section">处理操作</div>
             <div class="rp-op-btn-row">
               <el-button
@@ -105,6 +111,7 @@
             <el-button type="primary" class="rp-submit" :loading="submitting" @click="submit">
               提交{{ ACTION_LABEL[pendingAction] }}
             </el-button>
+            </template>
           </template>
 
           <!-- 已完成节点：只读历史 -->
@@ -149,6 +156,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Warning } from '@element-plus/icons-vue'
 import type { Alert, Doctor } from '@bracesync/shared-types'
 import { alertTypeLabel, userErrorCopy } from '@bracesync/shared-utils'
 import LogicFlow from '@logicflow/core'
@@ -160,6 +168,7 @@ import {
 } from '../../../api/flow'
 import { fetchDoctors, presignFile, uploadFileDirect, completeUpload } from '../../../api'
 import { useAuthStore } from '../../../stores/auth'
+import type { RoleKey } from '../../../router/permissions'
 import { canReadDoctorRoster } from '../../../utils/alertPageAccess'
 import { registerFlowElements } from './canvas'
 import { buildRuntimeGraph, deadlineOf, FLOW_STATUS_LABEL, type FlowStatus } from './flowGraph'
@@ -224,6 +233,44 @@ const assigneeText = computed(() => {
   return s?.assigneeName || s?.assignee || n?.assigneeRole || '-'
 })
 const deadlineText = computed(() => deadlineOf(selectedTemplateNode.value?.properties))
+
+// T668 节点执法的前端 UX 镜像（只读镜像，拦截 100% 以后端 403 为准）。
+// 映射必须与 user-service flow_t668_role_guard.go 的 flowNodeRoleMembers 同口径：
+// 主治/值班医生→doctor；护士/系统自动→空集（仅 admin 例外，护士是 doctors.title 职称非登录角色）。
+const FLOW_ROLE_MEMBERS: Record<string, RoleKey[]> = {
+  管理员: ['admin'],
+  主治医生: ['doctor'],
+  值班医生: ['doctor'],
+  护士: [],
+  系统自动: [],
+}
+const currentAssigneeRole = computed(() => {
+  const n = selectedTemplateNode.value?.properties as { assigneeRole?: string } | undefined
+  return (n?.assigneeRole || '').trim()
+})
+const canOperateCurrent = computed(() => {
+  const s = selectedState.value
+  if (!s || s.status !== 'current') return false
+  if (auth.role === 'admin') return true // 与后端同口径的 admin 例外
+  // 运行态已转派到具体账号 → 只认本人（转派可跨角色，账号层短路，不再卡模板角色）
+  if (s.assignee) {
+    const myId = auth.user?.adminId || ''
+    return myId !== '' && myId === s.assignee
+  }
+  const cfg = currentAssigneeRole.value
+  if (!cfg) return true // 节点未配角色：staff 均可（旧模板不锁死）
+  if (cfg.startsWith('ROLE_')) {
+    // 契约码值形（ROLE_DOCTOR…）→ 去前缀小写比对
+    return cfg.slice(5).toLowerCase() === auth.role
+  }
+  return (FLOW_ROLE_MEMBERS[cfg] ?? []).includes(auth.role ?? ('' as RoleKey))
+})
+const operateRoleHint = computed(() => {
+  const s = selectedState.value
+  if (s?.assignee) return '（需当前处理人操作）'
+  const cfg = currentAssigneeRole.value
+  return cfg ? `（要求处理角色：${cfg}）` : ''
+})
 
 const branchOptions = computed(() => {
   const s = selectedState.value
@@ -513,6 +560,13 @@ onBeforeUnmount(() => {
 .rp-hist-k { color: #94a3b8; width: 64px; }
 .rp-placeholder { padding: 20px 0; text-align: center; }
 .rp-muted { color: #94a3b8; font-size: 12px; }
+/* T668 节点无权操作提示（UX 层；真拦截在后端 403） */
+.rp-op-forbidden {
+  display: flex; align-items: center; gap: 6px;
+  margin: 8px 0; padding: 10px 12px;
+  border: 1px solid #fcd34d; border-radius: 6px;
+  background: #fffbeb; color: #92400e; font-size: 12px;
+}
 .rp-timeline-title { margin-top: 18px; }
 .rp-timeline { margin-top: 4px; }
 .rp-tl-actor { font-weight: 600; color: #1e293b; font-size: 12px; }

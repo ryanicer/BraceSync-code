@@ -81,6 +81,7 @@ type flowGraphNodes []struct {
 	Text *struct {
 		Value string `json:"value"`
 	} `json:"text"`
+	Properties flowGraphNodeProps `json:"properties"` // T668：仅取 assigneeRole 执法
 }
 
 // flowGraphEdges LogicFlow 2.x graphData.edges（端点键名 2.x 为 sourceNodeId/targetNodeId）
@@ -92,18 +93,20 @@ type flowGraphEdges []struct {
 
 // flowGraph 模板图的派生索引（每次请求由 nodes/edges 现算，不落库）
 type flowGraph struct {
-	nodeIDs     []string            // 全量节点（模板给出顺序）
-	edgeCount   int                 // 连线条数（审计文案用；successors 已去重，不能直接取长度）
-	nameOf      map[string]string   // node_id → 展示名（text.value，空则不收录）
-	successors  map[string][]string // node_id → 出边指向的 node_id（去重保序）
-	entryNodeID map[string]bool     // 入边为 0 的节点（实例启动时置 current）
+	nodeIDs      []string            // 全量节点（模板给出顺序）
+	edgeCount    int                 // 连线条数（审计文案用；successors 已去重，不能直接取长度）
+	nameOf       map[string]string   // node_id → 展示名（text.value，空则不收录）
+	successors   map[string][]string // node_id → 出边指向的 node_id（去重保序）
+	entryNodeID  map[string]bool     // 入边为 0 的节点（实例启动时置 current）
+	assigneeRole map[string]string   // T668：node_id → 模板配置的处理角色（properties.assigneeRole；无配置不入 map）
 }
 
 func newFlowGraph() *flowGraph {
 	return &flowGraph{
-		nameOf:      map[string]string{},
-		successors:  map[string][]string{},
-		entryNodeID: map[string]bool{},
+		nameOf:       map[string]string{},
+		successors:   map[string][]string{},
+		entryNodeID:  map[string]bool{},
+		assigneeRole: map[string]string{},
 	}
 }
 
@@ -139,6 +142,9 @@ func parseFlowGraph(rawNodes, rawEdges json.RawMessage) (*flowGraph, *model.AppE
 		g.nodeIDs = append(g.nodeIDs, id)
 		if n.Text != nil && strings.TrimSpace(n.Text.Value) != "" {
 			g.nameOf[id] = strings.TrimSpace(n.Text.Value)
+		}
+		if role := strings.TrimSpace(n.Properties.AssigneeRole); role != "" {
+			g.assigneeRole[id] = role // T668：节点角色执法依据
 		}
 		g.successors[id] = nil // 保证每个节点都有 key（无出边时回空数组而非 null）
 	}
@@ -714,6 +720,23 @@ func (h *Handler) submitFlowNodeAction(c *gin.Context) {
 	}
 	if _, isNode := graph.successors[nodeID]; !isNode {
 		fail(c, model.ErrNotFound("node %s not found in this instance's template", nodeID))
+		return
+	}
+
+	// T668 节点级角色/账号执法（confirm/reject/transfer/urge 统一走此门）：
+	// 读运行态节点 assignee（transfer 维护）+ 模板配置角色（properties.assigneeRole）。
+	nodeStates, err := h.store.ListNodeStates(ctx, instanceID)
+	if err != nil {
+		fail(c, model.ErrInternal("load node states failed"))
+		return
+	}
+	if allowed, denyReason := enforceFlowNodeAssignment(flowNodeGuardInput{
+		ConfiguredRole: graph.assigneeRole[nodeID],
+		StateAssignee:  nodeStateAssignee(nodeStates, nodeID),
+		OperatorID:     op,
+		XRole:          c.GetHeader(headerRole),
+	}); !allowed {
+		fail(c, model.ErrForbidden(denyReason))
 		return
 	}
 

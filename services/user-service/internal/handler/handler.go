@@ -231,6 +231,8 @@ func (h *Handler) Router() *gin.Engine {
 	// T653 服务间端点：alert-service 告警入库后按绑定自动建实例。
 	// 挂 v1 组之外 = 不挂 auditTrail、不鉴 JWT（不经网关，docker 内网白名单，同 data-service→alert-service /internal/evaluate 范式）。
 	r.POST("/internal/flow/auto-start", h.autoStartFlow)
+	// T668：alert-service 处理告警（process/processing）前的节点执法一问（绑定流程的告警以节点执法为准）。
+	r.POST("/internal/flow/process-guard", h.flowProcessGuard)
 
 	v1 := r.Group("/api/v1")
 	// T252 12.3 操作日志：表驱动埋点（auditRoutes 命中的路由在 HTTP<400 时写 audit_logs）

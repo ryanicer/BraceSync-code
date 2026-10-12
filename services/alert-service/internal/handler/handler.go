@@ -64,7 +64,9 @@ type Handler struct {
 	alerts   consumer.AlertCreator
 	notifier consumer.Notifier
 	flow     flowstarter.Starter // T653：告警入库后按绑定自动建实例（SetFlowStarter 注入，默认 Noop）
-	public   PublicAlertStore    // T028 公开端点数据源（SetPublicStore 注入，可空）
+	// processGuard T668：告警处理（process/processing）前的节点执法一问（默认 NoopGuard = 不执法）
+	processGuard flowstarter.Guard
+	public       PublicAlertStore // T028 公开端点数据源（SetPublicStore 注入，可空）
 	// wearingThresholdN 内联评估佩戴判定阈值（T661 H 项）：由 sys_configs
 	// wearing_pressure_threshold 热更新注入；零值走 consumer.DefaultWearingThresholdN 兜底。
 	wearingThresholdN float64
@@ -77,7 +79,15 @@ func New(eval *engine.RuleEvaluator, alerts consumer.AlertCreator, notifier cons
 		notifier = consumer.NoopNotifier{}
 	}
 	return &Handler{eval: eval, alerts: alerts, notifier: notifier,
-		flow: flowstarter.Noop{}, log: zerolog.Nop()}
+		flow: flowstarter.Noop{}, processGuard: flowstarter.NoopGuard{}, log: zerolog.Nop()}
+}
+
+// SetProcessGuard T668：注入告警处理节点执法守卫（user-service /internal/flow/process-guard）。
+// 不注入时保持 NoopGuard（无流程服务的环境按 staff 现状放行）。
+func (h *Handler) SetProcessGuard(g flowstarter.Guard) {
+	if g != nil {
+		h.processGuard = g
+	}
 }
 
 // SetLogger 注入日志器（生产使用；默认 Nop）

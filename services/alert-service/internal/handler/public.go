@@ -257,6 +257,9 @@ func (h *Handler) processAlert(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.enforceProcessGuard(w, r, alertID) {
+		return
+	}
 	note, ok := h.parseProcessNote(w, r)
 	if !ok {
 		return
@@ -320,6 +323,9 @@ func (h *Handler) startProcessingAlert(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.enforceProcessGuard(w, r, alertID) {
+		return
+	}
 	st, err := h.public.StartProcessing(r.Context(), alertID)
 	if err != nil {
 		h.log.Error().Err(err).Int64("alert_id", alertID).Msg("start processing alert failed")
@@ -350,6 +356,30 @@ type startProcessingData struct {
 	AlertID       string `json:"alertId"`
 	ProcessStatus string `json:"processStatus"`
 	InProgressAt  string `json:"inProgressAt"`
+}
+
+// enforceProcessGuard T668 卡面口径 3：告警 process/processing 落库前问 user-service
+// 流程节点执法。绑定流程且实例 running 时，操作者不是当前节点合法处理人 → 403；
+// user-service 不可达等依赖故障 → 503（权限判定 fail-closed，不旁路成 staff 放行）。
+// 返回 false 时响应已写出，调用方直接 return。
+func (h *Handler) enforceProcessGuard(w http.ResponseWriter, r *http.Request, alertID int64) bool {
+	d, err := h.processGuard.CheckProcess(r.Context(), alertID,
+		r.Header.Get(headerUserID), r.Header.Get(headerRole))
+	if err != nil {
+		h.log.Error().Err(err).Int64("alert_id", alertID).Msg("flow process-guard check failed")
+		h.reject(w, r, http.StatusServiceUnavailable, codeInternalError,
+			"流程权限校验暂不可用，请稍后重试")
+		return false
+	}
+	if d.Enforced && !d.Allowed {
+		reason := d.Reason
+		if reason == "" {
+			reason = "流程进行中，当前节点未授权该账号处理"
+		}
+		h.reject(w, r, http.StatusForbidden, codeForbidden, reason)
+		return false
+	}
+	return true
 }
 
 // parseAlertID 路径参数 alertId → int64（非数字或 <1 → 400，两处理端点同口径）
