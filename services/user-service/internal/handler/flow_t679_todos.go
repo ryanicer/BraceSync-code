@@ -30,9 +30,9 @@ import (
 )
 
 const (
-	flowTodoDefaultLimit = 30                   // properties.timeLimit 缺省（分钟）
-	flowTodoDefaultUnit  = "minutes"            // properties.timeUnit 缺省
-	flowTodoDueWindow    = 30 * time.Minute     // R5 临期阈值
+	flowTodoDefaultLimit = 30               // properties.timeLimit 缺省（分钟）
+	flowTodoDefaultUnit  = "minutes"        // properties.timeUnit 缺省
+	flowTodoDueWindow    = 30 * time.Minute // R5 临期阈值
 )
 
 // flowTodoUnitNames timeUnit → 中文单位（limitText 用）。

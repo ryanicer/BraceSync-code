@@ -93,12 +93,12 @@ type flowGraphEdges []struct {
 
 // flowGraph 模板图的派生索引（每次请求由 nodes/edges 现算，不落库）
 type flowGraph struct {
-	nodeIDs      []string            // 全量节点（模板给出顺序）
-	edgeCount    int                 // 连线条数（审计文案用；successors 已去重，不能直接取长度）
-	nameOf       map[string]string   // node_id → 展示名（text.value，空则不收录）
-	successors   map[string][]string // node_id → 出边指向的 node_id（去重保序）
-	entryNodeID  map[string]bool     // 入边为 0 的节点（实例启动时置 current）
-	assigneeRole map[string]string   // T668：node_id → 模板配置的处理角色（properties.assigneeRole；无配置不入 map）
+	nodeIDs      []string                      // 全量节点（模板给出顺序）
+	edgeCount    int                           // 连线条数（审计文案用；successors 已去重，不能直接取长度）
+	nameOf       map[string]string             // node_id → 展示名（text.value，空则不收录）
+	successors   map[string][]string           // node_id → 出边指向的 node_id（去重保序）
+	entryNodeID  map[string]bool               // 入边为 0 的节点（实例启动时置 current）
+	assigneeRole map[string]string             // T668：node_id → 模板配置的处理角色（properties.assigneeRole；无配置不入 map）
 	props        map[string]flowGraphNodeProps // T679：node_id → 节点业务属性（时限/指引；供待办读侧装配）
 }
 
