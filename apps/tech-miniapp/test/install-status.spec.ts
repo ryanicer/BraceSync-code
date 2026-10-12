@@ -440,7 +440,8 @@ describe('TI-9 — 基线提交成功侧有反馈（稿面 install.html 校准�
     const body = pageFnBody('install', 'finalizeCalibration')
     const atSaved = body.indexOf('installStore.setBaselineSaved(bs.baselineId)')
     const atToast = body.indexOf("uni.showToast({ title: '基线已提交云端'")
-    const atCatch = body.indexOf('} catch (e) {')
+    // 在 finalizeCalibration 函数体里、saveBaseline try 块之后找 catch（不是 failCalibration 里的 catch）
+    const atCatch = body.indexOf('} catch (e) {', atSaved)
     expect(atSaved).toBeGreaterThan(-1)
     expect(atToast).toBeGreaterThan(atSaved)
     expect(atCatch).toBeGreaterThan(atToast)
@@ -460,12 +461,15 @@ describe('T443 裁定⑥ — 重新采集入口只在不破坏规矩 A 的前提
   const src = pageSrc('install')
 
   it('入口只挂在采集中态（稿面 T449·TI-6），校准完成态不留入口', () => {
-    const atCollecting = src.indexOf('v-else-if="calibrating && !calibrated"')
+    // T675 重构：calibrating/calibrated 由 calibState ref 派生为 computed，
+    //   采集中态块用 v-else-if="calibrating"（前面 calibFailed 已经把失败态截走），
+    //   「重新采集」按钮仍只在采集中态块内出现。
+    const atCollecting = /v-else-if="calibrating[^\w]/.exec(src)?.index
     const atDone = src.indexOf('<!-- 校准完成：零点偏移矩阵')
     const atBtn = src.indexOf('recollectCalibration"><text>重新采集')
-    expect(atCollecting).toBeGreaterThan(-1)
-    expect(atDone).toBeGreaterThan(atCollecting)
-    expect(atBtn, '「重新采集」不在采集中态块内').toBeGreaterThan(atCollecting)
+    expect(atCollecting, '采集中态块定位失败').toBeGreaterThan(-1)
+    expect(atDone).toBeGreaterThan(atCollecting!)
+    expect(atBtn, '「重新采集」不在采集中态块内').toBeGreaterThan(atCollecting!)
     expect(atBtn, '「重新采集」漏进校准完成态，与稿面 T449·TI-6 相反').toBeLessThan(atDone)
     const line = src.slice(src.lastIndexOf('\n', atBtn) + 1, src.indexOf('\n', atBtn))
     expect(line).toContain('v-if="!baselineLocked"')
@@ -497,19 +501,20 @@ describe('T443 裁定⑥ — 重新采集入口只在不破坏规矩 A 的前提
   })
 
   it('recollectCalibration 复位采集态并重启采集，不落基线', () => {
+    // T675 重构：calibrated/calibState 走 calibState.value = 'collecting' 在 startCalibration 里统一复位，
+    //   recollectCalibration 只负责停流 + 重新调 startCalibration；核心不变=不落基线。
     const body = pageFnBody('install', 'recollectCalibration')
-    expect(body).toContain('calibrated.value = false')
-    expect(body).toContain('collectedPointCount.value = 0')
-    expect(body).toContain('offsetValues.value = Array(20).fill(0)')
+    expect(body).toContain('await stopRealtimePressure(')
     expect(body).toContain('await startCalibration()')
     // 本函数只做前端状态复位，不碰写通道
     expect(body).not.toContain('saveBaseline(')
     expect(body).not.toContain('setBaselineSaved(')
   })
 
-  it('采集中止重采要先收计时器与实时流（不收会叠第二个 interval，finalize 触发两次）', () => {
+  it('采集中止重采要先收计时器与实时流（不收会叠第二个 timeout，finalize 触发两次）', () => {
+    // T675：setInterval 改成 setTimeout（看门狗），断言改成收 frameTimer + stopRealtimePressure 顺序
     const body = pageFnBody('install', 'recollectCalibration')
-    const atClear = body.indexOf('clearInterval(collectTimer)')
+    const atClear = body.indexOf('clearTimeout(frameTimer)')
     const atStop = body.indexOf('await stopRealtimePressure(')
     const atStart = body.indexOf('await startCalibration()')
     expect(atClear).toBeGreaterThan(-1)
