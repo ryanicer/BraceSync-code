@@ -447,6 +447,44 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
   }
 
   /**
+   * 按 total 翻页取全量模板名册（pageSize=100/面，服务端分页契约见 listFlowTemplates：
+   * {list,total,page,pageSize}）。
+   *
+   * 为什么不再各点写死「pageSize=100 一页必须装得下全量」：跨轮「在用不可删」残留只增不减，
+   * 2026-10-12 t667 真实档实发 100/101，六处名册尺在同一发里集体假红（24.2 当场红、
+   * 24.3-24.7 serial 依赖连带 did not run）；同数据面 t668 早 15 分钟跑时还是 100/100 通过，
+   * 证明红的是「一页装全量」这条测试假设，不是服务端行为。
+   *
+   * 牙不丢：累计行数必须等于 total —— 分页参数漂移或提前断页照样判红，只是不再把「总量超过 100」当失败。
+   * 零落地反证与守恒律的调用方拿到的仍是一枚完整名册，断语一格不改。
+   */
+  async function readAllTemplates(
+    p: Page,
+    token: string,
+    why: string,
+  ): Promise<{ total: number; list: TemplateDTO[] }> {
+    const PAGE_SIZE = 100
+    const all: TemplateDTO[] = []
+    let total = 0
+    for (let pageNo = 1; ; pageNo += 1) {
+      const r = await callOk<{ list: TemplateDTO[]; total: number }>(
+        p,
+        'GET',
+        `/api/v1/admin/flow/templates?page=${pageNo}&pageSize=${PAGE_SIZE}`,
+        { token, why: `${why}（全量名册第 ${pageNo} 面）` },
+      )
+      if (pageNo === 1) total = r.total
+      all.push(...r.list)
+      if (r.list.length < PAGE_SIZE || all.length >= total) break
+      if (pageNo >= 50) {
+        throw new Error(`全量名册翻到第 50 面（累计 ${all.length}/${total}）仍未取完，与分页契约不符，先停手`)
+      }
+    }
+    expect(all.length, `全量名册翻页累计应等于 total（实回 ${all.length}/${total}；${why}）`).toBe(total)
+    return { total, list: all }
+  }
+
+  /**
    * T647 丙案：把「往轮漏删的空壳」从「报给人清」改成本文件自己清一遍，通路就是 afterAll 每轮都在用的
    * 那条 admin 模板单删（文件头 41 行），作用域锁死在按 FLOW_TPL_PREFIX 筛出来的名册里，
    * 越出前缀即零动作（不碰 alerts、不碰实例行、不碰 seed、不碰非本前缀模板）。
@@ -459,11 +497,7 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     token: string,
     tag: string,
   ): Promise<{ scanned: number; deleted: string[]; refusedInUse: string[]; unexpected: string[]; shellCount: number; overCap: boolean }> {
-    const list = await callOk<{ list: TemplateDTO[]; total: number }>(p, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
-      token,
-      why: '自清前的模板列表读不通（作用域尺就立在这一枚面上）',
-    })
-    expect(list.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${list.list.length}/${list.total}）`).toBe(list.total)
+    const list = await readAllTemplates(p, token, '自清前的模板列表（作用域尺要立在全量名册上）')
     const mine = list.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
     const shells: TemplateDTO[] = []
     for (const t of mine) {
@@ -507,11 +541,7 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     // 「残留都在用」：instanceCount=0 却还在册 = 往轮漏删。T647 丙案把这一类从「报给人清」改成本腿自清
     // （通路就是 afterAll 每轮都在用的那条模板单删），清完再按原口径复尺断言，牙不丢；
     // 基线与往轮残留名册一律取自**清后**那一枚面，否则 afterAll 的行数守恒会把自清掉的颗数算成漏删。
-    const preClean = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
-      token,
-      why: '模板列表读不通',
-    })
-    expect(preClean.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${preClean.list.length}/${preClean.total}）`).toBe(preClean.total)
+    const preClean = await readAllTemplates(page, token, '自清前的模板列表')
     const cleaned = await cleanPrefixShells(page, token, '前置')
     expect(
       cleaned.unexpected,
@@ -526,13 +556,9 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
       appendJobSummary(over.message)
       throw over
     }
-    const list = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
-      token,
-      why: '自清后的模板列表读不通（基线要取这一枚面，不是清前那枚）',
-    })
+    const list = await readAllTemplates(page, token, '自清后的模板列表（基线取这一枚面，不是清前那枚）')
     baselineTplTotal = list.total
     const mine = list.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
-    expect(list.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${list.list.length}/${list.total}）`).toBe(list.total)
     preexistingTplIds = mine.map((t) => t.templateId)
     const prevUnsupported: string[] = []
     for (const t of mine) {
@@ -571,10 +597,7 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
       fixtureClean.deleted.includes(fixture.templateId),
       `夹具那颗 ${fixtureName}(${fixture.templateId}) 没被自清腿删掉（deleted=${fixtureClean.deleted.join(' ; ') || '空'}）⇒ 前置的自愈是假的`,
     ).toBe(true)
-    const afterFixture = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
-      token,
-      why: '夹具轮的收尾列表读不通',
-    })
+    const afterFixture = await readAllTemplates(page, token, '夹具轮的收尾列表')
     expect(
       afterFixture.list.filter((t) => t.templateId === fixture.templateId).length,
       `夹具那颗删后仍在本前缀名册里（回读 id=${fixture.templateId}）⇒ 单删只删了行没出名册`,
@@ -662,10 +685,7 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     expect(detail.version, '首建版本应为 1').toBe(1)
     expect(detail.instanceCount, '刚建的模板实例数应为 0').toBe(0)
 
-    const listAfter = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
-      token,
-      why: 'A1 建后列表读不通',
-    })
+    const listAfter = await readAllTemplates(page, token, 'A1 建后列表')
     expect(listAfter.total, `建一颗后 total 应等于基线 +1（基线 ${baselineTplTotal}，实得 ${listAfter.total}）`).toBe(baselineTplTotal! + 1)
     expect(listAfter.list.map((t) => t.templateId)).toContain(created.templateId)
     console.log(`[t574-chain-d][A1] templateId=${created.templateId} name=${name} 节点=${detail.nodes.length} 边=${detail.edges.length} version=${detail.version}`)
@@ -673,16 +693,10 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
 
   test('24.2 A2 坏图四形必须被拒（本卡核心负对照）＋ 逐形配对正对照 ＋ 零落地反证', async ({ page }) => {
     const token = await ensureAdmin(page)
-    const readTemplates = async (): Promise<{ total: number; list: TemplateDTO[] }> => {
-      const r = await callOk<{ total: number; list: TemplateDTO[] }>(
-        page,
-        'GET',
-        '/api/v1/admin/flow/templates?pageSize=100',
-        { token, why: 'A2 的列表读不通（零落地反证要靠名册，读不通就不能定性）' },
-      )
-      expect(r.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${r.list.length}/${r.total}）`).toBe(r.total)
-      return r
-    }
+    // 零落地反证要覆盖全量名册：跨轮残留把 total 顶过单页 100 后（2026-10-12 实发 100/101），
+    // 只读首页会漏判后页落库，故走 readAllTemplates 按 total 翻页，断语不动。
+    const readTemplates = (): Promise<{ total: number; list: TemplateDTO[] }> =>
+      readAllTemplates(page, token, 'A2 零落地反证要靠全量名册')
 
     // 每一形只让「被检的那一处」不合法，并给一处改对的配对：
     // 负对照证明被拒，配对证明同一条请求改那一处就收 ⇒ 拒的是这条规则，不是别的锁抢先。
@@ -1091,10 +1105,7 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     })
     expect(techWrite.status, `技师写模板应 403，实得 HTTP=${techWrite.status} code=${String(techWrite.code)} message=${techWrite.message}`).toBe(403)
     // 三发越权都不许落库（否则「拒了但也写了」）；名册现读，不靠响应推断
-    const afterForbidden = await callOk<{ list: TemplateDTO[] }>(pTech, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
-      token,
-      why: '越权三发后的名册读不通',
-    })
+    const afterForbidden = await readAllTemplates(pTech, token, '越权三发后的名册')
     const forbiddenLanded = afterForbidden.list.filter((t) => /医护越权|技师越权|无令牌/.test(t.name)).map((t) => t.name)
     expect(forbiddenLanded, `越权三发都不许落库，实得：${forbiddenLanded.join(' ; ') || '无'}`).toEqual([])
     console.log(`[t574-chain-d][A6] 技师写=${techWrite.status}/code=${String(techWrite.code)} 无令牌写=${anon.status}/code=${String(anon.code)}｜越权三发落库颗数=${forbiddenLanded.length}（名册现读）`)
@@ -1120,12 +1131,8 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
       `[t574-chain-d][残留] 实例 ${instId} 发 DELETE ⇒ HTTP=${delInst.status} code=${String(delInst.code)}（无删除端点，实例行删不掉，如实登记）`,
     )
 
-    const rest = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
-      token,
-      why: '守恒腿读模板不通',
-    })
+    const rest = await readAllTemplates(page, token, '守恒腿读模板')
     const mine = rest.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
-    expect(rest.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${rest.list.length}/${rest.total}）`).toBe(rest.total)
     expect(
       mine.length,
       `名册里本前缀颗数应等于「往轮在用残留 ${preexistingTplIds.length} + 本轮登记 ${madeTemplates.length}」（实得 ${mine.length}）`,
@@ -1176,12 +1183,8 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
         unexpected,
         `删除结果只该有两种（删成 / 在用 409），出现第三种就是漏删或端点变化：${unexpected.join(' ; ') || '无'}`,
       ).toEqual([])
-      const after = await callOk<{ list: TemplateDTO[]; total: number }>(page, 'GET', '/api/v1/admin/flow/templates?pageSize=100', {
-        token,
-        why: '还原后的模板列表读不通',
-      })
+      const after = await readAllTemplates(page, token, '还原后的模板列表')
       const leftovers = after.list.filter((t) => t.name.startsWith(FLOW_TPL_PREFIX))
-      expect(after.list.length, `名册尺要成立，pageSize=100 必须装得下全量（实回 ${after.list.length}/${after.total}）`).toBe(after.total)
       const leftoverNames = leftovers.map((t) => t.templateId)
       console.log(
         `[t574-chain-d][守恒] 模板 total=${after.total} 基线=${baselineTplTotal} 删成=${deleted} 在用残留=${leftovers.length}（其中往轮 ${preexistingTplIds.length} + 本轮 ${refusedInUse.length}）｜实例残留颗数=${instancesStarted}（契约无删除端点，只能推到终态不能删行）`,
