@@ -295,7 +295,10 @@ export interface AddMemberInput {
 /** mock 团队自增序号（TEAM-200 起，避开预置） */
 let teamSeq = 200
 
-/** 创建团队：name 查重命中 → 抛错；leader 不存在 → 抛错；否则返回 TeamDetail（mock 不持久化，前端乐观 push） */
+/** 创建团队：name 查重命中 → 抛错；leader 不存在 → 抛错；否则返回 TeamDetail。
+ * T671：对齐真实后端——建团同事务把负责人 team_id 置为新团（成员明细口径=doctors.team_id），
+ * 故 mock 也在内存里把负责人迁入新团并返回 memberCount=1；否则「建团后成员列表含负责人」
+ * 这条契约只在真环境成立，mock 反而演示旧缺陷。 */
 export function mockCreateTeam(input: CreateTeamInput): TeamDetail {
   const name = input.name.trim()
   if (TEAMS.some((t) => t.name === name)) {
@@ -306,19 +309,25 @@ export function mockCreateTeam(input: CreateTeamInput): TeamDetail {
     throw new Error('负责人不存在')
   }
   teamSeq += 1
+  const teamId = `TEAM-${String(teamSeq).padStart(3, '0')}`
   const now = new Date().toISOString()
-  return {
-    teamId: `TEAM-${String(teamSeq).padStart(3, '0')}`,
+  leader.teamId = teamId
+  const created: TeamDetail = {
+    teamId,
     name,
     leader: leader.doctorId,
     leaderName: leader.name,
-    memberCount: 0,
+    memberCount: 1,
     patientCount: 0,
     description: input.description ?? null,
     status: 'active',
     createdAt: now,
     teamType: input.teamType ?? 'medical',
   }
+  // 同步进 TEAMS：建团后「成员」面板走 mockTeamMembers，它先验团队存在；不 push 会把
+  // 真实后端「建团即可读成员」的契约在 mock 里误演成 404（页面自身的列表是乐观 push，不靠它）。
+  TEAMS.push(created)
+  return created
 }
 
 /** 编辑团队：团队不存在 → 抛错；name 被他人占用 → 抛错；否则返回更新后的 TeamDetail */
