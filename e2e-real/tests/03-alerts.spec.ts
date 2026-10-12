@@ -332,25 +332,27 @@ test.describe('03b-告警管理 · 角色分叉（T351）', () => {
     await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
 
-  test('3b.2 ops_admin：四张 Tab 齐全，规则网格照常渲染（运营不退化）', async ({ page }) => {
+  test('3b.2 ops_admin：五张 Tab 齐全，规则网格照常渲染（运营不退化）', async ({ page }) => {
     await realLogin(page)
     await expect(menuItems(page).first()).toBeVisible({ timeout: 20_000 })
     await gotoMenu(page, '告警管理')
     await expect(page).toHaveURL(/\/alerts$/, { timeout: 15_000 })
 
     await requireDeployedBuild(page, {
-      marker: 'T351-alerts-role-403',
-      why: '同上——旧包运营侧也是四张 Tab，本条只锁「按角色分叉没把运营一起摘掉」',
+      marker: 'T666-binding-tab',
+      why: '旧包运营侧只有四张 Tab（绑定区还嵌在「流程配置」内），T666 起独立为第五张「流程绑定」',
       // T358 同族（与 02-dashboard 2.4 一条形状）：toHaveURL 只代表路由换了，懒加载 chunk 里的
-      // Tab 未必已挂载，一次性 count() 会把「已部署」读成「未部署」。先有界等齐 4 张再取计数。
+      // Tab 未必已挂载，一次性 count() 会把「已部署」读成「未部署」。先有界等齐 5 张再取计数。
       probe: async (p) => {
         const tabs = p.getByRole('tab')
-        await tabs.nth(3).waitFor({ state: 'attached', timeout: 25_000 }).catch(() => {})
-        return (await tabs.count()) === 4
+        await tabs.nth(4).waitFor({ state: 'attached', timeout: 25_000 }).catch(() => {})
+        return (await tabs.count()) === 5
       },
     })
 
-    await expect(page.getByRole('tab')).toHaveCount(4)
+    // T666：告警类型↔流程绑定独立成第五张 Tab（原嵌在「流程配置」设计器上方）
+    await expect(page.getByRole('tab')).toHaveCount(5)
+    await expect(page.getByRole('tab', { name: '流程绑定' })).toHaveCount(1)
     await page.getByRole('tab', { name: '告警规则配置' }).click()
     await expect(page.locator('.alert-grid .grid-cell')).toHaveCount(20)
     await expect(page.locator('.el-message--error')).toHaveCount(0)
@@ -560,21 +562,31 @@ test.describe('03c-告警处理流程 · 医护可读（T359）', () => {
 
     // 同 3c.2：监听器只覆盖本页，别把上一屏的现场算进来
     const badRows: string[] = []
-    const sentPaths: string[] = []
     page.on('response', (res) => {
       if (!res.url().includes('/api/')) return
       if (res.status() >= 400) badRows.push(`${res.status()} ${res.request().method()} ${new URL(res.url()).pathname}`)
     })
-    page.on('request', (r) => {
-      if (r.url().includes('/api/')) sentPaths.push(new URL(r.url()).pathname)
-    })
+
+    // T666 起运营侧为五张 Tab，行内「流程」入口仍须切到「处理流程」（Tab3）。FlowRuntime 挂载后先串发
+    // 实例→模板→节点/动作（首行告警带实例时 4 跳、实测 2s+），转派候选人名录 /api/v1/doctors 在 load()
+    // 跑完后才补发。旧用例写死等 2.5s 再一次性查请求数组，staging 往返稍慢名录枪就落在窗外
+    // （Andy 第四批 STRICT run 38149844955 两次复现：实例链四枪齐发、名录未发；首行无实例的 run 又能
+    // 过 ⇒ 竞速型假红，非权限回退）。改为响应事件有界等，语义不变、不猜时长。
+    const rosterRes = page.waitForResponse(
+      (res) => new URL(res.url()).pathname === '/api/v1/doctors' && res.status() === 200,
+      { timeout: 15_000 },
+    ).catch(() => null)
+    const tplRes = page.waitForResponse(
+      (res) => new URL(res.url()).pathname.includes('/admin/flow/templates') && res.status() === 200,
+      { timeout: 15_000 },
+    ).catch(() => null)
 
     await tableRows(page).first().getByRole('button', { name: '流程' }).click()
-    await page.waitForTimeout(2_500)
+    await expect(page.getByRole('tab', { name: '处理流程' })).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 })
 
+    expect(await rosterRes, '运营的转派候选人名录应照发（GET /api/v1/doctors 200）').not.toBeNull()
+    expect(await tplRes, '运营应能读模板列表（GET /admin/flow/templates* 200）').not.toBeNull()
     expect(badRows, `运营侧出现 4xx：${badRows.join('；')}`).toEqual([])
-    expect(sentPaths.some((p) => p === '/api/v1/doctors'), '运营的转派候选人名录应照发').toBe(true)
-    expect(sentPaths.some((p) => p.includes('/admin/flow/templates')), '运营应能读模板列表').toBe(true)
     await expect(page.locator('.el-message--error')).toHaveCount(0)
   })
 })
