@@ -15,6 +15,7 @@ import {
   mockUpdatePatientPhone,
   mockUpdatePatientProfile,
   mockUnbindPatientWechat,
+  mockCreatePatient,
   MOCK_PHONE_AUDIT,
 } from '../src/mock/patients'
 
@@ -123,6 +124,16 @@ describe('T432 档案编辑（PUT /admin/patients/:id）', () => {
 
   it('患者不存在时报错', () => {
     expect(() => mockUpdatePatientProfile('PT-999', { name: '不存在的人' })).toThrow()
+  })
+})
+
+describe('T675 建档归属归一（POST /admin/patients）', () => {
+  // 与后端 handler.createPatient 同形：创建通道不再有 doctorId 入参，
+  // 新行 primary_doctor_id 恒 NULL；团队照常写入。存量列保留不迁移。
+  it('新建患者 teamId 照常落库、doctorId 恒为 null（CreatePatientInput 类型层已删 doctorId，传了直接编译不过）', () => {
+    const p = mockCreatePatient({ name: 'T675mock建档', phone: '13800675003', teamId: 'TEAM-003' })
+    expect(p.teamId).toBe('TEAM-003')
+    expect(p.doctorId).toBeNull()
   })
 })
 
