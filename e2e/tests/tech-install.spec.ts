@@ -97,6 +97,35 @@ test.describe('安装流程 3 阶段', () => {
     await expect(page.getByText('稳定性校验：占位（阈值待重定后启用）')).toBeVisible()
   })
 
+  test('阶段二：校准矩阵 N/kPa 随档切（T662 格2）', async ({ page }) => {
+    await goToPhase2(page)
+
+    // 采集前即切 kPa 档（切换器挂在阶段二卡头，采集中/完成态均可见）
+    await page.locator('.unit-seg-btn', { hasText: 'kPa' }).click()
+    await page.locator('.btn-primary', { hasText: '开始校准' }).click()
+
+    // 采集中：矩阵整数 kPa（mock 帧 ±0.15N 随机，含负值归零的 0），统计行带 kPa 字母
+    await expect(page.getByText('采集中... 第 1 / 5 秒')).toBeVisible({ timeout: 10_000 })
+    const cells = page.locator('.pressure-cell')
+    await expect(cells).toHaveCount(20)
+    for (let i = 0; i < 20; i++) {
+      await expect(cells.nth(i)).toHaveText(/^\d+$/)
+    }
+    await expect(page.locator('.stat-item').first()).toHaveText(/均值: \d+kPa/)
+    await expect(page.locator('.stat-item').nth(1)).toHaveText(/最大: \d+kPa/)
+
+    // 完成态：副标题单位与范围校验阈值随档（0.05N × 15.625 = 0.78125 → 同源派生取整 1 kPa）
+    await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText('零点偏移量（将从后续读数中扣除，单位 kPa）')).toBeVisible()
+    await expect(page.getByText('范围校验：|偏移| ≤ 1kPa（空载偏差上限）')).toBeVisible()
+
+    // 切回 N 档：文案与矩阵格式复原
+    await page.locator('.unit-seg-btn', { hasText: 'N' }).click()
+    await expect(page.getByText('零点偏移量（将从后续读数中扣除，单位 N）')).toBeVisible()
+    await expect(page.getByText('范围校验：|偏移| ≤ 0.05N（空载偏差上限）')).toBeVisible()
+    await expect(cells.first()).toHaveText(/^-?\d+\.\d{2}$/)
+  })
+
   test('阶段三：WiFi 配网入口', async ({ page }) => {
     await goToPhase2(page)
     await calibrateAndGoToPhase3(page)

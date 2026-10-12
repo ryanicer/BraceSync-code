@@ -202,8 +202,9 @@
                   <el-empty v-else-if="!wearLoading" :description="pressureEmptyText" :image-size="60" />
                   <div class="axis-note">
                     纵轴 = 日均压力（{{ axisUnitText(unit) }}），横轴 = 日期（后端按 Asia/Shanghai 切日）。
-                    <span v-if="unit === 'kPa'">压力上限线只有 N 口径（PRD §7D.12 未设 kPa 阈值键），kPa 档不画这条虚线。</span>
-                    <span v-else-if="thresholds">虚线为压力上限线，当前取系统配置 {{ thresholds.pressureHighThresholdN }}N（PRD §7D.12，不写死数值）。</span>
+                    <span v-if="thresholds && unit === 'N'">虚线为压力上限线，当前取系统配置 {{ thresholds.pressureHighThresholdN }}N（PRD §7D.12，不写死数值）。</span>
+                    <span v-else-if="unit === 'kPa' && pressureHighThresholdKpa != null">虚线为压力上限线（同源换算），当前约 {{ pressureHighThresholdKpa }}kPa（真值仍为系统配置 {{ thresholds?.pressureHighThresholdN }}N，按日聚合行的 kPa 比例换算）。</span>
+                    <span v-else-if="unit === 'kPa'">虚线为压力上限线，面积未配置时 kPa 档不画（fail-closed）。</span>
                     <span v-else>虚线为压力上限线，取值来自系统配置（PRD §7D.12），不写死数值。</span>
                   </div>
                 </div>
@@ -617,6 +618,35 @@ const pressureEmptyText = computed(() =>
   isKpaAxis.value && !pressureAxisUsable.value ? AREA_MISSING_HINT : '暂无日佩戴统计',
 )
 
+/**
+ * T662（T643 二期）：kPa 档下压力上限虚线的数值（同源换算）。
+ *
+ * 口径：阈值 N 真值是 sys_configs 的全局值（pressureHighThresholdN），
+ * 要对应到 kPa 轴需要乘一个换算系数。系数从 daily-wear 行的后端派生值
+ * 反推（kpaPerN = avgPressureKpa / avgPressure），完全同源、
+ * 不引入独立换算公式 —— 跟后端 KpaFromN 是同一条线。
+ *
+ * fail-closed：
+ *  - 非 kPa 档 → null（不参与计算）
+ *  - 找不着有值行 → null（虚线不画，与 T643 选型 A 同口径）
+ *  - avgPressure 为 0 → null（避免除零）
+ */
+const pressureHighThresholdKpa = computed<number | null>(() => {
+  if (!isKpaAxis.value) return null
+  const thresholdN = thresholds.value?.pressureHighThresholdN
+  if (thresholdN == null) return null
+  const kpas = wearSeries.value.avgPressureKpa
+  const ns = wearSeries.value.avgPressure
+  for (let i = 0; i < kpas.length; i++) {
+    const k = kpas[i]
+    const n = ns[i]
+    if (typeof k === 'number' && typeof n === 'number' && n > 0) {
+      return Math.round(thresholdN * (k / n))
+    }
+  }
+  return null
+})
+
 const pressureChartData = computed<ChartData<'line'>>(() => ({
   labels: wearSeries.value.dates,
   datasets: [
@@ -629,10 +659,23 @@ const pressureChartData = computed<ChartData<'line'>>(() => ({
       tension: 0.25,
       spanGaps: false,
     },
-    // 压力上限线恒 N：PRD §7D.12 只配 N 口径阈值，后端不下发 kPa 阈值键。
-    // 前端不许自算第二套口径（选型 A）⇒ kPa 档整条线不画，原因写在轴注里。
+    // T662：两档都画压力上限虚线。
+    // N 档：直接用 sys_configs 的 pressureHighThresholdN（PRD §7D.12）。
+    // kPa 档：按 daily-wear 行的同源比例换算（见 pressureHighThresholdKpa），
+    //         算不出时整条线不画（fail-closed）。
     ...(isKpaAxis.value
-      ? []
+      ? pressureHighThresholdKpa.value == null
+        ? []
+        : [
+            {
+              label: `压力上限线（${pressureHighThresholdKpa.value}kPa）`,
+              data: constantLine(pressureHighThresholdKpa.value, wearSeries.value.dates.length),
+              borderColor: '#f56c6c',
+              borderDash: [6, 4],
+              pointRadius: 0,
+              fill: false,
+            },
+          ]
       : [
           {
             label: `压力上限线（${thresholds.value?.pressureHighThresholdN ?? '—'}N）`,

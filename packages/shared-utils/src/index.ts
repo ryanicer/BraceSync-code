@@ -5,6 +5,7 @@
 export * from './errorCopy'
 export * from './feelings'
 export * from './pressureUnit'
+export * from './pressureConversion'
 
 /** Format pressure value with unit (default: N) */
 export function formatPressure(value: number, decimals = 1): string {

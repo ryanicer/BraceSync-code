@@ -105,7 +105,18 @@
 
       <el-tab-pane v-if="canConfigure" label="告警规则配置" name="rules">
         <div class="page-card" v-loading="rulesLoading">
-          <div class="card-title">按采集点设置告警阈值</div>
+          <div class="card-title-row">
+            <div class="card-title">按采集点设置告警阈值</div>
+            <!-- T662：压力阈值单位切换（与实时监控页同记忆键，同档位一致） -->
+            <span class="unit-seg" aria-label="压力单位">
+              <span
+                v-for="u in PRESSURE_UNITS"
+                :key="u"
+                :class="['unit-seg-btn', { 'unit-seg-active': ruleUnit === u }]"
+                @click="switchRuleUnit(u)"
+              >{{ u }}</span>
+            </span>
+          </div>
           <div class="rule-tip">💡 在 4×5 网格中点击格子勾选需监控的采集点，下方设置统一的压力阈值上下限。触发告警后将通知对应团队医生。</div>
           <div class="grid-area">
             <div class="alert-grid">
@@ -115,7 +126,7 @@
                 type="button"
                 class="grid-cell"
                 :class="{ monitored: p.monitored }"
-                :title="`${p.pointId} (${p.label}) — ${p.monitored ? '已勾选' : '未勾选'}，上限 ${p.effectiveUpperN}N / 下限 ${p.effectiveLowerN}N`"
+                :title="`${p.pointId} (${p.label}) — ${p.monitored ? '已勾选' : '未勾选'}，上限 ${isRuleKpa ? (kpaFromN(p.effectiveUpperN, RULE_AREA_CM2) ?? '--') : p.effectiveUpperN + 'N'} / 下限 ${isRuleKpa ? (kpaFromN(p.effectiveLowerN, RULE_AREA_CM2) ?? '--') : p.effectiveLowerN + 'N'}${isRuleKpa ? 'kPa' : ''}`"
                 @click="handleCellClick(p)"
                 @dblclick="openPointEditor(p)"
               >
@@ -134,14 +145,32 @@
             </div>
           </div>
           <div class="config-row config-header">
-            <span>统一压力上限(N)</span>
-            <span>统一压力下限(N)</span>
+            <span>统一压力上限({{ ruleUnit }})</span>
+            <span>统一压力下限({{ ruleUnit }})</span>
             <span>已选点位</span>
           </div>
           <div class="config-row">
             <span class="config-label">统一阈值</span>
-            <el-input-number v-model="unifiedUpper" :min="1" :max="200" :precision="1" controls-position="right" />
-            <el-input-number v-model="unifiedLower" :min="0" :max="200" :precision="1" controls-position="right" />
+            <el-input-number
+              v-if="!isRuleKpa"
+              v-model="unifiedUpper"
+              :min="1" :max="200" :precision="1" controls-position="right"
+            />
+            <el-input-number
+              v-else
+              v-model="unifiedUpperKpa"
+              :min="KPA_UPPER_MIN" :max="KPA_PRESSURE_MAX" :precision="0" controls-position="right"
+            />
+            <el-input-number
+              v-if="!isRuleKpa"
+              v-model="unifiedLower"
+              :min="0" :max="200" :precision="1" controls-position="right"
+            />
+            <el-input-number
+              v-else
+              v-model="unifiedLowerKpa"
+              :min="0" :max="KPA_PRESSURE_MAX" :precision="0" controls-position="right"
+            />
             <span class="selected-count">已选: {{ selectedCount }} / 20</span>
           </div>
           <div class="config-row per-point-row">
@@ -153,7 +182,9 @@
                 class="point-chip"
                 :title="`${p.pointId} 独立阈值（双击修改）`"
                 @dblclick="openPointEditor(p)"
-              >{{ p.pointId }} {{ p.effectiveUpperN }}/{{ p.effectiveLowerN }}N</span>
+              >{{ p.pointId }} {{ isRuleKpa
+                  ? (kpaFromN(p.effectiveUpperN, RULE_AREA_CM2) ?? '--') + '/' + (kpaFromN(p.effectiveLowerN, RULE_AREA_CM2) ?? '--') + 'kPa'
+                  : p.effectiveUpperN + '/' + p.effectiveLowerN + 'N' }}</span>
             </div>
           </div>
           <div class="rule-actions">
@@ -199,8 +230,17 @@
           </div>
           <div class="config-row">
             <span class="config-label">传感器标定阈值</span>
-            <el-input-number v-model="globalRules.sensorDriftN" :min="0.1" :max="20" :step="0.1" :precision="1" controls-position="right" />
-            <span class="unit">N</span>
+            <el-input-number
+              v-if="!isRuleKpa"
+              v-model="globalRules.sensorDriftN"
+              :min="0.1" :max="20" :step="0.1" :precision="1" controls-position="right"
+            />
+            <el-input-number
+              v-else
+              v-model="sensorDriftKpa"
+              :min="KPA_DRIFT_MIN" :max="KPA_DRIFT_MAX" :step="1" :precision="0" controls-position="right"
+            />
+            <span class="unit">{{ ruleUnit }}</span>
           </div>
           <div class="rule-actions">
             <el-button type="primary" :loading="savingGlobal" @click="saveGlobalRules">保存全局规则</el-button>
@@ -241,13 +281,15 @@
 
     <!-- 独立阈值编辑（设计稿：双击网格格子可编辑；留空 = 跟随统一阈值） -->
     <el-dialog v-model="pointEditorVisible" :title="`设置 ${editing?.pointId ?? ''} 独立阈值`" width="380px">
-      <p class="process-desc">留空 = 跟随统一阈值（当前统一上限 {{ unifiedUpper }}N / 下限 {{ unifiedLower }}N）</p>
+      <p class="process-desc">留空 = 跟随统一阈值（当前统一上限 {{ isRuleKpa ? unifiedUpperKpa + 'kPa' : unifiedUpper + 'N' }} / 下限 {{ isRuleKpa ? unifiedLowerKpa + 'kPa' : unifiedLower + 'N' }}）</p>
       <el-form label-width="120px">
-        <el-form-item label="独立压力上限(N)">
-          <el-input-number v-model="editingUpper" :min="1" :max="200" :precision="1" controls-position="right" />
+        <el-form-item :label="`独立压力上限(${ruleUnit})`">
+          <el-input-number v-if="!isRuleKpa" v-model="editingUpper" :min="1" :max="200" :precision="1" controls-position="right" />
+          <el-input-number v-else v-model="editingUpperKpa" :min="KPA_UPPER_MIN" :max="KPA_PRESSURE_MAX" :precision="0" controls-position="right" />
         </el-form-item>
-        <el-form-item label="独立压力下限(N)">
-          <el-input-number v-model="editingLower" :min="0" :max="200" :precision="1" controls-position="right" />
+        <el-form-item :label="`独立压力下限(${ruleUnit})`">
+          <el-input-number v-if="!isRuleKpa" v-model="editingLower" :min="0" :max="200" :precision="1" controls-position="right" />
+          <el-input-number v-else v-model="editingLowerKpa" :min="0" :max="KPA_PRESSURE_MAX" :precision="0" controls-position="right" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -262,7 +304,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Alert } from '@bracesync/shared-types'
-import { alertTypeLabel, formatAlertValue, isHiddenAlertType, userErrorCopy } from '@bracesync/shared-utils'
+import {
+  alertTypeLabel, formatAlertValue, isHiddenAlertType, userErrorCopy,
+  PRESSURE_UNITS, type PressureUnit,
+  DEFAULT_SENSOR_AREA_CM2, kpaFromN, nFromKpa,
+} from '@bracesync/shared-utils'
 import {
   fetchAlerts, processAlertApi, startProcessingAlertApi, patientNameOf,
   fetchAlertRules, saveAlertPointRulesApi, resetAlertPointRulesApi, saveAlertGlobalRulesApi,
@@ -272,6 +318,7 @@ import type { AlertPointRule, AlertGlobalRules } from '../../mock/alerts'
 import { useAuthStore } from '../../stores/auth'
 import { canConfigureAlerts } from '../../utils/alertPageAccess'
 import { formatCstMonthDayTime } from '../../utils/formatTime'
+import { readStoredUnit, persistUnit } from '../../utils/unitPref'
 import FlowRuntime from './flow/FlowRuntime.vue'
 import FlowTypeBindings from './flow/FlowTypeBindings.vue'
 import FlowDesigner from './flow/designer/FlowDesigner.vue'
@@ -386,6 +433,27 @@ async function confirmProcess() {
 }
 
 // ===== Tab2 告警规则配置 =====
+// T662（T643 二期）：压力阈值输入框随 N/kPa 档切换。
+// - N 是唯一真源（存储、请求、告警判定全用 N）
+// - kPa 仅展示+编辑层换算，按传感器有效面积 DEFAULT_SENSOR_AREA_CM2
+//   （PRD §7A.2.1 二.5，0.64 cm²）做前端换算，与后端 KpaFromN 同公式
+// - 与实时监控页共用 admin_monitor_unit 记忆键，同一台 admin 机器档位一致
+const ruleUnit = ref<PressureUnit>(readStoredUnit())
+function switchRuleUnit(next: PressureUnit) {
+  if (ruleUnit.value === next) return
+  ruleUnit.value = next
+  persistUnit(next)
+}
+const isRuleKpa = computed(() => ruleUnit.value === 'kPa')
+// 换算用的面积：全局配置无独立面积字段，按默认面积 0.64 cm² 兜底。
+// 若后端 sys_configs 后续新增 pressure_point_area_cm2 字段，改这里即可。
+const RULE_AREA_CM2 = DEFAULT_SENSOR_AREA_CM2
+// kPa 输入框量程由 N 侧硬量程换算而来，保证任何 kPa 编辑都回写出合法 N（防越界被后端 400）
+const KPA_PRESSURE_MAX = kpaFromN(200, RULE_AREA_CM2) ?? 3125
+const KPA_UPPER_MIN = kpaFromN(1, RULE_AREA_CM2) ?? 16
+const KPA_DRIFT_MAX = kpaFromN(20, RULE_AREA_CM2) ?? 313
+const KPA_DRIFT_MIN = kpaFromN(0.1, RULE_AREA_CM2) ?? 2
+
 const rulesLoading = ref(false)
 const savingRules = ref(false)
 const savingGlobal = ref(false)
@@ -398,6 +466,32 @@ const rules = ref<{ unifiedUpperN: number; unifiedLowerN: number; points: AlertP
 const unifiedUpper = ref(45)
 const unifiedLower = ref(10)
 const globalRules = ref<AlertGlobalRules>({ ...rules.value.globalRules })
+// T662：统一阈值的 kPa 双向换算（N 是唯一真源，kPa 仅编辑层）
+const unifiedUpperKpa = computed<number>({
+  get: () => kpaFromN(unifiedUpper.value, RULE_AREA_CM2) ?? 0,
+  set: (v: number) => {
+    const n = nFromKpa(v, RULE_AREA_CM2)
+    if (n != null) unifiedUpper.value = Math.round(n * 10) / 10
+  },
+})
+const unifiedLowerKpa = computed<number>({
+  get: () => kpaFromN(unifiedLower.value, RULE_AREA_CM2) ?? 0,
+  set: (v: number) => {
+    const n = nFromKpa(v, RULE_AREA_CM2)
+    if (n != null) unifiedLower.value = Math.round(n * 10) / 10
+  },
+})
+// 传感器标定阈值的 kPa 双向换算
+const sensorDriftKpa = computed<number>({
+  get: () => {
+    const k = kpaFromN(globalRules.value.sensorDriftN, RULE_AREA_CM2)
+    return k ?? 0
+  },
+  set: (v: number) => {
+    const n = nFromKpa(v, RULE_AREA_CM2)
+    if (n != null) globalRules.value.sensorDriftN = Math.round(n * 10) / 10
+  },
+})
 // T667：设备离线阈值的链式下限跟随「系统配置」里的数据采集间隔（后端 alert_rules_t252.go：
 // deviceOfflineMinutes 必须 ≥ 2× 采集间隔，且量程 [10,720]）。
 // 起始 null = 尚未读到（与规则同批加载，避免先用缺省 30 渲染出错误下限再闪变）；缺省 30 分钟（§7D.12 1800 秒）。
@@ -408,6 +502,30 @@ const pointEditorVisible = ref(false)
 const editing = ref<AlertPointRule | null>(null)
 const editingUpper = ref<number | null>(null)
 const editingLower = ref<number | null>(null)
+// 独立阈值编辑弹窗的 kPa 档双向换算（T662 格1b）：null = 跟随统一阈值，kPa 侧同样以空表达；
+// 回写 N 保留一位小数，与 N 档输入框 precision=1 对齐；N 仍是唯一真源，保存路径零改动。
+const editingUpperKpa = computed<number | null>({
+  get: () => (editingUpper.value == null ? null : kpaFromN(editingUpper.value, RULE_AREA_CM2)),
+  set: (v: number | null) => {
+    if (v == null) {
+      editingUpper.value = null
+      return
+    }
+    const n = nFromKpa(v, RULE_AREA_CM2)
+    if (n != null) editingUpper.value = Math.round(n * 10) / 10
+  },
+})
+const editingLowerKpa = computed<number | null>({
+  get: () => (editingLower.value == null ? null : kpaFromN(editingLower.value, RULE_AREA_CM2)),
+  set: (v: number | null) => {
+    if (v == null) {
+      editingLower.value = null
+      return
+    }
+    const n = nFromKpa(v, RULE_AREA_CM2)
+    if (n != null) editingLower.value = Math.round(n * 10) / 10
+  },
+})
 // 单击切换勾选 / 双击编辑独立阈值：单击延迟分派，双击取消定时器
 let cellClickTimer: number | null = null
 
@@ -608,6 +726,36 @@ onMounted(() => {
   font-weight: 600;
   color: #333;
   margin-bottom: 16px;
+}
+/* T662：规则卡标题行 + 压力单位切换（与实时监控页同款，记忆键共用） */
+.card-title-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.card-title-row .card-title {
+  margin-bottom: 0;
+}
+.unit-seg {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 2px;
+  gap: 1px;
+  margin-left: auto;
+  flex: none;
+}
+.unit-seg-btn {
+  padding: 3px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #666;
+  user-select: none;
+}
+.unit-seg-active {
+  background: #1a6db5;
+  color: #fff;
 }
 .rule-tip {
   background: #f0f7ff;
