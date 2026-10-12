@@ -267,12 +267,24 @@ const REGISTERED_DIVERGENCES: Divergence[] = [
   // T653 建档、T666 起绑定区独立成「流程绑定」Tab（index.vue:212，v-if canConfigure；GET/PUT 均 admin-only）
   { role: 'doctor', page: '/alerts', method: 'GET', path: '/api/v1/admin/flow/type-bindings', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/index.vue:212 流程绑定 Tab v-if="canConfigure"，FlowTypeBindings 仅该 Tab 激活（v-if activeTab=bindings）时挂载', why: '绑定决定未来告警是否自动起流程，属配置面；非 admin Tab 不渲染、onMounted 拉取不发' },
   { role: 'doctor', page: '/alerts', method: 'PUT', path: '/api/v1/admin/flow/type-bindings', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/index.vue:212 流程绑定 Tab v-if="canConfigure"', why: '同上：保存按钮在绑定区内，非 admin 无入口' },
+  // T667：设备离线阈值动态下限需读采集间隔；fetchSystemSettings 在 loadRules() 内，函数首行 canConfigure 即返回（alerts/index.vue loadRules 守卫），非 admin 不发
+  { role: 'doctor', page: '/alerts', method: 'GET', path: '/api/v1/admin/settings', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/index.vue loadRules() 首行 if (!canConfigure.value) return 后才 fetchSystemSettings', why: 'T667 联动采集间隔所需；仅 admin 的规则配置流程读取，非 admin 进页 loadRules 提前返回不发请求（与同函数 fetchAlertRules 同档；与 /orthosis-log 的 defect 条按页区分）' },
   { role: 'doctor', page: '/alerts', method: 'GET', path: '/api/v1/doctors', kind: 'guarded', at: 'apps/admin-web/src/pages/alerts/flow/FlowRuntime.vue:433 if (!canReadRoster.value) return', why: 'T359：转派候选人名录是 admin 域端点，非 admin 手输账号 ID' },
   { role: 'doctor', page: '/orthosis-log', method: 'GET', path: '/api/v1/teams', kind: 'guarded', at: 'apps/admin-web/src/pages/orthosis-log/index.vue:660 if (auth.role === \'admin\') fetchTeams()', why: 'T348 同类处置：团队名映射非 admin 不发' },
   // 门禁上线当天抓到的第一条真缺陷：无角色守卫，医护打开「数据视图」必吃 403 红条 + 图空白（现网实测见 T379 卡内交件）
   { role: 'doctor', page: '/orthosis-log', method: 'GET', path: '/api/v1/admin/settings', kind: 'defect', at: 'apps/admin-web/src/pages/orthosis-log/index.vue:478 loadWearSeries 无条件 fetchSystemSettings()', why: '缺陷待修：网关 admin-only 正确，前端照打违反 T348/T359 已立的「非 admin 不照打」口径；修法（不照打后阈值线怎么画）需产品定，请 PM 立缺陷卡' },
 ]
-const registeredDeny = new Map(REGISTERED_DIVERGENCES.map((d) => [key(d), d]))
+// T667：同一 (角色,方法,端点) 可能被多个页面以不同处置调用——
+// 如 GET /admin/settings 在 /orthosis-log 是无守卫 defect、在 /alerts（loadRules canConfigure 守卫内）是 guarded。
+// 故按页登记成数组，命中判定按「该页有没有对应条目」。
+const registeredDeny = new Map<string, Divergence[]>()
+for (const d of REGISTERED_DIVERGENCES) {
+  const k = key(d)
+  const arr = registeredDeny.get(k) ?? []
+  arr.push(d)
+  registeredDeny.set(k, arr)
+}
+const hitKey = (d: Divergence) => `${key(d)}@${d.page}`
 
 // ===== 派生网关判定表（golden 的内容）=====
 interface GatewayRow { role: string; method: string; path: string; deny: boolean; why: string }
@@ -350,13 +362,13 @@ describe('T379 权限矩阵三源跨源门禁', () => {
           const v = gatewayVerdict(d.gw, ROLE_ID[role], c.method, c.path)
           if (!v.deny) continue
           const k = key({ role, method: c.method, path: c.path })
-          const reg = registeredDeny.get(k)
-          if (!reg || reg.page !== page) { found.push(`${k} 页面 ${page}：网关 ${v.why}，且不在登记表（或登记的页面不符）`); continue }
-          hit.add(k)
+          const reg = registeredDeny.get(k)?.find((r) => r.page === page)
+          if (!reg) { found.push(`${k} 页面 ${page}：网关 ${v.why}，且不在登记表（或登记的页面不符）`); continue }
+          hit.add(hitKey(reg))
         }
       }
     }
-    const stale = REGISTERED_DIVERGENCES.map((x) => key(x)).filter((k) => !hit.has(k))
+    const stale = REGISTERED_DIVERGENCES.filter((x) => !hit.has(hitKey(x)))
     expect(found, '新增的「可见页 × 网关 403」差异（要么前端加守卫，要么改网关矩阵，别直接往登记表塞）：\n' +
       found.join('\n')).toEqual([])
     expect(stale, '登记表里这些条目已经不再命中（多半是缺陷修好了）：请删掉对应条目，否则门禁对它彻底失明：\n' +
