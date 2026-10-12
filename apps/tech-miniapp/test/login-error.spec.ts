@@ -3,22 +3,27 @@ import { classifyLoginError } from '../src/utils/loginError'
 
 /**
  * T677：登录错误分级——区分「网络失败」与「服务端凭证错误」，不再一锅烩。
- * 契约出处：PRD §7A「网络失败与凭证错误必须分别提示，禁止一锅烩兜底文案」。
+ * 契约出处：PRD §7C.1「网络失败与凭证错误必须分别提示，禁止一锅烩兜底文案」。
+ * 展示面口径：T465 门禁规定展示汇点不得出现技术原文（errMsg 只进日志），故 modal 正文
+ * 走共享文案层（带 NET 码位），原始 errMsg 由 login/index.vue 的 logger 单独留痕。
  */
 describe('T677 登录错误分级', () => {
-  it('传输层失败（无码无状态）判 network，透出真实 errMsg', () => {
+  it('传输层失败（无码无状态）判 network，弹网络 modal 且不含技术原文', () => {
     const err = new Error('request:fail url not in domain list')
     const p = classifyLoginError(err)
     expect(p.kind).toBe('network')
     expect(p.modal).toBe(true)
     expect(p.title).toBe('网络连接失败')
-    expect(p.content).toContain('request:fail url not in domain list')
+    expect(p.content).toContain('登录请求未能送达服务器')
+    expect(p.content).toContain('错误码 NET')
+    expect(p.content).not.toContain('request:fail')
   })
 
-  it('断网无 errMsg 时退化为「未知错误」，不空窗', () => {
+  it('断网空错误也判 network，正文退化到页面兜底句不空窗', () => {
     const p = classifyLoginError(new Error(''))
     expect(p.kind).toBe('network')
-    expect(p.content).toContain('未知错误')
+    expect(p.content).toContain('登录请求未能送达服务器')
+    expect(p.content).toContain('错误码 NET')
   })
 
   it('服务端 10401（HTTP 401）判 credential，逐字保持既有句', () => {

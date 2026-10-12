@@ -6,11 +6,16 @@
  * 也被报成凭证错误，误导排查方向。此处把分级判据独立出来，供页面复用且可单测。
  *
  * 分级：
- *  - network：传输层失败（无信封码、无 HTTP 状态），透出真实 errMsg（含 wx.request fail 原文）；
+ *  - network：传输层失败（无信封码、无 HTTP 状态），弹 modal 报「网络连接失败」，
+ *    正文走共享文案层（带 NET 码位），与凭证错误彻底分开；
  *  - credential：服务端 401／10401（凭据错误 / 账号不存在，统一防枚举），文案逐字保持既有句；
  *  - server：其余服务端错误码，走共享错误文案层 userErrorCopy。
+ *
+ * 🔴 原始 errMsg（request:fail 原文）不给展示汇点：T465 门禁规定展示层不得出现
+ *    logErrorText 技术原文（no-bare-message-display.test.ts R3）。它留在日志面
+ *    （login/index.vue catch 里的 logger.error + logErrorText），供真机取证读取。
  */
-import { logErrorText, userErrorCopy } from '@bracesync/shared-utils'
+import { userErrorCopy } from '@bracesync/shared-utils'
 
 export type LoginErrorKind = 'network' | 'credential' | 'server'
 
@@ -33,7 +38,10 @@ export function classifyLoginError(error: unknown): LoginErrorPrompt {
     return {
       kind: 'network',
       title: '网络连接失败',
-      content: `登录请求未能送达服务器，请检查网络后重试。\n详情：${logErrorText(error) || '未知错误'}`,
+      content: userErrorCopy(error, {
+        scope: 'tech',
+        fallback: '登录请求未能送达服务器，请检查网络后重试',
+      }),
       modal: true,
     }
   }
