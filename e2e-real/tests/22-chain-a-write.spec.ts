@@ -410,7 +410,8 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
     await expect(femaleRadio, '性别应有「女」这一项').toHaveCount(1)
     await femaleRadio.click()
     await expect(femaleRadio.locator('input')).toBeChecked()
-    // 团队/医生两项刻意留空：分配团队是被测的第五步，建档时就带上队等于没串
+    // 团队刻意留空：分配团队是被测的第五步，建档时就带上队等于没串。
+    // 医生项 T675 已从新建弹窗移除（归属只留团队一条线），建档请求体不再有 doctorId。
     await createDialog.getByRole('button', { name: '确定' }).first().click()
     // 文案按准确值等：登录那句「欢迎，运营小张」也是 .el-message，只等「出现任意一条」会误判（06 的 6.2 同律）
     await expect(adminMessage(page), '建档应回「创建成功」').toHaveText('创建成功', { timeout: 15_000 })

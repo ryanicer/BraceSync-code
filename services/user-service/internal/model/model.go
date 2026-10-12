@@ -453,6 +453,12 @@ type PatientLoginResultDTO struct {
 
 // CreatePatientRequestDTO 创建患者请求（name + phone 必填，其余可空）
 // T151：非传 deviceId——患者-设备绑定以 devices.patient_id 为唯一事实源，建档无权绑定确诊设备。
+//
+// T675（Boss 2026-10-12 拍板，患者创建归属归一）：创建通道不再接受 doctorId ——
+// 医生与团队无约束关系，建档双绑定致列表归属混乱；归属只留团队一条线，医生经团队成员关系确定。
+// ShouldBindJSON 对未知字段静默忽略 ⇒ 老客户端即使仍传 doctorId 也不会报错，只是一律不落库
+// （handler 不再向 PatientInput 透传，新行 primary_doctor_id 恒为 NULL）。
+// 存量行的 primary_doctor_id 列保留、读侧投影不动（接口兼容读），不做数据迁移。
 type CreatePatientRequestDTO struct {
 	Name      string   `json:"name"`
 	Phone     string   `json:"phone"` // 必填，11 位 1 开头手机号（validPhone 校验）
@@ -461,7 +467,6 @@ type CreatePatientRequestDTO struct {
 	Diagnosis *string  `json:"diagnosis"`
 	CobbAngle *float64 `json:"cobbAngle"`
 	TeamID    *string  `json:"teamId"`
-	DoctorID  *string  `json:"doctorId"`
 }
 
 // AssignTeamRequestDTO 分配团队请求（teamId 必填）

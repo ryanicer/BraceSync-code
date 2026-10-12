@@ -347,3 +347,91 @@ test.describe('设登录口令', () => {
     await expect(page.getByText(pwd as string)).toHaveCount(0)
   })
 })
+
+// ─────────────────────────────────────────────────────────────
+// T675 患者创建归属归一（Boss 2026-10-12 拍板）
+//
+// ① 建档去医生：新建表单没有「医生」项 ⇒ 提交体结构上不可能含 doctorId；
+//    「请求体不含 doctorId 键」这一格在 vitest（test/patient-create-t675.spec.ts）断言，
+//    mock 模式没有真 HTTP（请求不经网络），Playwright 这层只能量 UI 结构。
+//    后端同口径由 Go 用例 patient_writes_test.go 的 t675_legacy_doctor_id_ignored_not_written 兜。
+// ② 团队下拉只显医护团队：mock TEAM-201/202 是 maintenance（设备维护一/二组），
+//    患者域四个下拉（筛选 / 创建 / 分配 / 批量绑定）都不得列出它们。
+// ─────────────────────────────────────────────────────────────
+
+/** 打开 el-select 并取当前可见浮层的全部选项文案（去空白）；取完按 Esc 收起浮层 */
+async function medicalDropdownTexts(page: Page, select: ReturnType<Page['locator']>): Promise<string[]> {
+  await select.click()
+  const items = page.locator('.el-select-dropdown:visible .el-select-dropdown__item')
+  await expect(items.first()).toBeVisible()
+  const texts = (await items.allTextContents()).map((s) => s.trim()).filter(Boolean)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.el-select-dropdown:visible')).toHaveCount(0, { timeout: 5_000 }).catch(() => { /* 收起动画慢不阻塞 */ })
+  return texts
+}
+
+/** T675 统一口径：有医护团队、无维护班组 */
+async function expectOnlyMedicalTeams(page: Page, select: ReturnType<Page['locator']>): Promise<void> {
+  const texts = await medicalDropdownTexts(page, select)
+  expect(texts, '医护团队必须照常可选').toContain('脊柱侧弯一组')
+  expect(texts, '维护班组「设备维护一组」不得出现在患者团队下拉').not.toContain('设备维护一组')
+  expect(texts, '维护班组「设备维护二组」不得出现在患者团队下拉').not.toContain('设备维护二组')
+}
+
+test.describe('T675 患者创建归属归一', () => {
+  test('新建患者表单无「医生」项：提交体不可能携带 doctorId（无字段即无写入）', async ({ page }) => {
+    await page.locator('.page-toolbar').getByRole('button', { name: '添加患者' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '新建患者' })
+    await expect(dialog).toBeVisible()
+
+    // 表单内不得有医生 label，也不得残留旧的「请选择医生」下拉
+    await expect(dialog.locator('.el-form-item__label').filter({ hasText: '医生' })).toHaveCount(0)
+    await expect(dialog.locator('input[placeholder*="选择医生"]')).toHaveCount(0)
+
+    // 走一遍真提交，确认去字段后表单仍可正常建档
+    await dialog.locator('input[placeholder*="姓名"]').fill('T675建档无医生')
+    await dialog.locator('input[placeholder*="手机号"]').fill('13800675001')
+    await pickSelectOption(page, dialog.locator('.el-select').first(), '脊柱侧弯一组')
+    await dialog.getByRole('button', { name: '确定' }).click()
+    await expect(adminMessage(page)).toContainText('成功')
+    await expect(tableRows(page).filter({ hasText: 'T675建档无医生' })).toHaveCount(1)
+    // 请求体无 doctorId 键的逐字断言在 vitest（test/patient-create-t675.spec.ts），mock 不经网络
+  })
+
+  test('详情抽屉不再展示「主治医生」行（存量 primary_doctor_id 只兼容读、不展示不迁移）', async ({ page }) => {
+    await tableRows(page).filter({ hasText: '林小雨' }).click()
+    const drawer = page.locator('.el-drawer')
+    await expect(drawer).toBeVisible()
+    await expect(drawer.locator('.el-descriptions-item__label').filter({ hasText: '主治医生' })).toHaveCount(0)
+  })
+
+  test('团队下拉只列医护团队：创建 / 筛选 / 分配 / 批量绑定四个入口同口径', async ({ page }) => {
+    // ① 工具栏「全部团队」筛选
+    await expectOnlyMedicalTeams(page, page.locator('.page-toolbar .team-select'))
+
+    // ② 新建患者弹窗的团队下拉
+    await page.locator('.page-toolbar').getByRole('button', { name: '添加患者' }).click()
+    const createDialog = page.locator('.el-dialog').filter({ hasText: '新建患者' })
+    await expect(createDialog).toBeVisible()
+    await expectOnlyMedicalTeams(page, createDialog.locator('.el-select').first())
+    await createDialog.getByRole('button', { name: '取消' }).click()
+
+    // ③ 详情抽屉 → 分配团队弹窗
+    await tableRows(page).filter({ hasText: '林小雨' }).click()
+    const drawer = page.locator('.el-drawer')
+    await expect(drawer).toBeVisible()
+    await drawer.getByRole('button', { name: '分配团队' }).click()
+    const assignDialog = page.locator('.el-dialog').filter({ hasText: '分配团队' })
+    await expect(assignDialog).toBeVisible()
+    await expectOnlyMedicalTeams(page, assignDialog.locator('.el-select').first())
+    await assignDialog.getByRole('button', { name: '取消' }).click()
+    // 关掉详情抽屉：抽屉遮罩盖住整页，不关会拦截下方批量卡片的点击
+    await drawer.locator('.el-drawer__close-btn').click()
+    await expect(drawer).toBeHidden()
+
+    // ④ 批量患者-团队绑定卡片逐行下拉
+    const batchSelect = page.locator('.batch-bind-card .batch-team-select').first()
+    await expect(batchSelect).toBeVisible({ timeout: 15_000 })
+    await expectOnlyMedicalTeams(page, batchSelect)
+  })
+})

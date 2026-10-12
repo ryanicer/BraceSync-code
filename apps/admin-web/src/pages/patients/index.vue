@@ -9,8 +9,10 @@
         @keyup.enter="handleSearch"
         @clear="handleSearch"
       />
+      <!-- T675：患者归属只留团队一条线，团队下拉只显医护团队（维护班组不是患者归属对象）。
+           筛选/创建/分配/批量绑定四个下拉同口径，全部取 medicalTeams。 -->
       <el-select v-model="teamFilter" placeholder="全部团队" clearable class="team-select" @change="handleSearch">
-        <el-option v-for="t in teams" :key="t.teamId" :label="t.name" :value="t.teamId" />
+        <el-option v-for="t in medicalTeams" :key="t.teamId" :label="t.name" :value="t.teamId" />
       </el-select>
       <el-button type="primary" @click="handleSearch">查询</el-button>
       <el-button type="success" @click="openCreate">添加患者</el-button>
@@ -29,8 +31,9 @@
           <template #default="{ row }">{{ row.diagnosis || '-' }}</template>
         </el-table-column>
         <!-- 设计稿 患者管理.html:88 无 Cobb角列，PRD §7D.3 有；T245 明令多出列不自行判删，保留。
-             「主治医生」列 T657 Boss 拍板移除（团队制护理模型只显示绑定团队；
-             主治医生仍在详情抽屉展示，后端 primary_doctor_id 不动）。
+             「主治医生」列 T657 Boss 拍板移除（团队制护理模型只显示绑定团队）；
+             T675 进一步把详情抽屉的医生项一并移除（归属归一团队，医生经团队成员关系确定）。
+             后端 primary_doctor_id 存量列保留不动、不迁移（接口兼容读），仅 UI 不再展示。
              插在诊断之后，让设计稿的 绑定设备 / 绑定团队 / 状态 保持相邻原序。 -->
         <el-table-column label="Cobb角" width="90">
           <template #default="{ row }">{{ row.cobbAngle ? row.cobbAngle + '°' : '-' }}</template>
@@ -87,7 +90,8 @@
               size="small"
               class="batch-team-select"
             >
-              <el-option v-for="t in teams" :key="t.teamId" :label="t.name" :value="t.teamId" />
+              <!-- T675：批量绑定面与创建面同口径，只显医护团队 -->
+              <el-option v-for="t in medicalTeams" :key="t.teamId" :label="t.name" :value="t.teamId" />
             </el-select>
           </template>
         </el-table-column>
@@ -135,7 +139,8 @@
         <el-descriptions-item label="诊断">{{ detail.diagnosis || '-' }}</el-descriptions-item>
         <el-descriptions-item label="Cobb角">{{ detail.cobbAngle ? detail.cobbAngle + '°' : '-' }}</el-descriptions-item>
         <el-descriptions-item label="所属团队">{{ detail.teamName || teamNameOf(detail.teamId) }}</el-descriptions-item>
-        <el-descriptions-item label="主治医生">{{ detail.doctorName || doctorNameOf(detail.doctorId) }}</el-descriptions-item>
+        <!-- T675：主治医生项移除（归属只留团队一条线，医生经团队成员关系确定）。
+             存量患者的 primary_doctor_id 后端保留兼容读，本页不再展示、不做迁移。 -->
         <el-descriptions-item label="绑定设备">{{ detail.deviceId || '未绑定' }}</el-descriptions-item>
         <el-descriptions-item label="建档时间">{{ formatDate(detail.createdAt) }}</el-descriptions-item>
       </el-descriptions>
@@ -172,8 +177,9 @@
           <el-input v-model="createForm.diagnosis" placeholder="请输入诊断" />
         </el-form-item>
         <el-form-item label="团队">
+          <!-- T675：只显医护团队；归属只留团队一条线 -->
           <el-select v-model="createForm.teamId" placeholder="请选择团队" clearable>
-            <el-option v-for="t in teams" :key="t.teamId" :label="t.name" :value="t.teamId" />
+            <el-option v-for="t in medicalTeams" :key="t.teamId" :label="t.name" :value="t.teamId" />
           </el-select>
         </el-form-item>
         <el-form-item label="性别">
@@ -185,11 +191,8 @@
         <el-form-item label="Cobb角">
           <el-input v-model="createForm.cobbAngle" placeholder="请输入Cobb角" />
         </el-form-item>
-        <el-form-item label="医生">
-          <el-select v-model="createForm.doctorId" placeholder="请选择医生" clearable>
-            <el-option v-for="d in doctors" :key="d.doctorId" :label="d.name" :value="d.doctorId" />
-          </el-select>
-        </el-form-item>
+        <!-- T675：医生选择移除。医生与团队无约束关系，双绑定致列表归属混乱；
+             归属只留团队一条线，医生经团队成员关系确定。存量 primary_doctor_id 不迁移。 -->
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
@@ -201,8 +204,9 @@
     <el-dialog v-model="assignVisible" title="分配团队" width="420px" :close-on-click-modal="false">
       <el-form label-width="80px">
         <el-form-item label="目标团队">
+          <!-- T675：单个患者分配团队与批量绑定同口径，只显医护团队 -->
           <el-select v-model="assignTeamId" placeholder="请选择团队">
-            <el-option v-for="t in teams" :key="t.teamId" :label="t.name" :value="t.teamId" />
+            <el-option v-for="t in medicalTeams" :key="t.teamId" :label="t.name" :value="t.teamId" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -278,9 +282,9 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import QRCode from 'qrcode'
-import type { Patient, Team, Doctor } from '@bracesync/shared-types'
+import type { Patient, Team } from '@bracesync/shared-types'
 import {
-  fetchPatients, fetchTeams, fetchDoctors, teamNameOf, doctorNameOf,
+  fetchPatients, fetchTeams, teamNameOf,
   createPatientApi, assignPatientTeamApi, batchBindPatientsApi,
   updatePatientPhoneApi, updatePatientProfileApi, unbindPatientWechatApi,
   setPatientPasswordApi,
@@ -297,7 +301,12 @@ const router = useRouter()
 const auth = useAuthStore()
 const list = ref<PatientRow[]>([])
 const teams = ref<Team[]>([])
-const doctors = ref<Doctor[]>([])
+/**
+ * T675：患者域四个团队下拉（筛选 / 新建 / 分配 / 批量绑定）统一只显医护团队。
+ * teams 字典仍拉全量（teamNameOf 兜底要把任意 teamId 翻成名，含存量行），
+ * 只是选项层过滤——维护班组（运维/客服）不是患者归属对象（T627 类型轴，T658/T675 口径）。
+ */
+const medicalTeams = computed<Team[]>(() => teams.value.filter((t) => t.teamType === 'medical'))
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
@@ -312,6 +321,7 @@ const qrMatrix = ref<{ size: number; path: string } | null>(null)
 const createVisible = ref(false)
 const creating = ref(false)
 const createFormRef = ref<FormInstance>()
+// T675：createForm 不再有 doctorId —— 新建患者不写医生归属（primary_doctor_id 恒空），医生经团队成员关系确定
 const createForm = ref({
   name: '',
   phone: '',
@@ -319,7 +329,6 @@ const createForm = ref({
   diagnosis: '',
   cobbAngle: '',
   teamId: '',
-  doctorId: '',
   gender: '' as '' | 'male' | 'female',
 })
 const createRules = {
@@ -474,7 +483,7 @@ function onBatchSelectionChange(rows: PatientRow[]) {
 function openCreate() {
   createForm.value = {
     name: '', phone: '', age: '', diagnosis: '',
-    cobbAngle: '', teamId: '', doctorId: '', gender: '',
+    cobbAngle: '', teamId: '', gender: '',
   }
   createFormRef.value?.clearValidate()
   createVisible.value = true
@@ -497,7 +506,8 @@ async function confirmCreate() {
       diagnosis: createForm.value.diagnosis || null,
       cobbAngle: createForm.value.cobbAngle ? Number(createForm.value.cobbAngle) : null,
       teamId: createForm.value.teamId || null,
-      doctorId: createForm.value.doctorId || null,
+      // T675：请求体不带 doctorId —— 医生与团队无约束关系，归属只留团队一条线；
+      // 后端创建通道同卡停止写 primary_doctor_id（存量列保留兼容读、不迁移）。
     })
     ElMessage.success('创建成功')
     createVisible.value = false
@@ -776,14 +786,10 @@ onMounted(async () => {
   loadData()
   loadUnassigned()
   try {
+    // T675：仍拉全量团队（medicalTeams 在选项层过滤；teamNameOf 兜底需要全量字典翻译存量行团队名）
     teams.value = await fetchTeams()
   } catch {
     // 团队筛选失败不阻塞列表
-  }
-  try {
-    doctors.value = await fetchDoctors()
-  } catch {
-    // 医生列表加载失败不阻塞
   }
 })
 </script>
