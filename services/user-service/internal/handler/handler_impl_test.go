@@ -206,16 +206,17 @@ type fakeStore struct {
 	// T314 医护账号写通道：同上，字段集中在 doctor_accounts_t314_test.go 的 fakeDoctorAccountState
 	docAcct fakeDoctorAccountState
 
-	lastUpsert       []repo.ConfigKV
-	lastUpsertBy     string
-	lastFilter       repo.PatientFilter
-	lastProcessR     *string
-	lastProcessMark  bool // T374：断言「标记已处理」与「保存备注」两动作分流
-	lastTechInput    repo.TechInput
-	lastPermJSON     string
-	lastReply        string
-	lastToggle       string
-	lastFeelingQuery string
+	lastUpsert              []repo.ConfigKV
+	lastUpsertBy            string
+	lastUpsertBumpedVersion bool // T669：最后一笔保存是否走了 device_config_version 递增通道
+	lastFilter              repo.PatientFilter
+	lastProcessR            *string
+	lastProcessMark         bool // T374：断言「标记已处理」与「保存备注」两动作分流
+	lastTechInput           repo.TechInput
+	lastPermJSON            string
+	lastReply               string
+	lastToggle              string
+	lastFeelingQuery        string
 	// T350 返工 D-2：患者维度感受日志读替身的调用次数（跨团队读必须为 0）
 	feelingListCalls int
 
@@ -643,6 +644,13 @@ func (f *fakeStore) GetConfigs(_ context.Context, _ []string) (map[string]string
 func (f *fakeStore) UpsertConfigs(_ context.Context, kvs []repo.ConfigKV, updatedBy string) error {
 	f.lastUpsert = kvs
 	f.lastUpsertBy = updatedBy
+	f.lastUpsertBumpedVersion = false
+	return f.upsertErr
+}
+func (f *fakeStore) UpsertConfigsBumpDeviceVersion(_ context.Context, kvs []repo.ConfigKV, updatedBy string) error {
+	f.lastUpsert = kvs
+	f.lastUpsertBy = updatedBy
+	f.lastUpsertBumpedVersion = true
 	return f.upsertErr
 }
 

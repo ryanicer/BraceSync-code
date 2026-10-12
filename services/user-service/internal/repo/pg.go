@@ -1476,6 +1476,26 @@ func (s *PGStore) GetConfigs(ctx context.Context, keys []string) (map[string]str
 
 // UpsertConfigs 批量写 sys_configs（单事务 UPSERT，updated_at/updated_by 审计）
 func (s *PGStore) UpsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy string) error {
+	return s.upsertConfigs(ctx, kvs, updatedBy, false)
+}
+
+// DeviceConfigVersionKey 设备配置下发版本键（协议 §4.1：上报响应捎带 config{interval_minutes,config_version}，
+// 固件比对版本不一致才应用新配置）。data-service ConfigRepo 读同一键，缺省/非法均回退版本 1。
+const DeviceConfigVersionKey = "device_config_version"
+
+// UpsertConfigsBumpDeviceVersion 与 UpsertConfigs 同事务语义，额外把 device_config_version 原子 +1。
+//
+// T669：后台改采集间隔时必须让固件看到版本变化，否则固件按「版本不变不应用」跳过新间隔，
+// 下发通道实际打不通。递增用一条 SQL 原子完成（不先读再写），与 SaveAlertRules 现状一致——
+// 单事务 UPSERT、不引入额外咨询锁：并发保存时 RHS 取的是该行「当前已提交/本事务可见」值，
+// 两次并发提交各 +1，不会丢递增。
+//
+// 初值语义：键缺失或值不是正整数时落 2（出厂缺省版本=1，首改必须给出与缺省不同的版本）。
+func (s *PGStore) UpsertConfigsBumpDeviceVersion(ctx context.Context, kvs []ConfigKV, updatedBy string) error {
+	return s.upsertConfigs(ctx, kvs, updatedBy, true)
+}
+
+func (s *PGStore) upsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy string, bumpDeviceVersion bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -1491,6 +1511,24 @@ func (s *PGStore) UpsertConfigs(ctx context.Context, kvs []ConfigKV, updatedBy s
 			       updated_by = EXCLUDED.updated_by,
 			       updated_at = now()`,
 			kv.Key, kv.Value, updatedBy); execErr != nil {
+			return execErr
+		}
+	}
+	if bumpDeviceVersion {
+		// 原子递增：VALUES 的 '2' 只在键不存在（首次接入）时插入；
+		// 冲突时 RHS 引用旧行现值——正整数则 +1，脏值（空/非数字/非正）重置为 2。
+		if _, execErr := tx.Exec(ctx,
+			`INSERT INTO sys_configs (config_key, config_value, updated_by, updated_at)
+			 VALUES ($1, '2', $2, now())
+			 ON CONFLICT (config_key) DO UPDATE
+			   SET config_value = CASE
+			         WHEN sys_configs.config_value ~ '^[0-9]+$' AND sys_configs.config_value::bigint >= 1
+			           THEN (sys_configs.config_value::bigint + 1)::text
+			         ELSE '2'
+			       END,
+			       updated_by = EXCLUDED.updated_by,
+			       updated_at = now()`,
+			DeviceConfigVersionKey, updatedBy); execErr != nil {
 			return execErr
 		}
 	}

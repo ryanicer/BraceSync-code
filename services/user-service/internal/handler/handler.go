@@ -2626,8 +2626,11 @@ func (h *Handler) updateSettings(c *gin.Context) {
 	// T257 12.4：统一压力下限与告警管理页 Tab2 同键（threshold_pressure_low）；
 	// 请求未给（nil）= 不改该键，校验时沿用库里现值
 	// T302：同一条规则扩展到空载校准上限与两个模板 ID（三项都是后加的，老前端不带字段）
+	// T669：同时读 collect_interval_minutes 现值，只为判「本次间隔是否真的变了」——
+	// 变了才在同一笔保存里递增 device_config_version（固件按版本差应用新配置，协议 §4.1）。
 	currentKVs, err := h.store.GetConfigs(c.Request.Context(), []string{
 		keyWifiPresets, keyPressureLow, keyCalibrationOffset, keyWechatTemplateID, keySmsTemplateID,
+		keyCollectInterval,
 	})
 	if err != nil {
 		fail(c, model.ErrInternal("read existing settings failed"))
@@ -2694,7 +2697,22 @@ func (h *Handler) updateSettings(c *gin.Context) {
 	if req.SmsTemplateID != nil {
 		kvs = append(kvs, repo.ConfigKV{Key: keySmsTemplateID, Value: smsTemplateID})
 	}
-	if err := h.store.UpsertConfigs(c.Request.Context(), kvs, operatorID(c, "ops")); err != nil {
+	// T669：间隔分钟值落库的同时必须让 device_config_version 往前走一格，否则固件比对版本
+	// 不变就不会应用新间隔（协议 §4.1 唯一下发通道）。只在间隔实际变更时递增：
+	// validateSettings 已保证秒值为 60 的正整数倍 ⇒ 分钟值恒为整数字符串，可直接逐字比较；
+	// 库里缺键按缺省 30 分钟算（data-service 读缺省回退 30/1，两侧等效 ⇒ 首存 30 不产生配置差）。
+	storedInterval := currentKVs[keyCollectInterval]
+	if storedInterval == "" {
+		storedInterval = fmtNum(float64(settingsDefaults.CollectIntervalSeconds) / 60.0)
+	}
+	intervalChanged := storedInterval != fmtNum(intervalMinutes)
+	saveCtx := c.Request.Context()
+	if intervalChanged {
+		err = h.store.UpsertConfigsBumpDeviceVersion(saveCtx, kvs, operatorID(c, "ops"))
+	} else {
+		err = h.store.UpsertConfigs(saveCtx, kvs, operatorID(c, "ops"))
+	}
+	if err != nil {
 		fail(c, model.ErrInternal("save settings failed"))
 		return
 	}
