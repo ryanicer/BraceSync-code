@@ -1789,6 +1789,12 @@ func newTeamID() (string, error) {
 }
 
 // CreateTeam 创建团队（name 唯一性 + leader 存在性校验 → INSERT → 回读 join doctors.leader_name）
+//
+// T671：团队成员明细的唯一口径是 doctors/technicians.team_id（getTeamMembers →
+// ListDoctorsByTeam），不存在独立的 team_members 表。旧实现只写 teams.leader，负责人 team_id
+// 不跟着落，建团后成员列表看不到负责人。故 INSERT teams 与「负责人入团」同一事务提交：
+// 写入形态与 addDoctorToTeam 完全同形（UPDATE doctors SET team_id），负责人原属别的团队时
+// 随本笔迁入——与「添加成员」允许跨团迁入的既有语义一致。
 func (s *PGStore) CreateTeam(ctx context.Context, in TeamInput) (*TeamDetailRow, error) {
 	// 1. name 查重
 	var nameTaken bool
@@ -1815,16 +1821,34 @@ func (s *PGStore) CreateTeam(ctx context.Context, in TeamInput) (*TeamDetailRow,
 	if err != nil {
 		return nil, err
 	}
-	if _, err = s.pool.Exec(ctx,
+	// 4. 建团与负责人入团必须同一事务：任一笔失败都不留「有团无长/成员口径缺行」的半成品。
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx,
 		`INSERT INTO teams (team_id, name, leader, description, status, team_type) VALUES ($1, $2, $3, $4, 'active', $5)`,
 		teamID, in.Name, in.Leader, in.Description, in.TeamType); err != nil {
 		return nil, err
 	}
-	// 4. 回读 join doctors.leader_name
+	if _, err = tx.Exec(ctx,
+		`UPDATE doctors SET team_id = $2 WHERE doctor_id = $1`,
+		in.Leader, teamID); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	// 5. 回读 join doctors.leader_name
 	return s.getTeamDetail(ctx, teamID)
 }
 
 // UpdateTeam 编辑团队（团队存在 + name 查重排除自身 + leader 校验 + UPDATE）
+//
+// T671 口径边界（卡内钦定不扩范围）：编辑换负责人只改 teams.leader，不自动动 team_id——
+// 旧负责人保留成员身份（不踢），新负责人若不在团内也不随编辑自动入团（要进成员表走「添加成员」）。
+// 自动入团只发生在 CreateTeam；若日后要求「换长即入团」，在本函数同事务补一条 UPDATE 即可。
 func (s *PGStore) UpdateTeam(ctx context.Context, teamID string, in TeamInput) (*TeamDetailRow, error) {
 	// 1. name 查重排除自身
 	var nameTaken bool

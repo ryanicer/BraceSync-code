@@ -227,7 +227,7 @@ test.describe('T658 团队治理', () => {
     await expect(page.locator('.el-dialog').filter({ hasText: '编辑成员' })).toHaveCount(0)
   })
 
-  test('添加成员候选只列医护账号：全部带（医生）后缀，技师姓名不出现', async ({ page }) => {
+  test('添加成员候选只列医护账号：标签带真实职称（T671 起去硬编码（医生）），技师姓名不出现', async ({ page }) => {
     await tableRows(page).first().getByRole('button', { name: '成员' }).click()
     await expect(page.locator('.member-panel-header')).toBeVisible()
     await page.getByRole('button', { name: '添加成员' }).click()
@@ -239,10 +239,14 @@ test.describe('T658 团队治理', () => {
     const texts = await opts.allInnerTexts()
     expect(texts.length, '候选列表非空').toBeGreaterThan(0)
     for (const t of texts) {
-      expect(t.trim(), `候选「${t}」必须是医生（带（医生）后缀）`).toMatch(/（医生）$/)
+      const label = t.trim()
+      // T671：后缀是 doctors.title 真实职称，不再是写死的「（医生）」；无职称存量号只显名字。
+      expect(label, `候选「${label}」不许再带硬编码（医生）后缀`).not.toMatch(/（医生）$/)
+      expect(label, `候选「${label}」不许是空标签`).toMatch(/.+/)
     }
     const joined = texts.join('|')
-    expect(joined).toContain('刘医生')
+    // 真实职称正证（mock 夹具 DOC-104 刘医生=主治医师）
+    expect(joined).toContain('刘医生（主治医师）')
     // 技师账号（夹具 TECH-001~006）一律不得进候选
     for (const tech of ['周师傅', '吴师傅', '郑师傅', '冯师傅', '孙师傅', '马师傅']) {
       expect(joined, `技师 ${tech} 不得出现在医护团队候选`).not.toContain(tech)

@@ -286,7 +286,9 @@ const candidateMembers = computed(() => {
   const list: { id: string; name: string }[] = []
   for (const d of doctors.value) {
     if (!inTeam.has(d.doctorId)) {
-      list.push({ id: d.doctorId, name: `${d.name}（医生）` })
+      // T671：后缀显示真实职称（Doctor.title，T456 字段换位契约），不再硬编码「（医生）」；
+      // T658 已移除职称编辑，存量账号职称可为空——空就只显名字，数据真实形态优于假后缀。
+      list.push({ id: d.doctorId, name: d.title ? `${d.name}（${d.title}）` : d.name })
     }
   }
   return list
