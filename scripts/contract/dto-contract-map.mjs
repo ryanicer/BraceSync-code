@@ -64,6 +64,9 @@ export const CONTRACT_MAP = {
   FlowNodeStateDTO: { ts: null, reason: '契约未声明（T274 流程节点状态）' },
   FlowNodeActionDTO: { ts: null, reason: '契约未声明（T274 流程节点操作）' },
   FlowTypeBindingDTO: { ts: null, reason: '契约未声明（T653 告警类型↔流程模板绑定，admin-web 本地类型；守 T274 flow 类型不入 shared-types 的边界，docs/api/api-contracts.ts 已同步）' },
+  // T681 E2E 夹具清理端点响应内的「前后两拍读数」快照（freePool/templateCount/templateCountTotal/instanceCount）：
+  // 端点为 CI 收尾钩子专用（生产域名命中即拒），前端零消费；同 FlowTypeBindingDTO 守 flow 类型不入 shared-types 的边界。
+  FlowFixtureSnapshotDTO: { ts: null, reason: '契约未声明（T681 夹具清理端点响应内快照，仅 CI 收尾钩子消费，前端零消费）' },
   BatchBindResultDTO: { ts: null, reason: '写响应（批量绑定结果信封），契约未声明' },
   BatchBindFailureDTO: { ts: null, reason: '写响应的子项，契约未声明' },
   DoctorAccountCreateDTO: { ts: null, reason: '写响应：整行 DoctorDTO + 一次性初始密码，契约未声明该信封' },
