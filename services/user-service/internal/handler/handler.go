@@ -2773,6 +2773,8 @@ func (h *Handler) createPatient(c *gin.Context) {
 		fail(c, appErr)
 		return
 	}
+	// T675：归属归一团队线，创建通道停写 primary_doctor_id（DTO 已无 doctorId 字段，
+	// 老客户端传了也被 ShouldBindJSON 静默忽略）；存量列保留兼容读、不迁移。
 	row, err := h.store.CreatePatient(c.Request.Context(), repo.PatientInput{
 		Name:      name,
 		PhoneEnc:  &enc,
@@ -2782,7 +2784,6 @@ func (h *Handler) createPatient(c *gin.Context) {
 		Diagnosis: req.Diagnosis,
 		CobbAngle: req.CobbAngle,
 		TeamID:    req.TeamID,
-		DoctorID:  req.DoctorID,
 	})
 	if err != nil {
 		if errors.Is(err, repo.ErrPatientExists) {

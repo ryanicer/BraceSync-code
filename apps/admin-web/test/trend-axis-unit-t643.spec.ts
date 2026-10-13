@@ -7,6 +7,9 @@
  *
  * 选型 A 的落点：换算真源只有后端那一份，前端只显示 pressureKpa / avgPressureKpa 这类派生字段。
  * 图在 jsdom 里画不出像素，但 Line 组件的 props 读得到 ⇒ 运行时判据钉「喂给图的那列数」。
+ * T662（二期）格1a 修订：压力上限虚线随档切换 —— kPa 档按日聚合行同源比例反推
+ * （kpaPerN = avgPressureKpa / avgPressure，不引入独立换算公式），算不出时虚线不画（fail-closed）。
+ * 本文件原「kPa 档整条不画」用例已按该口径改写。
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
@@ -169,11 +172,25 @@ describe('矫形日志 · 压力趋势图随 N/kPa 档切换（PRD V3.44 §7A.2.
     expect(axisNote(w)).toContain('纵轴 = 日均压力（kPa）')
   })
 
-  it('上限线在 kPa 档整条不画：§7D.12 只有 N 口径阈值，前端不许自算第二套口径', async () => {
+  it('上限线随档切换（T662 格1a）：kPa 档按日聚合行同源比例换算画虚线（40N × 300/20 = 600kPa）', async () => {
+    const w = await mountLogPage()
+    await switchSeg(w, 'kPa')
+    const ds = pressureDatasets(w)
+    expect(ds).toHaveLength(2)
+    expect(ds[1].label).toBe('压力上限线（600kPa）')
+    expect(ds[1].data).toEqual([600, 600, 600, 600, 600, 600, 600])
+    expect(axisNote(w)).toContain('同源换算')
+    expect(axisNote(w)).toContain('600kPa')
+  })
+
+  it('kPa 档虚线 fail-closed：有 kPa 列但 N 列全 0 推不出比例 ⇒ 虚线不画、轴注出 fail-closed 句', async () => {
+    vi.mocked(api.fetchPatientDailyWear).mockImplementation(async () =>
+      fx.rows('present').map((r) => ({ ...r, avgPressure: 0 })) as never,
+    )
     const w = await mountLogPage()
     await switchSeg(w, 'kPa')
     expect(pressureDatasets(w)).toHaveLength(1)
-    expect(axisNote(w)).toContain('kPa 档不画这条虚线')
+    expect(axisNote(w)).toContain('面积未配置时 kPa 档不画（fail-closed）')
   })
 
   it('切回 N 档：数据集与轴注逐字复原（切档是显示档切换，不是数据变更）', async () => {

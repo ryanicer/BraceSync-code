@@ -58,7 +58,6 @@ func TestCreatePatient_KNOWN_RED(t *testing.T) {
 			Diagnosis: strPtr("胸椎右侧凸"),
 			CobbAngle: floatPtr(28.0),
 			TeamID:    strPtr("TEAM01"),
-			DoctorID:  strPtr("D0001"),
 		}
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients", body, adminHdr)
 		assert.Equal(t, http.StatusOK, w.Code, "成功应返回 200")
@@ -73,6 +72,31 @@ func TestCreatePatient_KNOWN_RED(t *testing.T) {
 		assert.NotEmpty(t, e.store.lastCreateInput.PhoneHash, "phone_hash 应由 preparePhone 生成并透传到 store")
 		require.NotNil(t, e.store.lastCreateInput.TeamID, "stub 未调用 store，转绿后此处应通过")
 		assert.Equal(t, "TEAM01", *e.store.lastCreateInput.TeamID)
+		// T675：创建通道不写主治医生，新行 primary_doctor_id 恒 NULL
+		assert.Nil(t, e.store.lastCreateInput.DoctorID, "T675 后建档不得透传 doctorId 落库")
+	})
+
+	// T675 归属归一：老客户端请求体里仍带 doctorId 时必须静默忽略（不报错、不落库），
+	// 其余字段照常解析 —— 接口对旧调用方保持兼容，但 primary_doctor_id 不再产生新写入。
+	t.Run("t675_legacy_doctor_id_ignored_not_written", func(t *testing.T) {
+		p := samplePatient()
+		e.store.createdPatient = &p
+		e.store.createPatientErr = nil
+		body := map[string]any{
+			"name":     "老客户端建档",
+			"phone":    "13800138001",
+			"gender":   "female",
+			"age":      12,
+			"teamId":   "TEAM02",
+			"doctorId": "D0009", // 旧版 H5/脚本仍可能传；应被忽略而非 400
+		}
+		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients", body, adminHdr)
+		assert.Equal(t, http.StatusOK, w.Code, "带 doctorId 的旧请求体应静默兼容，实得 %s body=%s", w.Code, w.Body.String())
+		assert.Equal(t, model.CodeOK, resp.Code)
+		assert.Nil(t, e.store.lastCreateInput.DoctorID, "doctorId 不得透传到 store（primary_doctor_id 恒 NULL）")
+		require.NotNil(t, e.store.lastCreateInput.TeamID, "同体内的 teamId 必须照常解析")
+		assert.Equal(t, "TEAM02", *e.store.lastCreateInput.TeamID)
+		assert.Equal(t, "老客户端建档", e.store.lastCreateInput.Name)
 	})
 
 	// 缺 name → 400 CodeInvalidParam

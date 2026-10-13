@@ -485,8 +485,14 @@ jobs:
           E2E_POST_DEPLOY_STRICT: ${{ github.event_name != 'pull_request' && '1' || '0' }}
           # T462 S5 链 B（技师端登录腿）：凭据只从这两个变量进用例，值不落卡、不落板、不落仓文件。
           # 缺任一值时 23.1/23.2/23.3 判红而不是 skip（PM 2598 丙案）——静默跳过的绿不是证据。
-          TECHE2E_TECH_ACCOUNT: ${{ secrets.TECHE2E_TECH_ACCOUNT }}
-          TECHE2E_TECH_PASSWORD: ${{ secrets.TECHE2E_TECH_PASSWORD }}
+          # T676（2026-10-12，根治 T656 甲案的 staging/TST 单值 secret 结构性冲突，Boss 追认丙案）：
+          #   secrets 拆双 —— tst 档取 *_TST，缺省（staging 档）取 *_STAGING；两档新名缺值时都回退
+          #   旧单值名 ⇒ 新 secret 配好前的过渡期行为与甲案后逐字一致（staging 档红是环境既有态，
+          #   tst 档绿靠甲案双写），main 上的 run 一枚不全灭。注入 env 名（TECHE2E_TECH_ACCOUNT/
+          #   TECHE2E_TECH_PASSWORD）与用例断言一格未动；新 secret 名以本行引用为准，值由值班席
+          #   Boss 通道维护（两库各自同源的技师账号），不进任何卡/日志/PR。
+          TECHE2E_TECH_ACCOUNT: ${{ github.event.inputs.target == 'tst' && (secrets.TECHE2E_TECH_ACCOUNT_TST != '' && secrets.TECHE2E_TECH_ACCOUNT_TST || secrets.TECHE2E_TECH_ACCOUNT) || (secrets.TECHE2E_TECH_ACCOUNT_STAGING != '' && secrets.TECHE2E_TECH_ACCOUNT_STAGING || secrets.TECHE2E_TECH_ACCOUNT) }}
+          TECHE2E_TECH_PASSWORD: ${{ github.event.inputs.target == 'tst' && (secrets.TECHE2E_TECH_PASSWORD_TST != '' && secrets.TECHE2E_TECH_PASSWORD_TST || secrets.TECHE2E_TECH_PASSWORD) || (secrets.TECHE2E_TECH_PASSWORD_STAGING != '' && secrets.TECHE2E_TECH_PASSWORD_STAGING || secrets.TECHE2E_TECH_PASSWORD) }}
           # T506（e2e-real 凭据接线）：真实模式口令只从 secrets 进用例，堵源码常量兜底假绿点（T509 实锤）。
           # 缺值时凭据门按设计抛错判红，静默兜底的绿不算证据（与 361 行同口径）。
           E2E_REAL_PASSWORD: ${{ secrets.E2E_REAL_PASSWORD }}

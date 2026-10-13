@@ -48,6 +48,17 @@
           <view class="chip-row">
             <view class="data-source-chip ds-ble"><text class="chip-dot"></text><text>BLE 实时</text></view>
             <view class="data-source-chip ds-cloud"><text class="chip-dot"></text><text>云端保存</text></view>
+            <!-- T662 格2：校准矩阵 N/kPa 展示档切换（纯展示层，存储/判定仍全 N） -->
+            <view class="unit-seg">
+              <view
+                v-for="u in PRESSURE_UNITS"
+                :key="u"
+                :class="['unit-seg-btn', { 'unit-seg-active': calibUnit === u }]"
+                @click="setCalibUnit(u)"
+              >
+                <text>{{ u }}</text>
+              </view>
+            </view>
           </view>
         </view>
 
@@ -98,7 +109,7 @@
               :key="i"
               :class="['pressure-cell', 'lvl-' + pressureLevel(v)]"
             >
-              <text>{{ v.toFixed(2) }}</text>
+              <text>{{ calibCellText(v) }}</text>
             </view>
           </view>
           <view class="progress-block">
@@ -106,8 +117,8 @@
             <text class="progress-text">采集中... 已收 {{ frameCount }} / {{ CALIBRATION_FRAME_COUNT }} 帧（订阅后 10 秒无数据将超时提示）</text>
           </view>
           <view class="stat-row">
-            <text class="stat-item">均值: {{ statAvg.toFixed(2) }}N</text>
-            <text class="stat-item">最大: {{ statMax.toFixed(2) }}N</text>
+            <text class="stat-item">均值: {{ calibStatText(statAvg) }}</text>
+            <text class="stat-item">最大: {{ calibStatText(statMax) }}</text>
           </view>
           <!-- 裁定⑥（Boss 2026-09-28）＋稿面 T449·TI-6：重新采集只挂在采集中态，
                校准完成态与阶段三不留入口（见下方 baselineLocked 注释） -->
@@ -132,7 +143,7 @@
             </view>
           </view>
           <view class="phase-subtitle">
-            <text>零点偏移量（将从后续读数中扣除，单位 N）</text>
+            <text>零点偏移量（将从后续读数中扣除，单位 {{ calibUnit }}）</text>
           </view>
           <view class="pressure-grid">
             <view
@@ -140,7 +151,7 @@
               :key="i"
               :class="['pressure-cell', 'lvl-' + pressureLevel(v)]"
             >
-              <text>{{ v.toFixed(2) }}</text>
+              <text>{{ calibCellText(v) }}</text>
             </view>
           </view>
           <view v-if="offsetSummary" class="stat-row">
@@ -236,7 +247,14 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { logErrorText, userErrorCopy } from '@bracesync/shared-utils'
+import {
+  logErrorText,
+  userErrorCopy,
+  PRESSURE_UNITS,
+  DEFAULT_SENSOR_AREA_CM2,
+  kpaFromN,
+} from '@bracesync/shared-utils'
+import type { PressureUnit } from '@bracesync/shared-utils'
 import { useAuthStore } from '../../stores/auth'
 import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
@@ -309,6 +327,29 @@ const offsetSummary = ref<ReturnType<typeof summarizeCalibrationOffsets> | null>
 const calibrationProgress = computed(() => Math.min(100, (frameCount.value / CALIBRATION_FRAME_COUNT) * 100))
 const statAvg = computed(() => average(displayFrame.value))
 const statMax = computed(() => max(displayFrame.value))
+
+// ===== T662 格2：校准矩阵 N/kPa 展示档切换 =====
+// 纯展示层：采集、offsets 计算、范围校验、saveBaseline 上报全用 N（与格1b 告警页同思路），
+// 档位只决定数字怎么写。面积兜底 DEFAULT_SENSOR_AREA_CM2 —— install 上下文无
+// contact_area_cm2（bind 时置 null，见 bind/index.vue T508 注记），按 pressureConversion.ts
+// 顶部约束第 5 条登记为「默认面积兜底」。判色 pressureLevel 恒按 N，不随档（PRD 裁定 4）。
+const calibUnit = ref<PressureUnit>('N')
+const CAL_AREA_CM2 = DEFAULT_SENSOR_AREA_CM2
+const isCalibKpa = computed(() => calibUnit.value === 'kPa')
+function setCalibUnit(u: PressureUnit) {
+  calibUnit.value = u
+}
+// 矩阵单元格：N 档 2 位小数（本页既有口径）；kPa 档整数（同源派生取整，与格1b 一致）
+function calibCellText(n: number): string {
+  if (!isCalibKpa.value) return n.toFixed(2)
+  return String(kpaFromN(n, CAL_AREA_CM2) ?? '--')
+}
+// 统计行带单位字母
+function calibStatText(n: number): string {
+  if (!isCalibKpa.value) return `${n.toFixed(2)}N`
+  const k = kpaFromN(n, CAL_AREA_CM2)
+  return k === null ? '--' : `${k}kPa`
+}
 
 // 裁定⑥（Boss 2026-09-28）＋稿面 T449·TI-6：「重新采集」只挂在采集中态，
 // 校准完成态与阶段三不留入口（本页只有 goPhase2/goPhase3 两个前进键，无回退 ⇒ 基线一落库就再也走不到采集中态）。
@@ -622,7 +663,10 @@ onUnmounted(() => {
 .card { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 32rpx; box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04); }
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24rpx; }
 .card-title { font-size: 32rpx; font-weight: 600; color: #1e293b; }
-.chip-row { display: flex; gap: 8rpx; }
+.chip-row { display: flex; gap: 8rpx; align-items: center; }
+.unit-seg { display: inline-flex; background: #f1f5f9; border-radius: 16rpx; padding: 4rpx; margin-left: 8rpx; }
+.unit-seg-btn { padding: 2rpx 18rpx; border-radius: 12rpx; font-size: 20rpx; color: #64748b; }
+.unit-seg-active { background: #fff; color: #2563eb; font-weight: 600; }
 .data-source-chip { display: inline-flex; align-items: center; gap: 6rpx; padding: 4rpx 14rpx; border-radius: 20rpx; font-size: 20rpx; font-weight: 500; }
 .ds-cloud { background: #dbeafe; color: #2563eb; }
 .ds-ble { background: #fef3c7; color: #b45309; }

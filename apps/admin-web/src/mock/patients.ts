@@ -258,7 +258,7 @@ export interface CreatePatientInput {
   diagnosis?: string | null
   cobbAngle?: number | null
   teamId?: string | null
-  doctorId?: string | null
+  // T675：无 doctorId —— 新建患者不写医生归属（后端创建通道同步停写 primary_doctor_id，存量列兼容读不迁移）
 }
 
 export interface BatchBindFailure {
@@ -288,7 +288,8 @@ export function mockCreatePatient(input: CreatePatientInput): Patient {
     cobbAngle: input.cobbAngle ?? null,
     deviceId: null,
     teamId: input.teamId ?? null,
-    doctorId: input.doctorId ?? null,
+    // T675：新建患者恒不写主治医生（归属归一团队线）；Patient.doctorId 键保留以容存量行兼容读
+    doctorId: null,
     status: 'active',
     createdAt: now,
     updatedAt: now,
