@@ -39,6 +39,7 @@
 | 40301 | 登录凭证范围不足，请重新登录 | user-service model.go:34 |
 | 40403 | 无权查看该告警，请联系管理员 | alert-service code_lock_t402_test.go:27 |
 | 40404 | 告警记录不存在，请刷新后重试 | alert-service code_lock_t402_test.go:28 |
+| 40409 | 该告警已绑定处理流程，请从流程节点完成处置，无需在此直接标记 | alert-service public.go codeFlowRouteConflict（677） |
 | 50001 | 内部通道校验未通过，请联系管理员 | msg-service model.go:109-115 |
 | 50400 | 消息设置参数有误，请检查后重试 | msg-service model.go:109-115 |
 | 50403 | 无权操作该消息设置，请联系管理员 | msg-service model.go:109-115 |

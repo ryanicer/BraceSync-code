@@ -1,8 +1,14 @@
 // T274 告警流程画布数据访问层（flow_template / flow_instance / flow_node_state / flow_node_action）
 //
 // 表归属：四表均 user-service owner（migration 000020）。跨 owner 只有 flow_instance.alert_id
-// 指向 alerts（alert-service）—— 不建外键（000020 有因），本层只写该列值、不读其列，
-// 存在性由 CreateFlowInstance 事务内校验。
+// 指向 alerts（alert-service）—— 不建外键（000020 有因），本层自身只维护该列值；对 alerts
+// 表的触达仅限 CreateFlowInstance 事务内存在性校验与下方 🔴 677 例外两条，别处不碰。
+//
+// 🔴 跨 owner 写例外（677 甲案，max 2026-10-13 裁决）：ApplyFlowNodeAction 的末节点完结
+// 分支在**同一事务内**回写 alerts.process_status（既有字段，不新增列）——依据：
+// ① CreateFlowInstance 同事务 SELECT EXISTS alerts 先例（同库、跨 owner 读已在跑）；
+// ② 677 卡面诉求「流程办结不回写告警」要的正是同事务原子性（回滚时两侧都不落）。
+// 除该完结分支与 AlertRouteInfo 只读外，本层仍不碰 alerts；如需扩面必须回 max 重新裁决。
 //
 // 🔴 单一状态权威在后端：flow_node_state 只由本文件的 CreateFlowInstance / ApplyFlowNodeAction
 // 两处写入，读端点不改状态。前端不得自行推算节点色（契约 submitFlowNodeAction 已写同一条）。
@@ -479,6 +485,23 @@ func (s *PGStore) flowInstanceExists(ctx context.Context, instanceID string) err
 // 节点操作（状态机唯一写入点）
 // ─────────────────────────────────────────────────────────────
 
+// AlertRouteInfo 677 快处路由一问的跨 owner 只读：取告警类型 + 处理态。
+// 🔴 跨 owner 只读（与 CreateFlowInstance 的 alerts 存在性校验同先例，见文件头注释）；
+// 只 SELECT 不写，供 handler/flow_677_quick_route.go 判定 direct/flow 路由。
+// 不存在 → ( "", "", false, nil )，由调用方决定 4xx，不在此处造 sentinel。
+func (s *PGStore) AlertRouteInfo(ctx context.Context, alertID int64) (typeName, processStatus string, exists bool, err error) {
+	err = s.pool.QueryRow(ctx,
+		`SELECT type, process_status FROM alerts WHERE alert_id = $1`, alertID).
+		Scan(&typeName, &processStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return typeName, processStatus, true, nil
+}
+
 // FlowActionWrite 一次节点操作的写入参数。后继集合与目标状态由 handler 依模板 edges 算好，
 // repo 不读模板 JSON（图遍历是业务逻辑，不放数据层）。
 type FlowActionWrite struct {
@@ -508,8 +531,10 @@ func (s *PGStore) ApplyFlowNodeAction(ctx context.Context, in FlowActionWrite) (
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var status string
+	var alertID int64 // 677 完结回写用；仅在 in.Complete 分支读写 alerts
 	if err := tx.QueryRow(ctx,
-		`SELECT status FROM flow_instance WHERE instance_id = $1 FOR UPDATE`, in.InstanceID).Scan(&status); err != nil {
+		`SELECT status, alert_id FROM flow_instance WHERE instance_id = $1 FOR UPDATE`, in.InstanceID).
+		Scan(&status, &alertID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrFlowInstanceNotFound
 		}
@@ -583,6 +608,29 @@ func (s *PGStore) ApplyFlowNodeAction(ctx context.Context, in FlowActionWrite) (
 			if _, err := tx.Exec(ctx,
 				`UPDATE flow_instance SET status = 'completed', ended_at = now() WHERE instance_id = $1`,
 				in.InstanceID); err != nil {
+				return nil, err
+			}
+			// 🔴 跨 owner 写 alerts（677 甲案完结回写，仅此一处；裁决与先例见文件头注释）：
+			// 流程终态 ⇒ 告警处理态同步落 processed，消除「流程办结、列表仍待处理」漂移。
+			// 语义对齐 alert-service ProcessAlert（first-wins）：
+			//   - 已 processed 的行不重写 processed_by/processed_at（首次处置者为准）；
+			//   - process_note 不动（处置语义归流程时间线，快处备注保留原值）；
+			//   - 告警行缺失 = 数据漂移，返回 ErrFlowAlertNotFound 让整事务回滚（两侧都不落）。
+			var alertExists bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM alerts WHERE alert_id = $1)`, alertID).Scan(&alertExists); err != nil {
+				return nil, err
+			}
+			if !alertExists {
+				return nil, ErrFlowAlertNotFound
+			}
+			if _, err := tx.Exec(ctx,
+				`UPDATE alerts
+				    SET process_status = 'processed',
+				        processed_at   = now(),
+				        processed_by   = COALESCE(NULLIF($2, ''), processed_by)
+				  WHERE alert_id = $1 AND process_status <> 'processed'`,
+				alertID, in.Operator); err != nil {
 				return nil, err
 			}
 		}

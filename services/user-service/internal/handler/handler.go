@@ -233,6 +233,8 @@ func (h *Handler) Router() *gin.Engine {
 	r.POST("/internal/flow/auto-start", h.autoStartFlow)
 	// T668：alert-service 处理告警（process/processing）前的节点执法一问（绑定流程的告警以节点执法为准）。
 	r.POST("/internal/flow/process-guard", h.flowProcessGuard)
+	// 677：alert-service 快处（POST /alerts/:id/process）落库前的路由一问（有绑定强制转流程）。
+	r.POST("/internal/flow/quick-route", h.quickRoute)
 
 	v1 := r.Group("/api/v1")
 	// T252 12.3 操作日志：表驱动埋点（auditRoutes 命中的路由在 HTTP<400 时写 audit_logs）

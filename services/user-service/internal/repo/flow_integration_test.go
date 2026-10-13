@@ -14,8 +14,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -486,6 +488,189 @@ func TestITT274CheckConstraintsRejectBadEnums(t *testing.T) {
 	require.NoError(t, err)
 	remaining := itCountRows(t, `SELECT COUNT(*) FROM flow_node_state WHERE instance_id = $1`, inst.InstanceID)
 	assert.Zero(t, remaining, "删实例应级联清掉节点状态，避免脏 current")
+}
+
+// ─────────────────────────────────────────────────────────────
+// 677 甲案：末节点完结同事务回写 alerts（正例一致性 + 负例回滚两侧都不落）
+// ─────────────────────────────────────────────────────────────
+
+// itAlertProcessRow alerts 处理态投影（677 回写断言用；可空列按 NULL 扫指针）
+type itAlertProcessRow struct {
+	Status       string
+	ProcessedBy  *string
+	ProcessedAt  *time.Time
+	ProcessNote  *string
+	InProgressAt *time.Time
+}
+
+func itAlertProcess(t *testing.T, alertID int64) itAlertProcessRow {
+	t.Helper()
+	var r itAlertProcessRow
+	require.NoError(t, itStore.pool.QueryRow(context.Background(),
+		`SELECT process_status, processed_by, processed_at, process_note, in_progress_at
+		   FROM alerts WHERE alert_id = $1`, alertID).Scan(
+		&r.Status, &r.ProcessedBy, &r.ProcessedAt, &r.ProcessNote, &r.InProgressAt), "读告警处理态失败")
+	return r
+}
+
+// walkITFlowToLast 按序确认 confirms 各节点（链条内逐个后继推进），
+// 最后一个确认的后继置为 finalCurrent——即把 current 推到 finalCurrent 但不完结。
+func walkITFlowToLast(t *testing.T, instanceID string, confirms []string, finalCurrent, operator string) {
+	t.Helper()
+	ctx := context.Background()
+	for i, node := range confirms {
+		next := finalCurrent
+		if i+1 < len(confirms) {
+			next = confirms[i+1]
+		}
+		_, err := itStore.ApplyFlowNodeAction(ctx, FlowActionWrite{
+			InstanceID: instanceID, NodeID: node, Action: "confirm", Operator: operator,
+			NodeStatus: "done", Successors: []string{next}, CurrentNodeID: next,
+		})
+		require.NoError(t, err, "走 %s→%s 失败", node, next)
+	}
+}
+
+// TestIT677FlowCompleteWritesBackAlert 正例：流程终态与 alert 处理态一致。
+// 中间节点确认不碰 alerts；末节点完结同事务落 processed（对齐 ProcessAlert first-wins 字段语义）。
+func TestIT677FlowCompleteWritesBackAlert(t *testing.T) {
+	ctx := context.Background()
+	fx := newITFlow(t, "T677W")
+	inst, err := itStore.CreateFlowInstance(ctx, fx.templateID, fx.alertID,
+		[]string{"N1", "N2", "N3"}, []string{"N1"})
+	require.NoError(t, err)
+
+	walkITFlowToLast(t, inst.InstanceID, []string{"N1", "N2"}, "N3", itDoctor)
+	mid := itAlertProcess(t, fx.alertID)
+	assert.Equal(t, "pending", mid.Status, "中间节点确认不得回写告警（只在末节点完结分支）")
+
+	_, err = itStore.ApplyFlowNodeAction(ctx, FlowActionWrite{
+		InstanceID: inst.InstanceID, NodeID: "N3", Action: "confirm", Operator: itAdmin,
+		NodeStatus: "done", CurrentNodeID: "N3", Complete: true,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "completed", statusOf(t, inst.InstanceID))
+	done, err := itStore.GetFlowInstance(ctx, inst.InstanceID)
+	require.NoError(t, err)
+	require.NotNil(t, done.EndedAt)
+
+	got := itAlertProcess(t, fx.alertID)
+	assert.Equal(t, "processed", got.Status, "流程终态必须回写告警处理态")
+	require.NotNil(t, got.ProcessedAt, "processed_at 必须落")
+	assert.Equal(t, itAdmin, *got.ProcessedBy, "回写取末节点确认人")
+	assert.Nil(t, got.ProcessNote, "process_note 不归回写管（处置语义在流程时间线）")
+	assert.Nil(t, got.InProgressAt, "回写不冒充「开始处理」时刻")
+}
+
+// TestIT677WriteBackKeepsFirstProcessor 正例旁支：告警已被快处先标 processed 的，
+// 完结回写不得改写首次处置者/时刻/备注（与 alert-service ProcessAlert 幂等语义同规则）。
+func TestIT677WriteBackKeepsFirstProcessor(t *testing.T) {
+	ctx := context.Background()
+	fx := newITFlow(t, "T677F")
+	_, err := itStore.pool.Exec(ctx,
+		`UPDATE alerts SET process_status = 'processed',
+		        processed_at = now() - interval '1 hour',
+		        processed_by = 'QK-QUICK', process_note = '快处先行备注'
+		  WHERE alert_id = $1`, fx.alertID)
+	require.NoError(t, err, "预置快处已处理失败")
+	before := itAlertProcess(t, fx.alertID)
+	require.Equal(t, "processed", before.Status)
+
+	inst, err := itStore.CreateFlowInstance(ctx, fx.templateID, fx.alertID,
+		[]string{"N1", "N2", "N3"}, []string{"N1"})
+	require.NoError(t, err)
+	walkITFlowToLast(t, inst.InstanceID, []string{"N1", "N2"}, "N3", itDoctor)
+	_, err = itStore.ApplyFlowNodeAction(ctx, FlowActionWrite{
+		InstanceID: inst.InstanceID, NodeID: "N3", Action: "confirm", Operator: itAdmin,
+		NodeStatus: "done", CurrentNodeID: "N3", Complete: true,
+	})
+	require.NoError(t, err)
+
+	after := itAlertProcess(t, fx.alertID)
+	assert.Equal(t, "processed", after.Status)
+	require.NotNil(t, after.ProcessedBy)
+	assert.Equal(t, "QK-QUICK", *after.ProcessedBy, "first-wins：首次处置者不被回写覆盖")
+	require.NotNil(t, after.ProcessedAt)
+	assert.True(t, after.ProcessedAt.Equal(*before.ProcessedAt), "first-wins：首次处置时刻不被回写刷新")
+	require.NotNil(t, after.ProcessNote)
+	assert.Equal(t, "快处先行备注", *after.ProcessNote)
+}
+
+// TestIT677CompleteRollbackLeavesBothSides 负例：完结回写途中失败 → 整事务回滚，
+// 流程不落终态、告警不落 processed（证明回写与流程推进同事务，不是事外补写）。
+// 注入手段：仅对本夹具告警的 processed UPDATE 抛错的测试域触发器，t.Cleanup 必拆。
+func TestIT677CompleteRollbackLeavesBothSides(t *testing.T) {
+	ctx := context.Background()
+	fx := newITFlow(t, "T677R")
+	inst, err := itStore.CreateFlowInstance(ctx, fx.templateID, fx.alertID,
+		[]string{"N1", "N2", "N3"}, []string{"N1"})
+	require.NoError(t, err)
+	walkITFlowToLast(t, inst.InstanceID, []string{"N1", "N2"}, "N3", itDoctor)
+
+	_, err = itStore.pool.Exec(ctx,
+		`CREATE FUNCTION it677_fail_processed() RETURNS trigger LANGUAGE plpgsql AS
+		 $$ BEGIN RAISE EXCEPTION 'it677 injected failure'; END $$`)
+	require.NoError(t, err, "建注入函数失败")
+	_, err = itStore.pool.Exec(ctx,
+		`CREATE TRIGGER it677_fail BEFORE UPDATE ON alerts FOR EACH ROW
+		 WHEN (NEW.alert_id = `+fmt.Sprintf("%d", fx.alertID)+` AND NEW.process_status = 'processed')
+		 EXECUTE FUNCTION it677_fail_processed()`)
+	require.NoError(t, err, "建注入触发器失败")
+	t.Cleanup(func() {
+		c := context.Background()
+		if _, e := itStore.pool.Exec(c, `DROP TRIGGER IF EXISTS it677_fail ON alerts`); e != nil {
+			t.Errorf("it: 拆注入触发器: %v", e)
+		}
+		if _, e := itStore.pool.Exec(c, `DROP FUNCTION IF EXISTS it677_fail_processed()`); e != nil {
+			t.Errorf("it: 拆注入函数: %v", e)
+		}
+	})
+
+	actionsBefore := len(itFlowActions(t, inst.InstanceID))
+	_, err = itStore.ApplyFlowNodeAction(ctx, FlowActionWrite{
+		InstanceID: inst.InstanceID, NodeID: "N3", Action: "confirm", Operator: itAdmin,
+		NodeStatus: "done", CurrentNodeID: "N3", Complete: true,
+	})
+	require.Error(t, err, "回写被注入失败时完结必须报错")
+	assert.Contains(t, err.Error(), "it677 injected failure")
+
+	// 侧一：流程不落终态
+	assert.Equal(t, "running", statusOf(t, inst.InstanceID), "回滚后实例不得是 completed")
+	rollback, err := itStore.GetFlowInstance(ctx, inst.InstanceID)
+	require.NoError(t, err)
+	assert.Nil(t, rollback.EndedAt, "回滚后 ended_at 不得落")
+	assert.Equal(t, "current", nodeStateOf(t, inst.InstanceID, "N3").Status, "末节点状态随事务回滚")
+	assert.Len(t, itFlowActions(t, inst.InstanceID), actionsBefore, "回滚后不得留 N3 流水")
+
+	// 侧二：告警不落 processed
+	got := itAlertProcess(t, fx.alertID)
+	assert.Equal(t, "pending", got.Status, "回滚后告警不得是 processed")
+	assert.Nil(t, got.ProcessedAt, "回滚后 processed_at 不得落")
+	assert.Nil(t, got.ProcessedBy, "回滚后 processed_by 不得落")
+}
+
+// TestIT677CompleteMissingAlertRollsBack 负例支：完结时告警行缺失（数据漂移）→
+// 返回 ErrFlowAlertNotFound，流程同样不落终态——宁可报错回滚，不许流程走了告警没跟上。
+func TestIT677CompleteMissingAlertRollsBack(t *testing.T) {
+	ctx := context.Background()
+	fx := newITFlow(t, "T677M")
+	inst, err := itStore.CreateFlowInstance(ctx, fx.templateID, fx.alertID,
+		[]string{"N1", "N2", "N3"}, []string{"N1"})
+	require.NoError(t, err)
+	walkITFlowToLast(t, inst.InstanceID, []string{"N1", "N2"}, "N3", itDoctor)
+
+	_, err = itStore.pool.Exec(ctx, `DELETE FROM alerts WHERE alert_id = $1`, fx.alertID)
+	require.NoError(t, err)
+
+	_, err = itStore.ApplyFlowNodeAction(ctx, FlowActionWrite{
+		InstanceID: inst.InstanceID, NodeID: "N3", Action: "confirm", Operator: itAdmin,
+		NodeStatus: "done", CurrentNodeID: "N3", Complete: true,
+	})
+	require.Error(t, err, "告警行缺失时完结必须报错")
+	assert.True(t, errors.Is(err, ErrFlowAlertNotFound), "应返回 ErrFlowAlertNotFound，实际 %v", err)
+	assert.Equal(t, "running", statusOf(t, inst.InstanceID), "缺告警时流程不得落终态")
+	assert.Equal(t, "current", nodeStateOf(t, inst.InstanceID, "N3").Status, "末节点状态随事务回滚")
 }
 
 func itCountRows(t *testing.T, sql string, args ...any) int {

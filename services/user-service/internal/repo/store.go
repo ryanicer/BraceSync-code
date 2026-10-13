@@ -730,6 +730,8 @@ type Store interface {
 	CreateFlowInstance(ctx context.Context, templateID string, alertID int64, nodeIDs, entryNodeIDs []string) (*FlowInstanceRow, error)
 	GetFlowInstance(ctx context.Context, instanceID string) (*FlowInstanceRow, error)
 	ListFlowInstancesByAlert(ctx context.Context, alertID int64) ([]FlowInstanceRow, error)
+	// AlertRouteInfo 677：跨 owner 只读 alerts 类型+处理态（快处路由判定），不存在回 exists=false。
+	AlertRouteInfo(ctx context.Context, alertID int64) (typeName, processStatus string, exists bool, err error)
 	ListNodeStates(ctx context.Context, instanceID string) ([]FlowNodeStateRow, error)
 	// ApplyFlowNodeAction 状态机唯一写入点（图遍历结果由 handler 传入，repo 不读模板 JSON）。
 	ApplyFlowNodeAction(ctx context.Context, in FlowActionWrite) (*FlowNodeActionRow, error)
