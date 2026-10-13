@@ -132,7 +132,10 @@ export interface TeamStats {
   unassignedPatientCount: number; // 待分配患者数（未分配团队）
 }
 
-/** 团队成员（T059 成员管理，对齐后端 TeamMemberDTO） */
+/** 团队成员视图（T059 成员管理）。
+ *  T684 语义修正：这是成员行的归一化视图（写路径出参 / 成员明细的 UI 视图），memberId = doctorId | techId（成员行真实键）。
+ *  GET /api/v1/teams/:teamId/members 的读契约是 TeamMembers（doctors: Doctor[] / technicians: Technician[]），
+ *  行内键是 doctorId/techId、无 memberId/memberType——前端在 API 层归一化为本视图，不得把读端点当 TeamMember[] 直用。 */
 export interface TeamMember {
   memberId: string;
   memberType: 'doctor' | 'technician';
