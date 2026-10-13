@@ -6,6 +6,7 @@ package handler
 
 import (
 	"context"
+	"time"
 
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 )
@@ -61,6 +62,12 @@ type fakeFlowState struct {
 	bindings      map[string]repo.FlowTypeBindingRow
 	failReplace   bool
 	replacedItems []repo.FlowTypeBindingSet
+
+	// T681 夹具清理：cleanupRes/cleanupErr 为返回值注入，lastCleanup* 记录入参。
+	cleanupRes        *repo.FlowFixtureCleanupResult
+	cleanupErr        error
+	lastCleanupPrefix string
+	lastCleanupAfter  time.Time
 }
 
 func (f *fakeStore) ListFlowTemplates(_ context.Context, _ string, _, _ int) ([]repo.FlowTemplateRow, int64, error) {
@@ -114,4 +121,9 @@ func (f *fakeStore) ApplyFlowNodeAction(_ context.Context, in repo.FlowActionWri
 
 func (f *fakeStore) ListFlowNodeActions(_ context.Context, _ string) ([]repo.FlowNodeActionRow, error) {
 	return f.flow.actions, f.flow.actionsErr
+}
+
+func (f *fakeStore) CleanupFlowFixtures(_ context.Context, templatePrefix string, createdAfter time.Time) (*repo.FlowFixtureCleanupResult, error) {
+	f.flow.lastCleanupPrefix, f.flow.lastCleanupAfter = templatePrefix, createdAfter
+	return f.flow.cleanupRes, f.flow.cleanupErr
 }

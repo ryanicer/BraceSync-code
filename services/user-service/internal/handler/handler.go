@@ -354,6 +354,9 @@ func (h *Handler) Router() *gin.Engine {
 		v1.GET("/admin/flow/type-bindings", h.getFlowTypeBindings)
 		v1.PUT("/admin/flow/type-bindings", h.saveFlowTypeBindings)
 
+		// T681 E2E 夹具清理（adminOnly；网关 RBAC 双登记，白名单+生产拒在 handler 兜底）
+		v1.POST("/admin/flow/fixtures/cleanup", h.cleanupFlowFixtures)
+
 		// T130 复查记录（合同患者端「复查管理」）
 		v1.POST("/admin/review-records", h.createReviewRecord)
 		v1.GET("/patients/:patientId/review-records", h.listReviewRecords)

@@ -70,6 +70,13 @@ type FlowNodeActionRequest struct {
 	NextNodeIDs json.RawMessage `json:"nextNodeIds"`
 }
 
+// CleanupFlowFixturesRequest POST /admin/flow/fixtures/cleanup（T681）
+// 两项均必填：prefix 须命中服务端白名单；createdAfter 为 RFC3339，只清该时刻之后创建/启动的夹具。
+type CleanupFlowFixturesRequest struct {
+	TemplatePrefix string `json:"templatePrefix" binding:"required"`
+	CreatedAfter   string `json:"createdAfter" binding:"required"`
+}
+
 // ─────────────────────────────────────────────────────────────
 // 响应 DTO
 // ─────────────────────────────────────────────────────────────
@@ -127,4 +134,22 @@ type FlowNodeActionDTO struct {
 	Attachments    json.RawMessage `json:"attachments"`
 	TargetOperator *string         `json:"targetOperator"`
 	CreatedAt      string          `json:"createdAt"`
+}
+
+// FlowFixtureSnapshotDTO 单拍读数（T681 清理前后各一拍）。
+type FlowFixtureSnapshotDTO struct {
+	FreePool           int64 `json:"freePool"`
+	TemplateCount      int64 `json:"templateCount"`
+	TemplateCountTotal int64 `json:"templateCountTotal"`
+	InstanceCount      int64 `json:"instanceCount"`
+}
+
+// CleanupFlowFixturesResponse POST /admin/flow/fixtures/cleanup 响应（含前后两拍读数与删除计数）。
+type CleanupFlowFixturesResponse struct {
+	TemplatePrefix   string                 `json:"templatePrefix"`
+	CreatedAfter     string                 `json:"createdAfter"`
+	Before           FlowFixtureSnapshotDTO `json:"before"`
+	After            FlowFixtureSnapshotDTO `json:"after"`
+	DeletedInstances int64                  `json:"deletedInstances"`
+	DeletedTemplates int64                  `json:"deletedTemplates"`
 }

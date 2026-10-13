@@ -305,6 +305,118 @@ func (s *PGStore) DeleteFlowTemplate(ctx context.Context, templateID string) err
 }
 
 // ─────────────────────────────────────────────────────────────
+// E2E 夹具清理（T681）：按前缀 + 时间窗回收 e2e-real 造的 T053 夹具
+// ─────────────────────────────────────────────────────────────
+
+// FlowFixtureSnapshot 单拍读数。freePool = 未被流程实例占用的告警位（池 free 数）；
+// templateCount = 命中前缀的模板数；templateTotal = 全量模板数；instanceCount = 命中前缀实例数。
+type FlowFixtureSnapshot struct {
+	FreePool           int64
+	TemplateCount      int64
+	TemplateCountTotal int64
+	InstanceCount      int64
+}
+
+// FlowFixtureCleanupResult 清理结果：含前后两拍读数与删除计数（审计与验收用）。
+type FlowFixtureCleanupResult struct {
+	TemplatePrefix   string
+	CreatedAfter     time.Time
+	Before           FlowFixtureSnapshot
+	After            FlowFixtureSnapshot
+	DeletedInstances int64
+	DeletedTemplates int64
+}
+
+// CleanupFlowFixtures 单事务清理命中「前缀 + 时间窗」的流程夹具：先删窗口内实例
+// （flow_node_state / flow_node_action 走 FK ON DELETE CASCADE 一并清），再删窗口内创建
+// 且无残留引用的前缀模板。前置与后置各拍一次读数随响应返回，供 CI 收尾钩子与验收留痕。
+//
+// 幂等：空窗口时删除计数为 0、前后读数相同，仍返回成功（不报错）。
+// 生产拒/前缀白名单/时间窗必填由 handler 层把关，本层只按入参执行。
+func (s *PGStore) CleanupFlowFixtures(ctx context.Context, templatePrefix string, createdAfter time.Time) (*FlowFixtureCleanupResult, error) {
+	res := &FlowFixtureCleanupResult{TemplatePrefix: templatePrefix, CreatedAfter: createdAfter}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	before, err := flowFixtureSnapshot(ctx, tx, templatePrefix)
+	if err != nil {
+		return nil, err
+	}
+	res.Before = *before
+
+	// 1) 删窗口内实例。级联清 flow_node_state / flow_node_action；
+	//    删实例即释放其 alert_id，池位随 after 读数回正。
+	delInst, err := tx.Exec(ctx,
+		`DELETE FROM flow_instance i
+		  USING flow_template t
+		  WHERE i.template_id = t.template_id
+		    AND starts_with(t.name, $1)
+		    AND i.started_at >= $2`, templatePrefix, createdAfter)
+	if err != nil {
+		return nil, err
+	}
+	res.DeletedInstances = delInst.RowsAffected()
+
+	// 2) 删窗口内创建、且已无引用的前缀模板。flow_instance 与 flow_type_bindings 两处 FK 均无
+	//    ON DELETE CASCADE，故凡仍被实例或类型绑定引用的模板一律 NOT EXISTS 拦下保留——
+	//    宁可留模板，也不让本步抛 FK 违例回滚整事务（回滚会把上一步的实例删除一起撤销，池净流失没治）。
+	delTpl, err := tx.Exec(ctx,
+		`DELETE FROM flow_template t
+		  WHERE starts_with(t.name, $1)
+		    AND t.created_at >= $2
+		    AND NOT EXISTS (SELECT 1 FROM flow_instance i WHERE i.template_id = t.template_id)
+		    AND NOT EXISTS (SELECT 1 FROM flow_type_bindings b WHERE b.template_id = t.template_id)`,
+		templatePrefix, createdAfter)
+	if err != nil {
+		return nil, err
+	}
+	res.DeletedTemplates = delTpl.RowsAffected()
+
+	after, err := flowFixtureSnapshot(ctx, tx, templatePrefix)
+	if err != nil {
+		return nil, err
+	}
+	res.After = *after
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// flowFixtureSnapshot 在同一事务内取一拍读数（保证前后两拍口径一致、可对账）。
+func flowFixtureSnapshot(ctx context.Context, tx pgx.Tx, templatePrefix string) (*FlowFixtureSnapshot, error) {
+	var snap FlowFixtureSnapshot
+
+	// freePool：未被任何流程实例占用的告警位。alerts 与 flow 同库，可在本服务池内直查。
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM alerts a
+		  WHERE NOT EXISTS (SELECT 1 FROM flow_instance i WHERE i.alert_id = a.alert_id)`).Scan(&snap.FreePool); err != nil {
+		return nil, err
+	}
+	// templateCount：命中前缀的模板数（24.2 名册尺的 pageSize=100 口径即看此项）。
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM flow_template t WHERE starts_with(t.name, $1)`, templatePrefix).Scan(&snap.TemplateCount); err != nil {
+		return nil, err
+	}
+	// templateTotal：全量模板数。
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM flow_template`).Scan(&snap.TemplateCountTotal); err != nil {
+		return nil, err
+	}
+	// instanceCount：命中前缀实例数。
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM flow_instance i JOIN flow_template t ON t.template_id = i.template_id
+		  WHERE starts_with(t.name, $1)`, templatePrefix).Scan(&snap.InstanceCount); err != nil {
+		return nil, err
+	}
+	return &snap, nil
+}
+
+// ─────────────────────────────────────────────────────────────
 // 实例与节点状态（2.3 运行态）
 // ─────────────────────────────────────────────────────────────
 
