@@ -6,6 +6,9 @@ import {
   adminMessage,
   getAuthToken,
   uniqueName,
+  releaseTeamMembers,
+  restoreTeamMembers,
+  expectDoctorsRestored,
   E2E_PATIENT_NAME_PREFIX,
   E2E_TEAM_NAME_PREFIX,
 } from '../real-helpers'
@@ -317,6 +320,8 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
   const createdTeams: Array<{ teamId: string; name: string }> = []
   /** 写段开始前的 patients total，还原后必须回到这个值 */
   let baselineTotal: number | null = null
+  /** T682 迁回基数：建团队前各医护的归属（doctorId → teamId | null），afterAll 用 */
+  let priorDoctorTeams: Record<string, string | null> = {}
 
   test('22.1 建档→改号→改档案→分配团队：四笔真 UI 写逐笔值级回读，改号留痕脱敏对上', async ({
     page,
@@ -363,9 +368,15 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
     })
     const doctors = (Array.isArray(doctorsRaw)
       ? doctorsRaw
-      : ((doctorsRaw as { list?: unknown[] })?.list ?? [])) as Array<{ doctorId: string; name: string }>
+      : ((doctorsRaw as { list?: unknown[] })?.list ?? [])) as Array<{
+      doctorId: string
+      name: string
+      teamId?: string | null
+    }>
     expect(doctors.length, 'staging 应至少有一名医护可当团队负责人').toBeGreaterThanOrEqual(1)
     const leaderId = doctors[0].doctorId
+    // T682 迁回基数：趁还没建队，把各医护当前归属拍下来（建队会把负责人迁走）
+    priorDoctorTeams = Object.fromEntries(doctors.map((d) => [String(d.doctorId), d.teamId ?? null]))
 
     const teamName = uniqueName(E2E_TEAM_NAME_PREFIX)
     const team = await callOk<{ teamId: string; name: string }>(page, 'POST', '/api/v1/teams', {
@@ -938,6 +949,14 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
       }
 
       for (const t of [...createdTeams]) {
+        // T682 B案：团队天然带「负责人引用」——POST /teams 把 leader 迁进新队（repo/pg.go:1874），
+        // DeleteTeam 见引用即拒（handler.go:3024 ⇒ 409/10409）⇒ 还原必须先按契约端点解除成员引用
+        //（DELETE /teams/:id/members/:memberId，见 real-helpers.releaseTeamMembers），
+        // 再 DELETE，否则每条链跑完都在 staging 落一行自建团队（修前实测：TEAM26b90838cb/T053团队-794552 恒 10409 后停手回报）。
+        const rel = await releaseTeamMembers(page.request, token, t.teamId)
+        console.log(
+          `[t462-s2s3][还原] 解除团队 ${t.teamId} 引用 → listStatus=${rel.listStatus} doctors=${rel.doctors} techs=${rel.technicians} results=${JSON.stringify(rel.results)}`,
+        )
         const del = await callApi(page, 'DELETE', `/api/v1/teams/${t.teamId}`, { token })
         console.log(
           `[t462-s2s3][还原] DELETE /api/v1/teams/${t.teamId} → status=${del.status} code=${del.code}`,
@@ -945,7 +964,7 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
         if (del.code !== 0) {
           if (del.code === 10409) {
             throw new Error(
-              `团队 ${t.teamId}（${t.name}）仍被引用，删除被拒（409）。链 A 只写了自建患者这一条引用面，说明上面删患者没删干净或另有引用 ⇒ 停手回报，不动 seed 数据`,
+              `团队 ${t.teamId}（${t.name}）在「已解除成员引用」之后仍被引用，删除被拒（409）。上面已打印解除读数 ⇒ 剩下的引用面只可能是患者或技师：链 A 只写了自建患者这一条，说明患者没删干净或另有引用 ⇒ 停手回报，不动 seed 数据`,
             )
           }
           throw new Error(
@@ -957,6 +976,17 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
           goneTeam.code,
           `团队 ${t.teamId} 删除后详情应回 code=10404（getTeam，handler.go:950-964），实得 status=${goneTeam.status} code=${goneTeam.code}`,
         ).toBe(10404)
+        // 迁回（T682 B案）：负责人被建队迁来、被解除置 NULL，不还回去就是把 doctor_li
+        // 留在「无团队」状态 ⇒ 连累 2.4（医生 scope 排行 0 行）与 29.1（前置要求有团队归属）。
+        const restored = await restoreTeamMembers(page.request, token, priorDoctorTeams, rel.results)
+        console.log(`[t462-s2s3][还原] 迁回团队成员 → ${JSON.stringify(restored)}`)
+        for (const r of restored) {
+          expect(
+            r.status === null || r.status === 200,
+            `迁回${r.memberType} ${r.memberId} → ${r.toTeamId} 应 200 或本无归属（实得 ${r.status}）`,
+          ).toBe(true)
+        }
+        await expectDoctorsRestored(page.request, token, restored)
         createdTeams.splice(createdTeams.indexOf(t), 1)
       }
 

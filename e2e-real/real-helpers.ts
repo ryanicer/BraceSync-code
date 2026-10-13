@@ -1,4 +1,4 @@
-import { expect, type Page, type Locator, type Route } from '@playwright/test'
+import { expect, type Page, type Locator, type Route, type APIRequestContext } from '@playwright/test'
 // gotoMenu / isLoginPath 在本文件下方要被直接调用，故必须真 import 一份——
 // 下面那串 `export { ... } from '../e2e/admin-helpers'` 只转发给消费者，不产生本地绑定。
 import { gotoMenu, isLoginPath } from '../e2e/admin-helpers'
@@ -348,6 +348,151 @@ export const LS_USER_KEY = 'admin_user'
 /** 从 localStorage 取 JWT token（用于 page.request 直接调 API 清理资源） */
 export async function getAuthToken(page: Page): Promise<string | null> {
   return page.evaluate((k) => localStorage.getItem(k), LS_TOKEN_KEY)
+}
+
+/** releaseTeamMembers 读数：不做断言，调用方自行判红或打日志（清理路径不能因断言中断后续清理） */
+export interface TeamMemberRelease {
+  /** GET /teams/:id/members 的状态码（非 200 ⇒ 未解除任何引用，调用方必须处理） */
+  listStatus: number
+  doctors: number
+  technicians: number
+  results: { memberId: string; memberType: 'doctor' | 'technician'; status: number }[]
+}
+
+/**
+ * T682 B案：删除自建团队前解除「负责人/成员引用」的唯一产品契约路径。
+ *
+ * 因果链（一手读数）：POST /teams 会把负责人迁进新队
+ * （repo/pg.go:1874 `UPDATE doctors SET team_id = $2 WHERE doctor_id = $1`），
+ * 而 DELETE /teams/:id 只要 patients/doctors/technicians 任一按 team_id 命中就拒
+ * （handler/handler.go:3024 ⇒ 409，信封码 10409；全线唯一 409 来源）
+ * ⇒ **任何自建团队天然带 ≥1 条引用**，不解除就直接删必 409
+ * （06 的 6.5、10.1 收尾、22.2 清理三红同一根因）。
+ *
+ * 解除端点：handler/handler.go:273 `DELETE /teams/:teamId/members/:memberId?memberType=doctor|technician`
+ * → repo/pg.go:2137 RemoveTeamMember（`SET team_id = NULL`），带审计（audit_t252.go「移除成员 %s」），
+ * 无「负责人 / 最后一名成员」保护 ⇒ 可清空。这不是测试后门，是产品自己的 REST 契约。
+ *
+ * 🔴 成员行 ID 口径：现网返回的是 DoctorDTO.doctorId / TechnicianDTO.techId（model.go:196/216，
+ * 探针实测 GET /teams/TEAM01/members 无 memberId/memberType 字段）。
+ * 前端 teams/index.vue:443 传的是 `row.memberId`/`row.memberType` ⇒ UI「移除」按钮在真实模式恒发
+ * `undefined` ⇒ 400。该缺陷已随 T682 交件登记（不在用例里替产品兜）。
+ */
+export async function releaseTeamMembers(
+  request: APIRequestContext,
+  token: string,
+  teamId: string,
+): Promise<TeamMemberRelease> {
+  const headers = { Authorization: `Bearer ${token}` }
+  const res = await request.get(`/api/v1/teams/${teamId}/members`, { headers }).catch(() => null)
+  if (!res) return { listStatus: 0, doctors: 0, technicians: 0, results: [] }
+  if (res.status() !== 200) {
+    return { listStatus: res.status(), doctors: 0, technicians: 0, results: [] }
+  }
+  const body: any = await res.json().catch(() => null)
+  const data = body?.data ?? {}
+  const docs: any[] = data.doctors ?? []
+  const techs: any[] = data.technicians ?? []
+  const results: TeamMemberRelease['results'] = []
+  for (const d of docs) {
+    const id = String(d.doctorId ?? d.memberId ?? '')
+    const r = await request
+      .delete(`/api/v1/teams/${teamId}/members/${id}?memberType=doctor`, { headers })
+      .catch(() => null)
+    results.push({ memberId: id, memberType: 'doctor', status: r?.status() ?? 0 })
+  }
+  for (const t of techs) {
+    const id = String(t.techId ?? t.memberId ?? '')
+    const r = await request
+      .delete(`/api/v1/teams/${teamId}/members/${id}?memberType=technician`, { headers })
+      .catch(() => null)
+    results.push({ memberId: id, memberType: 'technician', status: r?.status() ?? 0 })
+  }
+  return { listStatus: 200, doctors: docs.length, technicians: techs.length, results }
+}
+
+/**
+ * T682 B案「迁回」半边：建团队前把医护的当前归属拍下来（doctorId → teamId | null）。
+ *
+ * 为什么必须有这张快照：POST /teams 会把负责人**迁走**（repo/pg.go:1874
+ * `UPDATE doctors SET team_id = 新队`），解除引用又把他置成 NULL
+ * （pg.go:2137 `SET team_id = NULL`）⇒ 一轮写测跑完，doctor_li 就变成「无团队医护」。
+ * 这不是理论风险，是 14:04 全量复跑的一手读数：
+ *   `[t654][fixture] doctor_li doctorId=D0001 teamId=null`
+ *   ⇒ 29.1「doctor_li 应有团队归属」判红、2.4「团队佩戴达标排行」0 行判红
+ *   （医生 scope 的排行按本人团队收窄，无团队必空）。
+ * 所以解除后必须按产品契约把负责人加回他**原来**的团队（restoreTeamMembers），
+ * 写测才对环境中性。
+ */
+export async function snapshotDoctorTeams(
+  request: APIRequestContext,
+  token: string,
+): Promise<Record<string, string | null>> {
+  const res = await request.get('/api/v1/doctors', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  expect(res.status(), `GET /api/v1/doctors 应 200（实得 ${res.status()}）`).toBe(200)
+  const body: any = await res.json().catch(() => null)
+  const rows: any[] = Array.isArray(body?.data) ? body.data : (body?.data?.list ?? [])
+  const map: Record<string, string | null> = {}
+  for (const r of rows) map[String(r.doctorId)] = r.teamId ?? null
+  return map
+}
+
+/** restoreTeamMembers 单条读数；status=null ⇒ 该成员原本就不在任何团队，无需复原 */
+export interface MemberRestoreReading {
+  memberId: string
+  memberType: 'doctor' | 'technician'
+  toTeamId: string | null
+  status: number | null
+}
+
+/**
+ * 把 releaseTeamMembers 解除过的成员加回快照里的原团队（产品契约
+ * handler.go:269 `POST /teams/:teamId/members`，body {memberId, memberType}）。
+ * 断言留给调用方（清理路径要能只打日志不中断）。
+ */
+export async function restoreTeamMembers(
+  request: APIRequestContext,
+  token: string,
+  priorTeams: Record<string, string | null>,
+  released: { memberId: string; memberType: 'doctor' | 'technician' }[],
+): Promise<MemberRestoreReading[]> {
+  const out: MemberRestoreReading[] = []
+  for (const m of released) {
+    const toTeamId = priorTeams[m.memberId] ?? null
+    if (!toTeamId) {
+      out.push({ ...m, toTeamId: null, status: null })
+      continue
+    }
+    const res = await request
+      .post(`/api/v1/teams/${toTeamId}/members`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { memberId: m.memberId, memberType: m.memberType },
+      })
+      .catch(() => null)
+    out.push({ ...m, toTeamId, status: res?.status() ?? 0 })
+  }
+  return out
+}
+
+/**
+ * 迁回回读（不采信「POST 回来了 200」）：GET /api/v1/doctors 复核每位被复原的成员
+ * 现在确实挂在快照里那个团队上。toTeamId=null 的（原本无队）要求现值仍为 null。
+ */
+export async function expectDoctorsRestored(
+  request: APIRequestContext,
+  token: string,
+  readings: MemberRestoreReading[],
+): Promise<void> {
+  if (readings.length === 0) return
+  const after = await snapshotDoctorTeams(request, token)
+  for (const r of readings) {
+    expect(
+      after[r.memberId] ?? null,
+      `迁回回读：${r.memberType} ${r.memberId} 的团队应回到 ${r.toTeamId}，实得 ${after[r.memberId] ?? 'null'}`,
+    ).toBe(r.toTeamId)
+  }
 }
 
 /**
