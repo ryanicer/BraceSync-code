@@ -327,6 +327,13 @@
     },
     {
       "role": "ROLE_ADMIN",
+      "method": "GET",
+      "path": "/api/v1/todos",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
       "method": "POST",
       "path": "/api/v1/admin/alert-rules/points/reset",
       "deny": false,
@@ -821,6 +828,13 @@
       "path": "/api/v1/teams",
       "deny": true,
       "why": "admin-only"
+    },
+    {
+      "role": "ROLE_DOCTOR",
+      "method": "GET",
+      "path": "/api/v1/todos",
+      "deny": false,
+      "why": "doctor-or-admin 专属"
     },
     {
       "role": "ROLE_DOCTOR",

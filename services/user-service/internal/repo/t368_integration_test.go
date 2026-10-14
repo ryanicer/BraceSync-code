@@ -53,6 +53,11 @@ var t368DoctorBefore = []string{"dashboard", "realtime", "alerts", "orthosis"}
 var t368DoctorT372After = []string{"dashboard", "realtime", "abnormal_report", "alerts", "orthosis", "review", "review_tpl"}
 
 // t368RolePerms 读库内某角色的 permissions_json（只取本卡关心的两个键）。
+// ⚠ T679：ROLE_ADMIN / ROLE_DOCTOR 在 000038 之后又补了 todo 键，本 helper 是 t368 / t372 两个
+// 「历史迁移验收」用例的共享读口，它们的期望值钉在 000026 → 000029 的终态（16 / 7 项）。
+// 为避免后续新增模块键（如 T679 的 todo）反复改这两组历史断言，此处**投影掉 todo**：
+// 本 helper 的返回值即「T679 之前那份词表」，t368 / t372 的逐值期望原样成立、不必随新页面漂移。
+// 新模块键的增删由专门的 t679_integration_test.go 与 t252_integration_test.go 把关（读真库终态）。
 func t368RolePerms(t *testing.T, roleID string) (scope string, modules []string) {
 	t.Helper()
 	ctx := context.Background()
@@ -72,7 +77,15 @@ func t368RolePerms(t *testing.T, roleID string) (scope string, modules []string)
 	}
 	require.NoError(t, json.Unmarshal([]byte(row.PermissionsJSON), &perms),
 		"%s 的 permissions_json 解析失败：%s", roleID, row.PermissionsJSON)
-	return perms.Scope, perms.Modules
+	// T679：投影掉 000038 补的 todo（见上方注释）。
+	filtered := make([]string, 0, len(perms.Modules))
+	for _, m := range perms.Modules {
+		if m == "todo" {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	return perms.Scope, filtered
 }
 
 func TestITT368DoctorReviewModulesUp(t *testing.T) {

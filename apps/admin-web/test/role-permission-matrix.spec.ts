@@ -62,8 +62,8 @@ async function openMatrix() {
   const cards = wrapper.findAll('.page-card')
   await cards[0].findAll('tbody tr')[0].trigger('click')
   await settle()
-  // 基数判据：PAGE_MODULES 16 键（T372 抬到 16）＝矩阵行数
-  expect(cards[1].findAll('tbody tr').length).toBe(16)
+  // 基数判据：PAGE_MODULES 17 键（T372 抬到 16，T679 抬到 17）＝矩阵行数
+  expect(cards[1].findAll('tbody tr').length).toBe(17)
   return { wrapper, matrix: cards[1] }
 }
 
