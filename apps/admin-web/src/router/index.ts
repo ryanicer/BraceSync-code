@@ -7,6 +7,7 @@ import { logErrorText } from '@bracesync/shared-utils'
 // 业务页路由（对齐架构 §5.4 / PRD §7D，meta.title 用于顶栏与菜单，菜单顺序即此数组顺序）
 export const pageRoutes: RouteRecordRaw[] = [
   { path: '/dashboard', name: 'Dashboard', component: () => import('../pages/dashboard/index.vue'), meta: { title: '数据概览', icon: '📊' } },
+  { path: '/todos', name: 'Todos', component: () => import('../pages/todos/index.vue'), meta: { title: '我的待办', icon: '✅' } }, // T679 医护待办（设计稿侧栏第 2 项）
   { path: '/monitor', name: 'Monitor', component: () => import('../pages/monitor/index.vue'), meta: { title: '实时监控', icon: '🔍' } },
   { path: '/patients', name: 'Patients', component: () => import('../pages/patients/index.vue'), meta: { title: '患者管理', icon: '👤' } },
   { path: '/abnormal-report', name: 'AbnormalReport', component: () => import('../pages/abnormal-report/index.vue'), meta: { title: '异常报告', icon: '🧾' } }, // T372 独立页（设计稿 异常报告.html，侧栏第 4 项）

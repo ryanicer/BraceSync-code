@@ -38,6 +38,7 @@ export function roleKeyFromRoleId(roleId: string): RoleKey | null {
 export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
   admin: [
     '/dashboard',
+    '/todos', // T679 我的待办（设计稿侧栏第 2 项）
     '/monitor',
     '/patients',
     '/abnormal-report', // T372 异常报告独立页（设计稿侧栏第 4 项）
@@ -54,7 +55,7 @@ export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
     '/roles',
     '/settings',
   ],
-  doctor: ['/dashboard', '/monitor', '/abnormal-report', '/alerts', '/orthosis-log', '/review-records', '/review-templates'], // T135 医生可下载空白模板；T368 库里 ROLE_DOCTOR.modules 按 Boss 裁定 (a) 补到同 6 页（迁移 000028）；T372 按 PRD §7D.11 第 4 行放开异常报告（医护 ✅ 仅本团队患者）
+  doctor: ['/dashboard', '/todos', '/monitor', '/abnormal-report', '/alerts', '/orthosis-log', '/review-records', '/review-templates'], // T135 医生可下载空白模板；T368 库里 ROLE_DOCTOR.modules 按 Boss 裁定 (a) 补到同 6 页（迁移 000028）；T372 按 PRD §7D.11 第 4 行放开异常报告（医护 ✅ 仅本团队患者）；T679 加我的待办（设计稿侧栏第 2 项）
   cs: ['/communication'],
 }
 
@@ -85,6 +86,7 @@ export interface PageModule {
 
 export const PAGE_MODULES: PageModule[] = [
   { key: 'dashboard', path: '/dashboard' },
+  { key: 'todo', path: '/todos' }, // T679 第 17 键：医护待办（设计稿侧栏第 2 项）
   { key: 'realtime', path: '/monitor' },
   { key: 'patients', path: '/patients' },
   { key: 'abnormal_report', path: '/abnormal-report' }, // T372 第 16 键（子权限目录未收组，按 T368 已裁口径保持 9 组 23 项）
