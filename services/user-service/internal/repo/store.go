@@ -735,6 +735,9 @@ type Store interface {
 	ApplyFlowNodeAction(ctx context.Context, in FlowActionWrite) (*FlowNodeActionRow, error)
 	ListFlowNodeActions(ctx context.Context, instanceID string) ([]FlowNodeActionRow, error)
 
+	// T679 医护待办读侧（flow_instance JOIN alerts/patients；纯派生不新建表）。
+	ListFlowTodos(ctx context.Context, f FlowTodoFilter) ([]FlowTodoRow, error)
+
 	// T653 告警类型 ↔ 流程模板绑定（migration 000037；sentinel 复用 ErrFlowTemplateNotFound）。
 	ListFlowTypeBindings(ctx context.Context) ([]FlowTypeBindingRow, error)
 	GetFlowTypeBinding(ctx context.Context, alertType string) (*FlowTypeBindingRow, error)

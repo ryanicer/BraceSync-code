@@ -5,21 +5,22 @@ import {
 
 /**
  * admin-web 权限守卫（PRD §7D.11 预置角色权限矩阵）
- * admin 16 页 / doctor 7 页 / cs 1 页，越权访问跳 /403
+ * admin 17 页 / doctor 8 页 / cs 1 页，越权访问跳 /403
  * T130 新增复查报告页：admin 12→13，doctor 4→5；T135 新增复查模板管理页：admin 13→14，doctor 5→6；
- * T315 新增医护账号页：admin 14→15；T372 异常报告拆独立页：admin 15→16，doctor 6→7
+ * T315 新增医护账号页：admin 14→15；T372 异常报告拆独立页：admin 15→16，doctor 6→7；
+ * T679 我的待办：admin 16→17，doctor 7→8（设计稿侧栏第 2 项）
  */
 
 test.describe('admin 全量权限', () => {
-  test('侧边栏显示全部 16 个菜单', async ({ page }) => {
+  test('侧边栏显示全部 17 个菜单', async ({ page }) => {
     await adminLogin(page, 'admin')
-    await expect(menuItems(page)).toHaveCount(16) // 断言更新：14→15（T315 医护账号页）→16（T372 异常报告独立页）
-    for (const title of ['数据概览', '实时监控', '患者管理', '异常报告', '团队管理', '设备管理', '告警管理', '患者沟通', '矫形日志', '安装记录', '复查报告', '复查模板管理', '技师管理', '医护账号', '权限控制', '系统配置']) {
+    await expect(menuItems(page)).toHaveCount(17) // 断言更新：14→15（T315 医护账号页）→16（T372 异常报告独立页）→17（T679 我的待办）
+    for (const title of ['数据概览', '我的待办', '实时监控', '患者管理', '异常报告', '团队管理', '设备管理', '告警管理', '患者沟通', '矫形日志', '安装记录', '复查报告', '复查模板管理', '技师管理', '医护账号', '权限控制', '系统配置']) {
       await expect(menuItems(page).filter({ hasText: title })).toHaveCount(1)
     }
   })
 
-  test('admin 直达 16 页全部放行（不落 403）', async ({ page }) => { // 断言更新：14→15（T315）→16（T372）
+  test('admin 直达 17 页全部放行（不落 403）', async ({ page }) => { // 断言更新：14→15（T315）→16（T372）→17（T679）
     await adminLogin(page, 'admin')
     for (const path of ADMIN_PAGES) {
       await page.goto(path)
@@ -30,15 +31,15 @@ test.describe('admin 全量权限', () => {
 })
 
 test.describe('doctor 受限权限', () => {
-  test('侧边栏仅显示 7 个菜单', async ({ page }) => { // 断言更新：5→6（T135）→7（T372 §7D.11 第 4 行医护 ✅）
+  test('侧边栏仅显示 8 个菜单', async ({ page }) => { // 断言更新：5→6（T135）→7（T372）→8（T679 我的待办）
     await adminLogin(page, 'doctor')
-    await expect(menuItems(page)).toHaveCount(7)
-    for (const title of ['数据概览', '实时监控', '异常报告', '告警管理', '矫形日志', '复查报告', '复查模板管理']) {
+    await expect(menuItems(page)).toHaveCount(8)
+    for (const title of ['数据概览', '我的待办', '实时监控', '异常报告', '告警管理', '矫形日志', '复查报告', '复查模板管理']) {
       await expect(menuItems(page).filter({ hasText: title })).toHaveCount(1)
     }
   })
 
-  test('doctor 可见 7 页放行', async ({ page }) => { // 断言更新：5→6（T135）→7（T372）
+  test('doctor 可见 8 页放行', async ({ page }) => { // 断言更新：5→6（T135）→7（T372）→8（T679）
     await adminLogin(page, 'doctor')
     for (const path of DOCTOR_PAGES) {
       await page.goto(path)

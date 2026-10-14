@@ -50,9 +50,9 @@ describe('权限路由守卫', () => {
     expect(router.currentRoute.value.query.redirect).toBe('/dashboard')
   })
 
-  it('admin 可访问全部 16 页', async () => {
+  it('admin 可访问全部 17 页', async () => {
     const pages = [
-      '/dashboard', '/monitor', '/patients', '/abnormal-report', '/teams', '/devices', '/alerts',
+      '/dashboard', '/todos', '/monitor', '/patients', '/abnormal-report', '/teams', '/devices', '/alerts',
       '/communication', '/orthosis-log', '/install-records', '/review-records', '/review-templates',
       '/technicians', '/doctor-accounts', '/roles', '/settings',
     ]
@@ -65,6 +65,7 @@ describe('权限路由守卫', () => {
     expect(await navigateAs('doctor', '/orthosis-log')).toBe('/orthosis-log')
     expect(await navigateAs('doctor', '/review-templates')).toBe('/review-templates') // T135 医生可下载空白模板
     expect(await navigateAs('doctor', '/abnormal-report')).toBe('/abnormal-report') // T372 §7D.11 第 4 行医护 ✅
+    expect(await navigateAs('doctor', '/todos')).toBe('/todos') // T679 §7D.16 我的待办医护可处理
     expect(await navigateAs('doctor', '/patients')).toBe('/403')
     expect(await navigateAs('doctor', '/settings')).toBe('/403')
     expect(await navigateAs('doctor', '/doctor-accounts')).toBe('/403') // T315 医护不能管账号

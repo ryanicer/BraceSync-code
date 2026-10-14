@@ -739,6 +739,113 @@ func (s *PGStore) ListFlowNodeActions(ctx context.Context, instanceID string) ([
 	return list, rows.Err()
 }
 
+// ─────────────────────────────────────────────────────────────
+// T679 医护待办读侧（flow_instance JOIN flow_template/alerts/patients/flow_node_state）
+// ─────────────────────────────────────────────────────────────
+
+// FlowTodoFilter 待办查询条件。无 keyword：关键词过滤与分页放 handler 侧（为忠实匹配设计稿
+// 「页签计数不受 keyword 影响」，须先算全集计数再过滤展示行）。
+//
+// TeamScoped 语义同 PatientFilter（T350）：为真且 TeamID 为空 = 无团队可看，落空集（fail-closed），
+// 不退化成「不过滤」。
+type FlowTodoFilter struct {
+	InstanceID string // 非空 = 取单条详情（供 GET /todos?instanceId=）
+	TeamID     string
+	TeamScoped bool
+}
+
+// FlowTodoRow 待办读侧一行（跨 flow_instance / flow_template / alerts / patients / flow_node_state 派生）。
+type FlowTodoRow struct {
+	InstanceID     string
+	TemplateID     string
+	TemplateName   string
+	Nodes          []byte // 模板 nodes JSON 原文（后端解析 name/role/时限，不落库）
+	AlertID        int64
+	CurrentNodeID  *string
+	InstanceStatus string
+	StartedAt      time.Time
+	EndedAt        *time.Time
+
+	AlertType      string
+	Detail         *string
+	SensorPoint    *string
+	ThresholdValue *float64
+	ActualValue    *float64
+	ResolvedStatus string
+	ResolvedAt     *time.Time
+	AlertTS        time.Time
+	ProcessStatus  string
+	DeviceID       string
+	AlertPatientID string
+
+	PatientName *string
+	TeamID      *string
+
+	NodeStatus   *string // 当前节点运行态（LEFT JOIN，无节点=办结）
+	NodeAssignee *string
+	// NodeEnteredAt 当前节点进入时间 = 最近一次 confirm 的 created_at，无则 started_at（时限 chip 计时基准）。
+	NodeEnteredAt time.Time
+}
+
+const flowTodoCols = `
+SELECT i.instance_id, i.template_id, t.name, t.nodes::text,
+       i.alert_id, i.current_node_id, i.status, i.started_at, i.ended_at,
+       al.type, al.detail, al.sensor_point, al.threshold_value::float8, al.actual_value::float8,
+       al.resolved_status, al.resolved_at, al.ts, al.process_status, al.device_id, al.patient_id,
+       p.name, p.team_id,
+       s.status, s.assignee,
+       COALESCE((SELECT MAX(a2.created_at) FROM flow_node_action a2
+                  WHERE a2.instance_id = i.instance_id AND a2.action = 'confirm'), i.started_at) AS node_entered_at
+  FROM flow_instance i
+  JOIN flow_template t ON t.template_id = i.template_id
+  JOIN alerts al ON al.alert_id = i.alert_id
+  JOIN patients p ON p.patient_id = al.patient_id
+  LEFT JOIN flow_node_state s ON s.instance_id = i.instance_id AND s.node_id = i.current_node_id`
+
+// ListFlowTodos 待办读侧（running/completed 在途实例；terminated 排除）。
+//
+// 🔴 跨表读 alerts / patients（同库）；本层只读不写，沿用包注释「alert_id 不建外键」口径。
+// 排序 al.ts 倒序（最新告警在前），次键 instance_id 保证稳定。
+func (s *PGStore) ListFlowTodos(ctx context.Context, f FlowTodoFilter) ([]FlowTodoRow, error) {
+	conds := []string{`i.status IN ('running','completed')`}
+	var args []any
+	if f.InstanceID != "" {
+		args = append(args, f.InstanceID)
+		conds = append(conds, fmt.Sprintf("i.instance_id = $%d", len(args)))
+	}
+	if f.TeamScoped && f.TeamID == "" {
+		conds = append(conds, "false")
+	} else if f.TeamID != "" {
+		args = append(args, f.TeamID)
+		conds = append(conds, fmt.Sprintf("p.team_id = $%d", len(args)))
+	}
+	sql := flowTodoCols + " WHERE " + strings.Join(conds, " AND ") +
+		" ORDER BY al.ts DESC, i.instance_id DESC"
+
+	rows, err := s.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]FlowTodoRow, 0, 16)
+	for rows.Next() {
+		var r FlowTodoRow
+		if err := rows.Scan(
+			&r.InstanceID, &r.TemplateID, &r.TemplateName, &r.Nodes,
+			&r.AlertID, &r.CurrentNodeID, &r.InstanceStatus, &r.StartedAt, &r.EndedAt,
+			&r.AlertType, &r.Detail, &r.SensorPoint, &r.ThresholdValue, &r.ActualValue,
+			&r.ResolvedStatus, &r.ResolvedAt, &r.AlertTS, &r.ProcessStatus, &r.DeviceID, &r.AlertPatientID,
+			&r.PatientName, &r.TeamID,
+			&r.NodeStatus, &r.NodeAssignee, &r.NodeEnteredAt,
+		); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
 // accountName 单账号显示名反查（写操作成功后回填 DTO，查不到回 nil 不编造）。
 func (s *PGStore) accountName(ctx context.Context, id string) (*string, error) {
 	var name *string

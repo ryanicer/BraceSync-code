@@ -19,7 +19,8 @@ func TestT419_DoctorTemplateHasNoCommModule(t *testing.T) {
 	assert.NotContains(t, tpl.Permissions.Modules, "comm",
 		"医护预设模板不得含 comm：库内预置行与权限矩阵都不给医护患者沟通页")
 	// 其余各项一字不动 —— Boss 本次只裁了 comm 一格，patients 是同性但未裁项，不顺手改
-	assert.Equal(t, []string{"dashboard", "realtime", "patients", "alerts", "orthosis"},
+	// T679：医护待办的主用户即医护，补 todo 一格（/todos 页）；comm 仍不在集内。
+	assert.Equal(t, []string{"dashboard", "todo", "realtime", "patients", "alerts", "orthosis"},
 		tpl.Permissions.Modules)
 
 	// 描述也是用户可见文案（新增角色弹窗、角色列表都渲染它）：授权里没有沟通，文案不许再写「+沟通」
