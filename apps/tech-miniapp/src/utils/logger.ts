@@ -14,6 +14,8 @@ const realtimeLogger = typeof wx !== 'undefined' && wx.getRealtimeLogManager
 const realtimeLogger: any = null
 // #endif
 
+import { formatLogArgs } from './logFormat'
+
 function safe(fn: () => void) {
   try { fn() } catch { /* 静默吞掉，不影响主流程 */ }
 }
@@ -27,21 +29,21 @@ export function maskPhone(phone: string): string {
 
 export const logger = {
   info(...args: any[]) {
-    const msg = args.join(' ')
+    const msg = formatLogArgs(args)
     safe(() => {
       console.log(msg)
       realtimeLogger?.info(msg)
     })
   },
   warn(...args: any[]) {
-    const msg = args.join(' ')
+    const msg = formatLogArgs(args)
     safe(() => {
       console.warn(msg)
       realtimeLogger?.warn(msg)
     })
   },
   error(...args: any[]) {
-    const msg = args.join(' ')
+    const msg = formatLogArgs(args)
     safe(() => {
       console.error(msg)
       realtimeLogger?.error(msg)
