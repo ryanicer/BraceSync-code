@@ -25,9 +25,8 @@ type t677FakeRouter struct {
 	d   flowstarter.RouteDecision
 	err error
 	// 记录调用与次序（验「路由门先于节点执法」）
-	hits       int
-	lastAlert  int64
-	guardAfter bool // 路由返回后守卫是否被打到（由测试在守卫里置位）
+	hits      int
+	lastAlert int64
 }
 
 func (r *t677FakeRouter) QuickRoute(_ context.Context, alertID int64) (flowstarter.RouteDecision, error) {
