@@ -133,6 +133,16 @@ test.describe('编辑团队', () => {
     // 列表中团队名已更新
     await expect(tableRows(page).filter({ hasText: '骨科一组（改）' })).toHaveCount(1)
   })
+
+  test('T685：打开编辑弹窗负责人回显当前负责人（无需重选）', async ({ page }) => {
+    // 骨科一组（TEAM-101）负责人=张主任（DOC-101）
+    tableRows(page).filter({ hasText: '骨科一组' }).getByRole('button', { name: '编辑' }).first().click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '编辑团队' })
+    await expect(dialog).toBeVisible()
+    // 负责人下拉应回显「张主任」——修前 openEdit 只吃列表概要投影 → 恒空（T279 同源），本用例为回归守卫
+    const ownerSelect = dialog.locator('.el-form-item').filter({ hasText: '负责人' }).locator('.el-select').first()
+    await expect(ownerSelect).toContainText('张主任', { timeout: 8_000 })
+  })
 })
 
 // ────────────────────────────────────────────────────────
