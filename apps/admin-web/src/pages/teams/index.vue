@@ -135,7 +135,7 @@
         </el-form-item>
         <el-form-item label="负责人" prop="leader">
           <el-select v-model="teamForm.leader" placeholder="请选择负责人" filterable>
-            <el-option v-for="d in doctors" :key="d.doctorId" :label="d.name" :value="d.doctorId" />
+            <el-option v-for="d in teamLeaderOptions" :key="d.doctorId" :label="d.name" :value="d.doctorId" />
           </el-select>
         </el-form-item>
         <el-form-item label="类型">
@@ -200,6 +200,7 @@ import {
   fetchTeams, fetchDoctors, fetchTeamStats,
   createTeamApi, updateTeamApi, deleteTeamApi,
   fetchTeamMembersApi, addTeamMemberApi, removeTeamMemberApi,
+  fetchTeamDetailApi,
 } from '../../api'
 
 const ROLE_OPTIONS = ['主任医师', '副主任医师', '主治医师', '住院医师', '护士', '康复师']
@@ -244,6 +245,21 @@ const teamRules = {
 }
 /** 编辑态判据就是「有没有带 teamId」，与 confirmSaveTeam 走 PUT 还是 POST 同一枚条件 */
 const isTeamEdit = computed(() => !!teamForm.value.teamId)
+
+/**
+ * T685：负责人下拉候选。以全量医生为源，并保证「当前负责人」恒在候选内——
+ * 真实后端详情会带回 leaderName，若该 doctorId 不在候选集（列表/医生投影缺列，T279 同源），
+ * 用详情 leaderName 补一条，避免 el-select 无匹配 option 而显示空。
+ */
+const leaderCandidates = ref<{ doctorId: string; name: string }[]>([])
+const teamLeaderOptions = computed(() => {
+  const base = doctors.value.map((d) => ({ doctorId: d.doctorId, name: d.name }))
+  const ids = new Set(base.map((o) => o.doctorId))
+  for (const extra of leaderCandidates.value) {
+    if (!ids.has(extra.doctorId)) base.push(extra)
+  }
+  return base
+})
 
 // 添加成员
 const addMemberVisible = ref(false)
@@ -297,13 +313,15 @@ const candidateMembers = computed(() => {
 // 新建/编辑团队
 function openCreate() {
   teamDialogTitle.value = '新建团队'
+  leaderCandidates.value = []
   teamForm.value = { teamId: '', name: '', leader: '', description: '', teamType: 'medical' }
   teamFormRef.value?.clearValidate()
   teamDialogVisible.value = true
 }
 
-function openEdit(row: Team) {
+async function openEdit(row: Team) {
   teamDialogTitle.value = '编辑团队'
+  leaderCandidates.value = []
   teamForm.value = {
     teamId: row.teamId,
     name: row.name,
@@ -313,6 +331,25 @@ function openEdit(row: Team) {
   }
   teamFormRef.value?.clearValidate()
   teamDialogVisible.value = true
+  // T685：编辑弹窗负责人从团队详情端点取（权威源），纠正列表概要投影可能缺列导致的「不回显」（T279 旧账同源）。
+  try {
+    const detail = await fetchTeamDetailApi(row.teamId)
+    teamForm.value = {
+      teamId: detail.teamId,
+      name: detail.name,
+      leader: detail.leader ?? '',
+      description: detail.description ?? '',
+      teamType: detail.teamType,
+    }
+    // 当前负责人若不在候选集（医生列表/投影缺该 doctorId），并入候选，保证下拉渲染出名字而非空白
+    if (detail.leader && !doctors.value.some((d) => d.doctorId === detail.leader)) {
+      leaderCandidates.value = [{ doctorId: detail.leader, name: detail.leaderName ?? detail.leader }]
+    } else {
+      leaderCandidates.value = []
+    }
+  } catch {
+    // 详情读失败：保留列表回填值，不清空负责人，也不阻断编辑
+  }
 }
 
 async function confirmSaveTeam() {

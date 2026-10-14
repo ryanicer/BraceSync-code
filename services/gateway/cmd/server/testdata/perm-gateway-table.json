@@ -314,6 +314,13 @@
     {
       "role": "ROLE_ADMIN",
       "method": "GET",
+      "path": "/api/v1/teams/S1",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "GET",
       "path": "/api/v1/teams/S1/members",
       "deny": false,
       "why": "admin 全放行"

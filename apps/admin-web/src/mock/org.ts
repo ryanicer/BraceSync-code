@@ -330,6 +330,40 @@ export function mockCreateTeam(input: CreateTeamInput): TeamDetail {
   return created
 }
 
+/** T685：团队单条详情读（GET /teams/:teamId 镜像）。权威源=详情，编辑弹窗负责人回显靠它，
+ *  不再依赖列表概要投影（T279 旧账同源：列表缺列 → 回显恒空）。若负责人不在 DOCTORS 档案集，
+ *  按真实后端「全量医生含负责人」口径补一条，保证编辑下拉候选能渲染出该负责人。 */
+export function mockTeamDetail(teamId: string): TeamDetail {
+  const idx = TEAMS.findIndex((t) => t.teamId === teamId)
+  if (idx === -1) {
+    throw new Error('团队不存在')
+  }
+  const team = TEAMS[idx]
+  if (team.leader && !DOCTORS.some((d) => d.doctorId === team.leader)) {
+    DOCTORS.push({
+      doctorId: team.leader,
+      name: team.leaderName ?? team.leader,
+      title: '',
+      department: '',
+      teamId,
+      phoneMasked: '',
+      phoneState: 'absent',
+      patientCount: 0,
+      status: 'enabled',
+    })
+  }
+  const detail: TeamDetail = {
+    ...team,
+    leader: team.leader ?? null,
+    leaderName: team.leaderName ?? null,
+    description: team.description ?? null,
+    status: (team.status ?? 'active') as 'active' | 'deleted',
+    createdAt: team.createdAt ?? new Date().toISOString(),
+  }
+  TEAMS[idx] = detail
+  return detail
+}
+
 /** 编辑团队：团队不存在 → 抛错；name 被他人占用 → 抛错；否则返回更新后的 TeamDetail */
 export function mockUpdateTeam(teamId: string, input: UpdateTeamInput): TeamDetail {
   const team = TEAMS.find((t) => t.teamId === teamId)

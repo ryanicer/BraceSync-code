@@ -407,6 +407,13 @@ export async function fetchTeamMembersApi(teamId: string): Promise<orgMock.TeamM
   }
 }
 
+/** T685：团队单条详情读（GET /teams/:teamId）。编辑弹窗负责人回显走这条权威源，
+ *  不依赖 GET /teams 列表概要投影（列表漏列即回显恒空，T279 旧账同源）。 */
+export async function fetchTeamDetailApi(teamId: string): Promise<TeamDetail> {
+  if (USE_MOCK) { await delay(); return orgMock.mockTeamDetail(teamId) }
+  return request<TeamDetail>({ url: `/api/v1/teams/${teamId}` })
+}
+
 export async function createTeamApi(input: orgMock.CreateTeamInput): Promise<TeamDetail> {
   if (USE_MOCK) { await delay(); return orgMock.mockCreateTeam(input) }
   return request<TeamDetail>({ url: '/api/v1/teams', method: 'POST', data: input as unknown as Record<string, unknown> })
