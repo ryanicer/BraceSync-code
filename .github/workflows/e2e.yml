@@ -445,6 +445,13 @@ jobs:
     concurrency:
       # T651 §二.3：两 lane 各自独立排队 —— tst 档换一枚组名，不与 staging 的串行锁互斥；
       # staging 档（PR / 定时 / 手动缺省）组名逐字不变 ⇒ 「一次只跑一枚打 staging 的真跑」那条承诺一格没松。
+      # T686 读数①「组名不随 event 变」：group 表达式只读 inputs.target —— pull_request / push /
+      #   schedule 三事件无 inputs ⇒ target 判空恒落 'e2e-real-staging'，与 workflow_dispatch 缺省档
+      #   （target=staging）同组 ⇒ 任何触发面进来的 staging 真跑共用这一把串行锁（锁在 job 级、跨 run 生效）。
+      # T686 读数②「双 lane 保留」：仅 workflow_dispatch 显式 target=tst 落 'e2e-real-tst'，
+      #   tst/staging 两 lane 依旧各排各的队，T651 双通道语义零变更。
+      # T686 裁定（max 2026-10-13）：cancel-in-progress 保留 false —— 串行排队、不中途 cancel 在跑的
+      #   旧 run（true 会在 staging 写一半时被 kill，留下比互污更脏的半截状态；也与「已推的让它跑完」纪律冲突）。
       group: ${{ github.event.inputs.target == 'tst' && 'e2e-real-tst' || 'e2e-real-staging' }}
       cancel-in-progress: false
     timeout-minutes: 45
@@ -550,6 +557,13 @@ jobs:
     runs-on: ubuntu-latest
     # T609 甲案：本 job 打 staging，定时臂只认领 12:00Z 档（02:00Z 那档不得再放行它）。
     if: github.event_name == 'workflow_dispatch'
+    # T686：本 job 同样打 staging（E2E_STAGING_URL 同一颗入口变量），此前无互斥组 —— dispatch run 里
+    #   它与上面的 e2e-real-staging 并行起跑（实测 run 38196302349 两 job 同秒 started），跨 run 也能
+    #   撞进别的 PR 真跑 ⇒ 并入同一组串行排队。group 表达式与 e2e-real-staging 逐字相同（读数①组名不随
+    #   event 变、读数②双 lane 保留，两格同源同义）；cancel-in-progress 同裁 false。
+    concurrency:
+      group: ${{ github.event.inputs.target == 'tst' && 'e2e-real-tst' || 'e2e-real-staging' }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - name: 目标面预检（T651 双通道，只读 GET）
