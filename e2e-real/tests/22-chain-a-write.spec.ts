@@ -6,6 +6,9 @@ import {
   adminMessage,
   getAuthToken,
   uniqueName,
+  releaseTeamMembers,
+  restoreTeamMembers,
+  expectDoctorsRestored,
   E2E_PATIENT_NAME_PREFIX,
   E2E_TEAM_NAME_PREFIX,
 } from '../real-helpers'
@@ -42,6 +45,18 @@ import {
  *   报备  还原失败就把患者号/团队名打进 stdout（前缀 [t462-s2s3][残留报备]）并把异常抛出去。
  *   删除顺序不许倒：DeleteTeam 见到 patients.team_id 有引用就 409（pg.go:1623-1647）。
  *
+ * 链 A 的负责人不许是 seed 家族医护（T682 链 A 修复段，max 22:01 的最高优先令）：
+ *   建团队前这里取的是 doctors[0]，而 staging 医护字典的第一行就是 D0001（doctor_li）。
+ *   POST /teams 会把 leader 迁进新队（repo/pg.go:1874）⇒ 只要收尾迁回没跑成（进程被杀、
+ *   红在 afterAll 之前、并发轮次交错），D0001 就被留在别的团队，29.1 的「doctor_li 同团队有患者」
+ *   前置当场被打脏。污染现行：run 38389624216 日志第 1633 行 [t462-s2s3][造数] leader=D0001
+ *   （11:32:36.393Z），删团被引用守卫挡下后留下孤儿团队。
+ *   所以负责人只能取 E2E 自有医护（DOC+十六进制那批），seed 家族一律排除；判据形状认 /^D\d{4}$/
+ *   号段，再叠一层显式锚点名单兜底。取不到合格候选直接判红，绝不回落到 D0001 ——
+ *   「宁可这一条红，不可把下游前置打脏」是本段的取舍。
+ *   收尾另加一格锚点守恒读数（[t682][链A][锚点守恒]）：逐条比对建队前的 seed 医护归属，
+ *   并把 D0001 现挂团队的 patient_count 一起打出来，让「污染有没有发生」在一轮日志里可复算。
+ *
  * 生产零写：本文件只在 staging 入口跑。入口只读 E2E_STAGING_URL，命中生产域名/生产 IP 直接抛。
  *
  * 不动既有面：不改 real-helpers.ts、不改 playwright.real.config.ts、不动 05/06 那 16 条单页回归
@@ -70,6 +85,67 @@ if (!PATIENT_ID_RE.test(GHOST_PATIENT_ID)) {
 }
 /** 全仓未注册的路径：负对照用（缺了它，「JSON code=10404 ⇒ 路由在架」分不清路由在不在） */
 const NOT_REGISTERED_PATH = '/api/v1/zzz-t462-chain-a-write-not-registered-4c8e'
+
+/** seed 家族医护的号段形状（staging 现读：D0001/D0002/D0003；E2E 建的行是 DOC+12 位十六进制） */
+const SEED_FAMILY_DOCTOR_ID = /^D\d{4}$/
+
+/**
+ * 显式钉住的锚点（形状判据的兜底：seed 号段若哪天改成 DOC 形状，这一层仍然拦得住）。
+ * 名单来源＝本仓 e2e-real 里被别的链当锚点用的医护标识，逐个可 grep：
+ *   doctor_li / 李医师 / D0001 被 29.x 与 02.x 用（29-advice-chain.spec.ts:141-158）
+ *   cs_wang 被链 D 的转派正对照用（23 号以外的 t574 段）
+ */
+const SEED_FAMILY_ANCHORS = new Set(['D0001', 'doctor_li', '李医师', 'cs_wang'])
+
+/** 链 A 自有医护的命名前缀：优先复用字典里已有的这一行（医护行没有删除端点，见 09 那侧同款约束） */
+const CHAIN_A_DOCTOR_PREFIX = 'T053链A负责人'
+
+interface DoctorRow {
+  doctorId: string
+  name: string
+  teamId?: string | null
+  username?: string | null
+}
+
+/** 是不是 seed 家族（负责人候选的排除判据） */
+function isSeedFamilyDoctor(d: DoctorRow): boolean {
+  return (
+    SEED_FAMILY_DOCTOR_ID.test(String(d.doctorId)) ||
+    SEED_FAMILY_ANCHORS.has(String(d.doctorId)) ||
+    SEED_FAMILY_ANCHORS.has(String(d.username)) ||
+    SEED_FAMILY_ANCHORS.has(String(d.name))
+  )
+}
+
+/**
+ * 选链 A 的负责人：只在「非 seed 家族」里选，三档从严到宽，每档内按 doctorId 升序取第一枚
+ * （升序是为了同一套 staging 上多轮/多条链拿到同一枚，别每轮换一个把归属变动面铺开）：
+ *   owned      本链自有前缀（T053链A负责人-xxx）—— 变动面最小，命中就用；
+ *   anchorFree 非 seed 家族、且当前不坐在任何锚点医护所在团队里（29.1 的团队基线不该被本链动成员）；
+ *   free       剩下的非 seed 家族（会打一行降级说明，让「为什么退到这一档」留在日志里）。
+ * 一个候选都没有就判红并点名补救方向 —— 这里绝不回落到 doctors[0]，回落等于把污染现行写回代码。
+ */
+function pickChainALeader(doctors: DoctorRow[]): {
+  leader: DoctorRow | null
+  tier: 'owned' | 'anchorFree' | 'free' | 'none'
+  ownedHits: number
+  anchorFreeHits: number
+} {
+  const free = doctors.filter((d) => !isSeedFamilyDoctor(d))
+  const anchorTeams = new Set(doctors.filter(isSeedFamilyDoctor).map((d) => String(d.teamId ?? null)))
+  const owned = free.filter((d) => String(d.name).startsWith(CHAIN_A_DOCTOR_PREFIX))
+  const anchorFree = free.filter((d) => !anchorTeams.has(String(d.teamId ?? null)))
+  const tier = owned.length > 0 ? 'owned' : anchorFree.length > 0 ? 'anchorFree' : free.length > 0 ? 'free' : 'none'
+  const pool = [...(tier === 'owned' ? owned : tier === 'anchorFree' ? anchorFree : free)].sort((a, b) =>
+    String(a.doctorId).localeCompare(String(b.doctorId)),
+  )
+  return {
+    leader: pool[0] ?? null,
+    tier,
+    ownedHits: owned.length,
+    anchorFreeHits: anchorFree.length,
+  }
+}
 
 /**
  * 后端脱敏口径的复刻（phone/phone.go:120-123，11 位取前 3 + **** + 后 4）。
@@ -317,6 +393,10 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
   const createdTeams: Array<{ teamId: string; name: string }> = []
   /** 写段开始前的 patients total，还原后必须回到这个值 */
   let baselineTotal: number | null = null
+  /** T682 迁回基数：建团队前各医护的归属（doctorId → teamId | null），afterAll 用 */
+  let priorDoctorTeams: Record<string, string | null> = {}
+  /** T682 链 A 修复段：建队前 seed 家族医护的归属基线（afterAll 的锚点守恒判据用它比对） */
+  let seedAnchorBaseline: Record<string, string | null> = {}
 
   test('22.1 建档→改号→改档案→分配团队：四笔真 UI 写逐笔值级回读，改号留痕脱敏对上', async ({
     page,
@@ -363,9 +443,41 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
     })
     const doctors = (Array.isArray(doctorsRaw)
       ? doctorsRaw
-      : ((doctorsRaw as { list?: unknown[] })?.list ?? [])) as Array<{ doctorId: string; name: string }>
+      : ((doctorsRaw as { list?: unknown[] })?.list ?? [])) as DoctorRow[]
     expect(doctors.length, 'staging 应至少有一名医护可当团队负责人').toBeGreaterThanOrEqual(1)
-    const leaderId = doctors[0].doctorId
+    // T682 迁回基数 + 锚点基线：趁还没建队，把各医护当前归属拍下来（建队会把负责人迁走）
+    priorDoctorTeams = Object.fromEntries(doctors.map((d) => [String(d.doctorId), d.teamId ?? null]))
+    seedAnchorBaseline = Object.fromEntries(
+      doctors.filter(isSeedFamilyDoctor).map((d) => [String(d.doctorId), d.teamId ?? null]),
+    )
+    const { leader, tier, ownedHits, anchorFreeHits } = pickChainALeader(doctors)
+    expect(
+      leader,
+      `链 A 负责人候选为空：医护字典 ${doctors.length} 行里「非 seed 家族」为 0 枚` +
+        `（seed 家族 ${Object.keys(seedAnchorBaseline).length} 枚已按排除面拦下）。本卡禁止把 seed 家族` +
+        `（D0001 那批）当负责人 —— 建队即把它迁走，收尾迁回一旦没跑成就把 29.1 前置打脏` +
+        `（污染现行：run 38389624216 日志第 1633 行 leader=D0001）。补救方向：先跑 09 那侧建出测试医护，` +
+        `或按「${CHAIN_A_DOCTOR_PREFIX}-xxxxxx」建一枚 E2E 自有医护，再重跑本链。`,
+    ).toBeTruthy()
+    const leaderId = leader!.doctorId
+    expect(
+      isSeedFamilyDoctor(leader!),
+      `负责人排除面被绕过：选出的 ${leaderId} 落在 seed 家族判据内（这条红的是本卡的取舍，不是环境）`,
+    ).toBe(false)
+    console.log(
+      `[t682][链A][负责人选择] leader=${leaderId} name=${leader!.name} priorTeamId=${String(leader!.teamId)} ` +
+        `档位=${tier} 自有前缀命中=${ownedHits} 非锚点团队命中=${anchorFreeHits} ` +
+        `字典=${doctors.length} 行 seed 家族排除=${Object.keys(seedAnchorBaseline).length} 枚` +
+        `（锚点基线：${Object.entries(seedAnchorBaseline)
+          .map(([k, v]) => `${k}=>${String(v)}`)
+          .join('，')}）`,
+    )
+    if (tier === 'free') {
+      console.log(
+        `[t682][链A][负责人降级] 没有「非 seed 家族且不在锚点团队里」的候选，退到 free 档（leader 坐在锚点医护所在团队，` +
+          `建队会让该团队少一名成员，收尾迁回补上）。D0001 本体的归属仍由收尾那格 [t682][链A][锚点守恒] 钉住。`,
+      )
+    }
 
     const teamName = uniqueName(E2E_TEAM_NAME_PREFIX)
     const team = await callOk<{ teamId: string; name: string }>(page, 'POST', '/api/v1/teams', {
@@ -903,7 +1015,12 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
    * 那不是我这条链的债 ⇒ 打进日志报备，不判我的红。
    */
   test.afterAll(async ({ browser }) => {
-    if (createdPatientIds.length === 0 && createdTeams.length === 0) return
+    if (
+      createdPatientIds.length === 0 &&
+      createdTeams.length === 0 &&
+      Object.keys(seedAnchorBaseline).length === 0
+    )
+      return
     const ctx = await browser.newContext()
     const page = await ctx.newPage()
     try {
@@ -938,6 +1055,14 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
       }
 
       for (const t of [...createdTeams]) {
+        // T682 B案：团队天然带「负责人引用」——POST /teams 把 leader 迁进新队（repo/pg.go:1874），
+        // DeleteTeam 见引用即拒（handler.go:3024 ⇒ 409/10409）⇒ 还原必须先按契约端点解除成员引用
+        //（DELETE /teams/:id/members/:memberId，见 real-helpers.releaseTeamMembers），
+        // 再 DELETE，否则每条链跑完都在 staging 落一行自建团队（修前实测：TEAM26b90838cb/T053团队-794552 恒 10409 后停手回报）。
+        const rel = await releaseTeamMembers(page.request, token, t.teamId)
+        console.log(
+          `[t462-s2s3][还原] 解除团队 ${t.teamId} 引用 → listStatus=${rel.listStatus} doctors=${rel.doctors} techs=${rel.technicians} results=${JSON.stringify(rel.results)}`,
+        )
         const del = await callApi(page, 'DELETE', `/api/v1/teams/${t.teamId}`, { token })
         console.log(
           `[t462-s2s3][还原] DELETE /api/v1/teams/${t.teamId} → status=${del.status} code=${del.code}`,
@@ -945,7 +1070,7 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
         if (del.code !== 0) {
           if (del.code === 10409) {
             throw new Error(
-              `团队 ${t.teamId}（${t.name}）仍被引用，删除被拒（409）。链 A 只写了自建患者这一条引用面，说明上面删患者没删干净或另有引用 ⇒ 停手回报，不动 seed 数据`,
+              `团队 ${t.teamId}（${t.name}）在「已解除成员引用」之后仍被引用，删除被拒（409）。上面已打印解除读数 ⇒ 剩下的引用面只可能是患者或技师：链 A 只写了自建患者这一条，说明患者没删干净或另有引用 ⇒ 停手回报，不动 seed 数据`,
             )
           }
           throw new Error(
@@ -957,6 +1082,17 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
           goneTeam.code,
           `团队 ${t.teamId} 删除后详情应回 code=10404（getTeam，handler.go:950-964），实得 status=${goneTeam.status} code=${goneTeam.code}`,
         ).toBe(10404)
+        // 迁回（T682 B案）：负责人被建队迁来、被解除置 NULL，不还回去就是把 doctor_li
+        // 留在「无团队」状态 ⇒ 连累 2.4（医生 scope 排行 0 行）与 29.1（前置要求有团队归属）。
+        const restored = await restoreTeamMembers(page.request, token, priorDoctorTeams, rel.results)
+        console.log(`[t462-s2s3][还原] 迁回团队成员 → ${JSON.stringify(restored)}`)
+        for (const r of restored) {
+          expect(
+            r.status === null || r.status === 200,
+            `迁回${r.memberType} ${r.memberId} → ${r.toTeamId} 应 200 或本无归属（实得 ${r.status}）`,
+          ).toBe(true)
+        }
+        await expectDoctorsRestored(page.request, token, restored)
         createdTeams.splice(createdTeams.indexOf(t), 1)
       }
 
@@ -986,6 +1122,42 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
             .map((t) => `${t.teamId}/${t.name}`)
             .join('，')}`,
         )
+      }
+
+      // T682 链 A 修复段的落点判据：seed 家族医护（含 D0001）不许因为本链建队而挪窝。
+      // 这一格同时就是交件要的那条读数 —— 「全量跑完后 D0001 仍在其原团队」，
+      // 并把该团队 patient_count 一起打出来，让「污染有没有发生、由谁造成」在一轮日志里可复算。
+      const anchorDoctorsRaw = await callOk<unknown>(page, 'GET', '/api/v1/doctors', {
+        token,
+        why: '收尾后读医护字典（锚点守恒）',
+      })
+      const anchorDoctors = (Array.isArray(anchorDoctorsRaw)
+        ? anchorDoctorsRaw
+        : ((anchorDoctorsRaw as { list?: unknown[] })?.list ?? [])) as DoctorRow[]
+      const anchorTeams = await callOk<TeamRow[]>(page, 'GET', '/api/v1/teams', {
+        token,
+        why: '收尾后读团队字典（锚点守恒，取 patientCount）',
+      })
+      for (const [doctorId, baselineTeam] of Object.entries(seedAnchorBaseline)) {
+        const now = anchorDoctors.find((d) => String(d.doctorId) === doctorId)
+        expect(
+          now,
+          `锚点医护 ${doctorId} 收尾后应仍在医护字典里（实读 ${anchorDoctors.length} 行）`,
+        ).toBeTruthy()
+        const nowTeam = now!.teamId ?? null
+        const teamRow = anchorTeams.find((t) => t.teamId === String(nowTeam))
+        console.log(
+          `[t682][链A][锚点守恒] ${doctorId} 基线团队=${String(baselineTeam)} 现读团队=${String(nowTeam)} ` +
+            `该团队 patient_count=${String(teamRow?.patientCount)} drift=${
+              String(nowTeam) === String(baselineTeam) ? 'MATCH' : 'DRIFT'
+            }`,
+        )
+        expect(
+          nowTeam,
+          `锚点医护 ${doctorId} 的归属漂了（建队前基线=${String(baselineTeam)}，收尾现读=${String(nowTeam)}）` +
+            `⇒ 要么本链把它当过负责人（判据应已拦下，见 [t682][链A][负责人选择]），` +
+            `要么别的轮次/链路迁走没迁回 —— 这正是 29.1 假红的根因，停手回报不自行改环境`,
+        ).toBe(baselineTeam)
       }
     } catch (err) {
       console.log(
