@@ -375,7 +375,36 @@ export async function fetchTeamStats(): Promise<TeamStats> {
 // T059 团队管理写功能（6 写端点 + 1 成员明细读端点）
 export async function fetchTeamMembersApi(teamId: string): Promise<orgMock.TeamMembersView> {
   if (USE_MOCK) { await delay(); return orgMock.mockTeamMembers(teamId) }
-  return request<orgMock.TeamMembersView>({ url: `/api/v1/teams/${teamId}/members` })
+  // T684：真实端点 GET /teams/:teamId/members 的契约是 TeamMembers（doctors: Doctor[] / technicians: Technician[]），
+  // 行键是 doctorId/techId，无 memberId/memberType/joinTime——与 mock 的 TeamMember 视图不同形（假绿结构根因）。
+  // 在此归一化为 TeamMember 视图（memberId=doctorId|techId），UI 层不再感知两态差异；joinTime 契约无此字段，留空由展示层出 '-'。
+  const res = await request<{ doctors: Doctor[]; technicians: Technician[] }>({ url: `/api/v1/teams/${teamId}/members` })
+  return {
+    doctors: res.doctors.map((d) => ({
+      memberId: d.doctorId,
+      memberType: 'doctor' as const,
+      name: d.name,
+      role: d.title,
+      title: d.department,
+      phoneMasked: d.phoneMasked,
+      phoneState: d.phoneState,
+      patientCount: d.patientCount,
+      joinTime: '',
+      status: d.status,
+    })),
+    technicians: res.technicians.map((t) => ({
+      memberId: t.techId,
+      memberType: 'technician' as const,
+      name: t.name,
+      role: null,
+      title: null,
+      phoneMasked: t.phoneMasked,
+      phoneState: t.phoneState,
+      patientCount: 0,
+      joinTime: '',
+      status: t.status,
+    })),
+  }
 }
 
 export async function createTeamApi(input: orgMock.CreateTeamInput): Promise<TeamDetail> {
