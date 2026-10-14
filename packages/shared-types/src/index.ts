@@ -333,6 +333,9 @@ export interface Feedback {
   replyContent: string | null;   // 医生/客服回复
   replyTime: string | null;
   status: 'pending' | 'replied' | 'resolved';
+  // phoneMasked T691 r134（方案2a）：患者登录手机号脱敏派生值，仅 ROLE_ADMIN 响应体携带（服务端按角色裁剪，
+  // 非 admin 恒 undefined）。明文不在此，需调独立 reveal 端点按需解密 + 落 sensitive_read 审计。
+  phoneMasked?: string;
 }
 
 export interface HealthReport {

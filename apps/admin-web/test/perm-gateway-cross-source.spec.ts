@@ -273,6 +273,11 @@ const REGISTERED_DIVERGENCES: Divergence[] = [
   { role: 'doctor', page: '/orthosis-log', method: 'GET', path: '/api/v1/teams', kind: 'guarded', at: 'apps/admin-web/src/pages/orthosis-log/index.vue:660 if (auth.role === \'admin\') fetchTeams()', why: 'T348 同类处置：团队名映射非 admin 不发' },
   // 门禁上线当天抓到的第一条真缺陷：无角色守卫，医护打开「数据视图」必吃 403 红条 + 图空白（现网实测见 T379 卡内交件）
   { role: 'doctor', page: '/orthosis-log', method: 'GET', path: '/api/v1/admin/settings', kind: 'defect', at: 'apps/admin-web/src/pages/orthosis-log/index.vue:478 loadWearSeries 无条件 fetchSystemSettings()', why: '缺陷待修：网关 admin-only 正确，前端照打违反 T348/T359 已立的「非 admin 不照打」口径；修法（不照打后阈值线怎么画）需产品定，请 PM 立缺陷卡' },
+  // T691 r134（方案2a）：沟通页 admin 可见的「联系电话」行按需 reveal 患者手机号明文，网关 admin-only 正确。
+  // cs 能进 /communication，但整行 v-if="auth.role === 'admin'"（communication/index.vue 详情「联系电话」el-descriptions-item），
+  // cs 无该行、无「查看号码」入口，revealPhone 永不触发 ⇒ guarded，与 T348/T351「非 admin 不照打」同档。
+  // 另服务端按角色裁剪（listFeedbacks 仅 ROLE_ADMIN 装配 phoneMasked），隐私不依赖前端 v-if，双层。
+  { role: 'cs', page: '/communication', method: 'POST', path: '/api/v1/admin/patients/:p/phone/reveal', kind: 'guarded', at: 'apps/admin-web/src/pages/communication/index.vue el-descriptions-item v-if="auth.role === \'admin\'"（联系电话行）→ 查看号码 @click=revealPhone', why: 'T691 方案2a：手机号明文 admin-only，cs 进得了页但该行整块 v-if 摘除、无 reveal 入口不发这枪；服务端亦按角色裁剪 phoneMasked（非前端单防）' },
 ]
 // T667：同一 (角色,方法,端点) 可能被多个页面以不同处置调用——
 // 如 GET /admin/settings 在 /orthosis-log 是无守卫 defect、在 /alerts（loadRules canConfigure 守卫内）是 guarded。

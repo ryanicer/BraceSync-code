@@ -256,6 +256,9 @@ func (h *Handler) Router() *gin.Engine {
 		// T085 Admin 档案维护
 		v1.POST("/admin/patients/:patientId/unbind-wechat", h.unbindWechat) // 解绑微信
 		v1.PUT("/admin/patients/:patientId/phone", h.updatePatientPhone)    // 改手机号
+		// T691 r134（方案2a）：按需解密查看患者手机号——独立端点承载明文 + 每次查看落 sensitive_read 审计；
+		// 明文不随常规读接口回传（T361/T491）。gateway RBAC 已拦非 admin，handler 内 requireAdminRole 兜底。
+		v1.POST("/admin/patients/:patientId/phone/reveal", h.revealPatientPhone)
 		v1.PUT("/admin/patients/:patientId", h.updatePatientAdmin)          // T248 4.3 档案编辑
 		v1.DELETE("/admin/patients/:patientId", h.deletePatientAdmin)       // T467 档案删除（reject-if-referenced）
 		// T477 设登录口令：patients.password_hash 的唯一 Go 写点，患者端 CI 凭据通道
@@ -1514,6 +1517,9 @@ func (h *Handler) listFeedbacks(c *gin.Context) {
 	if !allowed {
 		return
 	}
+	// T691 r134（D1甲 + 硬要求补D2）：脱敏派生值仅对 ROLE_ADMIN 装配；其余角色响应体不含 phoneMasked 字段。
+	// 隐私不依赖前端 v-if——非 admin 走服务端裁剪（omitempty 令字段整体缺席）。
+	isAdmin := c.GetHeader(headerRole) == roleAdmin
 	rows, err := h.store.ListFeedbacks(c.Request.Context(),
 		strings.TrimSpace(c.Query("keyword")), feedbackReadScope(scope))
 	if err != nil {
@@ -1522,7 +1528,13 @@ func (h *Handler) listFeedbacks(c *gin.Context) {
 	}
 	list := make([]model.FeedbackDTO, 0, len(rows))
 	for _, r := range rows {
-		list = append(list, toFeedbackDTO(r))
+		dto := toFeedbackDTO(r)
+		if isAdmin {
+			v := h.phoneView(r.PhoneEnc)
+			masked := v.Masked
+			dto.PhoneMasked = &masked
+		}
+		list = append(list, dto)
 	}
 	ok(c, list)
 }

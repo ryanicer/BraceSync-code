@@ -38,15 +38,19 @@ const (
 	auditActionConfig      = "config_change"
 	auditActionPermissions = "permission_change"
 	auditActionDataRead    = "data_read" // §9.2a「查看了哪个患者的数据」——PRD 四类之外的读审计，见交件待裁
+	// auditActionSensitiveRead T691 r134（方案2a）：查看患者手机号明文等敏感派生值的按需解密读，
+	// 比常规 data_read 更高敏感级——每次 reveal 单独留痕（§8.2 V3.48 新增读类 action 提案）。
+	auditActionSensitiveRead = "sensitive_read"
 )
 
 // auditActionLabels action → 中文标签（后端给，避免前端硬编码映射；未知值原样回显）
 var auditActionLabels = map[string]string{
-	auditActionLogin:       "登录",
-	auditActionDataModify:  "数据修改",
-	auditActionConfig:      "配置变更",
-	auditActionPermissions: "权限变更",
-	auditActionDataRead:    "数据查看",
+	auditActionLogin:         "登录",
+	auditActionDataModify:    "数据修改",
+	auditActionConfig:        "配置变更",
+	auditActionPermissions:   "权限变更",
+	auditActionDataRead:      "数据查看",
+	auditActionSensitiveRead: "敏感信息查看",
 }
 
 // audit 写一条操作日志：操作人身份取 gateway 注入头（X-User-Id / X-Role，架构 §5.2），
@@ -143,6 +147,8 @@ var auditRoutes = map[string]auditRoute{
 	http.MethodPost + " /api/v1/admin/patients/batch-bind":               {auditActionDataModify, "patient", "", "批量绑定患者到团队"},
 	http.MethodPost + " /api/v1/admin/patients/:patientId/unbind-wechat": {auditActionDataModify, "patient", "patientId", "解绑患者 %s 的微信"},
 	http.MethodPut + " /api/v1/admin/patients/:patientId/phone":          {auditActionDataModify, "patient", "patientId", "修改患者 %s 的手机号"},
+	// T691 r134：按需解密查看患者手机号明文——每次查看单独留痕，handler 内 setAuditTrace 只落脱敏值，明文不入 detail。
+	http.MethodPost + " /api/v1/admin/patients/:patientId/phone/reveal": {auditActionSensitiveRead, "patient", "patientId", "查看患者 %s 的手机号（敏感信息按需解密）"},
 	// T477 设登录口令：desc 不带口令也不带哈希（同上面 doctor reset-password 的口径）。
 	http.MethodPost + " /api/v1/admin/patients/:patientId/password": {auditActionDataModify, "patient", "patientId", "为患者 %s 设置登录口令"},
 	// T450 DEF-A：PR #126（T248）合并时欠下的档案编辑埋点，本笔补上（文件头注自述「合并后要补同一埋点」）。
