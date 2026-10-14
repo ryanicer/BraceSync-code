@@ -27,6 +27,9 @@ import { requireDeployedBuild } from '../deploy-guard'
  * 而 000029 前滚之前 staging 仍回旧值 ⇒ 两条都挂 deploy-guard（14.2 原先无守卫，
  * 因为它的旧终值当时已在 staging 现网成立）。守卫只问「库侧到没到终值」，
  * 前滚后自动转真跑。
+ *
+ * T679 追加第 17 个页面模块 todo（迁移 000038，dashboard 之后）⇒ 终值再抬一档：
+ * doctor 7 → 8、admin 16 → 17，守卫探针同步抬，部署前自动跳过。
  */
 
 interface MePerms {
@@ -59,7 +62,7 @@ async function sidebarTitles(page: Page): Promise<string[]> {
 }
 
 test.describe('14-角色页面准入与库同源（T368）', () => {
-  test('14.1 doctor_li：侧栏页数 = /me/permissions 项数 = 7（T368 补 review/review_tpl，T372 补 abnormal_report）', async ({ page }) => {
+  test('14.1 doctor_li：侧栏页数 = /me/permissions 项数 = 8（T368 补 review/review_tpl，T372 补 abnormal_report，T679 补 todo）', async ({ page }) => {
     await realLogin(page, 'doctor_li')
     const sidebar = await sidebarTitles(page)
     // 守卫之前先读数：否则「跳过」= 两个数都没采到，卡上拿不出修前现场（post-deploy 阶段
@@ -69,24 +72,24 @@ test.describe('14-角色页面准入与库同源（T368）', () => {
       `| /me/permissions ${pre.modules.length} 项 = ${JSON.stringify(pre.modules)}`)
 
     await requireDeployedBuild(page, {
-      marker: 'T372-doctor-abnormal-report-module',
-      why: '000028 已前滚（staging 现为 6 项），000029 未前滚 ⇒ /me/permissions 仍少 abnormal_report，本条判据无意义',
-      probe: async () => (await readMePermissions(page)).modules.length === 7,
+      marker: 'T679-doctor-todo-module',
+      why: '000028/000029 已前滚（staging 现为 7 项），000038 未前滚 ⇒ /me/permissions 仍少 todo，本条判据无意义',
+      probe: async () => (await readMePermissions(page)).modules.length === 8,
     })
 
     const perms = await readMePermissions(page)
     expect(perms.roleId, '登录账号应是医护').toBe('ROLE_DOCTOR')
     expect(perms.scope, '补模块键不该顺带改数据范围').toBe('team')
     // 两个来源逐元素相等：接口按 PAGE_MODULES 序回，侧栏按 pageRoutes 序渲染
-    expect(perms.modules).toEqual(['dashboard', 'realtime', 'abnormal_report', 'alerts', 'orthosis', 'review', 'review_tpl'])
-    expect(sidebar, `侧栏 ${sidebar.length} 项 vs 接口 ${perms.modules.length} 项 = 又分叉了`).toHaveLength(7)
+    expect(perms.modules).toEqual(['dashboard', 'todo', 'realtime', 'abnormal_report', 'alerts', 'orthosis', 'review', 'review_tpl'])
+    expect(sidebar, `侧栏 ${sidebar.length} 项 vs 接口 ${perms.modules.length} 项 = 又分叉了`).toHaveLength(8)
     // 侧栏每项文案含 emoji 图标（「📄 复查报告」），所以用子串存在性而非整等 —— toContain 对数组
     // 是「元素整等」，写成 toContain('复查报告') 会永远判红。
     expect(sidebar.some((t) => t.includes('复查报告')), '医护侧栏应有「复查报告」').toBe(true)
     expect(sidebar.some((t) => t.includes('复查模板管理')), '医护侧栏应有「复查模板管理」').toBe(true)
   })
 
-  test('14.2 ops_admin：侧栏页数 = /me/permissions 项数 = 16（不退化，T372 补 abnormal_report）', async ({ page }) => {
+  test('14.2 ops_admin：侧栏页数 = /me/permissions 项数 = 17（不退化，T372 补 abnormal_report，T679 补 todo）', async ({ page }) => {
     await realLogin(page)
     const sidebar = await sidebarTitles(page)
     const pre = await readMePermissions(page)
@@ -94,17 +97,17 @@ test.describe('14-角色页面准入与库同源（T368）', () => {
       + ` = ${JSON.stringify(pre.modules)}`)
 
     await requireDeployedBuild(page, {
-      marker: 'T372-admin-abnormal-report-module',
-      why: '000029 未前滚到 staging 库 ⇒ /me/permissions 仍回 000026 的 15 项，缺 abnormal_report',
-      probe: async () => (await readMePermissions(page)).modules.length === 16,
+      marker: 'T679-admin-todo-module',
+      why: '000038 未前滚到 staging 库 ⇒ /me/permissions 仍回 000029 的 16 项，缺 todo',
+      probe: async () => (await readMePermissions(page)).modules.length === 17,
     })
 
     const perms = await readMePermissions(page)
     expect(perms.roleId).toBe('ROLE_ADMIN')
-    expect(perms.modules).toHaveLength(16)
+    expect(perms.modules).toHaveLength(17)
     expect(perms.modules.indexOf('abnormal_report'), '模块序 = 侧栏序：异常报告在患者管理之后、团队管理之前')
-      .toBe(3)
-    expect(sidebar).toHaveLength(16)
+      .toBe(4)
+    expect(sidebar).toHaveLength(17)
     expect(sidebar.some((t) => t.includes('异常报告')), '运营侧栏应有「异常报告」').toBe(true)
   })
 

@@ -204,6 +204,11 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodGet, "/admin/flow/type-bindings"},
 	{http.MethodPut, "/admin/flow/type-bindings"},
 
+	// T681 E2E 夹具清理（adminOnly；RBAC 见 rbac.go，白名单+生产拒在 handler 兜底）
+	{http.MethodPost, "/admin/flow/fixtures/cleanup"},
+	// T679 医护待办（列表 + 详情合一 `?instanceId=`；RBAC 见 rbac.go doctorAdminOnly）
+	{http.MethodGet, "/todos"},
+
 	// T130 复查记录（合同患者端「复查管理」）
 	{http.MethodPost, "/admin/review-records"},              // 医生/管理员创建复查记录
 	{http.MethodGet, "/patients/:patientId/review-records"}, // 患者复查记录列表（含报告下载URL）

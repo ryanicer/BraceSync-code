@@ -23,6 +23,7 @@
         <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
           <span class="menu-icon">{{ item.icon }}</span>
           <template #title>{{ item.title }}</template>
+          <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -50,6 +51,7 @@
           <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
             <span class="menu-icon">{{ item.icon }}</span>
             <template #title>{{ item.title }}</template>
+            <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
           </el-menu-item>
         </el-menu>
       </div>
@@ -137,11 +139,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Menu, Fold } from '@element-plus/icons-vue'
-import { changeOwnPasswordApi } from '../api'
+import { changeOwnPasswordApi, fetchTodoBadgeCount } from '../api'
 import { ADMIN_PWD_RULE, changePasswordErrorCopy, pwdFieldIssue, pwdFormIssue } from '../utils/password'
 import { useAuthStore } from '../stores/auth'
 import { pageRoutes } from '../router'
@@ -202,6 +204,16 @@ const visibleMenus = computed<MenuItem[]>(() => {
       title: String(r.meta?.title ?? ''),
       icon: String(r.meta?.icon ?? ''),
     }))
+})
+
+// T679 侧栏「我的待办」红角标 = 待我处理条数（mineCount）。仅当前角色能进 /todos 才拉取，
+// 失败静默（角标是增强提醒，不该阻断导航/布局）。
+const todoBadge = ref(0)
+onMounted(() => {
+  if (!canAccess(auth.role ?? '', '/todos')) return
+  fetchTodoBadgeCount()
+    .then((n) => { todoBadge.value = n })
+    .catch(() => { /* 角标拉取失败静默 */ })
 })
 
 // G3：设计稿各页顶栏标题带 emoji 前缀（如 数据概览.html:87「📊 数据概览」），emoji 取自路由 meta.icon
@@ -320,6 +332,18 @@ async function submitPwdChange() {
 }
 .menu-icon {
   margin-right: 10px;
+}
+/* T679 侧栏「我的待办」红角标（设计稿 医护待办列表.html .menu-badge 原样） */
+.menu-badge {
+  margin-left: auto;
+  background: #ee5a24;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 9px;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 .sidebar-collapsed .menu-icon {
   margin-right: 0;

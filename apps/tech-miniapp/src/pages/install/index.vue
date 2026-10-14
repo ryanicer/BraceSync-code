@@ -72,7 +72,7 @@
         </view>
 
         <!-- 校准前：空载提示 -->
-        <template v-if="!calibrating && !calibrated">
+        <template v-if="!calibrating && !calibrated && !calibFailed">
           <view class="notice warn">
             <text class="notice-icon">⚡</text>
             <view class="notice-body">
@@ -85,8 +85,21 @@
           </view>
         </template>
 
+        <!-- 校准失败（T675：失败必须说话，禁卡「采集中」静默循环）——超时/点数不完整/启动失败 -->
+        <template v-else-if="calibFailed">
+          <view class="calib-fail-card">
+            <text class="fail-icon">✕</text>
+            <view class="calib-fail-text">
+              <text class="calib-fail-title">校准失败</text>
+              <text class="calib-fail-sub">{{ calibError }}</text>
+            </view>
+          </view>
+          <view class="btn-outline" @click="reconnectBLE"><text>重新连接蓝牙</text></view>
+          <view class="btn-primary" @click="startCalibration"><text>重新校准</text></view>
+        </template>
+
         <!-- 校准中：实时压力矩阵 + 进度 -->
-        <template v-else-if="calibrating && !calibrated">
+        <template v-else-if="calibrating">
           <view class="phase-subtitle">
             <text>实时压力数据（20 点，1Hz）</text>
           </view>
@@ -101,7 +114,7 @@
           </view>
           <view class="progress-block">
             <view class="progress-bar"><view class="progress-fill" :style="{ width: calibrationProgress + '%' }"></view></view>
-            <text class="progress-text">采集中... 第 {{ collectSec }} / 5 秒</text>
+            <text class="progress-text">采集中... 已收 {{ frameCount }} / {{ CALIBRATION_FRAME_COUNT }} 帧（订阅后 10 秒无数据将超时提示）</text>
           </view>
           <view class="stat-row">
             <text class="stat-item">均值: {{ calibStatText(statAvg) }}</text>
@@ -121,6 +134,14 @@
               <text class="calib-success-sub">{{ installStore.baselineSaved ? '基线已保存（单次权威校准）' : '基线未保存' }}</text>
             </view>
           </view>
+          <!-- T675 故障哨兵警示条：恒 0 / 饱和超量程只提示、不拦截安装 -->
+          <view v-if="sentinelText" class="notice warn sentinel-bar">
+            <text class="notice-icon">⚠</text>
+            <view class="notice-body">
+              <text class="notice-title">传感器读数异常</text>
+              <text class="notice-text">{{ sentinelText }}。异常通道数据可能失准，可继续安装，建议现场检查传感器连接。</text>
+            </view>
+          </view>
           <view class="phase-subtitle">
             <text>零点偏移量（将从后续读数中扣除，单位 {{ calibUnit }}）</text>
           </view>
@@ -133,22 +154,18 @@
               <text>{{ calibCellText(v) }}</text>
             </view>
           </view>
+          <view v-if="offsetSummary" class="stat-row">
+            <text class="stat-item">最大 |偏移|: {{ offsetSummary.maxAbs.toFixed(2) }}N（P{{ String(offsetSummary.maxChannel).padStart(2, '0') }}）</text>
+            <text class="stat-item">均值: {{ offsetSummary.meanAbs.toFixed(2) }}N</text>
+          </view>
           <view class="checks-block">
             <view class="check-item">
               <text :class="calibrationChecks.pointCount ? 'check-icon-pass' : 'check-icon-fail'">{{ calibrationChecks.pointCount ? '✓' : '✗' }}</text>
               <text>数据点数：{{ collectedPointCount }}/100（5 帧 × 20 点）</text>
             </view>
             <view class="check-item">
-              <text :class="calibrationChecks.range ? 'check-icon-pass' : 'check-icon-fail'">{{ calibrationChecks.range ? '✓' : '✗' }}</text>
-              <text>范围校验：|偏移| ≤ {{ calibRangeText }}（空载偏差上限）</text>
-            </view>
-            <view class="check-item">
-              <text class="check-icon-muted">○</text>
-              <text>稳定性校验：占位（阈值待重定后启用）</text>
-            </view>
-            <view class="check-item">
               <text class="check-icon-muted">ℹ</text>
-              <text>校准完成后，实时压力读数将自动减去上述偏移值</text>
+              <text>偏移量为空载稳定偏置实测值（治具应力下偏大亦正常），将从后续读数中扣除，不再设通过阈值</text>
             </view>
           </view>
           <view class="btn-primary" @click="goPhase3"><text>校准完成，下一步</text></view>
@@ -238,7 +255,6 @@ import {
   kpaFromN,
 } from '@bracesync/shared-utils'
 import type { PressureUnit } from '@bracesync/shared-utils'
-import { DEFAULT_THRESHOLDS } from '@bracesync/constants'
 import { useAuthStore } from '../../stores/auth'
 import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
@@ -254,6 +270,15 @@ import {
   initBluetooth,
   registerBleStateListener,
 } from '../../utils/ble'
+import {
+  CALIBRATION_FRAME_COUNT,
+  CALIBRATION_FRAME_TIMEOUT_MS,
+  isValidCalibrationFrame,
+  computeCalibrationOffsets,
+  detectCalibrationSentinels,
+  summarizeCalibrationOffsets,
+  calibrationSentinelText,
+} from '../../utils/calibration'
 import type { CalibrationResult, PatientProfile } from '../../types/app-extends'
 
 const authStore = useAuthStore()
@@ -280,19 +305,26 @@ function goPhase2() {
 }
 
 // ===== 阶段二 校准 =====
-const calibrating = ref(false)
-const calibrated = ref(false)
-const collectSec = ref(0)
-let collectTimer: ReturnType<typeof setInterval> | null = null
+// T675 四态（互斥）：before = 采集前 / collecting = 采集中 / failed = 失败 / done = 完成
+//   旧 calibrating/calibrated 两态的问题：帧不到永远不触发 finalize，UI 卡在「采集中」静默死循环。
+const calibState = ref<'before' | 'collecting' | 'failed' | 'done'>('before')
+const calibrating = computed(() => calibState.value === 'collecting')
+const calibrated = computed(() => calibState.value === 'done')
+const calibFailed = computed(() => calibState.value === 'failed')
+const calibError = ref('')
+
+const frameCount = ref(0)
+let frameTimer: ReturnType<typeof setTimeout> | null = null
 const collectedFrames: number[][] = []
 const offsetValues = ref<number[]>(Array(20).fill(0))
 const displayFrame = ref<number[]>(Array(20).fill(0))
-// T173 D4：真实校验结果（非恒 ✓）；阈值上限取共享常量占位值，待 Boss 重定后随 constants 更新
-const CAL_OFFSET_N = DEFAULT_THRESHOLDS.CALIBRATION_OFFSET_N
-const calibrationChecks = ref({ pointCount: false, range: false, stability: true })
+const calibrationChecks = ref({ pointCount: false })
 const collectedPointCount = ref(0)
+const sentinels = ref<CalibrationResult['sentinels']>([])
+const sentinelText = computed(() => calibrationSentinelText(sentinels.value))
+const offsetSummary = ref<ReturnType<typeof summarizeCalibrationOffsets> | null>(null)
 
-const calibrationProgress = computed(() => Math.min(100, (collectSec.value / 5) * 100))
+const calibrationProgress = computed(() => Math.min(100, (frameCount.value / CALIBRATION_FRAME_COUNT) * 100))
 const statAvg = computed(() => average(displayFrame.value))
 const statMax = computed(() => max(displayFrame.value))
 
@@ -318,12 +350,6 @@ function calibStatText(n: number): string {
   const k = kpaFromN(n, CAL_AREA_CM2)
   return k === null ? '--' : `${k}kPa`
 }
-// 范围校验文案：判定阈值仍是 N 侧 CAL_OFFSET_N，只换算显示
-const calibRangeText = computed(() => {
-  if (!isCalibKpa.value) return `${CAL_OFFSET_N}N`
-  const k = kpaFromN(CAL_OFFSET_N, CAL_AREA_CM2)
-  return k === null ? '--' : `${k}kPa`
-})
 
 // 裁定⑥（Boss 2026-09-28）＋稿面 T449·TI-6：「重新采集」只挂在采集中态，
 // 校准完成态与阶段三不留入口（本页只有 goPhase2/goPhase3 两个前进键，无回退 ⇒ 基线一落库就再也走不到采集中态）。
@@ -353,32 +379,69 @@ function pressureLevel(v: number): number {
 
 function onFrame(frame: number[]) {
   displayFrame.value = frame
-  if (calibrating.value && collectedFrames.length < 5) {
-    collectedFrames.push([...frame])
-    collectSec.value = collectedFrames.length
+  if (calibState.value !== 'collecting') return
+  if (!isValidCalibrationFrame(frame)) {
+    // 残缺帧不收（不静默补 0 凑点数），继续等下一帧；看门狗到点仍不足就报失败
+    bleLog.warn(`校准帧异常：长度=${Array.isArray(frame) ? frame.length : '非数组'}，丢弃`)
+    return
   }
+  if (collectedFrames.length >= CALIBRATION_FRAME_COUNT) return
+  collectedFrames.push([...frame])
+  frameCount.value = collectedFrames.length
+  // 收齐 5 帧直接汇总，不再等轮询
+  if (collectedFrames.length === CALIBRATION_FRAME_COUNT) {
+    finalizeCalibration()
+    return
+  }
+  // 收了新帧 → 重置看门狗；中途断流 10s 无新帧同样判失败
+  resetFrameWatchdog()
+}
+
+/**
+ * 帧到达看门狗：订阅后 10 秒零帧即判超时；已收部分帧后 10 秒无新帧同判失败。
+ * T675 根因修复：旧代码用每秒 interval 只在收满 5 帧时才 finalize，零帧时永不触发，
+ *   UI 卡在「采集中」静默死循环。
+ */
+function resetFrameWatchdog() {
+  if (frameTimer) { clearTimeout(frameTimer); frameTimer = null }
+  frameTimer = setTimeout(() => {
+    if (calibState.value !== 'collecting') return
+    const got = collectedFrames.length
+    failCalibration(
+      got === 0
+        ? '校准超时：订阅后 10 秒未收到任何数据帧，请检查蓝牙连接或设备是否已开机'
+        : `校准中断：已收 ${got} 帧后 10 秒无新数据（需 ${CALIBRATION_FRAME_COUNT} 帧），请靠近设备重试`,
+    )
+  }, CALIBRATION_FRAME_TIMEOUT_MS)
 }
 
 async function startCalibration() {
   if (!installStore.bleConnected) return
-  calibrating.value = true
-  calibrated.value = false
+  // 复位本地状态
+  calibState.value = 'collecting'
+  calibError.value = ''
   collectedFrames.length = 0
-  collectSec.value = 0
+  frameCount.value = 0
+  calibrationChecks.value = { pointCount: false }
+  collectedPointCount.value = 0
+  offsetValues.value = Array(20).fill(0)
+  displayFrame.value = Array(20).fill(0)
+  sentinels.value = []
+  offsetSummary.value = null
   onRealtimeFrame(onFrame)
-  await startRealtimePressure(installStore.bleDeviceId || installStore.deviceId)
-  installStore.startRealtimeStream()
-  // 超时保护：5 秒后停止
-  collectTimer = setInterval(() => {
-    if (collectedFrames.length >= 5) {
-      finalizeCalibration()
-    }
-  }, 1000)
+  try {
+    await startRealtimePressure(installStore.bleDeviceId || installStore.deviceId)
+    installStore.startRealtimeStream()
+    resetFrameWatchdog()
+  } catch (e) {
+    bleLog.warn('startRealtimePressure 失败', logErrorText(e))
+    failCalibration(`启动实时压力流失败：${userErrorCopy(e)}`)
+  }
 }
 
 /**
- * 裁定⑥（稿面 T449·TI-6：该键只挂在采集中态）＝中止本轮 5 秒采集并重新起采。
- * 计时器与实时流必须先收：startCalibration 会再挂一个 interval，
+ * 裁定⑥（稿面 T449·TI-6：该键只挂在采集中态）＝中止本轮采集并重新起采。
+ * 看门狗与实时流必须先收：startCalibration 会再挂一个 setTimeout，
  * 不收就两个计时器并存，finalizeCalibration 会被触发两次。
  */
 async function recollectCalibration() {
@@ -386,44 +449,68 @@ async function recollectCalibration() {
     uni.showToast({ title: '蓝牙未就绪，请先重新连接', icon: 'none' })
     return
   }
-  if (collectTimer) { clearInterval(collectTimer); collectTimer = null }
+  if (frameTimer) { clearTimeout(frameTimer); frameTimer = null }
   await stopRealtimePressure(installStore.bleDeviceId || installStore.deviceId)
   installStore.stopRealtimeStream()
-  calibrated.value = false
-  calibrationChecks.value = { pointCount: false, range: false, stability: true }
-  collectedPointCount.value = 0
-  offsetValues.value = Array(20).fill(0)
-  displayFrame.value = Array(20).fill(0)
   await startCalibration()
 }
 
-async function finalizeCalibration() {
-  if (collectTimer) { clearInterval(collectTimer); collectTimer = null }
-  await stopRealtimePressure(installStore.bleDeviceId || '')
-  installStore.stopRealtimeStream()
-  calibrating.value = false
-
-  // 20 点取 5 帧平均
-  const offsets = Array(20).fill(0).map((_, p) => {
-    const sum = collectedFrames.reduce((s, frame) => s + (frame[p] || 0), 0)
-    return sum / collectedFrames.length
-  })
-  offsetValues.value = offsets
-
-  // T173 D4：真实校验（点数 / 范围）；稳定性占位待阈值重定
-  collectedPointCount.value = collectedFrames.length * 20
-  calibrationChecks.value = {
-    pointCount: collectedFrames.length === 5,
-    range: offsets.every((v) => Math.abs(v) <= CAL_OFFSET_N),
-    stability: true,
+/**
+ * 校准失败（T675 新增）：停止流 + 清计时器 + 落到失败面板 + 给技师可见原因与重试出口。
+ * 禁止 start/stop 静默循环——失败必须说话。
+ */
+async function failCalibration(reason: string) {
+  if (frameTimer) { clearTimeout(frameTimer); frameTimer = null }
+  try {
+    await stopRealtimePressure(installStore.bleDeviceId || '')
+    installStore.stopRealtimeStream()
+  } catch (e) {
+    bleLog.warn('failCalibration 停流失败（不影响失败展示）', logErrorText(e))
   }
+  calibError.value = reason
+  calibState.value = 'failed'
+  bleLog.warn(`校准失败：${reason}`)
+  uni.showToast({ title: '校准失败', icon: 'none' })
+}
+
+async function finalizeCalibration() {
+  if (frameTimer) { clearTimeout(frameTimer); frameTimer = null }
+  try {
+    await stopRealtimePressure(installStore.bleDeviceId || '')
+    installStore.stopRealtimeStream()
+  } catch (e) {
+    bleLog.warn('finalizeCalibration 停流失败', logErrorText(e))
+  }
+
+  // 点数完整性：5 帧 × 20 点收齐才能算汇总
+  const pointCountOk = collectedFrames.length === CALIBRATION_FRAME_COUNT
+  collectedPointCount.value = collectedFrames.length * 20
+  calibrationChecks.value = { pointCount: pointCountOk }
+
+  if (!pointCountOk) {
+    // 点数不完整 = 失败（正常路径收齐才进本函数，此分支由异常入口触发）
+    failCalibration(`校准帧不完整：需 ${CALIBRATION_FRAME_COUNT} 帧，实收 ${collectedFrames.length} 帧`)
+    return
+  }
+
+  // 偏移量（任何稳定偏置都如实记录，不再设偏移量门禁）
+  const offsets = computeCalibrationOffsets(collectedFrames)
+  offsetValues.value = offsets
+  offsetSummary.value = summarizeCalibrationOffsets(offsets)
+
+  // 故障哨兵（只提示不拦截）
+  const sent = detectCalibrationSentinels(collectedFrames)
+  sentinels.value = sent
+
   bleLog.info(
-    `T173-dbg 校准汇总：frames=${collectedFrames.length} points=${collectedPointCount.value} ` +
-    `offsetMaxAbs=${Math.max(...offsets.map((v) => Math.abs(v))).toFixed(4)}N rangePass=${calibrationChecks.value.range}`
+    `T675 校准汇总：frames=${collectedFrames.length} points=${collectedPointCount.value} ` +
+    `maxAbs=${offsetSummary.value.maxAbs.toFixed(4)}N sentinels=${sent.length}`,
   )
+
   const result: CalibrationResult = {
     offsetValues: offsets,
     checks: { ...calibrationChecks.value },
+    sentinels: sent.map((s) => ({ channel: s.channel, reason: s.reason })),
   }
   installStore.setCalibrationData(result)
 
@@ -452,7 +539,7 @@ async function finalizeCalibration() {
       uni.showToast({ title: '基线保存失败，校准仍有效', icon: 'none' })
     }
   }
-  calibrated.value = true
+  calibState.value = 'done'
 }
 
 async function reconnectBLE() {
@@ -651,6 +738,16 @@ onUnmounted(() => {
 .calib-success-text { display: flex; flex-direction: column; }
 .calib-success-title { font-size: 30rpx; font-weight: 600; color: #065f46; }
 .calib-success-sub { font-size: 24rpx; color: #047857; margin-top: 4rpx; }
+
+/* T675 校准失败卡（失败必须说话，禁卡「采集中」静默循环） */
+.calib-fail-card { display: flex; align-items: center; gap: 20rpx; margin: 12rpx 0 24rpx; padding: 24rpx; background: #fef2f2; border-radius: 16rpx; }
+.fail-icon { width: 64rpx; height: 64rpx; border-radius: 50%; background: #EF4444; color: #fff; font-size: 40rpx; display: flex; align-items: center; justify-content: center; }
+.calib-fail-text { display: flex; flex-direction: column; flex: 1; }
+.calib-fail-title { font-size: 30rpx; font-weight: 600; color: #991B1B; }
+.calib-fail-sub { font-size: 24rpx; color: #B91C1C; margin-top: 8rpx; line-height: 1.5; }
+
+/* T675 哨兵警示条（amber 色，与 notice.warn 基础样式叠加） */
+.sentinel-bar { margin: 8rpx 0 16rpx; }
 
 .checks-block { margin: 24rpx 0; }
 .check-item { display: flex; align-items: center; gap: 12rpx; padding: 10rpx 0; }

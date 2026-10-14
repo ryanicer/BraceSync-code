@@ -21,6 +21,8 @@ import * as feedbackMock from '../mock/communication'
 import * as orthosisMock from '../mock/orthosis'
 import * as reviewMock from '../mock/review'
 import * as systemMock from '../mock/system'
+import * as todoMock from '../mock/todos'
+import type { FlowNodeAction } from './flow'
 import type { RealtimeSnapshot } from '../mock/patients'
 import type { SystemSettings, AdminRoleRow } from '../mock/system'
 import type { DailyWearDay } from '../utils/workbenchData'
@@ -373,7 +375,36 @@ export async function fetchTeamStats(): Promise<TeamStats> {
 // T059 团队管理写功能（6 写端点 + 1 成员明细读端点）
 export async function fetchTeamMembersApi(teamId: string): Promise<orgMock.TeamMembersView> {
   if (USE_MOCK) { await delay(); return orgMock.mockTeamMembers(teamId) }
-  return request<orgMock.TeamMembersView>({ url: `/api/v1/teams/${teamId}/members` })
+  // T684：真实端点 GET /teams/:teamId/members 的契约是 TeamMembers（doctors: Doctor[] / technicians: Technician[]），
+  // 行键是 doctorId/techId，无 memberId/memberType/joinTime——与 mock 的 TeamMember 视图不同形（假绿结构根因）。
+  // 在此归一化为 TeamMember 视图（memberId=doctorId|techId），UI 层不再感知两态差异；joinTime 契约无此字段，留空由展示层出 '-'。
+  const res = await request<{ doctors: Doctor[]; technicians: Technician[] }>({ url: `/api/v1/teams/${teamId}/members` })
+  return {
+    doctors: res.doctors.map((d) => ({
+      memberId: d.doctorId,
+      memberType: 'doctor' as const,
+      name: d.name,
+      role: d.title,
+      title: d.department,
+      phoneMasked: d.phoneMasked,
+      phoneState: d.phoneState,
+      patientCount: d.patientCount,
+      joinTime: '',
+      status: d.status,
+    })),
+    technicians: res.technicians.map((t) => ({
+      memberId: t.techId,
+      memberType: 'technician' as const,
+      name: t.name,
+      role: null,
+      title: null,
+      phoneMasked: t.phoneMasked,
+      phoneState: t.phoneState,
+      patientCount: 0,
+      joinTime: '',
+      status: t.status,
+    })),
+  }
 }
 
 export async function createTeamApi(input: orgMock.CreateTeamInput): Promise<TeamDetail> {
@@ -872,4 +903,117 @@ export async function downloadReviewTemplateApi(groupId: string): Promise<{ down
     return { downloadUrl: '' }
   }
   return request<{ downloadUrl: string }>({ url: `/api/v1/admin/review-templates/${groupId}/download` })
+}
+
+// ========== T679 医护待办（PRD V3.45 §7D.16；设计稿 医护待办列表.html / 医护待办详情.html） ==========
+// GET /todos 是唯一端点：列表（pane/keyword/page）与详情（instanceId）同端点分派（后端 flow_t679_todos.go）。
+// 🔴 三个函数的 url 必须是字面量字符串（T379 跨源门禁只解析本文件/flow.ts/medicalAccount.ts 的 `url: '/api/v1/...'` 派生端点）。
+
+/** 列表「当前节点」列（node-action 文本 + 时限 chip） */
+export interface FlowTodoNode {
+  nodeId: string
+  name: string
+  limitText: string
+  leftText: string
+  /** over 红 / due 橙 / ok 绿 */
+  tone: 'over' | 'due' | 'ok'
+}
+
+/** 待办列表一行；node 为 null = 已办结 */
+export interface FlowTodoItem {
+  instanceId: string
+  alertId: string
+  patientId: string
+  patientName: string
+  alertType: string
+  alertTypeName: string
+  triggeredAt: string
+  processStatus: string
+  processStatusText: string
+  node: FlowTodoNode | null
+}
+
+/** 列表容器；mineCount/allCount 不受 keyword 影响 */
+export interface FlowTodoList {
+  list: FlowTodoItem[]
+  total: number
+  page: number
+  pageSize: number
+  mineCount: number
+  allCount: number
+}
+
+/** 详情页流程链路一步 */
+export interface FlowTodoStep {
+  nodeId: string
+  name: string
+  role: string
+  status: 'done' | 'current' | 'todo' | 'skipped'
+}
+
+/** 详情页当前节点指引（note 为 R8 兜底句） */
+export interface FlowTodoNodeDetail {
+  nodeId: string
+  name: string
+  role: string
+  limitText: string
+  leftText: string
+  tone: 'over' | 'due' | 'ok'
+  note: string
+}
+
+/** 待办详情（GET /todos?instanceId=） */
+export interface FlowTodoDetail {
+  instanceId: string
+  templateId: string
+  templateName: string
+  instanceStatus: string
+  alertId: string
+  patientId: string
+  patientName: string
+  deviceId: string
+  alertType: string
+  alertTypeName: string
+  triggeredAt: string
+  processStatus: string
+  processStatusText: string
+  detail: string | null
+  sensorPoint: string | null
+  thresholdValue: number | null
+  actualValue: number | null
+  resolved: boolean
+  resolvedAt: string | null
+  step: number
+  total: number
+  node: FlowTodoNodeDetail | null
+  steps: FlowTodoStep[]
+  records: FlowNodeAction[]
+}
+
+/** 待办列表（pane=mine|all；keyword 匹配患者姓名/患者ID；分页） */
+export async function fetchTodos(params: { pane?: 'mine' | 'all'; keyword?: string; page?: number; pageSize?: number }): Promise<FlowTodoList> {
+  if (USE_MOCK) {
+    await delay()
+    return todoMock.mockTodos(params)
+  }
+  return request<FlowTodoList>({ url: '/api/v1/todos', data: params as Record<string, unknown> })
+}
+
+/** 待办详情（同端点带 instanceId） */
+export async function fetchTodoDetail(instanceId: string): Promise<FlowTodoDetail> {
+  if (USE_MOCK) {
+    await delay()
+    return todoMock.mockTodoDetail(instanceId)
+  }
+  return request<FlowTodoDetail>({ url: '/api/v1/todos', data: { instanceId } })
+}
+
+/** 侧栏角标：仅取 mineCount（pageSize=1 只读计数，不取列表） */
+export async function fetchTodoBadgeCount(): Promise<number> {
+  if (USE_MOCK) {
+    await delay()
+    return todoMock.mockTodoBadgeCount()
+  }
+  const res = await request<FlowTodoList>({ url: '/api/v1/todos', data: { pane: 'mine', page: 1, pageSize: 1 } })
+  return res.mineCount
 }

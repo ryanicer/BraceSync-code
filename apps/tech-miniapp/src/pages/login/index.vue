@@ -62,6 +62,7 @@ import { ref } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { USE_MOCK } from '../../utils/request'
 import { logger } from '../../utils/logger'
+import { classifyLoginError } from '../../utils/loginError'
 import { logErrorText } from '@bracesync/shared-utils'
 
 const authStore = useAuthStore()
@@ -85,6 +86,19 @@ function isValidPhone(p: string): boolean {
 
 function isValidPassword(pwd: string): boolean {
   return pwd.length >= 6 && pwd.length <= 16
+}
+
+/**
+ * T677: 登录错误分级展示——区分「网络失败」与「服务端凭证错误」，不再一锅烩。
+ * 判据在 utils/loginError.ts（纯层可测），此处只负责渲染。
+ */
+function showLoginError(error: any) {
+  const prompt = classifyLoginError(error)
+  if (prompt.modal) {
+    uni.showModal({ title: prompt.title, content: prompt.content, showCancel: false })
+  } else {
+    uni.showToast({ title: prompt.title, icon: 'none' })
+  }
 }
 
 async function doLogin() {
@@ -141,10 +155,8 @@ async function doLogin() {
       code: error?.code,
       httpStatus: error?.httpStatus,
     })
-    uni.showToast({
-      title: '手机号或密码错误',
-      icon: 'none',
-    })
+    // T677: 网络失败 / 凭证错误 / 其它服务端错误 分级提示
+    showLoginError(error)
   } finally {
     loading.value = false
   }

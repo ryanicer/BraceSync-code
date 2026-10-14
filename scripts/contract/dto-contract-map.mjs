@@ -64,6 +64,17 @@ export const CONTRACT_MAP = {
   FlowNodeStateDTO: { ts: null, reason: '契约未声明（T274 流程节点状态）' },
   FlowNodeActionDTO: { ts: null, reason: '契约未声明（T274 流程节点操作）' },
   FlowTypeBindingDTO: { ts: null, reason: '契约未声明（T653 告警类型↔流程模板绑定，admin-web 本地类型；守 T274 flow 类型不入 shared-types 的边界，docs/api/api-contracts.ts 已同步）' },
+  // T681 E2E 夹具清理端点响应内的「前后两拍读数」快照（freePool/templateCount/templateCountTotal/instanceCount）：
+  // 端点为 CI 收尾钩子专用（生产域名命中即拒），前端零消费；同 FlowTypeBindingDTO 守 flow 类型不入 shared-types 的边界。
+  FlowFixtureSnapshotDTO: { ts: null, reason: '契约未声明（T681 夹具清理端点响应内快照，仅 CI 收尾钩子消费，前端零消费）' },
+  // T679 医护待办读侧：flow 域 DTO，契约未声明，admin-web 用本地类型
+  // 守 T274 flow 类型不入 shared-types 的边界（同 FlowTemplateDTO/FlowInstanceDTO 口径）
+  FlowTodoNodeDTO: { ts: null, reason: '契约未声明（T679 医护待办：当前节点简卡，flow 域，前端本地类型）' },
+  FlowTodoItemDTO: { ts: null, reason: '契约未声明（T679 医护待办：列表行，flow 域，前端本地类型）' },
+  FlowTodoListDTO: { ts: null, reason: '契约未声明（T679 医护待办：列表信封含计数/分页，flow 域）' },
+  FlowTodoStepDTO: { ts: null, reason: '契约未声明（T679 医护待办：流程进度节点，flow 域）' },
+  FlowTodoNodeDetailDTO: { ts: null, reason: '契约未声明（T679 医护待办：详情节点+处理记录，flow 域）' },
+  FlowTodoDetailDTO: { ts: null, reason: '契约未声明（T679 医护待办：详情信封，flow 域）' },
   BatchBindResultDTO: { ts: null, reason: '写响应（批量绑定结果信封），契约未声明' },
   BatchBindFailureDTO: { ts: null, reason: '写响应的子项，契约未声明' },
   DoctorAccountCreateDTO: { ts: null, reason: '写响应：整行 DoctorDTO + 一次性初始密码，契约未声明该信封' },

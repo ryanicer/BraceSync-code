@@ -43,8 +43,9 @@ var roleTemplates = []model.RoleTemplateDTO{
 		// 缺 review / review_tpl / doctor_acct 三键时，「系统全部权限」名不副实：
 		// 复查报告、复查模板管理（T135）、医护账号（T315）三页早已上线，模板却没登记。
 		// T372：补 abnormal_report 第 16 键（异常报告按 Boss 2026-09-24 裁定拆为独立页 /abnormal-report）。
+		// T679：补 todo 第 17 键（医护待办页 /todos，与 PAGE_MODULES 同序插于 dashboard 之后）。
 		Permissions: model.RolePermissionsDTO{Scope: "all", Modules: []string{
-			"dashboard", "realtime", "patients", "abnormal_report", "teams", "devices", "alerts",
+			"dashboard", "todo", "realtime", "patients", "abnormal_report", "teams", "devices", "alerts",
 			"comm", "orthosis", "install", "review", "review_tpl", "tech",
 			"doctor_acct", "perm", "config",
 		}},
@@ -61,8 +62,9 @@ var roleTemplates = []model.RoleTemplateDTO{
 	//      comm 一格 ⇒ 不顺手改；T277 起那条「是否连预设一起对齐」的未裁项继续挂在 PM 队列。
 	{
 		Key: "doctor", Name: "医护", Description: "患者数据+告警处理",
+		// T679：本模板补 todo —— 医护待办的**主要用户**就是医护（/todos 页 + 侧栏红角标）。
 		Permissions: model.RolePermissionsDTO{Scope: "team", Modules: []string{
-			"dashboard", "realtime", "patients", "alerts", "orthosis",
+			"dashboard", "todo", "realtime", "patients", "alerts", "orthosis",
 		}},
 	},
 	{

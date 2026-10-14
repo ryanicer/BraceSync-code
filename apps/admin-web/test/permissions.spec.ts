@@ -11,16 +11,16 @@ import {
 import { pageRoutes } from '../src/router'
 
 describe('ROLE_PAGE_MATRIX（PRD §7D.11）', () => {
-  it('运营管理员可访问全部 16 页', () => {
-    expect(ROLE_PAGE_MATRIX.admin).toHaveLength(16) // 断言更新：14→15（T315 医护账号页）→16（T372 异常报告独立页）
+  it('运营管理员可访问全部 17 页', () => {
+    expect(ROLE_PAGE_MATRIX.admin).toHaveLength(17) // 断言更新：14→15（T315）→16（T372）→17（T679 我的待办）
     for (const route of pageRoutes) {
       expect(canAccess('admin', route.path)).toBe(true)
     }
   })
 
-  it('医生仅可访问 数据概览/实时监控/异常报告/告警管理/矫形日志/复查报告/复查模板管理 7 页', () => {
-    // T135 医生可下载空白模板（5→6）；T372 按 PRD §7D.11 矩阵第 4 行放开异常报告（6→7）
-    expect(ROLE_PAGE_MATRIX.doctor).toEqual(['/dashboard', '/monitor', '/abnormal-report', '/alerts', '/orthosis-log', '/review-records', '/review-templates'])
+  it('医生仅可访问 数据概览/我的待办/实时监控/异常报告/告警管理/矫形日志/复查报告/复查模板管理 8 页', () => {
+    // T135 医生可下载空白模板（5→6）；T372 按 PRD §7D.11 矩阵第 4 行放开异常报告（6→7）；T679 放开我的待办（7→8）
+    expect(ROLE_PAGE_MATRIX.doctor).toEqual(['/dashboard', '/todos', '/monitor', '/abnormal-report', '/alerts', '/orthosis-log', '/review-records', '/review-templates'])
     expect(canAccess('doctor', '/patients')).toBe(false)
     expect(canAccess('doctor', '/settings')).toBe(false)
     expect(canAccess('doctor', '/doctor-accounts')).toBe(false) // T315 账号管理页仅运营管理员
@@ -66,9 +66,9 @@ describe('PAGE_MODULES 模块词表（T345 权限矩阵全量对齐）', () => {
     expect(pathOfModule('nope')).toBeUndefined()
   })
 
-  it('运营管理员 = 16 页全集（基数变化必须显式改这里）', () => {
+  it('运营管理员 = 17 页全集（基数变化必须显式改这里）', () => {
     expect(PAGE_MODULES.map((m) => m.key)).toEqual([
-      'dashboard', 'realtime', 'patients', 'abnormal_report', 'teams', 'devices', 'alerts',
+      'dashboard', 'todo', 'realtime', 'patients', 'abnormal_report', 'teams', 'devices', 'alerts',
       'comm', 'orthosis', 'install', 'review', 'review_tpl', 'tech',
       'doctor_acct', 'perm', 'config',
     ])
@@ -112,8 +112,10 @@ describe('模块词表与落库/后端模板同源（T345 跨端漂移门禁）'
       /'\{modules\}',\s*'(\[[^\]]*\])'::jsonb/,
     )
     expect(m, '000026 up 里没定位到 jsonb_set 的 modules 数组').not.toBeNull()
-    // 已入 main 的迁移不回改 ⇒ 它写的是 T345 当时的 15 项；第 16 项由 000029 前滚（见下面那条用例）。
-    expect(parseArray(m![1], '000026 up')).toEqual(PAGE_MODULES.map((x) => x.key).filter((k) => k !== 'abnormal_report'))
+    // 已入 main 的迁移不回改 ⇒ 它写的是 T345 当时的 15 项；第 16 项由 000029 前滚、第 17 项由 000038 前滚（见下面那条用例）。
+    expect(parseArray(m![1], '000026 up')).toEqual(
+      PAGE_MODULES.map((x) => x.key).filter((k) => k !== 'abnormal_report' && k !== 'todo'),
+    )
   })
 
   // ↓ T368：医护侧栏/路由越权（Ella T345 验收唯一不通过项 D-A）。缺陷成因正是
@@ -127,8 +129,8 @@ describe('模块词表与落库/后端模板同源（T345 跨端漂移门禁）'
     expect(m, 'seed.sql 里没定位到 ROLE_DOCTOR 的 modules').not.toBeNull()
     expect(parseArray(m![1], 'seed.sql')).toEqual(modulesForRole('doctor'))
     // 逐值再钉一遍基数：换算函数若哪天吞了某页，上一行会两边一起变短而看不出来
-    expect(modulesForRole('doctor'), 'T135 起医护 6 页（T368 补库）→ T372 起 7 页（异常报告独立页）').toEqual([
-      'dashboard', 'realtime', 'abnormal_report', 'alerts', 'orthosis', 'review', 'review_tpl',
+    expect(modulesForRole('doctor'), 'T135 起医护 6 页（T368 补库）→ T372 起 7 页（异常报告独立页）→ T679 起 8 页（我的待办）').toEqual([
+      'dashboard', 'todo', 'realtime', 'abnormal_report', 'alerts', 'orthosis', 'review', 'review_tpl',
     ])
   })
 
@@ -142,7 +144,7 @@ describe('模块词表与落库/后端模板同源（T345 跨端漂移门禁）'
     expect(
       parse('scripts/db/migrations/000028_t368_doctor_review_modules_iris.up.sql', '000028 up'),
       '000028 写的是 T368 当时的 doctor 可见页集合（含顺序）',
-    ).toEqual(modulesForRole('doctor').filter((k) => k !== 'abnormal_report'))
+    ).toEqual(modulesForRole('doctor').filter((k) => k !== 'abnormal_report' && k !== 'todo'))
     // down 回到补库前的 4 项 —— 不是「和 up 一样」就完事，回滚目标本身也要钉住
     expect(
       parse('scripts/db/migrations/000028_t368_doctor_review_modules_iris.down.sql', '000028 down'),
@@ -165,17 +167,17 @@ describe('模块词表与落库/后端模板同源（T345 跨端漂移门禁）'
       return all
     }
     const upBlocks = blocksIn('scripts/db/migrations/000029_t372_abnormal_report_module_iris.up.sql', '000029 up')
-    expect(upBlocks[0], '000029 up 的 ROLE_ADMIN 必须等于 PAGE_MODULES（16 项，含顺序）')
-      .toEqual(PAGE_MODULES.map((x) => x.key))
-    expect(upBlocks[1], '000029 up 的 ROLE_DOCTOR 必须等于前端 doctor 可见页换算结果（7 项，含顺序）')
-      .toEqual(modulesForRole('doctor'))
+    expect(upBlocks[0], '000029 up 的 ROLE_ADMIN 必须等于 T372 当时词表（16 项，含顺序；第 17 键 todo 由 000038 前滚，旧迁移不回改）')
+      .toEqual(PAGE_MODULES.map((x) => x.key).filter((k) => k !== 'todo'))
+    expect(upBlocks[1], '000029 up 的 ROLE_DOCTOR 必须等于 T372 当时 doctor 可见页换算结果（7 项，含顺序）')
+      .toEqual(modulesForRole('doctor').filter((k) => k !== 'todo'))
     // 回滚目标 = 000026 / 000028 的终态（退掉 abnormal_report 一键，其余逐字不变）
     const downBlocks = blocksIn('scripts/db/migrations/000029_t372_abnormal_report_module_iris.down.sql', '000029 down')
     expect(downBlocks[0], '000029 down 的 admin 应退回 000026 的 15 项').toEqual(
-      PAGE_MODULES.map((x) => x.key).filter((k) => k !== 'abnormal_report'),
+      PAGE_MODULES.map((x) => x.key).filter((k) => k !== 'abnormal_report' && k !== 'todo'),
     )
     expect(downBlocks[1], '000029 down 的 doctor 应退回 000028 的 6 项').toEqual(
-      modulesForRole('doctor').filter((k) => k !== 'abnormal_report'),
+      modulesForRole('doctor').filter((k) => k !== 'abnormal_report' && k !== 'todo'),
     )
   })
 
@@ -211,7 +213,7 @@ describe('模块词表与落库/后端模板同源（T345 跨端漂移门禁）'
     const keys = goTemplateModules('doctor')
     expect(keys).not.toContain('comm')
     // patients 是与 comm 同性但 Boss 本次未裁的一项（矩阵第 3 行）⇒ 逐值钉住，不许顺带改
-    expect(keys).toEqual(['dashboard', 'realtime', 'patients', 'alerts', 'orthosis'])
+    expect(keys).toEqual(['dashboard', 'todo', 'realtime', 'patients', 'alerts', 'orthosis'])
   })
 
   it('mock 角色模板与后端 roleTemplates 逐值同源（三条模板全比）', () => {

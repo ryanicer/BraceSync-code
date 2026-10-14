@@ -121,14 +121,17 @@ async function readDescriptions(drawer: Locator): Promise<Map<string, string>> {
   return new Map(pairs.map((p) => [p.label, p.value]))
 }
 
-/** 抽屉那 8 行的 label 文案（patients/index.vue:134-141，逐条对到前端渲染分支） */
+/**
+ * 抽屉那 7 行的 label 文案（patients/index.vue:138-145，逐条对到前端渲染分支）。
+ * T675（commit 5883411）移除「主治医生」项，归属只留团队一条线 ⇒ 原 8 行口径作废（T682-20.1）。
+ * 不跟 T675 同步会恒失败：实得只有 性别|年龄|诊断|Cobb角|所属团队|绑定设备|建档时间。
+ */
 const DRAWER_LABELS = [
   '性别',
   '年龄',
   '诊断',
   'Cobb角',
   '所属团队',
-  '主治医生',
   '绑定设备',
   '建档时间',
 ] as const
@@ -293,7 +296,8 @@ test.describe('20-链 A 读段（T462 S1，零写）', () => {
     expect(fields.get('诊断'), '抽屉「诊断」').toBe(textLabel(detail.diagnosis))
     expect(fields.get('Cobb角'), '抽屉「Cobb角」').toBe(cobbLabel(detail.cobbAngle))
     expect(fields.get('所属团队'), '抽屉「所属团队」').toBe(targetTeamName)
-    expect(fields.get('主治医生'), '抽屉「主治医生」').toBe(detail.doctorName || '-')
+    // T675 移除项的反向覆盖：归属只留团队一条线，「主治医生」再出现在抽屉即为回归
+    expect(fields.has('主治医生'), '抽屉不应再有「主治医生」行（T675 移除）').toBe(false)
     expect(fields.get('绑定设备'), '抽屉「绑定设备」').toBe(deviceLabel(detail.deviceId))
     expect(fields.get('建档时间'), '抽屉「建档时间」').toBe(detail.createdAt.slice(0, 10))
     // 兜底：任何一格都不该把 undefined / null 直接印到页面上

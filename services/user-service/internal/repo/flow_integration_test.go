@@ -679,3 +679,132 @@ func itCountRows(t *testing.T, sql string, args ...any) int {
 	require.NoError(t, itStore.pool.QueryRow(context.Background(), sql, args...).Scan(&n))
 	return n
 }
+
+// ─────────────────────────────────────────────────────────────
+// T681 E2E 夹具清理：按「前缀 + 时间窗」单事务回收
+// 真库验 SQL 语义（starts_with 前缀 / started_at+created_at 双窗 / DELETE…USING）、
+// FK ON DELETE CASCADE 级联、删实例释放告警池位、空窗口幂等。
+// 该用例独占 "T053流程" 前缀域（与 itFlowFixture 的「流程夹具模板-」域不重叠）。
+// ─────────────────────────────────────────────────────────────
+
+const it681Prefix = "T053流程"
+
+type it681Fixture struct {
+	templateID string
+	instanceID string // withInstance=false 时为空
+	alertID    int64  // withInstance=false 时为 0
+}
+
+// newIT681Fixture 造一套 "T053流程-" 前缀夹具（可选挂一条实例），并登记自清。
+// 设备/患者复用全夹具共用的既有行（同 newITFlow：自建设备会撞 uk_devices_active_patient）。
+func newIT681Fixture(t *testing.T, suffix string, withInstance bool) it681Fixture {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := itStore.pool.Exec(ctx,
+		`INSERT INTO devices (device_id, device_secret_enc, patient_id, status)
+		 VALUES ($1, '\x00'::bytea, $2, 'online') ON CONFLICT (device_id) DO NOTHING`,
+		itFlowDevice, itFlowPatient); err != nil {
+		t.Fatalf("it: T681 夹具设备前置: %v", err)
+	}
+	tpl, err := itStore.CreateFlowTemplate(ctx, it681Prefix+"-"+suffix, itFlowNodes, itFlowEdges, itAdmin)
+	require.NoError(t, err)
+	fx := it681Fixture{templateID: tpl.TemplateID}
+	if withInstance {
+		var id int64
+		require.NoError(t, itStore.pool.QueryRow(ctx,
+			`INSERT INTO alerts (patient_id, device_id, type, detail, ts)
+			 VALUES ($1, $2, 'pressure_high', $3, now() + make_interval(secs => $4::int)) RETURNING alert_id`,
+			itFlowPatient, itFlowDevice, "T681 夹具告警-"+suffix, int(itFlowAlertSeq.Add(1))).Scan(&id))
+		fx.alertID = id
+		inst, err := itStore.CreateFlowInstance(ctx, tpl.TemplateID, id, []string{"N1", "N2", "N3"}, []string{"N1"})
+		require.NoError(t, err)
+		fx.instanceID = inst.InstanceID
+	}
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = itStore.pool.Exec(c, `DELETE FROM flow_instance WHERE template_id = $1`, fx.templateID)
+		_, _ = itStore.pool.Exec(c, `DELETE FROM flow_template WHERE template_id = $1`, fx.templateID)
+		if fx.alertID != 0 {
+			_, _ = itStore.pool.Exec(c, `DELETE FROM alerts WHERE alert_id = $1`, fx.alertID)
+		}
+	})
+	return fx
+}
+
+func it681TemplateExists(t *testing.T, templateID string) bool {
+	t.Helper()
+	var exists bool
+	require.NoError(t, itStore.pool.QueryRow(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM flow_template WHERE template_id = $1)`, templateID).Scan(&exists))
+	return exists
+}
+
+func TestITT681CleanupFlowFixturesByPrefixAndWindow(t *testing.T) {
+	ctx := context.Background()
+	windowStart := time.Now().Add(-time.Minute) // 窗口下界：本用例造数之前
+
+	fxIn1 := newIT681Fixture(t, "IN1", true)  // 窗口内：模板 + 实例
+	fxIn2 := newIT681Fixture(t, "IN2", true)  // 窗口内：模板 + 实例
+	fxIn3 := newIT681Fixture(t, "IN3", false) // 窗口内：仅模板
+
+	// 窗口外：造好后把模板 created_at 与实例 started_at 改到窗口之前 → 不得被清
+	fxOut := newIT681Fixture(t, "OUT", true)
+	old := windowStart.Add(-time.Hour)
+	_, err := itStore.pool.Exec(ctx,
+		`UPDATE flow_template SET created_at = $2 WHERE template_id = $1`, fxOut.templateID, old)
+	require.NoError(t, err)
+	_, err = itStore.pool.Exec(ctx,
+		`UPDATE flow_instance SET started_at = $2 WHERE template_id = $1`, fxOut.templateID, old)
+	require.NoError(t, err)
+
+	// 窗口内但被类型绑定引用的模板：其实例应被删，模板须留存（flow_type_bindings FK 无级联，
+	// 硬删会抛违例回滚整事务 → 反把实例删除一起撤销）——校验新增的 NOT EXISTS 护栏。
+	fxBound := newIT681Fixture(t, "BND", true)
+	require.NoError(t, itStore.ReplaceFlowTypeBindings(ctx,
+		[]FlowTypeBindingSet{{AlertType: "pressure_high", TemplateID: fxBound.templateID, UpdatedBy: itAdmin}}))
+	t.Cleanup(func() { // LIFO：先解绑，fixture 自清才能删模板
+		_ = itStore.ReplaceFlowTypeBindings(context.Background(),
+			[]FlowTypeBindingSet{{AlertType: "pressure_high", TemplateID: ""}})
+	})
+
+	res, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart)
+	require.NoError(t, err)
+
+	// 删除计数：窗口内 3 实例（IN1/IN2/BND）+ 3 模板（IN1/IN2/IN3；BND 因绑定被留存）
+	assert.Equal(t, it681Prefix, res.TemplatePrefix)
+	assert.Equal(t, int64(3), res.DeletedInstances, "窗口内实例全删（含被绑定模板 BND 的实例）")
+	assert.Equal(t, int64(3), res.DeletedTemplates, "窗口内无引用模板全删（含无实例的 fxIn3；被绑定的 BND 留存）")
+
+	// 前后两拍读数：模板 -3 / 实例 -3；freePool 净增 = 删实例数（删实例即释放告警池位）
+	assert.Equal(t, res.Before.TemplateCount-3, res.After.TemplateCount, "前缀模板数 -3")
+	assert.Equal(t, res.Before.InstanceCount-3, res.After.InstanceCount, "前缀实例数 -3")
+	assert.Equal(t, res.Before.TemplateCountTotal-3, res.After.TemplateCountTotal, "全量模板数同样 -3（前缀外不动）")
+	assert.Equal(t, res.DeletedInstances, res.After.FreePool-res.Before.FreePool, "freePool 净增 = 删实例数")
+
+	// 窗口内模板已删；窗口外模板留存（时间窗隔离）；被绑定模板留存且绑定行完好
+	assert.False(t, it681TemplateExists(t, fxIn1.templateID))
+	assert.False(t, it681TemplateExists(t, fxIn2.templateID))
+	assert.False(t, it681TemplateExists(t, fxIn3.templateID))
+	assert.True(t, it681TemplateExists(t, fxOut.templateID), "窗口外模板不得被清")
+	assert.True(t, it681TemplateExists(t, fxBound.templateID), "被类型绑定引用的模板不得被清")
+	assert.Equal(t, 1, itCountRows(t, `SELECT COUNT(*) FROM flow_type_bindings WHERE template_id = $1`, fxBound.templateID),
+		"绑定行完好（模板留存则绑定不被破坏）")
+	assert.Zero(t, itCountRows(t, `SELECT COUNT(*) FROM flow_instance WHERE template_id = $1`, fxBound.templateID),
+		"被绑定模板的窗口内实例仍被删除（保池优先）")
+
+	// 级联：窗口内实例的节点状态/流水随实例删除（不留脏 current）
+	assert.Zero(t, itCountRows(t, `SELECT COUNT(*) FROM flow_node_state WHERE instance_id = $1`, fxIn1.instanceID))
+	assert.Zero(t, itCountRows(t, `SELECT COUNT(*) FROM flow_node_action WHERE instance_id = $1`, fxIn1.instanceID))
+	// 窗口外实例留存
+	assert.Equal(t, 1, itCountRows(t, `SELECT COUNT(*) FROM flow_instance WHERE template_id = $1`, fxOut.templateID))
+
+	// 只回收流程侧，不动告警源数据：被删实例的告警行仍在
+	assert.Equal(t, 1, itCountRows(t, `SELECT COUNT(*) FROM alerts WHERE alert_id = $1`, fxIn1.alertID))
+
+	// 幂等：同窗口再调 → 删 0，前后两拍读数完全相同（收尾钩子可无脑调用）
+	res2, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart)
+	require.NoError(t, err)
+	assert.Zero(t, res2.DeletedInstances)
+	assert.Zero(t, res2.DeletedTemplates)
+	assert.Equal(t, res2.Before, res2.After, "空窗口幂等：前后读数一致")
+}

@@ -311,6 +311,118 @@ func (s *PGStore) DeleteFlowTemplate(ctx context.Context, templateID string) err
 }
 
 // ─────────────────────────────────────────────────────────────
+// E2E 夹具清理（T681）：按前缀 + 时间窗回收 e2e-real 造的 T053 夹具
+// ─────────────────────────────────────────────────────────────
+
+// FlowFixtureSnapshot 单拍读数。freePool = 未被流程实例占用的告警位（池 free 数）；
+// templateCount = 命中前缀的模板数；templateTotal = 全量模板数；instanceCount = 命中前缀实例数。
+type FlowFixtureSnapshot struct {
+	FreePool           int64
+	TemplateCount      int64
+	TemplateCountTotal int64
+	InstanceCount      int64
+}
+
+// FlowFixtureCleanupResult 清理结果：含前后两拍读数与删除计数（审计与验收用）。
+type FlowFixtureCleanupResult struct {
+	TemplatePrefix   string
+	CreatedAfter     time.Time
+	Before           FlowFixtureSnapshot
+	After            FlowFixtureSnapshot
+	DeletedInstances int64
+	DeletedTemplates int64
+}
+
+// CleanupFlowFixtures 单事务清理命中「前缀 + 时间窗」的流程夹具：先删窗口内实例
+// （flow_node_state / flow_node_action 走 FK ON DELETE CASCADE 一并清），再删窗口内创建
+// 且无残留引用的前缀模板。前置与后置各拍一次读数随响应返回，供 CI 收尾钩子与验收留痕。
+//
+// 幂等：空窗口时删除计数为 0、前后读数相同，仍返回成功（不报错）。
+// 生产拒/前缀白名单/时间窗必填由 handler 层把关，本层只按入参执行。
+func (s *PGStore) CleanupFlowFixtures(ctx context.Context, templatePrefix string, createdAfter time.Time) (*FlowFixtureCleanupResult, error) {
+	res := &FlowFixtureCleanupResult{TemplatePrefix: templatePrefix, CreatedAfter: createdAfter}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	before, err := flowFixtureSnapshot(ctx, tx, templatePrefix)
+	if err != nil {
+		return nil, err
+	}
+	res.Before = *before
+
+	// 1) 删窗口内实例。级联清 flow_node_state / flow_node_action；
+	//    删实例即释放其 alert_id，池位随 after 读数回正。
+	delInst, err := tx.Exec(ctx,
+		`DELETE FROM flow_instance i
+		  USING flow_template t
+		  WHERE i.template_id = t.template_id
+		    AND starts_with(t.name, $1)
+		    AND i.started_at >= $2`, templatePrefix, createdAfter)
+	if err != nil {
+		return nil, err
+	}
+	res.DeletedInstances = delInst.RowsAffected()
+
+	// 2) 删窗口内创建、且已无引用的前缀模板。flow_instance 与 flow_type_bindings 两处 FK 均无
+	//    ON DELETE CASCADE，故凡仍被实例或类型绑定引用的模板一律 NOT EXISTS 拦下保留——
+	//    宁可留模板，也不让本步抛 FK 违例回滚整事务（回滚会把上一步的实例删除一起撤销，池净流失没治）。
+	delTpl, err := tx.Exec(ctx,
+		`DELETE FROM flow_template t
+		  WHERE starts_with(t.name, $1)
+		    AND t.created_at >= $2
+		    AND NOT EXISTS (SELECT 1 FROM flow_instance i WHERE i.template_id = t.template_id)
+		    AND NOT EXISTS (SELECT 1 FROM flow_type_bindings b WHERE b.template_id = t.template_id)`,
+		templatePrefix, createdAfter)
+	if err != nil {
+		return nil, err
+	}
+	res.DeletedTemplates = delTpl.RowsAffected()
+
+	after, err := flowFixtureSnapshot(ctx, tx, templatePrefix)
+	if err != nil {
+		return nil, err
+	}
+	res.After = *after
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// flowFixtureSnapshot 在同一事务内取一拍读数（保证前后两拍口径一致、可对账）。
+func flowFixtureSnapshot(ctx context.Context, tx pgx.Tx, templatePrefix string) (*FlowFixtureSnapshot, error) {
+	var snap FlowFixtureSnapshot
+
+	// freePool：未被任何流程实例占用的告警位。alerts 与 flow 同库，可在本服务池内直查。
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM alerts a
+		  WHERE NOT EXISTS (SELECT 1 FROM flow_instance i WHERE i.alert_id = a.alert_id)`).Scan(&snap.FreePool); err != nil {
+		return nil, err
+	}
+	// templateCount：命中前缀的模板数（24.2 名册尺的 pageSize=100 口径即看此项）。
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM flow_template t WHERE starts_with(t.name, $1)`, templatePrefix).Scan(&snap.TemplateCount); err != nil {
+		return nil, err
+	}
+	// templateTotal：全量模板数。
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM flow_template`).Scan(&snap.TemplateCountTotal); err != nil {
+		return nil, err
+	}
+	// instanceCount：命中前缀实例数。
+	if err := tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM flow_instance i JOIN flow_template t ON t.template_id = i.template_id
+		  WHERE starts_with(t.name, $1)`, templatePrefix).Scan(&snap.InstanceCount); err != nil {
+		return nil, err
+	}
+	return &snap, nil
+}
+
+// ─────────────────────────────────────────────────────────────
 // 实例与节点状态（2.3 运行态）
 // ─────────────────────────────────────────────────────────────
 
@@ -668,6 +780,113 @@ func (s *PGStore) ListFlowNodeActions(ctx context.Context, instanceID string) ([
 		var r FlowNodeActionRow
 		if err := rows.Scan(&r.ActionID, &r.NodeID, &r.Action, &r.Operator, &r.OperatorName,
 			&r.Remark, &r.Attachments, &r.TargetOperator, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
+// ─────────────────────────────────────────────────────────────
+// T679 医护待办读侧（flow_instance JOIN flow_template/alerts/patients/flow_node_state）
+// ─────────────────────────────────────────────────────────────
+
+// FlowTodoFilter 待办查询条件。无 keyword：关键词过滤与分页放 handler 侧（为忠实匹配设计稿
+// 「页签计数不受 keyword 影响」，须先算全集计数再过滤展示行）。
+//
+// TeamScoped 语义同 PatientFilter（T350）：为真且 TeamID 为空 = 无团队可看，落空集（fail-closed），
+// 不退化成「不过滤」。
+type FlowTodoFilter struct {
+	InstanceID string // 非空 = 取单条详情（供 GET /todos?instanceId=）
+	TeamID     string
+	TeamScoped bool
+}
+
+// FlowTodoRow 待办读侧一行（跨 flow_instance / flow_template / alerts / patients / flow_node_state 派生）。
+type FlowTodoRow struct {
+	InstanceID     string
+	TemplateID     string
+	TemplateName   string
+	Nodes          []byte // 模板 nodes JSON 原文（后端解析 name/role/时限，不落库）
+	AlertID        int64
+	CurrentNodeID  *string
+	InstanceStatus string
+	StartedAt      time.Time
+	EndedAt        *time.Time
+
+	AlertType      string
+	Detail         *string
+	SensorPoint    *string
+	ThresholdValue *float64
+	ActualValue    *float64
+	ResolvedStatus string
+	ResolvedAt     *time.Time
+	AlertTS        time.Time
+	ProcessStatus  string
+	DeviceID       string
+	AlertPatientID string
+
+	PatientName *string
+	TeamID      *string
+
+	NodeStatus   *string // 当前节点运行态（LEFT JOIN，无节点=办结）
+	NodeAssignee *string
+	// NodeEnteredAt 当前节点进入时间 = 最近一次 confirm 的 created_at，无则 started_at（时限 chip 计时基准）。
+	NodeEnteredAt time.Time
+}
+
+const flowTodoCols = `
+SELECT i.instance_id, i.template_id, t.name, t.nodes::text,
+       i.alert_id, i.current_node_id, i.status, i.started_at, i.ended_at,
+       al.type, al.detail, al.sensor_point, al.threshold_value::float8, al.actual_value::float8,
+       al.resolved_status, al.resolved_at, al.ts, al.process_status, al.device_id, al.patient_id,
+       p.name, p.team_id,
+       s.status, s.assignee,
+       COALESCE((SELECT MAX(a2.created_at) FROM flow_node_action a2
+                  WHERE a2.instance_id = i.instance_id AND a2.action = 'confirm'), i.started_at) AS node_entered_at
+  FROM flow_instance i
+  JOIN flow_template t ON t.template_id = i.template_id
+  JOIN alerts al ON al.alert_id = i.alert_id
+  JOIN patients p ON p.patient_id = al.patient_id
+  LEFT JOIN flow_node_state s ON s.instance_id = i.instance_id AND s.node_id = i.current_node_id`
+
+// ListFlowTodos 待办读侧（running/completed 在途实例；terminated 排除）。
+//
+// 🔴 跨表读 alerts / patients（同库）；本层只读不写，沿用包注释「alert_id 不建外键」口径。
+// 排序 al.ts 倒序（最新告警在前），次键 instance_id 保证稳定。
+func (s *PGStore) ListFlowTodos(ctx context.Context, f FlowTodoFilter) ([]FlowTodoRow, error) {
+	conds := []string{`i.status IN ('running','completed')`}
+	var args []any
+	if f.InstanceID != "" {
+		args = append(args, f.InstanceID)
+		conds = append(conds, fmt.Sprintf("i.instance_id = $%d", len(args)))
+	}
+	if f.TeamScoped && f.TeamID == "" {
+		conds = append(conds, "false")
+	} else if f.TeamID != "" {
+		args = append(args, f.TeamID)
+		conds = append(conds, fmt.Sprintf("p.team_id = $%d", len(args)))
+	}
+	sql := flowTodoCols + " WHERE " + strings.Join(conds, " AND ") +
+		" ORDER BY al.ts DESC, i.instance_id DESC"
+
+	rows, err := s.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]FlowTodoRow, 0, 16)
+	for rows.Next() {
+		var r FlowTodoRow
+		if err := rows.Scan(
+			&r.InstanceID, &r.TemplateID, &r.TemplateName, &r.Nodes,
+			&r.AlertID, &r.CurrentNodeID, &r.InstanceStatus, &r.StartedAt, &r.EndedAt,
+			&r.AlertType, &r.Detail, &r.SensorPoint, &r.ThresholdValue, &r.ActualValue,
+			&r.ResolvedStatus, &r.ResolvedAt, &r.AlertTS, &r.ProcessStatus, &r.DeviceID, &r.AlertPatientID,
+			&r.PatientName, &r.TeamID,
+			&r.NodeStatus, &r.NodeAssignee, &r.NodeEnteredAt,
+		); err != nil {
 			return nil, err
 		}
 		list = append(list, r)

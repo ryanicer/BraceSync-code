@@ -5,6 +5,7 @@ import {
   forceTechLoginMock, mockTechBLE,
 } from '../tech-helpers'
 import { WIFI_FAILED_NOTE } from '../../apps/tech-miniapp/src/utils/installStatus'
+import { CALIBRATION_FRAME_COUNT } from '../../apps/tech-miniapp/src/utils/calibration'
 
 /**
  * tech-install 页：安装流程 3 阶段（患者确认 → 空载校准 → WiFi 配网）
@@ -12,6 +13,18 @@ import { WIFI_FAILED_NOTE } from '../../apps/tech-miniapp/src/utils/installStatu
  *
  * 前置：通过 bind 流程进入 install（installId + patient + bleConnected 均已就绪）
  */
+
+/**
+ * T678：校准采集中进度文案已由「第 N / 5 秒」改为帧口径「已收 N / 5 帧」。
+ * 帧数上限从实现侧常量取，文案换了这条断言不会假绿（同 T459 立规）。
+ */
+const COLLECTING_ANY_FRAME = new RegExp(
+  `采集中\\.\\.\\. 已收 \\d+ / ${CALIBRATION_FRAME_COUNT} 帧`,
+)
+/** 重新采集后进度复位，帧数回到 0/1 */
+const COLLECTING_RESET_FRAME = new RegExp(
+  `采集中\\.\\.\\. 已收 [01] / ${CALIBRATION_FRAME_COUNT} 帧`,
+)
 
 /** 走 bind 流程进入 install 页（phase 1） */
 async function goToInstallViaBind(page) {
@@ -77,10 +90,10 @@ test.describe('安装流程 3 阶段', () => {
     await expect(recollect).toBeVisible()
     // 下面完成态那格用的是 getByText 形态，先给它一次正对照（否则 count 0 可能是 locator 根本没匹配）
     await expect(page.getByText('重新采集')).toHaveCount(1)
-    await expect(page.getByText('采集中... 第 3 / 5 秒')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText(COLLECTING_ANY_FRAME)).toBeVisible({ timeout: 10_000 })
     await recollect.click()
-    // 中止本轮的标志＝秒数回到 0/1（不中止会继续走 4/5）
-    await expect(page.getByText(/采集中\.\.\. 第 [01] \/ 5 秒/)).toBeVisible({ timeout: 3_000 })
+    // 中止本轮的标志＝帧数回到 0/1（不中止会继续走 4/5）
+    await expect(page.getByText(COLLECTING_RESET_FRAME)).toBeVisible({ timeout: 3_000 })
 
     // T173 D4：零点偏移矩阵主视图（5 帧均值）
     await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
@@ -91,10 +104,9 @@ test.describe('安装流程 3 阶段', () => {
     // 20 格偏移矩阵
     const cells = page.locator('.pressure-cell')
     await expect(cells).toHaveCount(20)
-    // 真实校验（mock 空载帧 ±0.15N → 范围校验通过）
+    // T678：废范围门禁，只留点数完整性校验；偏移量如实记录（治具应力下偏大亦正常，不设通过阈值）
     await expect(page.getByText('数据点数：100/100（5 帧 × 20 点）')).toBeVisible()
-    await expect(page.getByText('范围校验：|偏移| ≤ 0.05N（空载偏差上限）')).toBeVisible()
-    await expect(page.getByText('稳定性校验：占位（阈值待重定后启用）')).toBeVisible()
+    await expect(page.getByText('偏移量为空载稳定偏置实测值（治具应力下偏大亦正常），将从后续读数中扣除，不再设通过阈值')).toBeVisible()
   })
 
   test('阶段二：校准矩阵 N/kPa 随档切（T662 格2）', async ({ page }) => {
@@ -105,7 +117,7 @@ test.describe('安装流程 3 阶段', () => {
     await page.locator('.btn-primary', { hasText: '开始校准' }).click()
 
     // 采集中：矩阵整数 kPa（mock 帧 ±0.15N 随机，含负值归零的 0），统计行带 kPa 字母
-    await expect(page.getByText('采集中... 第 1 / 5 秒')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText(COLLECTING_ANY_FRAME)).toBeVisible({ timeout: 10_000 })
     const cells = page.locator('.pressure-cell')
     await expect(cells).toHaveCount(20)
     for (let i = 0; i < 20; i++) {
@@ -114,15 +126,13 @@ test.describe('安装流程 3 阶段', () => {
     await expect(page.locator('.stat-item').first()).toHaveText(/均值: \d+kPa/)
     await expect(page.locator('.stat-item').nth(1)).toHaveText(/最大: \d+kPa/)
 
-    // 完成态：副标题单位与范围校验阈值随档（0.05N × 15.625 = 0.78125 → 同源派生取整 1 kPa）
+    // 完成态：副标题单位随档（T678 废范围门禁，不再有范围校验行）
     await expect(page.getByText('空载校准完成')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('零点偏移量（将从后续读数中扣除，单位 kPa）')).toBeVisible()
-    await expect(page.getByText('范围校验：|偏移| ≤ 1kPa（空载偏差上限）')).toBeVisible()
 
     // 切回 N 档：文案与矩阵格式复原
     await page.locator('.unit-seg-btn', { hasText: 'N' }).click()
     await expect(page.getByText('零点偏移量（将从后续读数中扣除，单位 N）')).toBeVisible()
-    await expect(page.getByText('范围校验：|偏移| ≤ 0.05N（空载偏差上限）')).toBeVisible()
     await expect(cells.first()).toHaveText(/^-?\d+\.\d{2}$/)
   })
 

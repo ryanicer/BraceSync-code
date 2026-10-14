@@ -41,8 +41,9 @@ describe('DEFAULT_THRESHOLDS', () => {
     expect(DEFAULT_THRESHOLDS.SENSOR_DRIFT_N).toBe(0.3)
   })
 
-  it('calibration offset threshold is 0.05N (T203 ÷10)', () => {
-    expect(DEFAULT_THRESHOLDS.CALIBRATION_OFFSET_N).toBe(0.05)
+  it('CALIBRATION_OFFSET_N range gate is removed (T675 semantic refactor)', () => {
+    // T675 Boss 2026-10-12：偏移量门禁废除，任何稳定偏置都照记；不得回潮
+    expect('CALIBRATION_OFFSET_N' in DEFAULT_THRESHOLDS).toBe(false)
   })
 })
 

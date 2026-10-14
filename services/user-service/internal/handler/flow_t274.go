@@ -12,6 +12,7 @@
 //	GET    /api/v1/admin/flow/instances/:instanceId/nodes             节点状态（staff）
 //	POST   /api/v1/admin/flow/instances/:instanceId/nodes/:nodeId/actions  节点操作（staff）
 //	GET    /api/v1/admin/flow/instances/:instanceId/actions           处理时间线（staff）
+//	POST   /api/v1/admin/flow/fixtures/cleanup                        E2E 夹具清理（adminOnly，T681）
 //
 // 契约：docs/api/api-contracts.ts（docs PR #179）—— 字段名、枚举、状态机以契约为准，改一处需改两处。
 //
@@ -48,6 +49,12 @@ const (
 	flowAttachMax  = 20  // 单次操作附件数上限
 	flowFileIDMax  = 64  // file-service file_id VARCHAR(64)
 )
+
+// flowFixturePrefixWhitelist 允许清理的夹具前缀白名单（T681）。只放 E2E 造数前缀，
+// 防止误清真实业务模板；放宽须走代码评审，不改为任意前缀。
+var flowFixturePrefixWhitelist = map[string]bool{
+	"T053流程": true,
+}
 
 // requireFlowStaff 运行态端点的角色兜底判定（复用包内 staffRoles 表，与 gateway rbac.go staffRoles 同口径）。
 // handler 层兜底「绕过网关直连服务」的请求，纵深防御口径同 T190 requireAdminRole；fail-closed。
@@ -93,12 +100,13 @@ type flowGraphEdges []struct {
 
 // flowGraph 模板图的派生索引（每次请求由 nodes/edges 现算，不落库）
 type flowGraph struct {
-	nodeIDs      []string            // 全量节点（模板给出顺序）
-	edgeCount    int                 // 连线条数（审计文案用；successors 已去重，不能直接取长度）
-	nameOf       map[string]string   // node_id → 展示名（text.value，空则不收录）
-	successors   map[string][]string // node_id → 出边指向的 node_id（去重保序）
-	entryNodeID  map[string]bool     // 入边为 0 的节点（实例启动时置 current）
-	assigneeRole map[string]string   // T668：node_id → 模板配置的处理角色（properties.assigneeRole；无配置不入 map）
+	nodeIDs      []string                      // 全量节点（模板给出顺序）
+	edgeCount    int                           // 连线条数（审计文案用；successors 已去重，不能直接取长度）
+	nameOf       map[string]string             // node_id → 展示名（text.value，空则不收录）
+	successors   map[string][]string           // node_id → 出边指向的 node_id（去重保序）
+	entryNodeID  map[string]bool               // 入边为 0 的节点（实例启动时置 current）
+	assigneeRole map[string]string             // T668：node_id → 模板配置的处理角色（properties.assigneeRole；无配置不入 map）
+	props        map[string]flowGraphNodeProps // T679：node_id → 节点业务属性（时限/指引；供待办读侧装配）
 }
 
 func newFlowGraph() *flowGraph {
@@ -107,6 +115,7 @@ func newFlowGraph() *flowGraph {
 		successors:   map[string][]string{},
 		entryNodeID:  map[string]bool{},
 		assigneeRole: map[string]string{},
+		props:        map[string]flowGraphNodeProps{},
 	}
 }
 
@@ -146,7 +155,8 @@ func parseFlowGraph(rawNodes, rawEdges json.RawMessage) (*flowGraph, *model.AppE
 		if role := strings.TrimSpace(n.Properties.AssigneeRole); role != "" {
 			g.assigneeRole[id] = role // T668：节点角色执法依据
 		}
-		g.successors[id] = nil // 保证每个节点都有 key（无出边时回空数组而非 null）
+		g.props[id] = n.Properties // T679：待办读侧取时限/指引（无配置即零值）
+		g.successors[id] = nil     // 保证每个节点都有 key（无出边时回空数组而非 null）
 	}
 
 	edges := flowGraphEdges{}
@@ -525,6 +535,75 @@ func (h *Handler) deleteFlowTemplate(c *gin.Context) {
 		Description: fmt.Sprintf("删除流程模板 %s", templateID),
 	})
 	c.JSON(http.StatusOK, jsonResp{Code: model.CodeOK, Message: "success", Data: nil})
+}
+
+// cleanupFlowFixtures POST /api/v1/admin/flow/fixtures/cleanup
+//
+// T681：e2e-real 每 run 造 T053 夹具模板+实例，实例无删除端点、被引用模板 409 删不掉 → 池净流失。
+// 本端点为 CI 收尾钩子提供按「前缀 + 时间窗」单事务回收能力，响应带前后两拍读数。
+// 三重护栏：白名单前缀 + createdAfter 必填 + 生产域名命中即拒（同 T574 红线）。
+func (h *Handler) cleanupFlowFixtures(c *gin.Context) {
+	if !requireAdminRole(c) {
+		fail(c, model.ErrForbidden("only admin can clean flow fixtures"))
+		return
+	}
+	// 生产拒：请求 Host 命中生产 API 域名即拒（网关 NewSingleHostReverseProxy 默认透传原始 Host）。
+	// 自包含判定，不依赖 user-service 的 APP_ENV。
+	if strings.Contains(c.Request.Host, "api.hbksd.com.cn") {
+		fail(c, model.ErrForbidden("flow fixture cleanup is not allowed on production"))
+		return
+	}
+	var req model.CleanupFlowFixturesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
+		return
+	}
+	prefix := strings.TrimSpace(req.TemplatePrefix)
+	if !flowFixturePrefixWhitelist[prefix] {
+		fail(c, model.ErrInvalidParam("templatePrefix %q is not in the fixture whitelist", prefix))
+		return
+	}
+	createdAfter, err := time.Parse(time.RFC3339, strings.TrimSpace(req.CreatedAfter))
+	if err != nil {
+		fail(c, model.ErrInvalidParam("createdAfter must be RFC3339, got %q", req.CreatedAfter))
+		return
+	}
+
+	res, err := h.store.CleanupFlowFixtures(c.Request.Context(), prefix, createdAfter)
+	if err != nil {
+		fail(c, model.ErrInternal("cleanup flow fixtures failed"))
+		return
+	}
+	h.audit(c, repo.AuditInput{
+		Action:     auditActionDataModify,
+		TargetType: "flow_fixture",
+		TargetID:   prefix,
+		Description: fmt.Sprintf("清理 E2E 夹具：前缀=%s 时间窗>=%s 删实例=%d 删模板=%d（free %d→%d）",
+			prefix, res.CreatedAfter.UTC().Format(time.RFC3339), res.DeletedInstances, res.DeletedTemplates,
+			res.Before.FreePool, res.After.FreePool),
+	})
+	ok(c, cleanupFlowFixturesToDTO(res))
+}
+
+// cleanupFlowFixturesToDTO repo 结果 → 响应 DTO（时间统一 UTC RFC3339）。
+func cleanupFlowFixturesToDTO(res *repo.FlowFixtureCleanupResult) model.CleanupFlowFixturesResponse {
+	return model.CleanupFlowFixturesResponse{
+		TemplatePrefix:   res.TemplatePrefix,
+		CreatedAfter:     res.CreatedAfter.UTC().Format(time.RFC3339),
+		Before:           fixtureSnapshotToDTO(res.Before),
+		After:            fixtureSnapshotToDTO(res.After),
+		DeletedInstances: res.DeletedInstances,
+		DeletedTemplates: res.DeletedTemplates,
+	}
+}
+
+func fixtureSnapshotToDTO(s repo.FlowFixtureSnapshot) model.FlowFixtureSnapshotDTO {
+	return model.FlowFixtureSnapshotDTO{
+		FreePool:           s.FreePool,
+		TemplateCount:      s.TemplateCount,
+		TemplateCountTotal: s.TemplateCountTotal,
+		InstanceCount:      s.InstanceCount,
+	}
 }
 
 // ─────────────────────────────────────────────────────────────
