@@ -259,8 +259,8 @@ func (h *Handler) Router() *gin.Engine {
 		// T691 r134（方案2a）：按需解密查看患者手机号——独立端点承载明文 + 每次查看落 sensitive_read 审计；
 		// 明文不随常规读接口回传（T361/T491）。gateway RBAC 已拦非 admin，handler 内 requireAdminRole 兜底。
 		v1.POST("/admin/patients/:patientId/phone/reveal", h.revealPatientPhone)
-		v1.PUT("/admin/patients/:patientId", h.updatePatientAdmin)          // T248 4.3 档案编辑
-		v1.DELETE("/admin/patients/:patientId", h.deletePatientAdmin)       // T467 档案删除（reject-if-referenced）
+		v1.PUT("/admin/patients/:patientId", h.updatePatientAdmin)    // T248 4.3 档案编辑
+		v1.DELETE("/admin/patients/:patientId", h.deletePatientAdmin) // T467 档案删除（reject-if-referenced）
 		// T477 设登录口令：patients.password_hash 的唯一 Go 写点，患者端 CI 凭据通道
 		// （形态取 T314 医护 reset-password 先例：口令服务端生成、只在响应里一次性返回）
 		v1.POST("/admin/patients/:patientId/password", h.setPatientPassword)
