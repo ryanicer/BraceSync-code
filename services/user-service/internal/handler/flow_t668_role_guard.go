@@ -15,10 +15,14 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 )
 
-// flowGraphNodeProps 只取执法要读的属性；其余业务属性后端仍不解析（迁移 000020 口径不变）。
-// JSON 键 "assigneeRole" = T653 设计器落库键（apps/admin-web/.../designer/kinds.ts:199）。
+// flowGraphNodeProps 只取执法/待办要读的属性；其余业务属性后端仍不解析（迁移 000020 口径不变）。
+// JSON 键 "assigneeRole" = T653 设计器落库键（apps/admin-web/.../designer/kinds.ts:199）；
+// T679 新增 timeLimit/timeUnit（时限 chip 依据）/note（节点指引），键名同设计器 properties 形状。
 type flowGraphNodeProps struct {
 	AssigneeRole string `json:"assigneeRole"`
+	TimeLimit    int    `json:"timeLimit"`
+	TimeUnit     string `json:"timeUnit"`
+	Note         string `json:"note"`
 }
 
 // flowNodeRoleMembers 模板「处理角色」中文业务词（设计器 ROLE_OPTIONS 词表：

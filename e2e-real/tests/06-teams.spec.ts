@@ -4,16 +4,21 @@ import {
   gotoMenuAndWaitTable,
   tableRows,
   adminMessage,
+  getAuthToken,
+  releaseTeamMembers,
+  restoreTeamMembers,
+  snapshotDoctorTeams,
+  expectDoctorsRestored,
   E2E_TEAM_NAME_PREFIX,
   uniqueName,
-  getAuthToken,
 } from '../real-helpers'
 import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T053 - 06 团队管理（真实模式）
  * T051 seed：3 团队。写操作全部用唯一命名 T053团队-xxxxx。
- * 覆盖：列表 / 新建 / 编辑 / 删除引用团队（拒绝或成功均可）/ 删除自建团队（成功）
+ * 覆盖：列表 / 新建 / 编辑 / 删除引用团队（6.4 停跑，见用例内理由）/
+ *       自建团队删除的两面（T682 B案）：带引用被拒 409·10409 + 解除引用后删除成功
  */
 test.describe('06-团队管理', () => {
   test.beforeEach(async ({ page }) => {
@@ -24,6 +29,10 @@ test.describe('06-团队管理', () => {
 
   // 本 spec 新建的团队名（用于末尾删除清理）
   let createdTeams: string[] = []
+
+  // T682「迁回」基数：建团队**之前**医护的归属快照（doctorId → teamId | null）。
+  // 6.2 拍、6.5 与 afterAll 用；见 real-helpers.snapshotDoctorTeams 的因果说明。
+  let priorDoctorTeams: Record<string, string | null> = {}
 
   /**
    * 在团队弹窗里选负责人（6.2 新建、6.3 编辑都要调）。
@@ -48,6 +57,28 @@ test.describe('06-团队管理', () => {
     await expect(ownerSelect, '选完负责人后应回显所选医生').toContainText(ownerName, { timeout: 5_000 })
   }
 
+  /**
+   * 按团队名解析 teamId（GET /api/v1/teams 列表项只有 teamId/name/memberCount/patientCount）。
+   * 6.5 与 afterAll 都要它：解除引用、删除都必须用 ID，UI 行文案里拿不到。
+   */
+  async function findTeamIdByName(page: Page, token: string, name: string): Promise<string | null> {
+    const res = await page.request.get('/api/v1/teams', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok()) return null
+    const data: any = await res.json().catch(() => null)
+    const items = data?.data?.items || data?.items || data?.data || []
+    for (const t of items) {
+      if (t.name === name || String(t.name || '').includes(name)) return String(t.id || t.teamId)
+    }
+    return null
+  }
+
+  /**
+   * T682 B案：删除前解除引用走产品契约端点，实现见 real-helpers.releaseTeamMembers
+   * （根因、端点口径、UI「移除」按钮在真实模式失效的缺陷说明都在那里，勿在本文件复制第二份）。
+   */
+
   test.afterAll(async ({ browser }) => {
     if (createdTeams.length === 0) return
     const ctx = await browser.newContext()
@@ -55,24 +86,38 @@ test.describe('06-团队管理', () => {
     try {
       await realLogin(page)
       const token = await getAuthToken(page)
-      if (token) {
-        for (const name of createdTeams) {
-          const list = await page.request.get('/api/v1/teams', {
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          if (!list.ok()) continue
-          const data: any = await list.json().catch(() => null)
-          const items = data?.data?.items || data?.items || data?.data || []
-          for (const t of items) {
-            if (t.name === name || String(t.name || '').includes(name)) {
-              await page.request.delete(`/api/v1/teams/${t.id || t.teamId}`, {
-                headers: { Authorization: `Bearer ${token}` },
-              }).catch(() => {})
-            }
+      if (!token) {
+        console.log('[06-cleanup] 无 token，跳过清理 ⇒ 以下团队会残留：', createdTeams.join('|'))
+        return
+      }
+      const headers = { Authorization: `Bearer ${token}` }
+      // T682：清理必须先解除负责人引用再 DELETE，否则恒 409 ⇒ 静默留孤儿
+      //（T279 实跑就是这么在 staging 落下 T053团队-248968 的）
+      for (const name of createdTeams) {
+        const teamId = await findTeamIdByName(page, token, name)
+        if (!teamId) {
+          console.log(`[06-cleanup] 未找到团队「${name}」（可能已删）`)
+          continue
+        }
+        const rel = await releaseTeamMembers(page.request, token, teamId)
+        if (rel.results.length > 0) {
+          console.log(`[06-cleanup] 「${name}」(${teamId}) 解除引用 ${JSON.stringify(rel.results)}`)
+        }
+        const del = await page.request.delete(`/api/v1/teams/${teamId}`, { headers }).catch(() => null)
+        if (!del || del.status() !== 200) {
+          console.log(`[06-cleanup] 删除「${name}」(${teamId}) 未 200：status=${del?.status()}`)
+        }
+        // 迁回（清理路径只打日志不判红，否则一处失败会挡住后面几条的清理）
+        const restored = await restoreTeamMembers(page.request, token, priorDoctorTeams, rel.results)
+        for (const r of restored) {
+          if (r.status !== null && r.status !== 200) {
+            console.log(`[06-cleanup] 迁回 ${r.memberId} → ${r.toTeamId} 未 200：status=${r.status}`)
           }
         }
       }
-    } catch { /* ignore */ } finally {
+    } catch (e) {
+      console.log('[06-cleanup] 清理异常：', String(e))
+    } finally {
       await ctx.close()
     }
   })
@@ -134,6 +179,11 @@ test.describe('06-团队管理', () => {
       // 保存按钮
       const saveBtn = dialog.getByRole('button', { name: /保存|确认|提交/ }).first()
       await expect(saveBtn).toBeVisible()
+      // T682 迁回基数：必须在**点保存之前**拍——POST /teams 会把负责人迁进新队，
+      // 保存后再读就没有「他原来属于哪个团队」的信息了。
+      const snapToken = await getAuthToken(page)
+      expect(snapToken, '6.2 需登录态 token 才能拍医护归属基数').toBeTruthy()
+      priorDoctorTeams = await snapshotDoctorTeams(page.request, snapToken!)
       // 先把名字登记再点保存：只要发出过保存请求，afterAll 就必须去删它。
       // T279 实跑教训：旧写法整段包在 if(visible){if(/成功/){…}} 里，一旦 ElMessage 没被抓到，
       // 用例零断言通过、createdTeams 却为空 ⇒ staging 留下孤儿团队 T053团队-248968 无人清理。
@@ -223,28 +273,80 @@ test.describe('06-团队管理', () => {
       }
     })
 
-    test('6.5 删除自己新建的（唯一命名）团队 → 删除成功，列表消失', async ({ page }) => {
+    test('6.5 删除自建团队：带引用被拒（409/10409）→ 解除负责人引用 → 删除成功、列表消失', async ({
+      page,
+    }) => {
       // 前置：6.2 创建团队成功（6.3 可能改了名但 createdTeams 已同步），否则如实失败
       expect(createdTeams.length).toBeGreaterThan(0)
       const targetName = createdTeams[createdTeams.length - 1]
+      const token = await getAuthToken(page)
+      expect(token, '6.5 需登录态 token 才能按契约端点解除负责人引用').toBeTruthy()
+      const teamId = await findTeamIdByName(page, token!, targetName)
+      expect(teamId, `GET /api/v1/teams 应能按名解析出自建团队「${targetName}」`).toBeTruthy()
+
       const rows = tableRows(page)
-      let target: Locator | null = null
-      for (let i = 0; i < await rows.count(); i++) {
-        if ((await rows.nth(i).textContent())?.includes(targetName)) {
-          target = rows.nth(i)
-          break
-        }
-      }
-      expect(target).not.toBeNull()
-      const delBtn = target!.getByRole('button', { name: /删除|移除/ }).first()
-      await expect(delBtn).toBeVisible({ timeout: 5_000 })
+      const targetRow = rows.filter({ hasText: targetName })
+      await expect(targetRow, '目标自建团队应在列表里且只有 1 行').toHaveCount(1)
+
+      // ── ① 正向覆盖（T682 B案新增）：负责人仍在队时删除，必须被拒 ──
+      // 6.2 新建时 pickTeamOwner 选的医生被 CreateTeam 迁进本队 ⇒ 本队天然「被引用」，
+      // 旧写法却直接期望「删除成功」⇒ 与本 spec 自身的 6.2 天然互斥，恒红（T279/T682 同因）。
+      const delBtn = targetRow.first().getByRole('button', { name: /删除|移除/ }).first()
+      await expect(delBtn, '目标行应有「删除」按钮').toBeVisible({ timeout: 5_000 })
       await delBtn.click()
       const msgBox = page.locator('.el-message-box')
-      await expect(msgBox).toBeVisible({ timeout: 10_000 })
+      await expect(msgBox, '点删除应弹确认框').toBeVisible({ timeout: 10_000 })
       await msgBox.getByRole('button', { name: /确定|确认/ }).first().click()
-      // T279 收紧：旧写法「无提示 = 静默通过」，现在必须真删成功 + 行真的消失
+      // 10409 ⇒ errorCopy.ts:42 的用户文案（前端确实在拒绝，而不是静默成功）
+      await expect(adminMessage(page)).toHaveText('当前状态与该操作冲突，请刷新后重试', { timeout: 15_000 })
+      // 同一动作的接口面读数：状态码 409 + 信封码 10409（handler.go:3024 是全线唯一 409 来源）
+      const rejected = await page.request.delete(`/api/v1/teams/${teamId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(rejected.status(), `带引用的 DELETE 应 409（实得 ${rejected.status()}）`).toBe(409)
+      const rejectedBody: any = await rejected.json().catch(() => null)
+      expect(rejectedBody?.code, `拒绝应回信封码 10409（实得 ${rejectedBody?.code}）`).toBe(10409)
+      // 拒绝不能留下副作用：行仍在（confirmDelete 仅在成功时乐观移除）
+      await expect(rows.filter({ hasText: targetName }), '删除被拒后目标行应仍在列表').toHaveCount(1)
+
+      // ── ② 按产品契约解除引用（见 real-helpers.releaseTeamMembers 注释）──
+      const rel = await releaseTeamMembers(page.request, token!, teamId!)
+      expect(rel.listStatus, `GET /teams/${teamId}/members 应 200（实得 ${rel.listStatus}）`).toBe(200)
+      for (const r of rel.results) {
+        expect(
+          r.status,
+          `解除${r.memberType}引用 ${r.memberId} 应 200（实得 ${r.status}）`,
+        ).toBe(200)
+      }
+      expect(
+        rel.doctors + rel.technicians,
+        `解除前至少应有 1 名在册成员（负责人被新建流程迁了队），实得 ${JSON.stringify(rel)}`,
+      ).toBeGreaterThanOrEqual(1)
+
+      // ── ③ 无引用后再删：必须真删成功 + 行真的消失 ──
+      await targetRow.first().getByRole('button', { name: /删除|移除/ }).first().click()
+      await expect(msgBox, '第二次点删除应再次弹确认框').toBeVisible({ timeout: 10_000 })
+      await msgBox.getByRole('button', { name: /确定|确认/ }).first().click()
       await expect(adminMessage(page)).toHaveText('删除成功', { timeout: 15_000 })
-      await expect(tableRows(page).filter({ hasText: targetName })).toHaveCount(0, { timeout: 10_000 })
+      await expect(rows.filter({ hasText: targetName })).toHaveCount(0, { timeout: 10_000 })
+      // 回读接口面（不采信页面）：该 teamId 应已从字典消失
+      const gone = await page.request.get(`/api/v1/teams/${teamId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(gone.status(), `删除后 GET 该团队应 404（实得 ${gone.status()}）`).toBe(404)
+
+      // ── ④ 迁回（T682 B案的「迁回」半边）：把负责人加回他建队前的团队 ──
+      // 只解除不迁回 ⇒ doctor_li 变成「无团队医护」，会连累 2.4（医生 scope 排行 0 行）
+      // 与 29.1（用例前置「doctor_li 应有团队归属」）——14:04 全量复跑实测 teamId=null。
+      const restored = await restoreTeamMembers(page.request, token!, priorDoctorTeams, rel.results)
+      for (const r of restored) {
+        expect(
+          r.status === null || r.status === 200,
+          `迁回${r.memberType} ${r.memberId} → ${r.toTeamId} 应 200 或本无归属（实得 ${r.status}）`,
+        ).toBe(true)
+      }
+      console.log(`[06-迁回] ${JSON.stringify(restored)}`)
+      await expectDoctorsRestored(page.request, token!, restored)
       createdTeams.pop()
     })
   })
