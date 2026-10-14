@@ -23,8 +23,9 @@ export const DEFAULT_THRESHOLDS = {
   WEAR_INTERRUPT_MINUTES: 60,
   /** 传感器标定异常告警阈值 (N)，T203: 2.8 → 0.3（T419 G-6 同上） */
   SENSOR_DRIFT_N: 0.3,
-  /** 空载校准偏差上限 (N)，T203: 0.5 → 0.05 */
-  CALIBRATION_OFFSET_N: 0.05,
+  // T675（Boss 2026-10-12）：CALIBRATION_OFFSET_N（0.05N 空载偏差门禁）已废除——
+  // 校准目的是记录任何稳定偏置并扣除，偏移大不是失败；故障哨兵阈值（恒 0 / >10N）
+  // 落在 apps/tech-miniapp/src/utils/calibration.ts，只提示不拦截。
 } as const
 
 /** Device signature time window (minutes) */
