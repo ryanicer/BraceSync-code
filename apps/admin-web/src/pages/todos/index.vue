@@ -179,7 +179,6 @@
                   class="af-input af-textarea"
                   placeholder="处理意见（不超过 512 字，选填）"
                 />
-                <div class="upload">点击上传附件（选填，最多 20 个）</div>
                 <button
                   type="button"
                   class="submit"
@@ -513,7 +512,6 @@ tr.row-go:hover td { background:#f8fafd; }
 .af-input { width:100%;border:1px solid #dde4ec;border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;box-sizing:border-box; }
 select.af-input { margin-bottom:10px; }
 .af-textarea { min-height:60px;margin-bottom:10px;resize:vertical; }
-.upload { border:1px dashed #c8d4e0;border-radius:8px;padding:11px;text-align:center;font-size:12px;color:#889;margin-bottom:10px;background:#fafcfe;cursor:pointer; }
 .submit { border:none;border-radius:8px;padding:9px 24px;font-size:13px;font-weight:600;color:#fff;background:#1a6db5;cursor:pointer; }
 .submit:disabled { opacity:.6;cursor:not-allowed; }
 .done-note { font-size:13px;color:#0f8a5f;background:#e8f5e9;border:1px solid #bfe8cf;border-radius:8px;padding:11px 15px;display:inline-block; }

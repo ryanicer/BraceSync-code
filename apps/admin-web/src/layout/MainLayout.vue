@@ -22,8 +22,12 @@
       >
         <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
           <span class="menu-icon">{{ item.icon }}</span>
-          <template #title>{{ item.title }}</template>
-          <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
+          <template #title>
+            <span class="menu-title">
+              <span class="menu-label">{{ item.title }}</span>
+              <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
+            </span>
+          </template>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -50,8 +54,12 @@
         >
           <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
             <span class="menu-icon">{{ item.icon }}</span>
-            <template #title>{{ item.title }}</template>
-            <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
+            <template #title>
+              <span class="menu-title">
+                <span class="menu-label">{{ item.title }}</span>
+                <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
+              </span>
+            </template>
           </el-menu-item>
         </el-menu>
       </div>
@@ -332,6 +340,22 @@ async function submitPwdChange() {
 }
 .menu-icon {
   margin-right: 10px;
+}
+/* T689 角标须落在行尾（设计稿 <a> 是 flex 行、badge 末位 margin-left:auto 推右）。
+   EP el-menu-item 里 #title 插槽晚于默认插槽渲染，故把「文字+角标」并入 #title 的一层 flex，
+   flex:1 占满图标右侧剩余宽，space-between 把角标推到行尾。 */
+.menu-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* T679 侧栏「我的待办」红角标（设计稿 医护待办列表.html .menu-badge 原样） */
 .menu-badge {
