@@ -296,8 +296,8 @@ test.describe('解绑微信', () => {
 // 为什么这三条落 Playwright 而不是 vitest：口令只出现一次、关掉就再也取不回来，
 // 「关窗后页面上不得残留口令」这一格量的是真实 DOM 的销毁，happy-dom 里 EP 的
 // MessageBox 生命周期与真实浏览器不同形（本文件 T432 段头已记过一次同类坑）。
-// 非 admin 那一腿不在这里测：ROLE_PAGE_MATRIX 实测 admin 16 页含 /patients、
-// doctor 7 页与 cs 1 页都不含 ⇒ 路由守卫根本不落该页，比「按钮隐藏」更强；
+// 非 admin 那一腿不在这里测：ROLE_PAGE_MATRIX 实测 admin 17 页含 /patients、
+// doctor 8 页与 cs 1 页都不含 ⇒ 路由守卫根本不落该页，比「按钮隐藏」更强；
 // 闸门真值表与 rbac.go 的七张矩阵对拍在 test/patient-password-t500.spec.ts。
 // ─────────────────────────────────────────────────────────────
 

@@ -156,16 +156,19 @@ func TestITT262PresetRolesCollapsedToThree(t *testing.T) {
 	//   「补了该补的两键、没顺手改动别的角色、也没多给 patients / teams / devices 等页」。
 	// T372：两角色各再补 abnormal_report（ADMIN 15→16、DOCTOR 6→7，迁移 000029）——
 	//   Boss 2026-09-24 裁定 (a)「异常报告按设计稿拆独立页」，PRD §7D.11 第 4 行 admin ✅ / doctor ✅。
+	// T679：两角色各再补 todo（ADMIN 16→17、DOCTOR 7→8，迁移 000038）——
+	//   Boss 2026-10-11 裁定 A 案「医护待办功能全栈单卡」，侧栏第 2 页 /todos 入 PAGE_MODULES，
+	//   PRD §7D.16 admin ✅ / doctor ✅（仅本团队患者，范围由后端团队过滤负责）。
 	for _, want := range []struct {
 		id, name, scope string
 		modules         []string
 	}{
 		{"ROLE_ADMIN", "运营管理员", "all", []string{
-			"dashboard", "realtime", "patients", "abnormal_report", "teams", "devices", "alerts",
+			"dashboard", "todo", "realtime", "patients", "abnormal_report", "teams", "devices", "alerts",
 			"comm", "orthosis", "install", "review", "review_tpl", "tech",
 			"doctor_acct", "perm", "config",
 		}},
-		{"ROLE_DOCTOR", "医护", "team", []string{"dashboard", "realtime", "abnormal_report", "alerts", "orthosis", "review", "review_tpl"}},
+		{"ROLE_DOCTOR", "医护", "team", []string{"dashboard", "todo", "realtime", "abnormal_report", "alerts", "orthosis", "review", "review_tpl"}},
 		{"ROLE_CS", "客服", "all_patients", []string{"comm"}},
 	} {
 		row, ok := byID[want.id]

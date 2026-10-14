@@ -43,11 +43,11 @@ export function mockRoleTemplates(): RoleTemplateItem[] {
   // T419 R-1：本列表原为 5 条 = 1 角色 + 4 职称（主任医师/康复师/护士）。后端自 Boss 2026-09-20 裁定
   // （T277 收口）只有 3 条 = 三个预置登录角色，设计稿 权限控制.html:229 下拉同为 3 条 ——
   // 职称走 doctors.title、不是授权维度 ⇒ mock 与真源对齐，旧职称键随之删除（全仓无其他引用）。
-  // modules 词表来源 apps/admin-web/src/router/permissions.ts PAGE_MODULES（16 键），逐值抄
+  // modules 词表来源 apps/admin-web/src/router/permissions.ts PAGE_MODULES（17 键，T679 起含 todo），逐值抄
   // services/user-service/internal/handler/roles_t252.go 的 roleTemplates，不建第二套口径。
   return [
-    { key: 'admin', name: '运营管理员', description: '系统全部权限', permissions: { scope: 'all', modules: ['dashboard', 'realtime', 'patients', 'abnormal_report', 'teams', 'devices', 'alerts', 'comm', 'orthosis', 'install', 'review', 'review_tpl', 'tech', 'doctor_acct', 'perm', 'config'] } },
-    { key: 'doctor', name: '医护', description: '患者数据+告警处理', permissions: { scope: 'team', modules: ['dashboard', 'realtime', 'patients', 'alerts', 'orthosis'] } },
+    { key: 'admin', name: '运营管理员', description: '系统全部权限', permissions: { scope: 'all', modules: ['dashboard', 'todo', 'realtime', 'patients', 'abnormal_report', 'teams', 'devices', 'alerts', 'comm', 'orthosis', 'install', 'review', 'review_tpl', 'tech', 'doctor_acct', 'perm', 'config'] } },
+    { key: 'doctor', name: '医护', description: '患者数据+告警处理', permissions: { scope: 'team', modules: ['dashboard', 'todo', 'realtime', 'patients', 'alerts', 'orthosis'] } },
     { key: 'cs', name: '客服', description: '患者沟通模块，全量患者', permissions: { scope: 'all_patients', modules: ['comm'] } },
   ]
 }
