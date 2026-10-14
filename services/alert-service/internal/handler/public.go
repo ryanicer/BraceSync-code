@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -22,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/bracesync/bracesync/services/alert-service/internal/flowstarter"
 	"github.com/bracesync/bracesync/services/alert-service/internal/repo"
 )
 
@@ -34,6 +36,9 @@ const (
 	codeNotFound  = 40404 // HTTP 404 资源不存在
 	codeForbidden = 40403 // HTTP 403 角色无权 / 越界读
 	codeConflict  = 409   // T257 2.7：已处理的告警不允许重新进入「处理中」
+	// codeFlowRouteConflict 677：有绑定流程类型的告警，快处直改被拒、强制转流程（HTTP 409）。
+	// 与 codeConflict（409 已办结）分码：用户面文案不同，前端可按码区分提示。
+	codeFlowRouteConflict = 40409
 )
 
 // 身份头（gateway JWT 鉴权后注入）
@@ -257,6 +262,11 @@ func (h *Handler) processAlert(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// 677 快处路由门先于节点执法：有绑定类型一律转流程（409），不给旧快处直改开口子；
+	// direct / 已 processed 才继续走 T668 执法与落库（无绑定保持现状）。
+	if !h.enforceQuickRoute(w, r, alertID) {
+		return
+	}
 	if !h.enforceProcessGuard(w, r, alertID) {
 		return
 	}
@@ -377,6 +387,29 @@ func (h *Handler) enforceProcessGuard(w http.ResponseWriter, r *http.Request, al
 			reason = "流程进行中，当前节点未授权该账号处理"
 		}
 		h.reject(w, r, http.StatusForbidden, codeForbidden, reason)
+		return false
+	}
+	return true
+}
+
+// enforceQuickRoute 677：快处（process）落库前的路由一问。
+//   - route=flow 且未 processed → 409 强制转流程（有绑定类型不再允许快处直改）；
+//   - route=direct → 放行（无绑定/不可绑定类型保持现状，完全收口留 T672）；
+//   - alreadyProcessed → 放行，走原幂等直通（T028 幂等契约不破）；
+//   - 依赖故障 → 503 fail-closed（与 enforceProcessGuard 同口径，不许旁路回旧快处）。
+//
+// 返回 false 时响应已写出，调用方直接 return。
+func (h *Handler) enforceQuickRoute(w http.ResponseWriter, r *http.Request, alertID int64) bool {
+	d, err := h.quickRouter.QuickRoute(r.Context(), alertID)
+	if err != nil {
+		h.log.Error().Err(err).Int64("alert_id", alertID).Msg("flow quick-route check failed")
+		h.reject(w, r, http.StatusServiceUnavailable, codeInternalError,
+			"流程路由校验暂不可用，请稍后重试")
+		return false
+	}
+	if d.Route == flowstarter.RouteFlow && !d.AlreadyProcessed {
+		h.reject(w, r, http.StatusConflict, codeFlowRouteConflict,
+			fmt.Sprintf("alert %d routed to flow instance %s; quick process refused", alertID, d.InstanceID))
 		return false
 	}
 	return true

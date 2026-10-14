@@ -43,11 +43,12 @@ const FallbackUserText = "服务暂时不可用，请稍后重试；若持续失
 
 // userTextByCode 与 reject 的 code 入参同源（本域包内常量）。
 var userTextByCode = map[int]string{
-	codeInvalidParam:  "告警查询条件有误，请调整筛选条件后重试",
-	codeInternalError: FallbackUserText,
-	codeNotFound:      "未找到该条告警，请刷新告警列表后重试",
-	codeForbidden:     "没有权限查看该患者的告警，请联系管理员确认账号权限",
-	codeConflict:      "该告警已处理完成，无需重复处理",
+	codeInvalidParam:      "告警查询条件有误，请调整筛选条件后重试",
+	codeInternalError:     FallbackUserText,
+	codeNotFound:          "未找到该条告警，请刷新告警列表后重试",
+	codeForbidden:         "没有权限查看该患者的告警，请联系管理员确认账号权限",
+	codeConflict:          "该告警已处理完成，无需重复处理",
+	codeFlowRouteConflict: "该告警已绑定处理流程，请从流程节点完成处置，无需在此直接标记",
 }
 
 // userText 取该错误码的用户面中文文案；查不到码走兜底，绝不返回技术文本。

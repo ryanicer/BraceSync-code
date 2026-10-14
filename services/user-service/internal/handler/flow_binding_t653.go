@@ -10,6 +10,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -246,36 +247,13 @@ func (h *Handler) autoStartFlow(c *gin.Context) {
 		return
 	}
 
-	tpl, err := h.store.GetFlowTemplate(ctx, binding.TemplateID)
+	id, started, err := h.ensureFlowInstanceForBinding(ctx, binding, alertID)
 	if err != nil {
-		// 绑定指向的模板被删（FK 正常应拦住；此处为双保险）= 数据不一致，按未绑定降级
-		if errors.Is(err, repo.ErrFlowTemplateNotFound) {
+		switch {
+		case errors.Is(err, repo.ErrFlowTemplateNotFound):
+			// 绑定指向的模板被删（FK 正常应拦住；此处为双保险）= 数据不一致，按未绑定降级
 			c.JSON(http.StatusOK, jsonResp{Code: model.CodeOK, Message: "success",
 				Data: model.AutoStartFlowResponse{Started: false, Reason: "unbound"}})
-		} else {
-			c.JSON(http.StatusInternalServerError, jsonResp{Code: model.CodeInternal, Message: "get template failed", Data: nil})
-		}
-		return
-	}
-	g, appErr := parseFlowGraph(tpl.Nodes, tpl.Edges)
-	if appErr != nil {
-		c.JSON(http.StatusInternalServerError, jsonResp{Code: model.CodeInternal, Message: "invalid template graph", Data: nil})
-		return
-	}
-	entries := make([]string, 0, len(g.nodeIDs))
-	for _, id := range g.nodeIDs {
-		if g.entryNodeID[id] {
-			entries = append(entries, id)
-		}
-	}
-	row, err := h.store.CreateFlowInstance(ctx, binding.TemplateID, alertID, g.nodeIDs, entries)
-	if err != nil {
-		var exists *repo.ErrFlowInstanceExists
-		switch {
-		case errors.As(err, &exists):
-			id := exists.Existing.InstanceID
-			c.JSON(http.StatusOK, jsonResp{Code: model.CodeOK, Message: "success",
-				Data: model.AutoStartFlowResponse{Started: false, Reason: "exists", InstanceID: &id}})
 		case errors.Is(err, repo.ErrFlowAlertNotFound):
 			c.JSON(http.StatusBadRequest, jsonResp{Code: model.CodeInvalidParam, Message: "alert not found", Data: nil})
 		default:
@@ -283,7 +261,42 @@ func (h *Handler) autoStartFlow(c *gin.Context) {
 		}
 		return
 	}
-	id := row.InstanceID
+	if !started {
+		c.JSON(http.StatusOK, jsonResp{Code: model.CodeOK, Message: "success",
+			Data: model.AutoStartFlowResponse{Started: false, Reason: "exists", InstanceID: &id}})
+		return
+	}
 	c.JSON(http.StatusOK, jsonResp{Code: model.CodeOK, Message: "success",
 		Data: model.AutoStartFlowResponse{Started: true, InstanceID: &id}})
+}
+
+// ensureFlowInstanceForBinding 绑定 → 模板 → 图 → 建实例（一告警一实例，已有回既有 id）。
+// 677 quick-route 与 autoStartFlow 共用此段，防止两处建实例逻辑漂移。
+// 返回 id=实例 id（新建或既有）、started=本次是否新建；err ∈
+// ErrFlowTemplateNotFound（模板被删，调用方按未绑定降级）/ ErrFlowAlertNotFound /
+// *model.AppError（模板图非法）/ 其他内部错（已含 23505 → 存在实例的幂等吞掉）。
+func (h *Handler) ensureFlowInstanceForBinding(ctx context.Context, binding *repo.FlowTypeBindingRow, alertID int64) (id string, started bool, err error) {
+	tpl, err := h.store.GetFlowTemplate(ctx, binding.TemplateID)
+	if err != nil {
+		return "", false, err
+	}
+	g, appErr := parseFlowGraph(tpl.Nodes, tpl.Edges)
+	if appErr != nil {
+		return "", false, appErr
+	}
+	entries := make([]string, 0, len(g.nodeIDs))
+	for _, nid := range g.nodeIDs {
+		if g.entryNodeID[nid] {
+			entries = append(entries, nid)
+		}
+	}
+	row, err := h.store.CreateFlowInstance(ctx, binding.TemplateID, alertID, g.nodeIDs, entries)
+	if err != nil {
+		var exists *repo.ErrFlowInstanceExists
+		if errors.As(err, &exists) {
+			return exists.Existing.InstanceID, false, nil
+		}
+		return "", false, err
+	}
+	return row.InstanceID, true, nil
 }

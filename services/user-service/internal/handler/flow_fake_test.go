@@ -63,6 +63,14 @@ type fakeFlowState struct {
 	failReplace   bool
 	replacedItems []repo.FlowTypeBindingSet
 
+	// 677 快处路由：AlertRouteInfo 替身（零值 = 告警不存在；routeErr 注入读失败）。
+	routeTypeName string
+	routeStatus   string
+	routeExists   bool
+	routeErr      error
+	routeAlertID  int64 // 最近一次入参记录
+	routeHitCount int
+
 	// T681 夹具清理：cleanupRes/cleanupErr 为返回值注入，lastCleanup* 记录入参。
 	cleanupRes        *repo.FlowFixtureCleanupResult
 	cleanupErr        error
@@ -72,6 +80,13 @@ type fakeFlowState struct {
 	todos          []repo.FlowTodoRow
 	todosErr       error
 	lastTodoFilter repo.FlowTodoFilter
+}
+
+// AlertRouteInfo 677 快处路由判定的跨 owner 只读替身。
+func (f *fakeStore) AlertRouteInfo(_ context.Context, alertID int64) (string, string, bool, error) {
+	f.flow.routeAlertID = alertID
+	f.flow.routeHitCount++
+	return f.flow.routeTypeName, f.flow.routeStatus, f.flow.routeExists, f.flow.routeErr
 }
 
 func (f *fakeStore) ListFlowTemplates(_ context.Context, _ string, _, _ int) ([]repo.FlowTemplateRow, int64, error) {

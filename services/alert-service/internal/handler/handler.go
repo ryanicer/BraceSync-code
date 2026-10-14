@@ -66,7 +66,9 @@ type Handler struct {
 	flow     flowstarter.Starter // T653：告警入库后按绑定自动建实例（SetFlowStarter 注入，默认 Noop）
 	// processGuard T668：告警处理（process/processing）前的节点执法一问（默认 NoopGuard = 不执法）
 	processGuard flowstarter.Guard
-	public       PublicAlertStore // T028 公开端点数据源（SetPublicStore 注入，可空）
+	// quickRouter 677：快处（process）落库前的路由一问（默认 NoopRouter = 保持直改现状）
+	quickRouter flowstarter.Router
+	public      PublicAlertStore // T028 公开端点数据源（SetPublicStore 注入，可空）
 	// wearingThresholdN 内联评估佩戴判定阈值（T661 H 项）：由 sys_configs
 	// wearing_pressure_threshold 热更新注入；零值走 consumer.DefaultWearingThresholdN 兜底。
 	wearingThresholdN float64
@@ -79,7 +81,8 @@ func New(eval *engine.RuleEvaluator, alerts consumer.AlertCreator, notifier cons
 		notifier = consumer.NoopNotifier{}
 	}
 	return &Handler{eval: eval, alerts: alerts, notifier: notifier,
-		flow: flowstarter.Noop{}, processGuard: flowstarter.NoopGuard{}, log: zerolog.Nop()}
+		flow: flowstarter.Noop{}, processGuard: flowstarter.NoopGuard{},
+		quickRouter: flowstarter.NoopRouter{}, log: zerolog.Nop()}
 }
 
 // SetProcessGuard T668：注入告警处理节点执法守卫（user-service /internal/flow/process-guard）。
@@ -87,6 +90,14 @@ func New(eval *engine.RuleEvaluator, alerts consumer.AlertCreator, notifier cons
 func (h *Handler) SetProcessGuard(g flowstarter.Guard) {
 	if g != nil {
 		h.processGuard = g
+	}
+}
+
+// SetQuickRouter 677：注入快处路由一问客户端（user-service /internal/flow/quick-route）。
+// 不注入时保持 NoopRouter（无流程服务的环境快处直改保持现状）。
+func (h *Handler) SetQuickRouter(r flowstarter.Router) {
+	if r != nil {
+		h.quickRouter = r
 	}
 }
 
