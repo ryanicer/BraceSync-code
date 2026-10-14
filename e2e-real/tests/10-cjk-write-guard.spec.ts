@@ -1,6 +1,12 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 // T506：口令经凭据门取数；登录 401 时把失败信息定性为凭据漂移，而不是留给下游断言差异
-import { credentialDriftMessage, realPassword } from '../real-helpers'
+import {
+  credentialDriftMessage,
+  realPassword,
+  releaseTeamMembers,
+  restoreTeamMembers,
+  expectDoctorsRestored,
+} from '../real-helpers'
 
 /**
  * T334 · 中文写入字节面防回归（真实模式 / staging）
@@ -66,6 +72,8 @@ const replCount = (s: string) => s.split(REPL).length - 1
 test.describe('10-中文写入字节面防回归', () => {
   let token = ''
   let createdTeamId: string | null = null
+  // T682 迁回基数：建团队前负责人原本的归属（doctorId → teamId | null），见 real-helpers 说明
+  let priorDoctorTeams: Record<string, string | null> = {}
 
   test.beforeEach(async ({ request }) => {
     token = await realToken(request)
@@ -75,16 +83,43 @@ test.describe('10-中文写入字节面防回归', () => {
   test.afterEach(async ({ request }) => {
     if (!token) return
     const headers = { Authorization: `Bearer ${token}` }
+    // T682 B案：DELETE 前必须先解除负责人引用——POST /teams 会把 leader 迁进新队
+    // （repo/pg.go:1874），DeleteTeam 见引用即拒（handler.go:3024 ⇒ 409/10409）。
+    // 旧写法「delete 失败就 .catch(()=>null) 吞掉」⇒ 每轮红都留一行 T334CJK-* 孤儿
+    //（本次开工实测：staging 残留 TEAM2622059968 / T334CJK-785368康复医学科门诊复查）。
+    // 解除后必须「迁回」原团队，否则把 doctor_li 留在无队状态（2.4/29.1 会连累判红）。
+    const purge = async (teamId: string) => {
+      const rel = await releaseTeamMembers(request, token, teamId)
+      const res = await request.delete(`/api/v1/teams/${teamId}`, { headers }).catch(() => null)
+      if (!res || res.status() !== 200) {
+        console.log(`[10-cleanup] 删除自建团队 ${teamId} 未 200：status=${res?.status()}`)
+      }
+      const restored = await restoreTeamMembers(request, token, priorDoctorTeams, rel.results)
+      for (const r of restored) {
+        if (r.status !== null && r.status !== 200) {
+          console.log(`[10-cleanup] 迁回 ${r.memberId} → ${r.toTeamId} 未 200：status=${r.status}`)
+        }
+      }
+    }
     if (createdTeamId) {
-      await request.delete(`/api/v1/teams/${createdTeamId}`, { headers }).catch(() => null)
+      await purge(createdTeamId)
       createdTeamId = null
     }
     const rows = await request.get('/api/v1/teams', { headers }).then((r) => (r.ok() ? r.json() : null)).catch(() => null)
     for (const r of rows?.data ?? []) {
-      if (String(r.name ?? '').includes(NAME_PREFIX)) {
-        await request.delete(`/api/v1/teams/${r.teamId}`, { headers }).catch(() => null)
-      }
+      if (String(r.name ?? '').includes(NAME_PREFIX)) await purge(String(r.teamId))
     }
+    // 清扫自证（T682）：兜底跑完必须回读「前缀残留 0 行」——上一版这里只删不证，
+    // 于是 409 静默失败，把孤儿留在 staging 连累了后面每一轮的残留计数。
+    const residue = await request
+      .get('/api/v1/teams', { headers })
+      .then((r) => (r.ok() ? r.json() : null))
+      .catch(() => null)
+    const left = (residue?.data ?? []).filter((r: any) => String(r.name ?? '').includes(NAME_PREFIX))
+    expect(
+      left.map((r: any) => `${r.teamId}/${r.name}`),
+      'afterEach 清扫后 T334CJK-* 残留应为 0 行（非 0 ⇒ 解除引用或 DELETE 未生效，须报红）',
+    ).toEqual([])
   })
 
   test('10.1 写入中文 → 读回核字节面 → 删除还原到原点', async ({ request }) => {
@@ -100,6 +135,10 @@ test.describe('10-中文写入字节面防回归', () => {
     expect(doctorRows.length, 'staging 应有医生可作负责人').toBeGreaterThan(0)
     const leaderId = String(doctorRows[0].doctorId ?? doctorRows[0].id ?? '')
     expect(leaderId.length, '医生 doctorId 非空').toBeGreaterThan(0)
+    // T682 迁回基数：从这同一次 GET /doctors 读数里取每位医护的当前归属（建队后就被覆写了）
+    priorDoctorTeams = Object.fromEntries(
+      doctorRows.map((r: any) => [String(r.doctorId ?? r.id ?? ''), r.teamId ?? null]),
+    )
 
     // ── 2) 唯一命名（ASCII 前缀保证即使中文被吞也能定位、能删干净）+ 显式 UTF-8 字节 body 写入
     const ts = Date.now().toString().slice(-6)
@@ -144,15 +183,44 @@ test.describe('10-中文写入字节面防回归', () => {
       ).toBe(true)
     }
 
-    // ── 4) 自带还原：删掉自建行，确认前缀残留 0 行、总数回到原点
-    const del = await request.delete(`/api/v1/teams/${createdTeamId}`, {
+    // ── 4) 自带还原：先解除负责人引用（T682 B案），再删自建行，确认自建行消失、seed 未被改动
+    // 不解除就 DELETE ⇒ 恒 409（T682 修前实测读数：Expected 200 / Received 409，spec:151）。
+    const selfId = createdTeamId
+    const rel = await releaseTeamMembers(request, token, selfId)
+    expect(rel.listStatus, `GET /teams/${selfId}/members 应 200（实得 ${rel.listStatus}）`).toBe(200)
+    for (const r of rel.results) {
+      expect(r.status, `解除${r.memberType}引用 ${r.memberId} 应 200（实得 ${r.status}）`).toBe(200)
+    }
+    const del = await request.delete(`/api/v1/teams/${selfId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-    expect(del.status(), 'DELETE 自建团队应 200').toBe(200)
+    expect(del.status(), `解除引用后 DELETE 自建团队应 200，实得 ${del.status()}`).toBe(200)
     createdTeamId = null
 
+    // 迁回 + 回读（T682）：负责人被 POST /teams 迁进来、又被解除置 NULL，
+    // 不还回去就是「把 doctor_li 测成无团队医护」⇒ 2.4/29.1 连红。
+    const restored = await restoreTeamMembers(request, token, priorDoctorTeams, rel.results)
+    for (const r of restored) {
+      expect(
+        r.status === null || r.status === 200,
+        `迁回${r.memberType} ${r.memberId} → ${r.toTeamId} 应 200 或本无归属（实得 ${r.status}）`,
+      ).toBe(true)
+    }
+    await expectDoctorsRestored(request, token, restored)
+
+    // 反证走接口面：硬删后详情应 404，列表里也不该再有这一行
+    const gone = await request.get(`/api/v1/teams/${selfId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    expect(gone.status(), `删除后 GET /teams/${selfId} 应 404，实得 ${gone.status()}`).toBe(404)
     const after = await teamRows(request, token)
-    expect(after.filter((r) => String(r.name ?? '').includes(NAME_PREFIX)).length, 'T334CJK-* 残留应为 0 行').toBe(0)
-    expect(after.length, '团队总数应回到非本用例原点（seed 未被改动）').toBe(seedCount)
+    expect(after.filter((r) => String(r.teamId) === selfId).length, `自建团队 ${selfId} 应从列表消失`).toBe(0)
+    // T682 口径修正：残留判据收窄到「我这一行」。全前缀计数会把上一轮红遗留的 T334CJK-* 孤儿
+    // 算成我的红（13:56 实跑就是栽在这：残 1 行 = 上午那轮 409 留下的 TEAM2622059968），
+    // 而孤儿归 afterEach 的前缀兜底清扫负责，并由它自证归零（见下方 afterEach）。
+    expect(
+      after.filter((r) => !String(r.name ?? '').includes(NAME_PREFIX)).length,
+      '非本前缀团队总数应回到原点（seed 未被改动）',
+    ).toBe(seedCount)
   })
 })
