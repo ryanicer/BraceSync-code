@@ -742,4 +742,7 @@ type Store interface {
 	ListFlowTypeBindings(ctx context.Context) ([]FlowTypeBindingRow, error)
 	GetFlowTypeBinding(ctx context.Context, alertType string) (*FlowTypeBindingRow, error)
 	ReplaceFlowTypeBindings(ctx context.Context, items []FlowTypeBindingSet) error
+
+	// T681 E2E 夹具清理：按前缀 + 时间窗单事务回收夹具（前后两拍读数随结果返回）。
+	CleanupFlowFixtures(ctx context.Context, templatePrefix string, createdAfter time.Time) (*FlowFixtureCleanupResult, error)
 }

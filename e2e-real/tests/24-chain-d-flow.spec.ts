@@ -71,6 +71,11 @@ if (/api\.hbksd\.com\.cn/.test(ENTRY)) { // 49.235.137.217 自 2026-10-11 起为
 /** 造数名前缀（与真实数据区分；派发单 §五 的 T053 口径） */
 const FLOW_TPL_PREFIX = 'T053流程'
 /**
+ * T681 夹具清理的时间窗下界：本文件加载（≈本 run 起跑）时刻，前留 30s 时钟偏差余量。
+ * 只清该时刻之后创建/启动的 T053 夹具，避免误伤并发 run（PR 档 / dispatch 档同跑）正在用的夹具。
+ */
+const RUN_STARTED_AT = new Date(Date.now() - 30_000).toISOString()
+/**
  * T647 丙案：24.0 前置自清的单轮颗数上限。这枚数还没有现读背书（红发都停在断言那一行之前，
  * 名册颗数的一手读数取不到），所以首拍把在册颗数打进 summary 交接班席校准；超上限一律不改数据、照旧抛停手句。
  */
@@ -224,6 +229,47 @@ function appendJobSummary(text: string): void {
     appendFileSync(file, `- ${text}\n`, 'utf8')
   } catch (e) {
     console.log(`[t574-chain-d][快照] 写 job summary 失败（不影响用例结论）：${String(e)}`)
+  }
+}
+
+/**
+ * T681 收尾钩子：调用 admin 清理端点，按「前缀 + 本 run 起跑时间窗」回收本 run 造的 T053 夹具
+ * （实例 + 模板）——补上 24.7 钉在证据面上的「实例无删除端点 / 被引用模板 409」两条残留通路。
+ * 失败只登记不抛：这一格是池守恒的兜底，不是被测行为，不改变 afterAll 的主结论。
+ * 端点契约：POST /api/v1/admin/flow/fixtures/cleanup（白名单前缀 + createdAfter 必填 + 生产拒 + 幂等）。
+ */
+async function cleanupFlowFixtures(page: Page): Promise<void> {
+  try {
+    const token = (await getAuthToken(page)) ?? ''
+    if (!token) {
+      console.log('[t574-chain-d][T681清理] 管理令牌取不到 ⇒ 跳过夹具清理（不阻塞主结论）')
+      return
+    }
+    const res = await callApi(page, 'POST', '/api/v1/admin/flow/fixtures/cleanup', {
+      token,
+      body: { templatePrefix: FLOW_TPL_PREFIX, createdAfter: RUN_STARTED_AT },
+    })
+    if (res.code !== 0) {
+      console.log(
+        `[t574-chain-d][T681清理] 端点回非 0（不阻塞主结论）：HTTP=${res.status} code=${String(res.code)} message=${res.message}`,
+      )
+      appendJobSummary(`T681 夹具清理：未成功 HTTP=${res.status} code=${String(res.code)} message=${res.message}`)
+      return
+    }
+    const d = res.data as {
+      deletedInstances: number
+      deletedTemplates: number
+      before: { freePool: number; templateCount: number; templateCountTotal: number; instanceCount: number }
+      after: { freePool: number; templateCount: number; templateCountTotal: number; instanceCount: number }
+    }
+    console.log(
+      `[t574-chain-d][T681清理] 删实例=${d.deletedInstances} 删模板=${d.deletedTemplates}｜free ${d.before.freePool}→${d.after.freePool}｜前缀模板 ${d.before.templateCount}→${d.after.templateCount}｜全量模板 ${d.before.templateCountTotal}→${d.after.templateCountTotal}｜前缀实例 ${d.before.instanceCount}→${d.after.instanceCount}`,
+    )
+    appendJobSummary(
+      `T681 夹具清理：前缀=${FLOW_TPL_PREFIX} createdAfter=${RUN_STARTED_AT}｜删实例=${d.deletedInstances} 删模板=${d.deletedTemplates}｜free ${d.before.freePool}→${d.after.freePool}｜前缀模板 ${d.before.templateCount}→${d.after.templateCount}｜全量模板 ${d.before.templateCountTotal}→${d.after.templateCountTotal}`,
+    )
+  } catch (e) {
+    console.log(`[t574-chain-d][T681清理] 钩子异常（不阻塞主结论）：${e instanceof Error ? e.message : String(e)}`)
   }
 }
 
@@ -1215,6 +1261,9 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
         ).toBe(baselineTplTotal + refusedInUse.length)
       }
     } finally {
+      // T681 收尾钩子：无论上面的守恒断言是否通过，都尝试清理本 run 造的 T053 夹具
+      // （实例 + 模板）——补上 24.7 钉在证据面上的两条残留通路。失败只登记不抛。
+      await cleanupFlowFixtures(page)
       await page.close()
     }
   })

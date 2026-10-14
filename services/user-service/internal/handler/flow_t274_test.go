@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -662,6 +663,136 @@ func TestT274_ParseFlowGraph(t *testing.T) {
 	empty, appErr := parseFlowGraph(nil, nil)
 	require.Nil(t, appErr)
 	assert.Empty(t, empty.nodeIDs)
+}
+
+// ─────────────────────────────────────────────────────────────
+// T681 E2E 夹具清理端点（三重护栏：白名单前缀 + createdAfter 必填 + 生产域名拒；读数回传 + 审计）
+// ─────────────────────────────────────────────────────────────
+
+const cleanupFlowFixturesPath = "/api/v1/admin/flow/fixtures/cleanup"
+
+func fixCleanupResult() *repo.FlowFixtureCleanupResult {
+	return &repo.FlowFixtureCleanupResult{
+		TemplatePrefix: "T053流程",
+		CreatedAfter:   time.Date(2026, 10, 13, 1, 0, 0, 0, time.UTC),
+		Before: repo.FlowFixtureSnapshot{
+			FreePool: 40, TemplateCount: 12, TemplateCountTotal: 118, InstanceCount: 12,
+		},
+		After: repo.FlowFixtureSnapshot{
+			FreePool: 52, TemplateCount: 0, TemplateCountTotal: 106, InstanceCount: 0,
+		},
+		DeletedInstances: 12,
+		DeletedTemplates: 12,
+	}
+}
+
+func TestT681_CleanupFlowFixtures_OK(t *testing.T) {
+	e := flowEnv(t)
+	e.store.flow.cleanupRes = fixCleanupResult()
+	w, resp := e.do(http.MethodPost, cleanupFlowFixturesPath,
+		map[string]string{"templatePrefix": "T053流程", "createdAfter": "2026-10-13T01:00:00Z"},
+		hdr(flowRoleAdmin, "A0001"))
+	require.Equal(t, http.StatusOK, w.Code, resp.Message)
+
+	assert.Equal(t, "T053流程", e.store.flow.lastCleanupPrefix)
+	assert.Equal(t, time.Date(2026, 10, 13, 1, 0, 0, 0, time.UTC), e.store.flow.lastCleanupAfter, "createdAfter 原样透传 repo")
+
+	var dto model.CleanupFlowFixturesResponse
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Equal(t, int64(12), dto.DeletedInstances)
+	assert.Equal(t, int64(12), dto.DeletedTemplates)
+	assert.Equal(t, "2026-10-13T01:00:00Z", dto.CreatedAfter)
+	assert.Equal(t, int64(40), dto.Before.FreePool)
+	assert.Equal(t, int64(52), dto.After.FreePool)
+	assert.Equal(t, int64(118), dto.Before.TemplateCountTotal)
+	assert.Equal(t, int64(106), dto.After.TemplateCountTotal)
+	assert.Equal(t, int64(12), dto.Before.InstanceCount)
+	assert.Equal(t, int64(0), dto.After.InstanceCount)
+
+	require.Len(t, e.store.auditRows, 1)
+	assert.Equal(t, "data_modify", e.store.auditRows[0].Action)
+	assert.Equal(t, "flow_fixture", e.store.auditRows[0].TargetType)
+	assert.Equal(t, "T053流程", e.store.auditRows[0].TargetID)
+	assert.Contains(t, e.store.auditRows[0].Description, "删实例=12 删模板=12")
+}
+
+// 空窗口幂等：没有可删的也成功，free 前后不变（收尾钩子可无脑调用）
+func TestT681_CleanupFlowFixtures_EmptyWindowIdempotent(t *testing.T) {
+	e := flowEnv(t)
+	e.store.flow.cleanupRes = &repo.FlowFixtureCleanupResult{
+		TemplatePrefix: "T053流程",
+		CreatedAfter:   time.Date(2026, 10, 13, 1, 0, 0, 0, time.UTC),
+		Before:         repo.FlowFixtureSnapshot{FreePool: 52, TemplateCountTotal: 106},
+		After:          repo.FlowFixtureSnapshot{FreePool: 52, TemplateCountTotal: 106},
+	}
+	w, resp := e.do(http.MethodPost, cleanupFlowFixturesPath,
+		map[string]string{"templatePrefix": "T053流程", "createdAfter": "2026-10-13T01:00:00Z"},
+		hdr(flowRoleAdmin, "A0001"))
+	require.Equal(t, http.StatusOK, w.Code, resp.Message)
+
+	var dto model.CleanupFlowFixturesResponse
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Equal(t, int64(0), dto.DeletedInstances)
+	assert.Equal(t, int64(0), dto.DeletedTemplates)
+	assert.Equal(t, dto.Before.FreePool, dto.After.FreePool, "空窗口：free 不变")
+}
+
+func TestT681_CleanupFlowFixtures_NonAdmin403(t *testing.T) {
+	e := flowEnv(t)
+	w, _ := e.do(http.MethodPost, cleanupFlowFixturesPath,
+		map[string]string{"templatePrefix": "T053流程", "createdAfter": "2026-10-13T01:00:00Z"},
+		hdr("ROLE_DOCTOR", "D0001"))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Empty(t, e.store.flow.lastCleanupPrefix, "非 admin 不得触达清理")
+	assert.Empty(t, e.store.auditRows)
+}
+
+func TestT681_CleanupFlowFixtures_ProdHost403(t *testing.T) {
+	// 生产拒靠请求 Host 命中生产 API 域名（网关透传原始 Host）；do() 不设 Host，故手工构造请求
+	e := flowEnv(t)
+	req := httptest.NewRequest(http.MethodPost, cleanupFlowFixturesPath,
+		strings.NewReader(`{"templatePrefix":"T053流程","createdAfter":"2026-10-13T01:00:00Z"}`))
+	req.Host = "api.hbksd.com.cn"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Role", flowRoleAdmin)
+	req.Header.Set("X-User-Id", "A0001")
+	w := httptest.NewRecorder()
+	e.h.Router().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	t464TechLogContains(t, w, "not allowed on production")
+	assert.Empty(t, e.store.flow.lastCleanupPrefix, "生产域名不得触达清理")
+}
+
+func TestT681_CleanupFlowFixtures_PrefixNotWhitelisted400(t *testing.T) {
+	for _, prefix := range []string{"T999流程", "T053", "T053流程x", ""} {
+		e := flowEnv(t)
+		w, resp := e.do(http.MethodPost, cleanupFlowFixturesPath,
+			map[string]string{"templatePrefix": prefix, "createdAfter": "2026-10-13T01:00:00Z"},
+			hdr(flowRoleAdmin, "A0001"))
+		assert.Equal(t, http.StatusBadRequest, w.Code, "prefix=%q → %s", prefix, resp.Message)
+		assert.Empty(t, e.store.flow.lastCleanupPrefix, "prefix=%q 不得触达 repo", prefix)
+	}
+}
+
+func TestT681_CleanupFlowFixtures_BadCreatedAfter400(t *testing.T) {
+	for _, v := range []string{"", "yesterday", "2026-10-13 01:00:00"} {
+		e := flowEnv(t)
+		w, resp := e.do(http.MethodPost, cleanupFlowFixturesPath,
+			map[string]string{"templatePrefix": "T053流程", "createdAfter": v},
+			hdr(flowRoleAdmin, "A0001"))
+		assert.Equal(t, http.StatusBadRequest, w.Code, "createdAfter=%q → %s", v, resp.Message)
+		assert.Empty(t, e.store.flow.lastCleanupPrefix)
+	}
+}
+
+func TestT681_CleanupFlowFixtures_RepoError500(t *testing.T) {
+	e := flowEnv(t)
+	e.store.flow.cleanupErr = errors.New("connection reset")
+	w, resp := e.do(http.MethodPost, cleanupFlowFixturesPath,
+		map[string]string{"templatePrefix": "T053流程", "createdAfter": "2026-10-13T01:00:00Z"},
+		hdr(flowRoleAdmin, "A0001"))
+	assert.Equal(t, http.StatusInternalServerError, w.Code, resp.Message)
+	assert.Empty(t, e.store.auditRows, "失败不留审计")
 }
 
 // ── 测试辅助（本包内其它测试文件已有同名 strPtr，此处用 flow 前缀避免冲突）──

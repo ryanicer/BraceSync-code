@@ -86,6 +86,9 @@ var adminOnlyPatterns = []rbacPattern{
 	// GET/PUT 均收口 admin-only（与 alert-rules 同级；医护在 Tab4 只看设计器，绑定区仅 admin）。
 	rbacOf(http.MethodGet, "/api/v1/admin/flow/type-bindings"),
 	rbacOf(http.MethodPut, "/api/v1/admin/flow/type-bindings"),
+	// T681 E2E 夹具清理：会删流程模板/实例（数据面写），收口 admin-only。不登记 = gateway 默认拒绝，
+	// 且 TestRBAC_T190_AllAdminRoutesAreGated 会红。
+	rbacOf(http.MethodPost, "/api/v1/admin/flow/fixtures/cleanup"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notify-rules"),
 	rbacOf(http.MethodPut, "/api/v1/admin/notify-rules/:type"),
 	rbacOf(http.MethodGet, "/api/v1/admin/notification-logs"),

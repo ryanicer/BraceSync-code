@@ -6,6 +6,7 @@ package handler
 
 import (
 	"context"
+	"time"
 
 	"github.com/bracesync/bracesync/services/user-service/internal/repo"
 )
@@ -62,6 +63,11 @@ type fakeFlowState struct {
 	failReplace   bool
 	replacedItems []repo.FlowTypeBindingSet
 
+	// T681 夹具清理：cleanupRes/cleanupErr 为返回值注入，lastCleanup* 记录入参。
+	cleanupRes        *repo.FlowFixtureCleanupResult
+	cleanupErr        error
+	lastCleanupPrefix string
+	lastCleanupAfter  time.Time
 	// T679 医护待办读侧：todos 为待办行（含详情单行）；记录 filter 供断言团队/实例谓词。
 	todos          []repo.FlowTodoRow
 	todosErr       error
@@ -119,6 +125,11 @@ func (f *fakeStore) ApplyFlowNodeAction(_ context.Context, in repo.FlowActionWri
 
 func (f *fakeStore) ListFlowNodeActions(_ context.Context, _ string) ([]repo.FlowNodeActionRow, error) {
 	return f.flow.actions, f.flow.actionsErr
+}
+
+func (f *fakeStore) CleanupFlowFixtures(_ context.Context, templatePrefix string, createdAfter time.Time) (*repo.FlowFixtureCleanupResult, error) {
+	f.flow.lastCleanupPrefix, f.flow.lastCleanupAfter = templatePrefix, createdAfter
+	return f.flow.cleanupRes, f.flow.cleanupErr
 }
 
 func (f *fakeStore) ListFlowTodos(_ context.Context, in repo.FlowTodoFilter) ([]repo.FlowTodoRow, error) {
