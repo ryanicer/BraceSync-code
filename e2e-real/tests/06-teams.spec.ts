@@ -219,20 +219,36 @@ test.describe('06-团队管理', () => {
       // 编辑按钮
       const editBtn = target!.getByRole('button', { name: /编辑|修改/ }).first()
       await expect(editBtn).toBeVisible({ timeout: 5_000 })
+      // T685（e002e98 有意变更，andy 定性/max 2026-10-15 放行）：openEdit 在弹窗可见后异步
+      // GET /teams/{id} 权威详情并整体回填 teamForm。回填与用户输入并发 ⇒ 必须等它落地再改名，
+      // 否则「-改」会被详情旧名冲掉（run 38709462916 实证：提示「更新成功」但落库旧名，-改 行恒不出现）。
+      const detailResp = page.waitForResponse(
+        (r) =>
+          r.request().method() === 'GET' &&
+          /^\/api\/v1\/teams\/[A-Za-z0-9_-]+$/.test(new URL(r.url()).pathname),
+      )
       await editBtn.click()
       const dialog = page.locator('.el-dialog').filter({ hasText: '编辑团队' })
       await expect(dialog, '点行内「编辑」应打开标题为「编辑团队」的弹窗').toBeVisible({ timeout: 10_000 })
+      await detailResp
       const nameInput = dialog
         .locator('.el-form-item')
         .filter({ hasText: '团队名称' })
         .locator('input')
         .first()
+      // 详情回填落地：名称输入框回到权威旧名（详情读失败时保留列表回填值，同为旧名）
+      await expect(nameInput, 'T685 回显：详情回填后名称应为权威值').toHaveValue(oldName, { timeout: 5_000 })
       // 在末尾加「-改」
       const newName = `${oldName}-改`
       await nameInput.fill('')
       await nameInput.fill(newName)
-      // 负责人：编辑弹窗不回显（列表 DTO 无 leader，见 pickTeamOwner 注释），不重选会被拦成「请选择负责人」
-      await pickTeamOwner(page, dialog)
+      // 负责人：T685 后由详情/列表权威回显，不再手选（少一次写：本用例不改负责人）
+      const ownerSelect = dialog
+        .locator('.el-form-item')
+        .filter({ hasText: '负责人' })
+        .locator('.el-select')
+        .first()
+      await expect(ownerSelect, 'T685 回显：编辑弹窗负责人应显示名字而非占位').not.toContainText('请选择负责人')
       const save = dialog.getByRole('button', { name: /保存|确认|提交/ }).first()
       await save.click()
       const msg = adminMessage(page)
@@ -276,8 +292,32 @@ test.describe('06-团队管理', () => {
     test('6.5 删除自建团队：带引用被拒（409/10409）→ 解除负责人引用 → 删除成功、列表消失', async ({
       page,
     }) => {
-      // 前置：6.2 创建团队成功（6.3 可能改了名但 createdTeams 已同步），否则如实失败
-      expect(createdTeams.length).toBeGreaterThan(0)
+      // 前置：6.2 创建团队成功（6.3 可能改了名但 createdTeams 已同步）。
+      // T700 实证（run 38709462916 result.json：6.4/6.5 落在重启后的 workerIndex=1，模块态清零，
+      // createdTeams=[] 与产品行为无关）：worker 中途重排时本用例自给自足，按 6.2 同款当场建一支再删。
+      if (createdTeams.length === 0) {
+        const selfName = uniqueName(E2E_TEAM_NAME_PREFIX)
+        const newBtn = page.locator('.page-toolbar').getByRole('button', { name: /新建团队|新增团队/ })
+        await expect(newBtn.first()).toBeVisible({ timeout: 8_000 })
+        await newBtn.first().click()
+        const newDialog = page.locator('.el-dialog').filter({ hasText: /新建团队|新建/ })
+        await expect(newDialog).toBeVisible({ timeout: 10_000 })
+        await newDialog
+          .locator('.el-form-item')
+          .filter({ hasText: '团队名称' })
+          .locator('input')
+          .first()
+          .fill(selfName)
+        await pickTeamOwner(page, newDialog)
+        // 与 6.2 同口径：点保存前拍医护归属基数，afterAll 删除后才能原样迁回
+        const selfSnapToken = await getAuthToken(page)
+        expect(selfSnapToken, '6.5 自建前置需登录态 token 拍归属基数').toBeTruthy()
+        priorDoctorTeams = await snapshotDoctorTeams(page.request, selfSnapToken!)
+        createdTeams.push(selfName)
+        await newDialog.getByRole('button', { name: /保存|确认|提交/ }).first().click()
+        await expect(adminMessage(page)).toHaveText('创建成功', { timeout: 15_000 })
+        await expect(newDialog).toBeHidden({ timeout: 5_000 })
+      }
       const targetName = createdTeams[createdTeams.length - 1]
       const token = await getAuthToken(page)
       expect(token, '6.5 需登录态 token 才能按契约端点解除负责人引用').toBeTruthy()

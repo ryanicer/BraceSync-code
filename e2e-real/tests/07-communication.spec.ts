@@ -102,12 +102,25 @@ test.describe('07-患者沟通', () => {
       const replyRaw = fb?.replyContent == null ? '' : String(fb.replyContent)
 
       const shown = await readDescriptions(pane)
-      const expectedLabels = ['患者', '类型', '内容', '提交时间', '状态']
+      // T691（winner 有意变更，判据 max 2026-10-15 放行）：admin 详情在第 2 格插入「联系电话」
+      // （communication/index.vue:58 v-if=auth.role==='admin'，对 admin 恒渲染）。
+      const expectedLabels = ['患者', '联系电话', '类型', '内容', '提交时间', '状态']
       if (replyRaw !== '') expectedLabels.push('客服处理备注')
-      expect(shown.map((f) => f.label), '详情字段名与顺序（第 6 格按接口 replyContent 派生）').toEqual(
+      expect(shown.map((f) => f.label), '详情字段名与顺序（第 2 格=联系电话，末格按接口 replyContent 派生）').toEqual(
         expectedLabels,
       )
       const byLabel = Object.fromEntries(shown.map((f) => [f.label, f.value]))
+      // T691 脱敏形态（staging 一手读数 2026-10-15：135****6531 形）：值格是「掩码 span + 查看号码按钮 +
+      // 审计提示」三件套（readDescriptions 读整格文本），掩码本体单独取 .phone-masked span 判；
+      // 本用例不点「查看号码」（不落 sensitive_read 审计），故 .phone-full 不应出现。
+      const phoneSpan = pane.locator('.phone-masked').first()
+      await expect(phoneSpan, 'T691 未 reveal 时应渲染脱敏 span').toBeVisible()
+      expect(pane.locator('.phone-full'), '未点 reveal 不应出现明文号码 span').toHaveCount(0)
+      const maskedText = (await phoneSpan.innerText()).trim()
+      expect(
+        maskedText === '—' || /^\d{3}\*{4}\d{4}$/.test(maskedText),
+        `联系电话应脱敏显示（实得 ${maskedText}）`,
+      ).toBe(true)
       expect(byLabel['患者'], '详情的患者 = 所点行的患者列').toBe(patient)
       expect(byLabel['类型'], '详情的类型 = 所点行的类型列').toBe(type)
       expect(byLabel['内容'], '详情的内容 = 所点行的内容列').toBe(content)
