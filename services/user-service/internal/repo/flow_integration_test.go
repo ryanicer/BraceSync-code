@@ -808,3 +808,35 @@ func TestITT681CleanupFlowFixturesByPrefixAndWindow(t *testing.T) {
 	assert.Zero(t, res2.DeletedTemplates)
 	assert.Equal(t, res2.Before, res2.After, "空窗口幂等：前后读数一致")
 }
+
+// ─────────────────────────────────────────────────────────────
+// T687 账号形态归一（ResolveFlowAccountID 三级解析，真库验 SQL）
+// ─────────────────────────────────────────────────────────────
+
+// TestITT687ResolveFlowAccountID 真库三级解析读数：
+// admin_id 直配 / username 形 / doctor_id 形 → 全部回 admins.admin_id；
+// 非 admins 域账号（技师 tech_id）与未知串原样透传；空串短路。
+// 种子复用 seedITData：itAdmin=ADM-USR-IT（username=it_admin）、itDoctor=DOC-USR-IT（admin_id=ADM-USR-IT）。
+func TestITT687ResolveFlowAccountID(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"admin_id直配", itAdmin, itAdmin},
+		{"username形→admin_id", "it_admin", itAdmin},
+		{"doctor_id形→admin_id", itDoctor, itAdmin},
+		{"技师tech_id透传", "T-IT-UNKNOWN", "T-IT-UNKNOWN"},
+		{"未知串透传", "no_such_account", "no_such_account"},
+		{"空串短路", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := itStore.ResolveFlowAccountID(ctx, tc.raw)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

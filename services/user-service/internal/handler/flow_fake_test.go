@@ -80,6 +80,25 @@ type fakeFlowState struct {
 	todos          []repo.FlowTodoRow
 	todosErr       error
 	lastTodoFilter repo.FlowTodoFilter
+
+	// T687 账号形态归一：accountIDs 为 raw→canonical 映射（缺项原样透传，同 PGStore 三级解析语义）；
+	// resolveErr 注入解析失败（handler 侧应回退原值，不得把失败放大成新 403/500）。
+	accountIDs map[string]string
+	resolveErr error
+	resolveHit []string // 入参记录（断言归一发生在正确的时机）
+}
+
+// ResolveFlowAccountID T687 账号形态归一替身：命中映射回 canonical，缺项/出错按 PGStore 语义
+// 分别为原样透传 / 由调用方回退（此处返回空串+err，handler 回退原值）。
+func (f *fakeStore) ResolveFlowAccountID(_ context.Context, raw string) (string, error) {
+	f.flow.resolveHit = append(f.flow.resolveHit, raw)
+	if f.flow.resolveErr != nil {
+		return "", f.flow.resolveErr
+	}
+	if v, ok := f.flow.accountIDs[raw]; ok {
+		return v, nil
+	}
+	return raw, nil
 }
 
 // AlertRouteInfo 677 快处路由判定的跨 owner 只读替身。

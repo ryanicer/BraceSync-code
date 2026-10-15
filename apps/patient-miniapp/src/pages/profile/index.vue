@@ -62,9 +62,15 @@
             <text class="menu-sub">查看历史复查记录</text>
             <text class="menu-arrow">›</text>
           </view>
-          <view class="menu-item" @click="openSettingsSheet">
-            <text class="menu-ic">⚙️</text>
-            <text class="menu-text">设置</text>
+          <!-- T690（§7A.5 V3.48 联动注）：原「设置」行位置升为一级菜单「联系我们」，
+               直连统一咨询入口 §7A.13（Boss 2026-10-14 二轮亲审：不要抽屉交互，直接进 contact 页）。
+               原元素句留痕（恢复点）：「设置」行 → 抽屉三项「联系客服（<button open-type="contact">）/
+               绑定微信 / 退出登录」整组撤销，旧形态见 docs 设计稿 profile.html settingsSheet r133 恢复点注记
+               （改前实现形态 = 本文件删除前的设置弹层，PRD §7A.5 原元素句作正式恢复点）。 -->
+          <view class="menu-item" @click="goContact">
+            <text class="menu-ic">💬</text>
+            <text class="menu-text">联系我们</text>
+            <text class="menu-sub">在线客服 · 留言反馈</text>
             <text class="menu-arrow">›</text>
           </view>
         </view>
@@ -126,26 +132,11 @@
       </view>
     </view>
 
-    <!-- T223 设置弹层：承载 T098-Q4 profile Must（客服入口 + 退出登录）与绑定微信；配置家庭 WiFi 入口在设备页 -->
-    <view class="sheet-overlay" :class="{ 'sheet-overlay-show': settingsSheetVisible }" @click="closeSettingsSheet"></view>
-    <view class="bottom-sheet" :class="{ 'bottom-sheet-show': settingsSheetVisible }">
-      <view class="sheet-handle"></view>
-      <view class="sheet-title">设置</view>
-      <!-- R3：客服复用微信客服会话，不新建消息中心 -->
-      <button class="sheet-option" open-type="contact">
-        <text class="sheet-option-ic">💬</text>
-        <text>联系客服</text>
-      </button>
-      <view class="sheet-option" @click="bindWechat">
-        <text class="sheet-option-ic">🔁</text>
-        <text>绑定微信</text>
-      </view>
-      <view v-if="auth.isLoggedIn" class="sheet-option sheet-option-danger" @click="logout">
-        <text class="sheet-option-ic">🚪</text>
-        <text>退出登录</text>
-      </view>
-      <view class="sheet-cancel" @click="closeSettingsSheet">取消</view>
-    </view>
+    <!-- T690（§7A.5 V3.48）：原「设置」弹层整组撤销——「联系客服」（open-type="contact"）、
+         「绑定微信」「退出登录」三项与二次确认随抽屉一并删除（Boss 2026-10-14 ①撤；
+         bindWechat/logout 同路径、静默登录退出无实际用途，换微信号由后台「解绑微信」承接）。
+         恢复点：docs 设计稿 profile.html settingsSheet 处 r133 注记（旧形态取 docs 分支 9b1ff3e8）；
+         客服入口现行形态 = 上方一级菜单「联系我们」→ /pages/contact/index（§7A.13）。 -->
   </view>
 </template>
 
@@ -260,16 +251,6 @@ async function saveProfile() {
   }
 }
 
-const settingsSheetVisible = ref(false)
-
-function openSettingsSheet() {
-  settingsSheetVisible.value = true
-}
-
-function closeSettingsSheet() {
-  settingsSheetVisible.value = false
-}
-
 async function loadProfile() {
   if (!auth.isLoggedIn) {
     profile.value = null
@@ -324,23 +305,9 @@ function goAdvice() {
   uni.navigateTo({ url: '/pages/advice/index' })
 }
 
-function bindWechat() {
-  // 退出当前登录态 → 走微信登录 → 命中未绑定 → 授权手机号匹配同一档案
-  auth.logout()
-  uni.reLaunch({ url: '/pages/login/index' })
-}
-
-function logout() {
-  uni.showModal({
-    title: '提示',
-    content: '确定要退出登录吗？',
-    success: (r) => {
-      if (r.confirm) {
-        auth.logout()
-        uni.reLaunch({ url: '/pages/login/index' })
-      }
-    },
-  })
+function goContact() {
+  // T690：一级菜单直连统一咨询入口（§7A.13；原设置抽屉「联系客服」路径随之退场，见上方恢复点注）
+  uni.navigateTo({ url: '/pages/contact/index' })
 }
 </script>
 
@@ -387,11 +354,6 @@ function logout() {
 .form-radio { font-size: 28rpx; color: #64748b; display: flex; align-items: center; }
 .form-section-label { display: block; font-size: 24rpx; color: #94a3b8; padding: 28rpx 0 8rpx; font-weight: 500; }
 
-/* ====== T223 设置弹层选项（对齐 profile.html sheet-option） ====== */
-.sheet-option { display: flex; align-items: center; gap: 28rpx; width: 100%; padding: 32rpx 48rpx; font-size: 30rpx; color: #1e293b; background: #fff; border: none; border-radius: 0; line-height: normal; text-align: left; box-sizing: border-box; }
-.sheet-option::after { border: none; }
-.sheet-option:active { background: #f1f5f9; }
-.sheet-option-ic { font-size: 32rpx; }
-.sheet-option-danger, .sheet-option-danger .sheet-option-ic { color: #ef4444; }
-.sheet-cancel { text-align: center; padding: 28rpx; font-size: 30rpx; color: #94a3b8; border-top: 1rpx solid #e2e8f0; margin-top: 16rpx; }
+/* T690：原「设置」弹层样式（sheet-option / sheet-option-danger / sheet-cancel）随抽屉整组删除；
+   bottom-sheet / sheet-handle / sheet-header 等共用类保留在「编辑个人信息」弹层上。 */
 </style>

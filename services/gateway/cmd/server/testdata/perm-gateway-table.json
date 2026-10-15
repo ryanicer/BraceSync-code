@@ -412,6 +412,13 @@
     {
       "role": "ROLE_ADMIN",
       "method": "POST",
+      "path": "/api/v1/admin/patients/S1/phone/reveal",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
       "path": "/api/v1/admin/review-records",
       "deny": false,
       "why": "admin 全放行"
@@ -618,6 +625,13 @@
       "path": "/api/v1/feedbacks",
       "deny": false,
       "why": "staff-only"
+    },
+    {
+      "role": "ROLE_CS",
+      "method": "POST",
+      "path": "/api/v1/admin/patients/S1/phone/reveal",
+      "deny": true,
+      "why": "admin-only"
     },
     {
       "role": "ROLE_CS",

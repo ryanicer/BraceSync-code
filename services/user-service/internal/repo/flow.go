@@ -147,6 +147,30 @@ func flowAccountName(col string) string {
             (SELECT fp.name FROM patients fp WHERE fp.patient_id = %s))`, col, col, col, col)
 }
 
+// ResolveFlowAccountID T687：账号形态归一（username 形 doctor_li / doctor_id 形 D0001 /
+// admin_id 形 A0002 → admins.admin_id）。执法侧 OperatorID 恒为 JWT sub（= admins.admin_id），
+// 而转派入参三形态混用（前端名册发 doctor_id、自由输入发 username、提示文案发 admin_id），
+// 精确串比对会把本人合法动作判成越界。三级解析顺序：admin_id（已是 canonical，直配即回）
+// → username（UNIQUE）→ doctors.doctor_id（admin_id 为 NULL 的无账号医生解析不出，落回原值）；
+// 三形态都查不到（技师 tech_id / 患者 ID / 未知串）原样透传，不猜不造。
+func (s *PGStore) ResolveFlowAccountID(ctx context.Context, raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", nil
+	}
+	var out string
+	err := s.pool.QueryRow(ctx, `
+SELECT COALESCE(
+         (SELECT fa.admin_id FROM admins fa WHERE fa.admin_id = $1),
+         (SELECT fa.admin_id FROM admins fa WHERE fa.username = $1),
+         (SELECT fd.admin_id FROM doctors fd WHERE fd.doctor_id = $1),
+         $1)`, v).Scan(&out)
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
 // ─────────────────────────────────────────────────────────────
 // 模板 CRUD（2.4 设计器）
 // ─────────────────────────────────────────────────────────────

@@ -741,7 +741,8 @@ func (h *Handler) getFlowNodeStates(c *gin.Context) {
 			OperatedAt:   flowTimeStrPtr(r.OperatedAt),
 			Remark:       r.Remark,
 			Attachments:  jsonOrEmpty(r.Attachments),
-			Assignee:     r.Assignee,
+			// T687 回读归一：存量 username/doctor_id 形落 admin_id，前端 canOperateCurrent 的 adminId 比对才咬得住。
+			Assignee:     h.resolveFlowAssigneePtr(ctx, r.Assignee),
 			AssigneeName: r.AssigneeName,
 			NextNodeIDs:  successorsOf(graph, r.NodeID),
 		})
@@ -793,6 +794,8 @@ func (h *Handler) submitFlowNodeAction(c *gin.Context) {
 			fail(c, appErr)
 			return
 		}
+		// T687 写侧形态归一：username/doctor_id 形统一落 admin_id，杜绝新数据再造混形。
+		req.TargetOperator = h.resolveFlowAssignee(c.Request.Context(), req.TargetOperator)
 	}
 
 	ctx := c.Request.Context()
@@ -815,9 +818,10 @@ func (h *Handler) submitFlowNodeAction(c *gin.Context) {
 	}
 	if allowed, denyReason := enforceFlowNodeAssignment(flowNodeGuardInput{
 		ConfiguredRole: graph.assigneeRole[nodeID],
-		StateAssignee:  nodeStateAssignee(nodeStates, nodeID),
-		OperatorID:     op,
-		XRole:          c.GetHeader(headerRole),
+		// T687 读侧兼容：存量 username/doctor_id 形 assignee 归一后再比对（执法函数体不动）。
+		StateAssignee: h.resolveFlowAssignee(ctx, nodeStateAssignee(nodeStates, nodeID)),
+		OperatorID:    op,
+		XRole:         c.GetHeader(headerRole),
 	}); !allowed {
 		fail(c, model.ErrForbidden(denyReason))
 		return

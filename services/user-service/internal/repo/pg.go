@@ -896,13 +896,15 @@ func feedbackTeamCond(scope FeedbackScope, argN int) (string, []any) {
 
 // ListFeedbacks 反馈列表（keyword=内容/患者ID/患者姓名 ILIKE；按提交时间倒序，上限 200）
 func (s *PGStore) ListFeedbacks(ctx context.Context, keyword string, scope FeedbackScope) ([]FeedbackRow, error) {
+	// T691 r134：恒定 LEFT JOIN patients p 以投影 p.phone_enc（脱敏派生值来源）。
+	// keyword 分支与团队谓词均复用这条 join，不再按需追加（避免重复 JOIN p）。
 	query := `SELECT f.feedback_id, f.patient_id, f.type, f.content, f.submit_time,
-	                 f.handler, f.reply_content, f.reply_time, f.status
-	          FROM feedbacks f`
+	                 f.handler, f.reply_content, f.reply_time, f.status, p.phone_enc
+	          FROM feedbacks f
+	          LEFT JOIN patients p ON p.patient_id = f.patient_id`
 	var args []any
 	var conds []string
 	if keyword != "" {
-		query += ` LEFT JOIN patients p ON p.patient_id = f.patient_id`
 		args = append(args, "%"+keyword+"%")
 		conds = append(conds, fmt.Sprintf(`(f.content ILIKE $%[1]d OR f.patient_id ILIKE $%[1]d OR p.name ILIKE $%[1]d)`, 1))
 	}
@@ -926,7 +928,7 @@ func (s *PGStore) ListFeedbacks(ctx context.Context, keyword string, scope Feedb
 	for rows.Next() {
 		var f FeedbackRow
 		if scanErr := rows.Scan(&f.FeedbackID, &f.PatientID, &f.Type, &f.Content, &f.SubmitTime,
-			&f.Handler, &f.ReplyContent, &f.ReplyTime, &f.Status); scanErr != nil {
+			&f.Handler, &f.ReplyContent, &f.ReplyTime, &f.Status, &f.PhoneEnc); scanErr != nil {
 			return nil, scanErr
 		}
 		list = append(list, f)

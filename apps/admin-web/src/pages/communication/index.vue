@@ -53,6 +53,20 @@
           <div class="pane-title">反馈 {{ current.feedbackId }} 详情</div>
           <el-descriptions :column="1" border size="small" class="desc">
             <el-descriptions-item label="患者">{{ patientNameOf(current.patientId) }}</el-descriptions-item>
+            <!-- T691 r134（方案2a）：留言回访唯一触达通道。仅 ROLE_ADMIN 见本行；
+                 默认脱敏（masked 来自列表接口按角色裁剪后携带），点「查看号码」调独立 reveal 端点取明文并落审计。 -->
+            <el-descriptions-item v-if="auth.role === 'admin'" label="联系电话">
+              <template v-if="!revealedPhone">
+                <span class="phone-masked">{{ current.phoneMasked || '—' }}</span>
+                <el-button link type="primary" class="btn-phone" :loading="revealing" @click="revealPhone">查看号码</el-button>
+                <div class="phone-audit-hint">默认隐藏；查看完整号码将记录操作日志</div>
+              </template>
+              <template v-else>
+                <span class="phone-full">{{ revealedPhone }}</span>
+                <el-button link type="primary" class="btn-phone" @click="copyPhone">复制号码</el-button>
+                <span class="phone-viewed-hint">已记录本次查看 · {{ revealTime }}</span>
+              </template>
+            </el-descriptions-item>
             <el-descriptions-item label="类型">{{ current.type }}</el-descriptions-item>
             <el-descriptions-item label="内容">{{ current.content }}</el-descriptions-item>
             <el-descriptions-item label="提交时间">{{ formatTime(current.submitTime) }}</el-descriptions-item>
@@ -93,7 +107,7 @@ import { ref, onMounted } from 'vue'
 import { userErrorCopy } from '@bracesync/shared-utils'
 import { ElMessage } from 'element-plus'
 import type { Feedback } from '@bracesync/shared-types'
-import { fetchFeedbacks, processFeedbackApi, patientNameOf } from '../../api'
+import { fetchFeedbacks, processFeedbackApi, patientNameOf, revealPatientPhoneApi } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { formatCstMonthDayTime } from '../../utils/formatTime'
 
@@ -104,6 +118,10 @@ const loading = ref(false)
 const current = ref<Feedback | null>(null)
 const replyText = ref('')
 const replying = ref(false)
+// T691 r134：reveal 明文态（每次选中/切换行重置，避免跨患者串号）
+const revealedPhone = ref<string | null>(null)
+const revealing = ref(false)
+const revealTime = ref('')
 
 function statusLabel(status: Feedback['status']): string {
   const map: Record<Feedback['status'], string> = { pending: '待处理', replied: '已回复', resolved: '已解决' }
@@ -142,6 +160,34 @@ async function loadData() {
 function selectFeedback(row: Feedback) {
   current.value = row
   replyText.value = ''
+  // T691 r134：切换反馈即收起上一条的明文态，明文不跨患者滞留
+  revealedPhone.value = null
+  revealTime.value = ''
+}
+
+// T691 r134（方案2a）：按需解密查看手机号——调独立 reveal 端点，服务端每次查看落 sensitive_read 审计。
+async function revealPhone() {
+  if (!current.value) return
+  revealing.value = true
+  try {
+    const res = await revealPatientPhoneApi(current.value.patientId)
+    revealedPhone.value = res.phone
+    revealTime.value = `${formatCstMonthDayTime(new Date().toISOString())} ${auth.user?.name ?? ''}`.trim()
+  } catch (e: unknown) {
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '获取号码失败' }))
+  } finally {
+    revealing.value = false
+  }
+}
+
+async function copyPhone() {
+  if (!revealedPhone.value) return
+  try {
+    await navigator.clipboard.writeText(revealedPhone.value)
+    ElMessage.success('号码已复制')
+  } catch {
+    ElMessage.warning('复制失败，请手动选取')
+  }
 }
 
 async function saveNote() {
@@ -206,4 +252,11 @@ onMounted(loadData)
 .reply-label { font-size: 13px; color: #64748b; margin-bottom: 6px; }
 .reply-actions { margin-top: 10px; display: flex; gap: 8px; }
 .empty-desc { margin-top: 40px; }
+
+/* T691 r134 联系电话行（方案2a：默认脱敏 + 按需 reveal + 审计回显） */
+.phone-masked { font-size: 14px; color: var(--el-text-color-primary); letter-spacing: .5px; }
+.phone-full { font-size: 14px; color: var(--el-text-color-primary); font-weight: 600; letter-spacing: .5px; }
+.btn-phone { margin-left: 10px; padding: 0; }
+.phone-audit-hint { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px; }
+.phone-viewed-hint { display: block; font-size: 12px; color: #67c23a; margin-top: 4px; }
 </style>
