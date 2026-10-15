@@ -1,4 +1,4 @@
--- seed-prod.sql —— BraceSync 生产首发最小 seed（T696 手册 V1.1.1 §9 口径件）
+-- seed-prod.sql —— BraceSync 生产首发最小 seed（T696 手册 V1.2 §9 口径件）
 -- 🔴 纪律（红线同手册）：
 --   1. 本文件只含字典与 1 个管理员账号占位参数，禁一切测试家族数据（teams/doctors/patients/设备/告警等一律不进）；
 --   2. 禁任何真实口令/hash 入库——admins 行经 psql -v 运行时注入，明文与 hash 都不落本文件；
@@ -27,7 +27,12 @@ INSERT INTO admins (admin_id, username, name, password_hash, role_id)
 VALUES (:'admin_id', :'username', :'name', :'password_hash', 'ROLE_ADMIN')
 ON CONFLICT (admin_id) DO NOTHING;
 
--- ===== 3) 系统参数字典（17 行；值=产品默认口径，与迁移 000016–000023 同源） =====
+-- ===== 3) 系统参数字典（本件 17 行；值=产品默认口径，与迁移 000016–000023 同源） =====
+-- 🔴 V1.2/⑥ 终值判据=**20**：本件按 §9.2 在迁移 000001→000038 之后执行，迁移链已插 9 键
+--   （000015: data_retention_days/max_patients；000016: threshold_pressure_low/device_offline_minutes/
+--    continuous_wear_max_hours/report_timeout_minutes；000023: threshold_calibration_offset/
+--    notify_wechat_template_id/notify_sms_template_id），与 seed 17 键重叠 6 → ON CONFLICT 跳过，
+--   净增 11，终值 9+11=**20**（迁移独有 3 键：device_offline_minutes/continuous_wear_max_hours/report_timeout_minutes）。
 -- 🔴 T173 阈值口径（Boss 2026-09-14 明令）：压力量纲阈值均为「可配置参数」，配置驱动、不硬编码；
 -- 现值基于已作废的 N×100 量纲估算，仅作占位、待按 mN/÷1000 量级重定（重定输入：Boss+小顾真实物理范围）。
 -- 远期后台运营可调（alert-service config.Manager.Update 已预留写入口），调参不改代码。
@@ -63,7 +68,7 @@ ON CONFLICT (type) DO NOTHING;
 -- ===== 5) 回读自检（=冒烟 S13 判据；输出即留痕，随交件原文落板） =====
 SELECT count(*) AS roles_expect_3            FROM roles;
 SELECT count(*) AS admins_expect_1           FROM admins;
-SELECT count(*) AS sys_configs_expect_17     FROM sys_configs;
+SELECT count(*) AS sys_configs_expect_20     FROM sys_configs;  -- V1.2/⑥：迁移后跑本件终值=20（见第 3) 节推导）
 SELECT count(*) AS alert_rules_expect_5      FROM alert_notify_rules;
 SELECT (SELECT count(*) FROM patients) AS patients_expect_0,
        (SELECT count(*) FROM teams)    AS teams_expect_0,
