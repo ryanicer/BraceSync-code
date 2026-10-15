@@ -1,6 +1,9 @@
 // T668 流程节点角色级权限执法测试（卡面口径 1/2/4/5）：
-// 无权角色 confirm 403、admin 例外放行、transfer 越权 403 三最小集 + 角色词映射单元测试，
+// 无权角色 confirm 403、transfer 越权 403 最小集 + 角色词映射单元测试，
 // 以及 /internal/flow/process-guard 告警旁路守卫（口径 3）。
+// T694 甲案增补（分动作收窄）：admin 动作分流表（推进类 403/纠偏类放行）、
+// process-guard admin 反转、守卫有效面（非 admin × 配角色节点）、
+// 规则 2 拒因按动作分文案（⑦ max 点头）四组用例。
 package handler
 
 import (
@@ -63,8 +66,8 @@ const t668TwoNodeGraph = `{
   "edges":[{"id":"E1","type":"polyline","sourceNodeId":"N1","targetNodeId":"N2"}]
 }`
 
-// 最小集 2：admin 对任意角色节点例外放行（护士节点也能点）。
-func TestT668_NodeAction_AdminBypass(t *testing.T) {
+// t694NurseEnv 护士节点图装配（N2 配「护士」＝空集词表，任何登录角色都命不中）。
+func t694NurseEnv(t *testing.T) *testEnv {
 	e := flowEnv(t)
 	var g map[string]any
 	require.NoError(t, json.Unmarshal([]byte(t668TwoNodeGraph), &g))
@@ -72,10 +75,111 @@ func TestT668_NodeAction_AdminBypass(t *testing.T) {
 	edges, _ := json.Marshal(g["edges"])
 	e.store.flow.tpl.Nodes = nodes
 	e.store.flow.tpl.Edges = edges
-	e.store.flow.applied = &repo.FlowNodeActionRow{ActionID: 91, NodeID: "N2", Action: "confirm"}
-	w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
-		map[string]any{"action": "confirm"}, hdr(flowRoleAdmin, "A0001"))
-	require.Equal(t, http.StatusOK, w.Code, resp.Message)
+	return e
+}
+
+// T694 甲案动作分流表（max 2026-10-15 裁定）：admin 对配「护士」的 N2——
+// 推进类 confirm/reject 去豁免、与普通角色同走门 → 403（C10 纠偏：一正一反里的反面）；
+// 纠偏类 transfer/urge 保留例外 → 放行（T668 兜底本意：运维纠偏不被节点配置锁死）。
+func TestT694_NodeAction_AdminActionSplit(t *testing.T) {
+	t.Run("推进类confirm去豁免403", func(t *testing.T) {
+		e := t694NurseEnv(t)
+		w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "confirm"}, hdr(flowRoleAdmin, "A0001"))
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, model.CodeForbidden, resp.Code)
+		t464TechLogContains(t, w, "护士")
+		assert.Empty(t, e.store.flow.lastAction.NodeID, "403 不得落到 ApplyFlowNodeAction（lastAction 零值）")
+	})
+	t.Run("推进类reject去豁免403", func(t *testing.T) {
+		e := t694NurseEnv(t)
+		w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "reject", "remark": "admin 越权驳回"}, hdr(flowRoleAdmin, "A0001"))
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, model.CodeForbidden, resp.Code)
+		t464TechLogContains(t, w, "护士")
+		assert.Empty(t, e.store.flow.lastAction.NodeID, "403 不得落到 ApplyFlowNodeAction（lastAction 零值）")
+	})
+	t.Run("纠偏类transfer例外放行200", func(t *testing.T) {
+		e := t694NurseEnv(t)
+		e.store.flow.applied = &repo.FlowNodeActionRow{ActionID: 91, NodeID: "N2", Action: "transfer", Operator: "A0001"}
+		w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "transfer", "targetOperator": "T0009"}, hdr(flowRoleAdmin, "A0001"))
+		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		assert.Equal(t, "T0009", e.store.flow.lastAction.TargetOperator)
+	})
+	t.Run("纠偏类urge例外放行200", func(t *testing.T) {
+		e := t694NurseEnv(t)
+		e.store.flow.applied = &repo.FlowNodeActionRow{ActionID: 92, NodeID: "N2", Action: "urge", Operator: "A0001"}
+		w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "urge", "remark": "家属催办"}, hdr(flowRoleAdmin, "A0001"))
+		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		assert.Equal(t, "N2", e.store.flow.lastAction.NodeID)
+	})
+}
+
+// T694 交件补充：守卫有效面（非 admin × 配角色节点）——推进类两个动作都真拒，
+// 且不是「只对技师单点」（正常医护配错角色同样拒），全部零落地。
+func TestT694_NodeAction_EffectiveSide_NonAdminDenied(t *testing.T) {
+	t.Run("客服reject配角色节点403", func(t *testing.T) {
+		e := t668Env(t)
+		w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "reject", "remark": "越权驳回"}, hdr("ROLE_CS", "C0001"))
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, model.CodeForbidden, resp.Code)
+		t464TechLogContains(t, w, "主治医生")
+		assert.Empty(t, e.store.flow.lastAction.NodeID, "403 不得落到 ApplyFlowNodeAction")
+	})
+	t.Run("医生confirm护士节点403", func(t *testing.T) {
+		e := t694NurseEnv(t)
+		w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "confirm"}, hdr("ROLE_DOCTOR", "D0001"))
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, model.CodeForbidden, resp.Code)
+		t464TechLogContains(t, w, "护士")
+		assert.Empty(t, e.store.flow.lastAction.NodeID, "403 不得落到 ApplyFlowNodeAction")
+	})
+	t.Run("技师confirm配角色节点403", func(t *testing.T) {
+		e := t668Env(t)
+		w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "confirm"}, hdr("technician", "T0002"))
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, model.CodeForbidden, resp.Code)
+		t464TechLogContains(t, w, "主治医生")
+		assert.Empty(t, e.store.flow.lastAction.NodeID, "403 不得落到 ApplyFlowNodeAction")
+	})
+}
+
+// T694 ⑦（max 点头并入本卡）：规则 2 拒因按动作分——推进类去「或管理员可操作」（T694 后
+// admin 在推进类也无豁免，原句自相矛盾会污染排障）；纠偏类保留原句。拒因只进技术日志
+// （T464 双通道），断言查日志帧；放行/拒绝判定本身不受文案影响（Transfer 最小集仍绿）。
+func TestT694_AssigneeDenyReason_SplitByAction(t *testing.T) {
+	assigneeEnv := func(t *testing.T) *testEnv {
+		e := t668Env(t)
+		e.store.flow.nodes = []repo.FlowNodeStateRow{
+			{NodeID: "N1", Status: model.FlowNodeDone},
+			{NodeID: "N2", Status: model.FlowNodeCurrent, Assignee: flowStrPtr("T0002")},
+			{NodeID: "N3", Status: model.FlowNodeTodo},
+		}
+		return e
+	}
+	t.Run("推进类confirm拒因无管理员字样", func(t *testing.T) {
+		e := assigneeEnv(t)
+		w, _ := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "confirm"}, hdr("ROLE_DOCTOR", "D0001"))
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		msg, _ := t464TechLog(t, w)["message"].(string)
+		assert.Contains(t, msg, "仅当前处理人可操作")
+		assert.NotContains(t, msg, "或管理员", "推进类下 admin 也无豁免，拒因不得再提管理员")
+	})
+	t.Run("纠偏类transfer拒因保留管理员字样", func(t *testing.T) {
+		e := assigneeEnv(t)
+		w, _ := e.do(http.MethodPost, flowActionPath+"N2/actions",
+			map[string]any{"action": "transfer", "targetOperator": "T0009"}, hdr("ROLE_DOCTOR", "D0001"))
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		msg, _ := t464TechLog(t, w)["message"].(string)
+		assert.Contains(t, msg, "或管理员可操作", "纠偏类仍保留 admin 例外通道，原句不得改")
+	})
 }
 
 // Boss 验收口径：技师（运维）点「护士」节点 → 403。
@@ -218,14 +322,19 @@ func TestT668_ProcessGuard_RoleMatch_Allowed(t *testing.T) {
 	assert.True(t, g.Allowed)
 }
 
-func TestT668_ProcessGuard_AdminBypass(t *testing.T) {
+// T694 甲案 A：告警「标已处理/开始处理」按推进类同走门——admin 在配「主治医生」的
+// current 节点不再整段豁免，与普通角色同被判拒（原 TestT668_ProcessGuard_AdminBypass 反转）。
+func TestT694_ProcessGuard_AdminNoLongerBypassed(t *testing.T) {
 	e := t668GuardEnv(t)
 	w, resp := e.do(http.MethodPost, "/internal/flow/process-guard",
 		map[string]any{"alertId": 9527, "operatorId": "A0001", "role": "ROLE_ADMIN"}, nil)
 	require.Equal(t, http.StatusOK, w.Code, resp.Message)
 	var g flowProcessGuardResponse
 	require.NoError(t, json.Unmarshal(resp.Data, &g))
-	assert.True(t, g.Allowed)
+	assert.True(t, g.Enforced, "有 running 实例执法应在架")
+	assert.False(t, g.Allowed, "T694 后 admin 点配置他人角色的 current 节点应被拒（C10 纠偏）")
+	assert.Contains(t, g.Reason, "主治医生")
+	assert.Equal(t, "N2", g.CurrentNodeID)
 }
 
 func TestT668_ProcessGuard_BadRequest(t *testing.T) {
