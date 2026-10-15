@@ -161,6 +161,7 @@ type Handler struct {
 	bindSigner       *token.Signer // T085：绑定态 JWT signer（同 secret，ttl=30min）
 	phone            *phone.Cipher
 	wxClient         wxClientI      // 接口化：单测注入内存 fake；生产为 *wechat.Client
+	kfSender         kfSenderI      // T690：客服消息下发（身份透传；nil=未配置，进入事件不下发）
 	phoneTokenSecret string         // T085：phoneToken 签发/校验密钥（独立于 JWT_SECRET）
 	fileSvc          fileSvcClientI // T130：file-service 客户端（获取报告文件元数据+下载URL）
 }
@@ -181,6 +182,11 @@ func New(store repo.Store, signer *token.Signer, phoneCipher *phone.Cipher) *Han
 // 接 wxClientI 接口以便测试注入 wrapper（嵌入 testhelper.MockWechatClient）。
 func (h *Handler) SetWXClient(wx wxClientI) {
 	h.wxClient = wx
+}
+
+// SetKFSender 注入客服消息下发器（T690 身份透传；nil 视为未配置，进入事件跳过下发并留错误日志）。
+func (h *Handler) SetKFSender(kf kfSenderI) {
+	h.kfSender = kf
 }
 
 // SetPhoneTokenSecret T085：注入 phoneToken 签发/校验密钥（env PHONE_TOKEN_SECRET）。
@@ -297,6 +303,11 @@ func (h *Handler) Router() *gin.Engine {
 		v1.POST("/feedbacks", h.createFeedback)     // T311 患者端配网失败自动存档
 		v1.GET("/feedbacks/stats", h.feedbackStats) // T248 7.1 统计栏三项
 		v1.POST("/feedbacks/:feedbackId/process", h.processFeedback)
+
+		// T690 微信客服进入事件推送（§7A.13 身份透传）：免 JWT，验签在 handler（WX_KF_MSG_TOKEN）。
+		// gateway 侧对应 authWhitelisted + userServiceRoutes 注册（GET=URL 验签挑战，POST=事件）。
+		v1.GET("/wechat/kf-push", h.wxKfPush)
+		v1.POST("/wechat/kf-push", h.wxKfPush)
 
 		v1.GET("/patient/profile", h.getPatientProfile) // T186 患者本人只读档案（self-scope）
 		// T226 患者自助改本人资料（白名单+限本人，handler 拦水平越权）。

@@ -110,6 +110,9 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/tech/login"},           // T037 技师登录（免 JWT 白名单）
 	{http.MethodPost, "/patient/login"},        // T037 患者登录（免 JWT 白名单）
 	{http.MethodPost, "/patient/wx-login"},     // T069 患者微信小程序登录（免 JWT 白名单）
+	// T690 微信客服进入事件推送（免 JWT 白名单；GET=URL 验签挑战，POST=user_enter_tempsession）
+	{http.MethodGet, "/wechat/kf-push"},
+	{http.MethodPost, "/wechat/kf-push"},
 	// T085 患者微信绑定 + Admin 档案维护
 	{http.MethodPost, "/patient/bind-phone"},                      // 患者绑定手机号（scope=bind）
 	{http.MethodPost, "/admin/patients/:patientId/unbind-wechat"}, // 解绑微信

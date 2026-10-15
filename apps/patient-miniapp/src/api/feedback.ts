@@ -1,17 +1,42 @@
 /**
- * 配网失败反馈（T192 / 设计稿 07-contact + PRD §7A.9「联系技师的真实路由」）
+ * 反馈（feedbacks）提交 API —— 统一咨询入口两处落库共用一条契约：
  *
- * POST /api/v1/feedbacks  { patientId, type, content, status }
+ *   POST /api/v1/feedbacks  { patientId, type, content, status }
  *
- * ⚠️ 后端缺口（T192 上报 §D1，待 Winner 补）：user-service 目前只注册了
- *   GET  /api/v1/feedbacks（admin 列表）与 POST /api/v1/feedbacks/:id/process（回复），
- *   没有创建端点（services/user-service/internal/handler/handler.go:191-192）。
- *   本函数按真实契约实现，端点落地前调用会失败，由页面如实提示、不伪造成功。
+ *   - T690（§7A.13 通道二）：客服留言，类型三选 = 佩戴咨询 / 设备问题 / 功能建议；
+ *   - T192（§7A.9 配网失败自动上报）：type = wifi_setup_failure（词表 §8.2 V3.48 注，
+ *     普通留言、不单列概念），内容 = 失败类型 + 设备名 + 发生时间。
+ *
+ * 后端 createFeedback 已落地（handler.go，content ≤500 / type ≤32 / status 白名单），
+ * 患者只能为本人提交（assertAdminOrSelf）。
  */
 
 import { request } from '../utils/request'
 
 export const WIFI_SETUP_FEEDBACK_TYPE = 'wifi_setup_failure'
+
+/** §7A.13 通道二类型三选（沿用 feedbacks 现有词表；wifi_setup_failure 不进用户可选项） */
+export const FEEDBACK_TYPES = ['佩戴咨询', '设备问题', '功能建议'] as const
+export type FeedbackType = (typeof FEEDBACK_TYPES)[number]
+
+export interface FeedbackPayload {
+  patientId: string
+  type: string
+  content: string
+}
+
+async function createFeedback(payload: FeedbackPayload): Promise<{ feedbackId: string }> {
+  return request<{ feedbackId: string }>({
+    url: '/api/v1/feedbacks',
+    method: 'POST',
+    data: { ...payload, status: 'pending' },
+  })
+}
+
+/** T690 客服留言（内容由页面限 300 字，后端上限 500）；成功返回反馈 id */
+export async function submitFeedback(payload: FeedbackPayload): Promise<{ feedbackId: string }> {
+  return createFeedback(payload)
+}
 
 export interface WifiFailureFeedbackPayload {
   patientId: string
@@ -23,11 +48,7 @@ export interface WifiFailureFeedbackPayload {
 export async function submitWifiFailureFeedback(
   payload: WifiFailureFeedbackPayload
 ): Promise<{ feedbackId: string }> {
-  return request<{ feedbackId: string }>({
-    url: '/api/v1/feedbacks',
-    method: 'POST',
-    data: { ...payload, type: WIFI_SETUP_FEEDBACK_TYPE, status: 'pending' },
-  })
+  return createFeedback({ ...payload, type: WIFI_SETUP_FEEDBACK_TYPE })
 }
 
 /** 拼设计稿要求的 content：问题类型 + 设备名(BSYNC-XXX) + 时间 */

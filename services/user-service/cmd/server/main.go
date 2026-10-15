@@ -8,6 +8,8 @@
 //	PHONE_ENC_KEY     手机号 AES-GCM 加密密钥（64 位 hex）；未配置时技师新建/编辑返回 500
 //	WX_APPID          患者端小程序 AppID；缺失则 /patient/wx-login 返回 500（不影响其他登录端点）
 //	WX_APP_SECRET     患者端小程序 AppSecret；缺失同上（与 WX_APPID 配对）
+//	WX_KF_MSG_TOKEN   T690 微信客服消息推送验签 Token（小程序后台 开发→开发设置→消息推送）；
+//	                  未配置时 /api/v1/wechat/kf-push 整端点拒收（fail-closed）
 //	FILE_SERVICE_URL  file-service 内部地址（如 http://file-service:8085）；T130 复查报告元数据
 //	GIN_MODE          release 关闭调试日志
 package main
@@ -99,6 +101,11 @@ func main() {
 
 	h := handler.New(repo.NewPGStore(pool), signer, phoneCipher)
 	h.SetWXClient(wxClient) // 可选注入：nil 视为未配置，/patient/wx-login 降级 500
+	if wxClient != nil {
+		// T690：客服消息下发（身份透传）。仅在真实客户端存在时注入——
+		// 直接传 (*wechat.Client)(nil) 会装出「非 nil 接口 + nil 指针」，绕过 handler 的 nil 守卫。
+		h.SetKFSender(wxClient)
+	}
 
 	// T130：file-service 客户端（FILE_SERVICE_URL；未配置时复查记录列表不返回报告文件信息）
 	if fsu := os.Getenv("FILE_SERVICE_URL"); fsu != "" {

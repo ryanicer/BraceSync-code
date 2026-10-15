@@ -50,6 +50,11 @@ const (
 	// ⚠️ T166：文档里该 API 的短名是 phonenumber.getPhoneNumber，但它不是 URL path；
 	// 短名当 path 用会得到恒定 404 → 上层映射为 502（本缺陷的原始根因）。
 	phonePath = "/wxa/business/getuserphonenumber"
+
+	// kfSendPath 小程序客服消息下发（T690 · §7A.13 通道一身份透传）：
+	// 用户经 open-type="contact" 进入临时会话后 1 分钟内最多 2 条免用户先发消息；
+	// 体系归属（小程序客服消息 vs mpkf.weixin.qq.com）属真机实测项，按实测接法落地。
+	kfSendPath = "/cgi-bin/message/custom/send"
 )
 
 // Client 微信服务端客户端
@@ -286,4 +291,63 @@ func (c *Client) getPhoneNumber(ctx context.Context, code string, retried bool) 
 		return "", "", &WechatError{ErrCode: pi.ErrCode, ErrMsg: pi.ErrMsg}
 	}
 	return pi.PhoneInfo.PurePhoneNumber, pi.PhoneInfo.CountryCode, nil
+}
+
+// kfTextResp 客服消息下发响应
+type kfTextResp struct {
+	ErrCode int    `json:"errcode"`
+	ErrMsg  string `json:"errmsg"`
+}
+
+// SendKfText T690：向指定用户 openid 下发一条小程序客服文本消息（§7A.13 身份消息）。
+//   - 成功 → nil；微信 errcode != 0 → *WechatError
+//   - errcode 40001/42001（access_token 失效）→ 强制刷新并重试 1 次（同 GetPhoneNumber 口径）
+//   - 调用方须保证「进入会话 1 分钟内」的时效（本方法在收到进入事件后同步调用）
+func (c *Client) SendKfText(ctx context.Context, toUser, content string) error {
+	return c.sendKfText(ctx, toUser, content, false)
+}
+
+func (c *Client) sendKfText(ctx context.Context, toUser, content string, retried bool) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	tok, err := c.getAccessToken(ctx, false)
+	if err != nil {
+		return err
+	}
+	reqURL := c.baseURL + kfSendPath + "?access_token=" + url.QueryEscape(tok)
+	reqBody, _ := json.Marshal(map[string]any{
+		"touser":  toUser,
+		"msgtype": "text",
+		"text":    map[string]string{"content": content},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("build kf send request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpCli.Do(req)
+	if err != nil {
+		return fmt.Errorf("http do kf send: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read kf send body: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("kf send http status %d body %s", resp.StatusCode, truncate(body, 256))
+	}
+	var kf kfTextResp
+	if err := json.Unmarshal(body, &kf); err != nil {
+		return fmt.Errorf("parse kf send response: %w body %s", err, truncate(body, 256))
+	}
+	if kf.ErrCode != 0 {
+		if (kf.ErrCode == 40001 || kf.ErrCode == 42001) && !retried {
+			_, _ = c.getAccessToken(ctx, true)
+			return c.sendKfText(ctx, toUser, content, true)
+		}
+		return &WechatError{ErrCode: kf.ErrCode, ErrMsg: kf.ErrMsg}
+	}
+	return nil
 }

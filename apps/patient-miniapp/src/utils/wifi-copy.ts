@@ -29,7 +29,8 @@ export const ENTRY = {
   /** 设备上电无法由前端探测（BLE 未建连前无信号），故不给"已就绪"假绿态 */
   powerHint: '请确认',
   /** T297（Boss 09-21 23:02 裁定 D5 选①）：只给能力提示，不教用户凭网络名判断频段（PRD §7A.9.1 ④ 红线） */
-  hint: '提示：本设备仅支持 2.4GHz 家庭 WiFi，不支持 5G。请确认家中路由器已开启 2.4GHz 网络；不确定时请联系技师协助确认。',
+  // T690：设计稿 01-entry 已同步改「联系我们」（原「联系技师」四字随统一咨询入口退场）
+  hint: '提示：本设备仅支持 2.4GHz 家庭 WiFi，不支持 5G。请确认家中路由器已开启 2.4GHz 网络；不确定时请通过「联系我们」咨询产品客服协助确认。',
   btModal: {
     title: '请打开手机蓝牙',
     body: '配置家庭 WiFi 需要通过蓝牙近距离连接您的监测器。请在手机系统设置中打开蓝牙，然后返回本页面。',
@@ -216,7 +217,7 @@ export const FAILURES: Record<FailureKey, FailureCopy> = {
     actions: [
       '请稍后再试（服务器会自动重试）',
       '确认您的 WiFi 能正常上网',
-      '如长时间不行，请联系技师',
+      '如长时间不行，请联系我们',
     ],
     primaryLabel: '稍后重试',
     primaryTo: 'retry',
@@ -257,7 +258,7 @@ export const FAILURES: Record<FailureKey, FailureCopy> = {
 export const FAILURE_COMMON = {
   navTitle: '配网未成功',
   actionLabel: '建议操作',
-  contactBtn: '联系技师',
+  contactBtn: '联系我们',
 } as const
 
 /**
@@ -274,27 +275,28 @@ export const FAILURE_KEY_BY_CODE: Record<number, FailureKey> = {
 /** 07-contact 的问题类型键：五类配网失败 + 扫描无设备（02 空态第 4 条指引） */
 export type ContactIssue = FailureKey | 'nodevice'
 
-/** 07-contact：联系客服（进入即提交反馈，见 PRD §7A.9 联系技师路由链） */
+/**
+ * 07-contact：配网语境的统一咨询入口变体（T690 · 设计稿 wifi-setup/07-contact.html，
+ * PRD §7A.9 V3.48 联动注：出口「联系技师」→「联系我们」；自动上报维持普通留言、进入即提交。
+ * 配网变体不另立业务：两通道/落库/后台承载与统一入口页 contact 完全同构。
+ */
 export const CONTACT = {
-  navTitle: '联系客服',
-  title: '正在为您联系客服',
-  subtitle: '我们已记录本次配网遇到的问题，客服会尽快与您联系',
-  contextTitle: '已附上的信息',
+  navTitle: '联系我们',
+  title: '配网遇到问题？',
+  subtitle: '您可以在线沟通，或给产品客服留言\n配网问题由运维团队处理',
+  contextTitle: '已自动记录的配网信息',
   typeLabel: '问题类型',
   deviceLabel: '设备',
   timeLabel: '发生时间',
-  steps: [
-    '问题信息已提交到客服系统，客服可在工作台查看',
-    '点击下方按钮，打开与客服的对话窗口',
-    '客服会在对话中协助您完成配网',
-  ],
-  primaryBtn: '打开客服对话',
-  secondaryBtn: '稍后再说',
-  /** 步骤 1 真实状态（设计稿静态稿固定画 ✓，实现须反映提交结果） */
-  step1Pending: '正在提交问题信息…',
-  step1Done: '问题信息已提交到客服系统，客服可在工作台查看',
-  step1Failed: '问题信息提交失败，请在对话中直接说明情况',
-  openingToast: '正在打开客服对话…',
+  /** 自动上报状态条：设计稿绿条为成功态；pending/failed 由实现侧诚实呈现，不伪造成功 */
+  autoOk: '已作为一条普通留言提交客服，无需重复描述',
+  autoPending: '正在将配网信息作为普通留言提交…',
+  autoFailed: '自动记录提交失败，可在客服对话中直接说明情况',
+  channelHint: '您还可以选择以下方式继续沟通：',
+  primaryBtn: '在线客服（即时沟通）',
+  leaveBtn: '客服留言（补充说明）',
+  backBtn: '稍后再说，返回重试',
+  openingToast: '正在打开微信客服会话…',
   submitFailToast: '问题记录提交失败，请直接打开客服对话说明情况',
   /** 设计稿 TYPE_MAP：问题类型展示文案（与 06 页标题同源但措辞更短） */
   typeMap: {
