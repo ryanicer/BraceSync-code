@@ -75,7 +75,7 @@ test.describe('处理流程画布', () => {
     // 初值只能前端自取）；时限由 timeLimit + timeUnit 现算，模板里没有现成文本字段
     await expect(panel.locator('.rp-op-info')).toContainText('主治医生')
     await expect(panel.locator('.rp-op-info')).toContainText('2小时')
-    for (const label of ['确认处理', '驳回', '转派', '加急']) {
+    for (const label of ['确认处理', '跳过', '转派', '加急']) { // T699：reject 按钮词「驳回」→「跳过」（PRD V3.45，同目标非弱化：仍逐键验可见）
       await expect(panel.getByRole('button', { name: label })).toBeVisible()
     }
     await expect(panel.locator('.op-upload')).toContainText('点击上传附件')

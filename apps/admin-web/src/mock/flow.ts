@@ -249,7 +249,8 @@ function findInstance(instanceId: string): MockInstance {
 }
 
 const ACTION_LABEL: Record<FlowNodeActionRequest['action'], string> = {
-  confirm: '确认处理', reject: '驳回', transfer: '转派', urge: '加急',
+  // T699：与后端 flowActionLabels 同词——reject 显示「跳过」（mock 词表镜像，改名随真源）
+  confirm: '确认处理', reject: '跳过', transfer: '转派', urge: '加急',
 }
 
 /** 节点名取模板 text.value（后端同名口径：查不到给 null，前端不自行编名字） */
