@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { realLogin, getAuthToken } from '../real-helpers'
+import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
 
 /**
  * T654 · 「康复建议」全链真实模式用例（e2e-real，打 staging）。
@@ -14,13 +14,21 @@ import { realLogin, getAuthToken } from '../real-helpers'
  *   → 读回（职称+时间+内容，姓名类键缺席，作者视角 editable=true）
  *   → 作者编辑（200）→ 读回内容已更新 → 作者删除（200）→ 后拍=前拍（库面守恒）
  *
- * 数据纪律（T654 卡面约束）：
+ * 数据纪律（T654 卡面约束 + T697 治本改法）：
  *   - 医护用 seed 家族账号 doctor_li（口令与 ops_admin 同族，走 realPassword 凭据门）；
- *   - 患者对象动态定位：取 doctor_li 现网团队下的一名 seed 患者（不新建患者行）；
- *   - 唯一的 staging 写 = 1 条 advice 记录，用例内 DELETE 收尾 + afterAll 兜底删除，
- *     后拍断言「条数=前拍」⇒ 库面守恒，不留残行（T467 口径的行数守恒）。
- *   - 教训锚（T641 写腿 run3-scope.txt）：患者现网 teamId 可能被历轮测试改派（P20260005
- *     已不在 seed 的 TEAM03），所以患者不许写死，必须动态按 doctor_li 的团队解析。
+ *   - 🔴 T697：患者对象一律**本链自建**（建档 → 分配团队 → 读回校验 → 用后即删），
+ *     不再借 seed 家族患者的团队归属。旧姿势把用例生死押在共享 seed 状态上：历轮测试
+ *     （22-链A 的分配团队、24-链D 的改派）会把 seed 患者挪出 doctor_li 团队 ⇒ 本链稳定红
+ *     （PR #411 首跑与 max 复跑同为 1 failed/95 passed；现读 TEAM26f7a1b7bd 列表 17 行 /
+ *     同团队 0 行）。自己造的对象只有自己会挪，前置不再依赖任何共享行。
+ *   - staging 写 = 2 条自建患者 + 1 条 advice，全部用例内 DELETE 收尾 + afterAll 兜底，
+ *     后拍断言「advice 条数=前拍」且「患者总数=前拍」⇒ 库面守恒，不留残行（T467 口径）。
+ *   - 教训锚（T641 写腿 run3-scope.txt）：患者 teamId 会被历轮测试改派 ⇒ 患者不许写死；
+ *     T697 更进一步：连"动态定位"都不做，直接自建，把这条环境漂移从根上移出用例的依赖面。
+ *
+ * 负对照的真咬结构（T697 明确不弱化）：29.1 里同一枚 doctor 令牌对两枚患者各打一次 ——
+ *   同团队（自建）必须 200、跨团队（自建）必须 403。两条断言同处一条用例，
+ *   谁把负对照的对象挪回本团队，403 那条当场红 ⇒ 判据不靠"运气找到别人的患者"成立。
  *
  * 生产零写：入口守卫命中生产域名直接抛（生产针 = api.hbksd.com.cn；TST 基址 49.235.137.217 放行，口径同 PR382）。
  */
@@ -116,6 +124,53 @@ const STAFF_NAME_KEYS = ['doctorName', 'teamName', 'realName', 'userName', 'name
 const CONTENT_V1 = '【T654 CI 用例】请保持每日佩戴时长，两周后复查。（本条为自动化测试数据，将随即删除）'
 const CONTENT_V2 = '【T654 CI 用例·编辑】请保持每日佩戴时长并注意皮肤状态。（本条为自动化测试数据，将随即删除）'
 
+/** T697 自建夹具患者的命名前缀（残留可按前缀手工清，同 22-链A 的 T053 前缀口径） */
+const FIXTURE_PATIENT_PREFIX = 'T697建议夹具'
+
+/** 团队字典行（只取归属判定需要的两枚键） */
+interface TeamRow {
+  teamId: string
+  teamType?: string
+  name?: string
+}
+
+/** 患者总数信封（/admin/patients 是 {rows|list,total}，库面守恒两拍都读这一枚 total） */
+interface PatientTotal {
+  total?: number
+}
+
+/** 随机 11 位测试手机号（135 段，同 22-链A 姿势；撞 phone_hash 查重时 by why 里点名重跑） */
+function uniqueFixturePhone(): string {
+  return `135${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`
+}
+
+/**
+ * 建一枚夹具患者并分配进 teamId，随后读回校验归属真的落上。
+ * 这里"校验"不"自愈"：分配没落上就红在本处并点名端点，绝不回头去挪别人的患者或改 seed 归属
+ * （改派 seed 是环境动作，归值班席，不归用例）。
+ */
+async function createFixturePatient(p: Page, token: string, teamId: string, role: string): Promise<string> {
+  const name = uniqueName(FIXTURE_PATIENT_PREFIX)
+  const created = await callOk<PatientRow>(p, 'POST', '/api/v1/admin/patients', {
+    token,
+    body: { name, phone: uniqueFixturePhone(), gender: 'male', age: 12, diagnosis: 'T697 夹具（用后即删）' },
+    why: `建${role}夹具患者失败（message 含 already exists 即随机号撞了 phone_hash 查重，重跑一轮）：${name}`,
+  })
+  const pid = String(created.patientId)
+  await callOk<unknown>(p, 'PUT', `/api/v1/admin/patients/${encodeURIComponent(pid)}/team`, {
+    token,
+    body: { teamId },
+    why: `把${role}夹具患者分配进团队 ${teamId}`,
+  })
+  const back = await callOk<PatientRow>(p, 'GET', `/api/v1/admin/patients/${encodeURIComponent(pid)}`, {
+    token,
+    why: `读回${role}夹具患者的团队归属（本链前置，不成立就红在这里）`,
+  })
+  expect(String(back.teamId), `${role}夹具患者应坐在 ${teamId}，实读 ${String(back.teamId)}`).toBe(String(teamId))
+  console.log(`[t697][夹具] ${role} patientId=${pid} name=${name} teamId=${String(back.teamId)}`)
+  return pid
+}
+
 test.describe('29-advice-chain · 康复建议全链（T654）', () => {
   /** 跨用例共享的清理句柄：用例体内写入的 adviceId，afterAll 兜底删除 */
   let adminPage: Page
@@ -127,6 +182,10 @@ test.describe('29-advice-chain · 康复建议全链（T654）', () => {
   let crossTeamPatientId = ''
   let writtenAdviceId: string | null = null
   let baselineCount = -1
+  /** T697 自建夹具患者号（afterAll 用后即删，库面守恒的另一半） */
+  let createdPatientIds: string[] = []
+  /** T697 前拍患者总数（afterAll 后拍要回到这一枚） */
+  let patientBaselineTotal = -1
 
   test.beforeAll(async ({ browser }) => {
     const adminCtx = await browser.newContext()
@@ -157,30 +216,39 @@ test.describe('29-advice-chain · 康复建议全链（T654）', () => {
     console.log(`[t654][fixture] doctor_li doctorId=${me!.doctorId} teamId=${doctorTeamId}`)
     expect(doctorTeamId, 'doctor_li 应有团队归属（无团队则本链的「绑定团队成员」前提不成立）').toBeTruthy()
 
-    // 定位测试对象：doctor_li 团队内的一名患者（active 优先，pending 也可——advice 写只判团队归属）
-    // 注意分页信封：/admin/patients 的 data 是 {rows/list, total} 不是裸数组（与 /doctors 不同）
-    const patientsPage = await callOk<{ rows?: PatientRow[]; list?: PatientRow[]; total?: number }>(
+    // T697 治本段：两枚对象全部自建，用例不再读任何共享 seed 患者的归属。
+    // 前拍先记患者总数（afterAll 用后即删后要回到这一枚）。
+    const before = await callOk<PatientTotal>(
       adminPage,
       'GET',
-      '/api/v1/admin/patients?page=1&pageSize=100',
-      { token: adminToken, why: '读患者列表为动态定位同团队患者' },
+      '/api/v1/admin/patients?page=1&pageSize=1',
+      { token: adminToken, why: '前拍患者总数（库面守恒基数）' },
     )
-    const rows: PatientRow[] = patientsPage?.rows ?? patientsPage?.list ?? (Array.isArray(patientsPage) ? patientsPage : [])
-    expect(rows.length, `患者列表应有数据（total=${patientsPage?.total}）`).toBeGreaterThan(0)
-    const inTeam = rows.filter((x) => x.teamId === doctorTeamId)
-    const target = inTeam.find((x) => x.status === 'active') ?? inTeam[0]
-    expect(
-      target,
-      `doctor_li 团队 ${doctorTeamId} 下应有患者可作建议对象（列表 ${rows.length} 行，同团队 ${inTeam.length} 行）。` +
-        `若为 0：seed 家族患者被历轮测试改派所致，属环境漂移，按 T654「seed 家族账号」约束此处判红并停，不另行改派患者。`,
-    ).toBeTruthy()
-    targetPatientId = target!.patientId
+    patientBaselineTotal = Number(before?.total ?? -1)
+    expect(patientBaselineTotal, `患者总数应可读且非负（实得 ${patientBaselineTotal}）`).toBeGreaterThanOrEqual(0)
 
-    // 跨团队负对照对象：任一 teamId 非空且不等于 doctor_li 团队的患者
-    const outsider = rows.find((x) => x.teamId && x.teamId !== doctorTeamId)
-    expect(outsider, '患者列表里应存在跨团队患者作负对照对象').toBeTruthy()
-    crossTeamPatientId = outsider!.patientId
-    console.log(`[t654][fixture] 正例患者=${targetPatientId}（${target!.name}） 负对照患者=${crossTeamPatientId}（${outsider!.name}）`)
+    // 负对照只需要"另一个 teamId 这一个值"：只读借用，不动那支团队的成员与归属。
+    const teamsRaw = await callOk<TeamRow[] | { list?: TeamRow[] }>(adminPage, 'GET', '/api/v1/teams', {
+      token: adminToken,
+      why: '读团队字典取一枚非 doctor_li 团队 id（只借值，不改它的任何成员）',
+    })
+    const teamRows = Array.isArray(teamsRaw) ? teamsRaw : (teamsRaw?.list ?? [])
+    const otherTeam = teamRows.find((t) => t.teamId && t.teamId !== doctorTeamId)
+    expect(otherTeam, `团队字典里应有非 doctor_li 的团队可借（实读 ${teamRows.length} 行）`).toBeTruthy()
+
+    targetPatientId = await createFixturePatient(adminPage, adminToken, doctorTeamId!, '正例（与 doctor_li 同团队）')
+    createdPatientIds.push(targetPatientId)
+    crossTeamPatientId = await createFixturePatient(
+      adminPage,
+      adminToken,
+      otherTeam!.teamId,
+      `负对照（跨团队 ${otherTeam!.teamId}）`,
+    )
+    createdPatientIds.push(crossTeamPatientId)
+    console.log(
+      `[t697][夹具] 正例=${targetPatientId}@${doctorTeamId} 负对照=${crossTeamPatientId}@${otherTeam!.teamId} ` +
+        `患者总数前拍=${patientBaselineTotal}（本链自建 ${createdPatientIds.length} 枚，收尾全删）`,
+    )
   })
 
   test('29.1 医护发送-读回-编辑-删除全链 + 跨团队 403 负对照（用后即删，库面守恒）', async () => {
@@ -282,6 +350,43 @@ test.describe('29-advice-chain · 康复建议全链（T654）', () => {
         throw new Error(`[t654][残留报备] adviceId=${writtenAdviceId} 兜底删除失败 status=${r.status} —— 请按 T053 前缀在 staging 手工清理`)
       }
       writtenAdviceId = null
+    }
+
+    // T697 用后即删：自建的两枚夹具患者也必须回库。删除顺序不可倒 —— advice 已在上面清完，
+    // 这里只删患者行；删不动就报残像并抛（守恒是判据④，不允许"静默留行"过绿）。
+    if (createdPatientIds.length > 0 && adminToken) {
+      const leaked: string[] = []
+      for (const pid of createdPatientIds) {
+        const r = await callApi(adminPage, 'DELETE', `/api/v1/admin/patients/${encodeURIComponent(pid)}`, {
+          token: adminToken,
+        })
+        console.log(`[t697][清场] DELETE /admin/patients/${pid} status=${r.status} code=${r.code}`)
+        if (r.status !== 200) leaked.push(`${pid}(status=${r.status})`)
+      }
+      const after = await callOk<PatientTotal>(
+        adminPage,
+        'GET',
+        '/api/v1/admin/patients?page=1&pageSize=1',
+        { token: adminToken, why: '后拍患者总数（库面守恒）' },
+      )
+      const afterTotal = Number(after?.total ?? -1)
+      console.log(
+        `[t697][守恒] 患者总数 前拍=${patientBaselineTotal} 后拍=${afterTotal} ` +
+          `${afterTotal === patientBaselineTotal ? 'MATCH' : 'DRIFT'}`,
+      )
+      if (leaked.length > 0) {
+        throw new Error(
+          `[t697][残留报备] 夹具患者未删净：${leaked.join('，')}（前缀 ${FIXTURE_PATIENT_PREFIX}）` +
+            ` —— 本链不自行改环境，请按四纪律手工清理并回报 max`,
+        )
+      }
+      if (patientBaselineTotal >= 0 && afterTotal !== patientBaselineTotal) {
+        throw new Error(
+          `[t697][残留报备] 患者总数未回平：前拍 ${patientBaselineTotal} 后拍 ${afterTotal}（差 ` +
+            `${afterTotal - patientBaselineTotal}）—— 有行没删干净或本轮之外还有人写患者表，停手回报不自行修`,
+        )
+      }
+      createdPatientIds = []
     }
   })
 })

@@ -1,4 +1,4 @@
--- seed-prod.sql —— BraceSync 生产首发最小 seed（T696 手册 V1.1.1 §9 口径件）
+-- seed-prod.sql —— BraceSync 生产首发最小 seed（T696 手册 V1.2 §9 口径件）
 -- 🔴 纪律（红线同手册）：
 --   1. 本文件只含字典与 1 个管理员账号占位参数，禁一切测试家族数据（teams/doctors/patients/设备/告警等一律不进）；
 --   2. 禁任何真实口令/hash 入库——admins 行经 psql -v 运行时注入，明文与 hash 都不落本文件；

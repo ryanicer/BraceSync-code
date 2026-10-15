@@ -110,10 +110,14 @@ var userServiceRoutes = []proxyRoute{
 	{http.MethodPost, "/tech/login"},           // T037 技师登录（免 JWT 白名单）
 	{http.MethodPost, "/patient/login"},        // T037 患者登录（免 JWT 白名单）
 	{http.MethodPost, "/patient/wx-login"},     // T069 患者微信小程序登录（免 JWT 白名单）
+	// T690 微信客服进入事件推送（免 JWT 白名单；GET=URL 验签挑战，POST=user_enter_tempsession）
+	{http.MethodGet, "/wechat/kf-push"},
+	{http.MethodPost, "/wechat/kf-push"},
 	// T085 患者微信绑定 + Admin 档案维护
 	{http.MethodPost, "/patient/bind-phone"},                      // 患者绑定手机号（scope=bind）
 	{http.MethodPost, "/admin/patients/:patientId/unbind-wechat"}, // 解绑微信
 	{http.MethodPut, "/admin/patients/:patientId/phone"},          // 改手机号
+	{http.MethodPost, "/admin/patients/:patientId/phone/reveal"},  // T691 r134 按需解密查看手机号明文（仅 admin，每次查看落敏感审计）
 	{http.MethodPost, "/admin/patients/:patientId/password"},      // T477 设登录口令（仅 admin，口令一次性返回）
 	{http.MethodPut, "/admin/patients/:patientId"},                // T248 4.3 档案编辑（姓名/性别/年龄/诊断/Cobb）
 	{http.MethodDelete, "/admin/patients/:patientId"},             // T467 档案删除（仅删无关联行的患者，否则 409）
