@@ -7,7 +7,10 @@
 //
 // 判定：
 //   - 该告警无 running 流程实例（未绑定/已完成/未启动）→ enforced=false，alert-service 按 staff 现状放行；
-//   - 有 running 实例 → 操作者必须通过「任一 current 节点」的节点执法（admin 例外）。
+//   - 有 running 实例 → 操作者必须通过「任一 current 节点」的节点执法。
+//
+// T694 甲案 A（max 2026-10-15 裁定，同卡一并收窄）：告警「标已处理/开始处理」按推进类
+// 同走门——原 admin 整段豁免已删，admin 与普通角色逐 current 节点过同一执法门。
 package handler
 
 import (
@@ -79,12 +82,9 @@ func (h *Handler) flowProcessGuard(c *gin.Context) {
 		return
 	}
 
-	// admin 例外：不看节点直接放行。
+	// T694 甲案 A：admin 不再整段豁免——与普通角色同逐 current 节点过执法门（C10 纠偏：
+	// admin 点配置了他人角色的 current 节点应被拒，不再 200 绕过节点执法）。
 	guardIn := flowNodeGuardInput{OperatorID: req.OperatorID, XRole: req.Role}
-	if normalizeFlowXRole(req.Role) == normalizeFlowXRole(flowXRoleAdmin) {
-		ok(c, flowProcessGuardResponse{Enforced: true, Allowed: true, InstanceID: inst.InstanceID})
-		return
-	}
 
 	lastReason := "流程进行中，当前节点未授权该账号处理"
 	for i := range states {

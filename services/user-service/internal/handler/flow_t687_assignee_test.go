@@ -4,6 +4,8 @@
 //
 // 三例差分（卡面验收口径）：本人放行 + 非指派人 403 + admin 例外——存量 username 形落库
 // （doctor_li）+ 执法侧 admin_id 形操作者（A0002）下逐一读数。
+// T694 跟改：三例中 admin 例外仅存于纠偏类（transfer/urge）；本差分走 confirm 属推进类，
+// admin 无豁免 → 403（断言随甲案收窄更新，归一逻辑本身不受影响）。
 package handler
 
 import (
@@ -83,10 +85,12 @@ func TestT687_AssigneeLegacyForm_ThreeWayDiff(t *testing.T) {
 		assert.Empty(t, e.store.flow.lastAction.NodeID, "403 不得落到 ApplyFlowNodeAction")
 	})
 
-	t.Run("admin例外放行", func(t *testing.T) {
+	t.Run("admin推进类403（T694 甲案：confirm 去豁免，断言跟改）", func(t *testing.T) {
 		e := t687Env(t)
-		w, resp := e.do(http.MethodPost, flowActionPath+"N2/actions", body, hdr(flowRoleAdmin, "A0001"))
-		require.Equal(t, http.StatusOK, w.Code, resp.Message)
+		w, _ := e.do(http.MethodPost, flowActionPath+"N2/actions", body, hdr(flowRoleAdmin, "A0001"))
+		require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+		t464TechLogContains(t, w, "仅当前处理人可操作")
+		assert.Empty(t, e.store.flow.lastAction.NodeID, "403 不得落到 ApplyFlowNodeAction")
 	})
 }
 

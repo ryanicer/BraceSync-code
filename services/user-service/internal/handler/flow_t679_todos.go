@@ -135,8 +135,10 @@ func flowTodoNodeDTO(g *flowGraph, nodeID string, enteredAt time.Time) *model.Fl
 
 // flowTodoIsMine 「待我处理」判定：running 且当前节点经 T668 同源执法归本人。
 //
-// 🔴 采用 T668 同源判定（admin 恒放行 / 显式 assignee 只认该账号 / 否则模板角色须匹配 / 都没配放行）。
+// 🔴 采用 T668 同源判定（显式 assignee 只认该账号 / 否则模板角色须匹配 / 都没配放行）。
 // 与「严格只认 assigneeRole 命中」的差异已在 PR 卡评论登记（避免第二套判定漂移）。
+// T694 B 问裁定（可见性不等于可操作性）：admin 待办列表行为不动——共享门的 admin 恒放行
+// 随甲案移除后，在此处调用面显式保留 admin 放行；只影响「看」，能否「做」由动作面执法决定。
 func flowTodoIsMine(r *repo.FlowTodoRow, g *flowGraph, operatorID, xRole string) bool {
 	if r.InstanceStatus != model.FlowInstanceRunning {
 		return false
@@ -148,6 +150,9 @@ func flowTodoIsMine(r *repo.FlowTodoRow, g *flowGraph, operatorID, xRole string)
 	assignee := ""
 	if r.NodeAssignee != nil {
 		assignee = strings.TrimSpace(*r.NodeAssignee)
+	}
+	if normalizeFlowXRole(xRole) == normalizeFlowXRole(flowXRoleAdmin) {
+		return true
 	}
 	allowed, _ := enforceFlowNodeAssignment(flowNodeGuardInput{
 		ConfiguredRole: g.assigneeRole[nodeID],

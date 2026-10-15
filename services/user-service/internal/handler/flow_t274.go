@@ -807,20 +807,27 @@ func (h *Handler) submitFlowNodeAction(c *gin.Context) {
 
 	// T668 节点级角色/账号执法（confirm/reject/transfer/urge 统一走此门）：
 	// 读运行态节点 assignee（transfer 维护）+ 模板配置角色（properties.assigneeRole）。
+	// T694 甲案分动作分流：推进类（confirm/reject）admin 与普通角色同走门（去豁免，C10 纠偏）；
+	// 纠偏类（transfer/urge）保留 admin 例外——T668 兜底本意=运维纠偏不被节点配置锁死。
 	nodeStates, err := h.store.ListNodeStates(ctx, instanceID)
 	if err != nil {
 		fail(c, model.ErrInternal("load node states failed"))
 		return
 	}
-	if allowed, denyReason := enforceFlowNodeAssignment(flowNodeGuardInput{
-		ConfiguredRole: graph.assigneeRole[nodeID],
-		// T687 读侧兼容：存量 username/doctor_id 形 assignee 归一后再比对（执法函数体不动）。
-		StateAssignee: h.resolveFlowAssignee(ctx, nodeStateAssignee(nodeStates, nodeID)),
-		OperatorID:    op,
-		XRole:         c.GetHeader(headerRole),
-	}); !allowed {
-		fail(c, model.ErrForbidden(denyReason))
-		return
+	xRole := c.GetHeader(headerRole)
+	adminRemedialBypass := flowActionIsRemedial(req.Action) && normalizeFlowXRole(xRole) == normalizeFlowXRole(flowXRoleAdmin)
+	if !adminRemedialBypass {
+		if allowed, denyReason := enforceFlowNodeAssignment(flowNodeGuardInput{
+			ConfiguredRole: graph.assigneeRole[nodeID],
+			// T687 读侧兼容：存量 username/doctor_id 形 assignee 归一后再比对（执法函数体不动）。
+			StateAssignee: h.resolveFlowAssignee(ctx, nodeStateAssignee(nodeStates, nodeID)),
+			OperatorID:    op,
+			XRole:         xRole,
+			Action:        req.Action, // T694 ⑦：规则 2 拒因按动作分文案
+		}); !allowed {
+			fail(c, model.ErrForbidden(denyReason))
+			return
+		}
 	}
 
 	in := repo.FlowActionWrite{
