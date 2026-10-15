@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { appendFileSync } from 'node:fs'
 import { realLogin, getAuthToken, uniqueName } from '../real-helpers'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T574 · 链 D 流程图配置全链路（真实模式 / staging）
@@ -1062,6 +1063,18 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     })
     expect(trOk.actionLabel, '转派标签由后端给').toBe('转派')
     const g2AfterTransfer = await nodesAt(g2.inst.instanceId)
+    // T687: 归一回读形态（assignee=admin_id 形 / assigneeName 由 admin_id 反查）为本 PR 引入的
+    // 新行为，合并并部署到 staging 前该断言必假红 ⇒ 标 post-deploy；部署后由 strict 档真验。
+    // 同目标、非弱化：断言内容逐字不变（'A0003' + '客服小王'），只推迟到部署后验——本门位于
+    // 本用例末尾，跳过仅让位这组 T687 断言，24.4 前面全部 T574 判据照跑；跳过清单会随
+    // post-deploy annotation 进 job summary，reviewer 看得见「这一条没验」。
+    // 探针取「已部署包」读数（≠ 旧形态 cs_wang 即视为已部署）：旧包恒回 cs_wang ⇒ 让位；
+    // 已部署但归一坏了（回第三种值）⇒ 探针放行、由断言判红，不把真回归当「未部署」。
+    await requireDeployedBuild(page, {
+      marker: 'T687-assignee-normalize',
+      why: 'T687 写侧归一未随 staging 部署前，回读仍是 username 形 cs_wang',
+      probe: async () => g2AfterTransfer[NO]?.assignee !== 'cs_wang',
+    })
     // T687 断言变更说明（同目标、非弱化）：转派入参 username 形（cs_wang）经写侧形态归一
     // 落库为 admin_id 形（A0003，seed.sql:65 恒定），故回读断言从 'cs_wang' 改 'A0003'。
     // 断言目标不变——仍咬「转派后被转派人可回读」，且比改前更严：配对加验 assigneeName
