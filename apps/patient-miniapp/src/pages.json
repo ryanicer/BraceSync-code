@@ -55,6 +55,10 @@
     {
       "path": "pages/advice/index",
       "style": { "navigationBarTitleText": "康复建议" }
+    },
+    {
+      "path": "pages/contact/index",
+      "style": { "navigationBarTitleText": "联系我们" }
     }
   ],
   "tabBar": {

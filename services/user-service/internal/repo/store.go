@@ -305,6 +305,7 @@ type FeedbackRow struct {
 	ReplyContent *string
 	ReplyTime    *time.Time
 	Status       string
+	PhoneEnc     []byte // T691 r134：join patients 带回密文，handler 仅对 ROLE_ADMIN 经 phone.View 出脱敏；密文不出接口、明文不回常规读接口
 }
 
 // FeedbackCreateInput 反馈创建入参（T311）。字段已过 handler 层校验，长度不超列宽。

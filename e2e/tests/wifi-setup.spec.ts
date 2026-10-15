@@ -250,7 +250,8 @@ test.describe('06a–06e：五类失败态各自独立页', () => {
       await expect(page.locator('.action-item')).toHaveCount(3)
       await expect(body(page).getByText(c.action)).toBeVisible()
       await expect(body(page).getByText('建议操作')).toBeVisible()
-      await expect(body(page).getByText('联系技师', { exact: true })).toBeVisible()
+      // T690（§7A.9 V3.48 联动注）：五页出口「联系技师」→「联系我们」
+      await expect(body(page).getByText('联系我们', { exact: true })).toBeVisible()
       await expect(body(page).getByText(c.primary)).toBeVisible()
 
       // 失败页不给技术术语（PRD §7A.9 约束）
@@ -290,21 +291,23 @@ test('07-contact：进入即提交反馈，问题类型/设备/时间三项齐',
   await startProvision(page)
   await expect(body(page).getByText('WiFi 密码不正确')).toBeVisible({ timeout: 20_000 })
 
-  await body(page).getByText('联系技师', { exact: true }).click()
-  await expect(body(page).getByText('正在为您联系客服')).toBeVisible()
-  await expect(body(page).getByText('已附上的信息')).toBeVisible()
+  // T690（设计稿 07-contact.html 定稿形）：出口改「联系我们」，页形 = 上下文卡 + 绿条 + 三按钮
+  await body(page).getByText('联系我们', { exact: true }).click()
+  await expect(body(page).getByText('配网遇到问题？')).toBeVisible()
+  await expect(body(page).getByText('已自动记录的配网信息')).toBeVisible()
   await expect(body(page).getByText('问题类型')).toBeVisible()
   await expect(body(page).getByText('WiFi 密码不正确').first()).toBeVisible()
   await expect(body(page).getByText('BSYNC-')).toBeVisible()
   await expect(body(page).getByText('发生时间')).toBeVisible()
   await expect(body(page).getByText(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)).toBeVisible()
-  await expect(page.locator('.step')).toHaveCount(3)
-  await expect(body(page).getByText('打开客服对话')).toBeVisible()
+  await expect(body(page).getByText('在线客服（即时沟通）')).toBeVisible()
+  await expect(body(page).getByText('客服留言（补充说明）')).toBeVisible()
+  await expect(body(page).getByText('稍后再说，返回重试')).toBeVisible()
 
-  // 后端 POST /api/v1/feedbacks 尚未落地（T192 上报 §D1）：
-  // 第 1 步必须如实显示提交失败，不得画成已完成
-  await expect(body(page).getByText('问题信息提交失败，请在对话中直接说明情况')).toBeVisible({
+  // 自动上报真实结果：H5 e2e 下 POST 不可达 → 状态条必须如实显示失败，
+  // 不得画成已提交（设计稿绿条只在成功态出现）
+  await expect(body(page).getByText('自动记录提交失败，可在客服对话中直接说明情况')).toBeVisible({
     timeout: 15_000,
   })
-  await expect(body(page).getByText('问题信息已提交到客服系统')).toHaveCount(0)
+  await expect(body(page).getByText('已作为一条普通留言提交客服，无需重复描述')).toHaveCount(0)
 })

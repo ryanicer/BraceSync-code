@@ -254,6 +254,10 @@ type FeedbackDTO struct {
 	ReplyContent *string `json:"replyContent"`
 	ReplyTime    *string `json:"replyTime"`
 	Status       string  `json:"status"`
+	// PhoneMasked T691 r134（方案2a·D1甲案）：患者登录手机号的脱敏派生值，供沟通页「联系电话」行默认展示。
+	// 🔴 服务端按角色裁剪——仅 ROLE_ADMIN 装配本字段，其余角色恒 nil（omitempty 令字段整体缺席响应体）；
+	// 明文绝不走本常规读接口（T361/T491 隐私口径不破，明文只经独立 reveal 端点按需解密 + 落 sensitive_read 审计）。
+	PhoneMasked *string `json:"phoneMasked,omitempty"`
 }
 
 // FeedbackStatsDTO 患者沟通统计栏（T248 7.1，契约 getFeedbackStats）

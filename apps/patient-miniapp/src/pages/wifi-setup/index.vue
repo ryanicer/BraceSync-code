@@ -62,14 +62,16 @@
       @contact="goContact(failureType, 'failure')"
     />
 
-    <!-- 07-contact -->
+    <!-- 07-contact（T690 配网语境变体：同统一咨询入口两通道；补充留言回 pages/contact） -->
     <WifiContact
       v-else
       :issue-type="contactIssue"
       :device-label="deviceLabel"
       :occurred-at="occurredAt"
       :submit-state="feedbackState"
+      :session-from="contactSessionFrom"
       @open-chat="onOpenChat"
+      @leave="onContactLeave"
       @back="onContactBack"
     />
   </view>
@@ -787,12 +789,19 @@ async function retryProvision() {
 
 /* ===== 07-contact ===== */
 
+// T690：session-from＝患者ID|设备号（首段=患者ID，服务端按 | 解析；异常时 openid 兜底）
+const contactSessionFrom = computed(() => {
+  const pid = authStore.patientId || ''
+  const dev = deviceLabel.value || ''
+  return dev ? `${pid}|${dev}` : pid
+})
+
 function goContact(issue: ContactIssue, from: View) {
   contactIssue.value = issue
   contactBack.value = from
   const at = new Date()
   occurredAt.value = formatFeedbackTime(at)
-  logger.info('[T192] → 07 联系客服', { issue, from })
+  logger.info('[T690] → 07 联系我们（配网变体）', { issue, from })
   view.value = 'contact'
   void submitFeedback(issue, at)
 }
@@ -816,6 +825,11 @@ async function submitFeedback(issue: ContactIssue, at: Date) {
 function onOpenChat() {
   // 小程序端由 <button open-type="contact"> 原生打开客服会话
   uni.showToast({ title: CONTACT.openingToast, icon: 'none' })
+}
+
+function onContactLeave() {
+  // T690：补充留言回统一咨询入口留言表单（配网变体不另立业务，类型由用户自选）
+  uni.navigateTo({ url: '/pages/contact/index' })
 }
 
 function onContactBack() {

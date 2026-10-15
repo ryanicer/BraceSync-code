@@ -531,6 +531,16 @@ export async function processFeedbackApi(
   await request<null>({ url: `/api/v1/feedbacks/${feedbackId}/process`, method: 'POST', data: payload })
 }
 
+// T691 r134（方案2a）：按需解密查看患者手机号明文。仅 ROLE_ADMIN 可调（gateway RBAC + handler 双层）。
+// 每次调用服务端落一行 sensitive_read 审计；返回的 phone 为明文，供沟通页「复制号码」拨号回访。
+export async function revealPatientPhoneApi(patientId: string): Promise<{ patientId: string; phone: string }> {
+  if (USE_MOCK) { await delay(); return feedbackMock.mockRevealPatientPhone(patientId) }
+  return request<{ patientId: string; phone: string }>({
+    url: `/api/v1/admin/patients/${encodeURIComponent(patientId)}/phone/reveal`,
+    method: 'POST',
+  })
+}
+
 // ========== Orthosis（矫形日志 / 医生工作台） ==========
 
 export async function fetchOrthosisPlans(patientId: string): Promise<OrthosisPlan[]> {

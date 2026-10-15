@@ -90,7 +90,12 @@ func abortDeviceSecretRefused(c *gin.Context, refused *SecretRefusedError) {
 
 // authWhitelisted JWT 免鉴权白名单（方法 + 完整路径）
 // T030 admin 登录 + T037 技师/患者登录接口本身免 JWT
+// T690：/wechat/kf-push 为微信服务器推送入口（GET=URL 验签挑战，POST=进入事件），
+// 外部服务无 JWT；信任锚在 user-service handler 内的微信验签（WX_KF_MSG_TOKEN fail-closed）。
 func authWhitelisted(method, path string) bool {
+	if path == "/api/v1/wechat/kf-push" {
+		return method == http.MethodGet || method == http.MethodPost
+	}
 	if method != http.MethodPost {
 		return false
 	}
