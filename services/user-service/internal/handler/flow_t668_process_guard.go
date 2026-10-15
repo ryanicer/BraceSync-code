@@ -94,7 +94,8 @@ func (h *Handler) flowProcessGuard(c *gin.Context) {
 		nodeID := states[i].NodeID
 		assignee := ""
 		if states[i].Assignee != nil {
-			assignee = *states[i].Assignee
+			// T687 读侧兼容：存量混形 assignee 归一后再进执法（函数体不动）。
+			assignee = h.resolveFlowAssignee(ctx, *states[i].Assignee)
 		}
 		guardIn.ConfiguredRole = graph.assigneeRole[nodeID]
 		guardIn.StateAssignee = assignee
