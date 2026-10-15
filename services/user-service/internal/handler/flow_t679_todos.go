@@ -229,6 +229,11 @@ func (h *Handler) listMyTodos(c *gin.Context) {
 	var mineCount int64
 	for i := range rows {
 		r := rows[i]
+		if r.NodeAssignee != nil {
+			// T687 读侧兼容：存量混形 assignee 归一后再走 T668 同源判定（执法函数体不动）。
+			v := h.resolveFlowAssignee(c.Request.Context(), *r.NodeAssignee)
+			r.NodeAssignee = &v
+		}
 		g, gErr := parseFlowGraph(r.Nodes, nil)
 		if gErr != nil {
 			g = newFlowGraph() // 模板 JSON 异常不阻塞列表（节点名回退 node_id）
