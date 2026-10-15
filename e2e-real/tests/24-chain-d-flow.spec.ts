@@ -127,6 +127,7 @@ interface NodeStateDTO {
   operator: string | null
   remark: string | null
   assignee: string | null
+  assigneeName: string | null
 }
 interface ActionDTO {
   actionId: string
@@ -1061,9 +1062,15 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
     })
     expect(trOk.actionLabel, '转派标签由后端给').toBe('转派')
     const g2AfterTransfer = await nodesAt(g2.inst.instanceId)
-    expect(g2AfterTransfer[NO]?.assignee, '转派后被转派人应回读得到').toBe(TECH_ACCOUNT)
+    // T687 断言变更说明（同目标、非弱化）：转派入参 username 形（cs_wang）经写侧形态归一
+    // 落库为 admin_id 形（A0003，seed.sql:65 恒定），故回读断言从 'cs_wang' 改 'A0003'。
+    // 断言目标不变——仍咬「转派后被转派人可回读」，且比改前更严：配对加验 assigneeName
+    // （归一前 username 形经四表 ID 反查必为 null，归一后 ='客服小王'），若归一未生效，
+    // assignee 会回 'cs_wang'、assigneeName 会回 null，两条断言各自都能独立拦住弱化。
+    expect(g2AfterTransfer[NO]?.assignee, '转派后被转派人应回读得到（T687 归一为 admin_id 形）').toBe('A0003')
+    expect(g2AfterTransfer[NO]?.assigneeName, 'T687 归一后显示名应由 admin_id 反查得到（归一前 username 形必 null）').toBe('客服小王')
     console.log(
-      `[t574-chain-d][A4] 转派配对正对照 ⇒ 节点 ${NO} assignee=${String(g2AfterTransfer[NO]?.assignee)} status=${String(g2AfterTransfer[NO]?.status)}（转派只改指派，不改节点状态）`,
+      `[t574-chain-d][A4] 转派配对正对照 ⇒ 节点 ${NO} assignee=${String(g2AfterTransfer[NO]?.assignee)} assigneeName=${String(g2AfterTransfer[NO]?.assigneeName)} status=${String(g2AfterTransfer[NO]?.status)}（T687：username 形入参归一落 admin_id；转派只改指派，不改节点状态）`,
     )
   })
 

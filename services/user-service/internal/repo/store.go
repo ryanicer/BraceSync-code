@@ -736,6 +736,11 @@ type Store interface {
 	// ApplyFlowNodeAction 状态机唯一写入点（图遍历结果由 handler 传入，repo 不读模板 JSON）。
 	ApplyFlowNodeAction(ctx context.Context, in FlowActionWrite) (*FlowNodeActionRow, error)
 	ListFlowNodeActions(ctx context.Context, instanceID string) ([]FlowNodeActionRow, error)
+	// ResolveFlowAccountID T687：账号形态归一——把转派/指派里收到的任意账号形态
+	// （admins.username 形 doctor_li、doctors.doctor_id 形 D0001、已 canonical 的 admin_id 形 A0002）
+	// 解析到 admins.admin_id（执法侧 OperatorID 的比对口径）。三形态都查不到时原样返回
+	// （技师 tech_id / 患者 ID 等非 admins 域账号不在此列，落库/比对维持原值）。
+	ResolveFlowAccountID(ctx context.Context, raw string) (string, error)
 
 	// T679 医护待办读侧（flow_instance JOIN alerts/patients；纯派生不新建表）。
 	ListFlowTodos(ctx context.Context, f FlowTodoFilter) ([]FlowTodoRow, error)
