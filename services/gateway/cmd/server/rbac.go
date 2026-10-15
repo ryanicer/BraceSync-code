@@ -139,6 +139,9 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId/team"),
 	rbacOf(http.MethodPost, "/api/v1/admin/patients/:patientId/unbind-wechat"),
 	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId/phone"),
+	// T691 r134：按需解密查看患者手机号明文（方案2a）。明文触达 = 隐私/接管风险面，
+	// 收口 admin-only（其余角色 default-deny 403），handler 侧另有 requireAdminRole 双层防御，同 T190 口径。
+	rbacOf(http.MethodPost, "/api/v1/admin/patients/:patientId/phone/reveal"),
 	// T248 4.3 档案编辑（姓名/性别/年龄/诊断/Cobb）。不登记则 default-allow 放行任意角色。
 	rbacOf(http.MethodPut, "/api/v1/admin/patients/:patientId"),
 	// T477 患者设登录口令：能给别人设口令 = 能登别人账号，危害与「改手机号」同级甚至更高，
