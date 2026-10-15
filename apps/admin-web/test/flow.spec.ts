@@ -133,7 +133,8 @@ describe('节点操作状态机（前端不自行推算，一律重拉服务端�
       r1: 'skipped', r2: 'todo',
     })
     const actions = await fetchFlowInstanceActions(inst.instanceId)
-    expect(actions[actions.length - 1]?.actionLabel).toBe('驳回')
+    // T699：词表随 PRD V3.45 更新——reject 留痕显示「跳过」（行为断言在上面 statusMap，此处只咬标签词）
+    expect(actions[actions.length - 1]?.actionLabel).toBe('跳过')
   })
 
   it('transfer 只改指派不动状态；urge 只留痕', async () => {

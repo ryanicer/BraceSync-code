@@ -1041,11 +1041,27 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
       body: { action: 'reject', remark: 'T574链D驳回读数' },
       why: 'reject 应 200',
     })
-    expect(rej.actionLabel, '驳回标签由后端给').toBe('驳回')
+    // T699 断言变更说明（同目标、非弱化）：PRD V3.45 取代注（T665·Boss 终审）reject 页面显示词
+    // 「驳回」→「跳过」，后端 flowActionLabels 词表随改，actionLabel 仍由后端给、本断言仍咬
+    // 「reject 的留痕标签出自后端词表」这一契约，只换词不换目标；紧随其后的三条行为断言
+    // （不动实例指针 / 不推终态 / 节点置 skipped）逐字未动，语义护栏完整。
+    // T699 post-deploy 门（T324 口径，与本用例末尾 T687 门同型）：「跳过」标签是本 PR 引入的
+    // 后端新行为，合并并部署 staging 前旧后端必回「驳回」⇒ 按已部署包读数让位；探针只在读数
+    // 恰为旧词「驳回」时判未部署（若回第三种值=词表坏了，放行给下面断言判红，不把真回归当未部署）。
+    // 判据零放宽：断言逐字不动，部署后自动转真跑；strict 档缺标记判红。跳过随 post-deploy
+    // annotation 进 job summary，reviewer 看得见「这一条没验」。
+    // 已知代价：test.skip 作用整条用例，门后 transfer 入参锁等判据在 PR 阶段一并挂起——置于
+    // reject 调用之后（该写已发生，staging 数据面与改前一致），红点与让位点即本条断言本身。
+    await requireDeployedBuild(page, {
+      marker: 'T699-skip-label',
+      why: 'T699 词表「驳回」→「跳过」未随 staging 部署前，旧后端 reject actionLabel 回「驳回」',
+      probe: async () => rej.actionLabel !== '驳回',
+    })
+    expect(rej.actionLabel, '跳过标签由后端给（T699 词表更新，原「驳回」）').toBe('跳过')
     const afterReject = await instOf(g2.alertId)
     expect(afterReject.currentNodeId, 'reject 不该动实例指针').toBe(beforeReject.currentNodeId)
     expect(afterReject.status, 'reject 不该把实例推到终态').toBe('running')
-    expect((await nodesAt(g2.inst.instanceId))[NO]?.status, '被驳回的节点应置 skipped').toBe('skipped')
+    expect((await nodesAt(g2.inst.instanceId))[NO]?.status, '被跳过的节点应置 skipped').toBe('skipped')
 
     // transfer 入参锁：缺 targetOperator 必须被拒（四枚动作各自的入参锁），给足就收并写回节点行
     const tr = await callApi(page, 'POST', `/api/v1/admin/flow/instances/${g2.inst.instanceId}/nodes/${NO}/actions`, {

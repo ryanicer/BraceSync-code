@@ -63,9 +63,13 @@ func requireFlowStaff(c *gin.Context) bool {
 }
 
 // flowActionLabels action → 中文标签（后端给，前端不硬编码映射；同 auditActionLabels 口径）
+//
+// T699：reject 的页面显示词按 PRD V3.45 取代注（T665·Boss 终审）统一为「跳过」——
+// reject 置 skipped 不推进，沿出边继续，「驳回」旧词作废；留痕侧 actionLabel
+// 由本词表出（前端直渲），改这里即全链归一（DB 枚举值仍为 reject，不动）。
 var flowActionLabels = map[string]string{
 	model.FlowActionConfirm:  "确认处理",
-	model.FlowActionReject:   "驳回",
+	model.FlowActionReject:   "跳过",
 	model.FlowActionTransfer: "转派",
 	model.FlowActionUrge:     "加急",
 }

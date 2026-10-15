@@ -182,12 +182,13 @@ const canReadRoster = computed(() => canReadDoctorRoster(auth.role))
 
 const ACTIONS: { value: FlowActionType; label: string; primary: boolean }[] = [
   { value: 'confirm', label: '确认处理', primary: true },
-  { value: 'reject', label: '驳回', primary: false },
+  // T699：reject 按钮词随 PRD V3.45 统一「驳回」→「跳过」（与 todos 页/状态色文案同词）
+  { value: 'reject', label: '跳过', primary: false },
   { value: 'transfer', label: '转派', primary: false },
   { value: 'urge', label: '加急', primary: false },
 ]
 const ACTION_LABEL: Record<FlowActionType, string> = {
-  confirm: '处理', reject: '（驳回）', transfer: '（转派）', urge: '（加急）',
+  confirm: '处理', reject: '（跳过）', transfer: '（转派）', urge: '（加急）',
 }
 
 const loading = ref(false)
