@@ -24,14 +24,14 @@ func TestSubmit_EndToEnd(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/bugs", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		if r.Method == http.MethodPost {
+		if r.Form.Get("id") == "" { // 创建（POST 不带 id）
 			got.method, got.path, got.title, got.labels = "POST", "/bugs", r.Form.Get("title"), r.Form.Get("labels")
 			got.desc = r.Form.Get("description")
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": 1,
 				"data": map[string]any{"Bug": map[string]any{"id": "300100023"}}})
 			return
 		}
-		got.desc = r.Form.Get("description") // PUT 回填后覆盖（首行=受理号）
+		got.desc = r.Form.Get("description") // POST 带 id=回填后覆盖（首行=受理号）
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": 1})
 	})
 	mux.HandleFunc("/files/upload_attachment", func(w http.ResponseWriter, r *http.Request) {

@@ -22,7 +22,7 @@ type tapdClient struct {
 	user        string
 	pass        string
 	workspaceID string
-	attachType  string // 缺陷附件 type 枚举（D-2 注：联调期实测确认；env TAPD_ATTACHMENT_TYPE 可覆盖）
+	attachType  string // 缺陷附件 type 枚举（D-2 注：2026-10-17 验收帧实测=bug；env TAPD_ATTACHMENT_TYPE 可覆盖）
 	http        *http.Client
 }
 
@@ -106,7 +106,8 @@ func (c *tapdClient) UpdateDescription(ctx context.Context, bugID int64, descrip
 		"id":           strconv.FormatInt(bugID, 10),
 		"description":  description,
 	}
-	_, err := c.do(ctx, http.MethodPut, "/bugs", strings.NewReader(form.encode()), "application/x-www-form-urlencoded")
+	// TAPD 更新缺陷同走 POST（PUT /bugs 实测 405；POST 带 id=status1 实证 2026-10-17 验收帧）
+	_, err := c.do(ctx, http.MethodPost, "/bugs", strings.NewReader(form.encode()), "application/x-www-form-urlencoded")
 	return err
 }
 
