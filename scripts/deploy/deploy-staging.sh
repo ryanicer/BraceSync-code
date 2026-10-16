@@ -158,7 +158,11 @@ bash scripts/deploy/build-all.sh "$TAG" || {
 log "③ 构建 admin-web (VITE_USE_MOCK=false) ..."
 cd "$PROJECT_ROOT"
 npm install --silent 2>/dev/null || fail "npm install 失败"
-VITE_USE_MOCK=false npm run build -w apps/admin-web || fail "admin-web 构建失败"
+# T708/T709：iframe 宿主两构建变量（缺任一 ⇒ helper 返 null ⇒ 页面占位态「尚未开通」，
+# 2026-10-17 staging 首发实证）。基址走本机 nginx /feedback-proxy/ 前缀（剥前缀反代到 service，
+# 末尾斜杠必留：helper 是 base+"?env=" 拼法）。可用 FEEDBACK_SERVICE_URL 环境变量覆盖。
+FEEDBACK_BASE="${FEEDBACK_SERVICE_URL:-http://106.52.39.208:81/feedback-proxy/}"
+VITE_USE_MOCK=false VITE_FEEDBACK_SERVICE_URL="$FEEDBACK_BASE" VITE_FEEDBACK_ENV=staging npm run build -w apps/admin-web || fail "admin-web 构建失败"
 log "   admin-web 产物: $PROJECT_ROOT/apps/admin-web/dist/"
 
 # rsync admin-web 产物到 staging 目录

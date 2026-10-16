@@ -164,7 +164,9 @@
 
     var btn = document.getElementById('go');
     btn.disabled = true; btn.textContent = '提交中…';
-    fetch('/api/feedback', { method: 'POST', body: fd })
+    // 相对路径（勿写根路径）：直连 service(/) ⇒ /api/feedback；经 nginx /feedback-proxy/ 前缀
+    // ⇒ /feedback-proxy/api/feedback（nginx 剥前缀转发）。根路径会打到宿主 nginx 的 /api/（错后端）。
+    fetch('api/feedback', { method: 'POST', body: fd })
       .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
       .then(function (o) {
         if (o.s === 200 && o.j.code === 0) {
