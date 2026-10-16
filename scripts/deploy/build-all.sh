@@ -26,14 +26,15 @@ SVC_PORT[data-service]=8083
 SVC_PORT[alert-service]=8080
 SVC_PORT[file-service]=8085
 SVC_PORT[msg-service]=8086
+SVC_PORT[feedback-proxy]=8087
 
-# 服务列表
-SERVICES="gateway user-service device-service data-service alert-service file-service msg-service"
+# 服务列表（T709 起含 feedback-proxy 运维反馈代理容器）
+SERVICES="gateway user-service device-service data-service alert-service file-service msg-service feedback-proxy"
 
 echo "==> [0/8] 拉取 alpine 基础镜像 ..."
 sudo docker pull alpine:3.20
 
-echo "==> 开始编译 7 个服务 ..."
+echo "==> 开始编译 $(echo "$SERVICES" | wc -w) 个服务 ..."
 
 SVC_COUNT=$(echo "$SERVICES" | wc -w)
 SVC_IDX=0
