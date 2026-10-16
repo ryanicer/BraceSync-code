@@ -351,6 +351,7 @@ type FlowFixtureSnapshot struct {
 type FlowFixtureCleanupResult struct {
 	TemplatePrefix   string
 	CreatedAfter     time.Time
+	CreatedBefore    time.Time // T701：零值=仅下界（旧行为）；非零=闭窗上界
 	Before           FlowFixtureSnapshot
 	After            FlowFixtureSnapshot
 	DeletedInstances int64
@@ -361,10 +362,13 @@ type FlowFixtureCleanupResult struct {
 // （flow_node_state / flow_node_action 走 FK ON DELETE CASCADE 一并清），再删窗口内创建
 // 且无残留引用的前缀模板。前置与后置各拍一次读数随响应返回，供 CI 收尾钩子与验收留痕。
 //
+// T701：createdBefore 非零时窗为闭区间下界 + 开区间上界 [createdAfter, createdBefore)——
+// 残留守卫据此清「往轮存量」而不吞并发 run 正在造的夹具；零值保持仅下界的旧行为。
+//
 // 幂等：空窗口时删除计数为 0、前后读数相同，仍返回成功（不报错）。
 // 生产拒/前缀白名单/时间窗必填由 handler 层把关，本层只按入参执行。
-func (s *PGStore) CleanupFlowFixtures(ctx context.Context, templatePrefix string, createdAfter time.Time) (*FlowFixtureCleanupResult, error) {
-	res := &FlowFixtureCleanupResult{TemplatePrefix: templatePrefix, CreatedAfter: createdAfter}
+func (s *PGStore) CleanupFlowFixtures(ctx context.Context, templatePrefix string, createdAfter, createdBefore time.Time) (*FlowFixtureCleanupResult, error) {
+	res := &FlowFixtureCleanupResult{TemplatePrefix: templatePrefix, CreatedAfter: createdAfter, CreatedBefore: createdBefore}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -380,12 +384,17 @@ func (s *PGStore) CleanupFlowFixtures(ctx context.Context, templatePrefix string
 
 	// 1) 删窗口内实例。级联清 flow_node_state / flow_node_action；
 	//    删实例即释放其 alert_id，池位随 after 读数回正。
+	upperInst, argsInst := "", []any{templatePrefix, createdAfter}
+	if !createdBefore.IsZero() {
+		upperInst = " AND i.started_at < $3"
+		argsInst = append(argsInst, createdBefore)
+	}
 	delInst, err := tx.Exec(ctx,
 		`DELETE FROM flow_instance i
 		  USING flow_template t
 		  WHERE i.template_id = t.template_id
 		    AND starts_with(t.name, $1)
-		    AND i.started_at >= $2`, templatePrefix, createdAfter)
+		    AND i.started_at >= $2`+upperInst, argsInst...)
 	if err != nil {
 		return nil, err
 	}
@@ -394,13 +403,18 @@ func (s *PGStore) CleanupFlowFixtures(ctx context.Context, templatePrefix string
 	// 2) 删窗口内创建、且已无引用的前缀模板。flow_instance 与 flow_type_bindings 两处 FK 均无
 	//    ON DELETE CASCADE，故凡仍被实例或类型绑定引用的模板一律 NOT EXISTS 拦下保留——
 	//    宁可留模板，也不让本步抛 FK 违例回滚整事务（回滚会把上一步的实例删除一起撤销，池净流失没治）。
+	upperTpl, argsTpl := "", []any{templatePrefix, createdAfter}
+	if !createdBefore.IsZero() {
+		upperTpl = " AND t.created_at < $3"
+		argsTpl = append(argsTpl, createdBefore)
+	}
 	delTpl, err := tx.Exec(ctx,
 		`DELETE FROM flow_template t
 		  WHERE starts_with(t.name, $1)
-		    AND t.created_at >= $2
+		    AND t.created_at >= $2`+upperTpl+`
 		    AND NOT EXISTS (SELECT 1 FROM flow_instance i WHERE i.template_id = t.template_id)
 		    AND NOT EXISTS (SELECT 1 FROM flow_type_bindings b WHERE b.template_id = t.template_id)`,
-		templatePrefix, createdAfter)
+		argsTpl...)
 	if err != nil {
 		return nil, err
 	}

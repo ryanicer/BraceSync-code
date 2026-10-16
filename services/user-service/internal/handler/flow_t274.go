@@ -572,8 +572,22 @@ func (h *Handler) cleanupFlowFixtures(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("createdAfter must be RFC3339, got %q", req.CreatedAfter))
 		return
 	}
+	// T701：createdBefore 可选闭窗上界；给了必须是 RFC3339 且晚于 createdAfter（防倒挂窗=零删除假象）。
+	var createdBefore time.Time
+	if s := strings.TrimSpace(req.CreatedBefore); s != "" {
+		createdBefore, err = time.Parse(time.RFC3339, s)
+		if err != nil {
+			fail(c, model.ErrInvalidParam("createdBefore must be RFC3339, got %q", req.CreatedBefore))
+			return
+		}
+		if !createdBefore.After(createdAfter) {
+			fail(c, model.ErrInvalidParam("createdBefore %s must be later than createdAfter %s",
+				createdBefore.UTC().Format(time.RFC3339), createdAfter.UTC().Format(time.RFC3339)))
+			return
+		}
+	}
 
-	res, err := h.store.CleanupFlowFixtures(c.Request.Context(), prefix, createdAfter)
+	res, err := h.store.CleanupFlowFixtures(c.Request.Context(), prefix, createdAfter, createdBefore)
 	if err != nil {
 		fail(c, model.ErrInternal("cleanup flow fixtures failed"))
 		return
@@ -582,16 +596,24 @@ func (h *Handler) cleanupFlowFixtures(c *gin.Context) {
 		Action:     auditActionDataModify,
 		TargetType: "flow_fixture",
 		TargetID:   prefix,
-		Description: fmt.Sprintf("清理 E2E 夹具：前缀=%s 时间窗>=%s 删实例=%d 删模板=%d（free %d→%d）",
-			prefix, res.CreatedAfter.UTC().Format(time.RFC3339), res.DeletedInstances, res.DeletedTemplates,
-			res.Before.FreePool, res.After.FreePool),
+		Description: fmt.Sprintf("清理 E2E 夹具：前缀=%s 时间窗%s 删实例=%d 删模板=%d（free %d→%d）",
+			prefix, t701WindowLabel(res.CreatedAfter, res.CreatedBefore),
+			res.DeletedInstances, res.DeletedTemplates, res.Before.FreePool, res.After.FreePool),
 	})
 	ok(c, cleanupFlowFixturesToDTO(res))
 }
 
+// t701WindowLabel 审计用时间窗标签：带闭窗上界时给 [from, to)，否则保持 T681 的 >=from。
+func t701WindowLabel(from, to time.Time) string {
+	if to.IsZero() {
+		return ">=" + from.UTC().Format(time.RFC3339)
+	}
+	return "[" + from.UTC().Format(time.RFC3339) + ", " + to.UTC().Format(time.RFC3339) + ")"
+}
+
 // cleanupFlowFixturesToDTO repo 结果 → 响应 DTO（时间统一 UTC RFC3339）。
 func cleanupFlowFixturesToDTO(res *repo.FlowFixtureCleanupResult) model.CleanupFlowFixturesResponse {
-	return model.CleanupFlowFixturesResponse{
+	dto := model.CleanupFlowFixturesResponse{
 		TemplatePrefix:   res.TemplatePrefix,
 		CreatedAfter:     res.CreatedAfter.UTC().Format(time.RFC3339),
 		Before:           fixtureSnapshotToDTO(res.Before),
@@ -599,6 +621,10 @@ func cleanupFlowFixturesToDTO(res *repo.FlowFixtureCleanupResult) model.CleanupF
 		DeletedInstances: res.DeletedInstances,
 		DeletedTemplates: res.DeletedTemplates,
 	}
+	if !res.CreatedBefore.IsZero() {
+		dto.CreatedBefore = res.CreatedBefore.UTC().Format(time.RFC3339)
+	}
+	return dto
 }
 
 func fixtureSnapshotToDTO(s repo.FlowFixtureSnapshot) model.FlowFixtureSnapshotDTO {

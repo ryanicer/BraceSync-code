@@ -77,6 +77,15 @@ const FLOW_TPL_PREFIX = 'T053流程'
  */
 const RUN_STARTED_AT = new Date(Date.now() - 30_000).toISOString()
 /**
+ * T701 残留守卫的时间参数：
+ * - 下界=固定基线（T053 夹具族最早出现之前），闭窗上界=now-gap ⇒ 只清「往轮存量」，
+ *   gap 之内的近期夹具（并发 run 在用 / 本 run 主清理已管的）一律不碰；
+ * - gap 默认 2h（> 任何一档 CI run 时长），验收时可用 E2E_T701_RESIDUE_GAP_MS 缩窗实证。
+ * 老后端（无 createdBefore 契约）会静默忽略上界 ⇒ 守卫发前先打能力探针，不支持就跳过（宁少清不误删）。
+ */
+const T701_GUARD_BASELINE = '2026-10-13T00:00:00.000Z'
+const T701_GUARD_GAP_MS = Number(process.env.E2E_T701_RESIDUE_GAP_MS ?? 2 * 60 * 60 * 1000)
+/**
  * T647 丙案：24.0 前置自清的单轮颗数上限。这枚数还没有现读背书（红发都停在断言那一行之前，
  * 名册颗数的一手读数取不到），所以首拍把在册颗数打进 summary 交接班席校准；超上限一律不改数据、照旧抛停手句。
  */
@@ -272,6 +281,62 @@ async function cleanupFlowFixtures(page: Page): Promise<void> {
     )
   } catch (e) {
     console.log(`[t574-chain-d][T681清理] 钩子异常（不阻塞主结论）：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/**
+ * T701 残留守卫：清「往轮存量」——createdAfter=固定基线、createdBefore=now-gap 的闭窗。
+ * 先打能力探针（带 createdBefore 的空窗请求，回显里有 createdBefore 字段=端点支持闭窗），
+ * 老后端会静默忽略上界 ⇒ 探针不认就直接跳过，绝不拿仅下界的大窗去清历史（防误删并发 run 夹具）。
+ * 失败只登记不抛：与 T681 钩子同口径，池守恒兜底不是被测行为。
+ */
+async function residueGuardCleanup(page: Page): Promise<void> {
+  try {
+    const token = (await getAuthToken(page)) ?? ''
+    if (!token) {
+      console.log('[t574-chain-d][T701守卫] 管理令牌取不到 ⇒ 跳过残留守卫')
+      return
+    }
+    const guardBefore = new Date(Date.now() - T701_GUARD_GAP_MS).toISOString()
+
+    // 能力探针：空窗（createdAfter=now > createdBefore 不合法 ⇒ 用 createdAfter=guardBefore、
+    // createdBefore=now 的近窗，正常情况 0 删除，同时验上界被回显）
+    const probeAt = new Date().toISOString()
+    const probe = await callApi(page, 'POST', '/api/v1/admin/flow/fixtures/cleanup', {
+      token,
+      body: { templatePrefix: FLOW_TPL_PREFIX, createdAfter: probeAt, createdBefore: probeAt },
+    })
+    const probeData = probe.data as { createdBefore?: string } | null
+    if (probe.code !== 0 || !probeData?.createdBefore) {
+      console.log(
+        `[t574-chain-d][T701守卫] 端点未支持闭窗 createdBefore（HTTP=${probe.status} code=${String(probe.code)} 回显=${probeData?.createdBefore ?? '无'}）⇒ 跳过残留守卫（老后端忽略上界会误删，宁少清）`,
+      )
+      return
+    }
+
+    const res = await callApi(page, 'POST', '/api/v1/admin/flow/fixtures/cleanup', {
+      token,
+      body: { templatePrefix: FLOW_TPL_PREFIX, createdAfter: T701_GUARD_BASELINE, createdBefore: guardBefore },
+    })
+    if (res.code !== 0) {
+      console.log(`[t574-chain-d][T701守卫] 端点回非 0（不阻塞主结论）：HTTP=${res.status} code=${String(res.code)} message=${res.message}`)
+      appendJobSummary(`T701 残留守卫：未成功 HTTP=${res.status} code=${String(res.code)} message=${res.message}`)
+      return
+    }
+    const d = res.data as {
+      deletedInstances: number
+      deletedTemplates: number
+      before: { freePool: number; templateCount: number; templateCountTotal: number; instanceCount: number }
+      after: { freePool: number; templateCount: number; templateCountTotal: number; instanceCount: number }
+    }
+    console.log(
+      `[t574-chain-d][T701守卫] 闭窗=[${T701_GUARD_BASELINE}, ${guardBefore}) 删实例=${d.deletedInstances} 删模板=${d.deletedTemplates}｜free ${d.before.freePool}→${d.after.freePool}｜前缀模板 ${d.before.templateCount}→${d.after.templateCount}｜前缀实例 ${d.before.instanceCount}→${d.after.instanceCount}`,
+    )
+    appendJobSummary(
+      `T701 残留守卫：前缀=${FLOW_TPL_PREFIX} 窗=[${T701_GUARD_BASELINE}, ${guardBefore}) 删实例=${d.deletedInstances} 删模板=${d.deletedTemplates}｜free ${d.before.freePool}→${d.after.freePool}`,
+    )
+  } catch (e) {
+    console.log(`[t574-chain-d][T701守卫] 守卫异常（不阻塞主结论）：${e instanceof Error ? e.message : String(e)}`)
   }
 }
 
@@ -1300,6 +1365,9 @@ test.describe('24-链 D 流程图全链路（T574，A1-A6）', () => {
       // T681 收尾钩子：无论上面的守恒断言是否通过，都尝试清理本 run 造的 T053 夹具
       // （实例 + 模板）——补上 24.7 钉在证据面上的两条残留通路。失败只登记不抛。
       await cleanupFlowFixtures(page)
+      // T701 残留守卫：主清理只清本 run 窗（createdAfter=RUN_STARTED_AT）⇒ 往轮存量永不自愈；
+      // 守卫补一发闭窗清扫 [基线, now-gap) 回收历史残留，gap 防吞并发 run 夹具。
+      await residueGuardCleanup(page)
       await page.close()
     }
   })

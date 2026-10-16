@@ -767,7 +767,7 @@ func TestITT681CleanupFlowFixturesByPrefixAndWindow(t *testing.T) {
 			[]FlowTypeBindingSet{{AlertType: "pressure_high", TemplateID: ""}})
 	})
 
-	res, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart)
+	res, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart, time.Time{})
 	require.NoError(t, err)
 
 	// 删除计数：窗口内 3 实例（IN1/IN2/BND）+ 3 模板（IN1/IN2/IN3；BND 因绑定被留存）
@@ -802,11 +802,51 @@ func TestITT681CleanupFlowFixturesByPrefixAndWindow(t *testing.T) {
 	assert.Equal(t, 1, itCountRows(t, `SELECT COUNT(*) FROM alerts WHERE alert_id = $1`, fxIn1.alertID))
 
 	// 幂等：同窗口再调 → 删 0，前后两拍读数完全相同（收尾钩子可无脑调用）
-	res2, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart)
+	res2, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart, time.Time{})
 	require.NoError(t, err)
 	assert.Zero(t, res2.DeletedInstances)
 	assert.Zero(t, res2.DeletedTemplates)
 	assert.Equal(t, res2.Before, res2.After, "空窗口幂等：前后读数一致")
+}
+
+// T701：createdBefore 闭窗上界（残留守卫清往轮存量、不吞并发 run 正在造的夹具）
+func TestITT701CleanupFlowFixturesClosedWindowUpperBound(t *testing.T) {
+	ctx := context.Background()
+	windowStart := time.Now().Add(-time.Minute)
+
+	// 往轮存量：started_at/created_at 落在闭窗 [windowStart, windowBefore) 内 ⇒ 应被清
+	fxOld := newIT681Fixture(t, "OLD", true)
+	// 并发 run 在用：started_at 晚于闭窗上界 ⇒ 必须留存
+	fxNew := newIT681Fixture(t, "NEW", true)
+
+	cut := time.Now().Add(-time.Second) // 上界：把 NEW 排除在窗外
+	_, err := itStore.pool.Exec(ctx,
+		`UPDATE flow_template SET created_at = $2 WHERE template_id = $1`, fxOld.templateID, windowStart.Add(30*time.Second))
+	require.NoError(t, err)
+	_, err = itStore.pool.Exec(ctx,
+		`UPDATE flow_instance SET started_at = $2 WHERE template_id = $1`, fxOld.templateID, windowStart.Add(30*time.Second))
+	require.NoError(t, err)
+
+	res, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart, cut)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), res.DeletedInstances, "只删闭窗内实例（NEW 在窗外留存）")
+	assert.Equal(t, int64(1), res.DeletedTemplates, "只删闭窗内模板")
+	assert.False(t, it681TemplateExists(t, fxOld.templateID), "往轮存量（窗内）被回收")
+	assert.True(t, it681TemplateExists(t, fxNew.templateID), "并发 run 在用夹具（窗外）不得被清")
+	assert.Equal(t, 1, itCountRows(t, `SELECT COUNT(*) FROM flow_instance WHERE template_id = $1`, fxNew.templateID),
+		"窗外实例留存（残留守卫的防误伤口）")
+
+	// 幂等：同闭窗再调 → 0
+	res2, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart, cut)
+	require.NoError(t, err)
+	assert.Zero(t, res2.DeletedInstances)
+	assert.Zero(t, res2.DeletedTemplates)
+
+	// 零值上界 = 仅下界旧行为：窗内 NEW 现在应被清（与 T681 完全一致）
+	res3, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart, time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), res3.DeletedInstances, "零值上界回落仅下界（旧客户端兼容）")
+	assert.False(t, it681TemplateExists(t, fxNew.templateID))
 }
 
 // ─────────────────────────────────────────────────────────────
