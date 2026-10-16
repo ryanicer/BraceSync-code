@@ -15,6 +15,7 @@ import { readQrCode, type ScanImpl } from '../src/utils/scan'
 import {
   DEVICE_ID_EXAMPLE, DEVICE_ID_PLACEHOLDER, DEVICE_ID_SHAPE,
   PATIENT_ID_EXAMPLE, PATIENT_ID_PLACEHOLDER, PATIENT_ID_SHAPE, SCAN_TOAST,
+  MAC_ADDRESS_SHAPE, DEVICE_ID_READ_FAIL, DEVICE_ID_MAC_BLOCK,
 } from '../src/utils/bind-copy'
 
 const PAGE = fileURLToPath(new URL('../src/pages/bind/index.vue', import.meta.url))
@@ -113,7 +114,9 @@ describe('bind 页落点接线（源码契约，防回潮）', () => {
 
   it('扫码走 readQrCode + uni.scanCode，不再直接给输入框赋字面量', () => {
     expect(pageSrc).toMatch(/readQrCode\(\(opts\) => uni\.scanCode\(opts\)\)/)
-    expect(pageSrc).not.toMatch(/manualDeviceId\.value\s*=\s*['"`]/)
+    // T707：清空赋值 `''` 是「不残留 MAC/陈旧值」路径的必要动作，放行空串字面量；
+    //       非空字面量（mock 硬编码回流）仍禁止
+    expect(pageSrc).not.toMatch(/manualDeviceId\.value\s*=\s*['"`][^'"`]/)
   })
 
   it('四条链路各有对应提示，失败与取消不复用「扫码成功」', () => {
@@ -176,5 +179,52 @@ describe('T507 扫码位改扫患者码（源码契约）', () => {
     expect(SCAN_TOAST.failed).toBe('扫码失败，请手动输入患者 ID')
     expect(SCAN_TOAST.failed).not.toContain('设备 ID')
     expect(SCAN_TOAST.empty).toBe('未识别到二维码内容，请手动输入')
+  })
+})
+
+/**
+ * T707 — 绑定页「蓝牙列表选设备 ⇒ 栏内填 MAC ⇒ 绑定必踩」修复的源码契约。
+ *
+ * 卡面修法三条全钉：①不预填 MAC（只认 B514 回填）；②栏位语义分离（列表标注蓝牙地址、
+ * 设备 ID 独立必填留手输——Boss 手输 TST_DEV_A 绑通实证，不许回退该能力）；
+ * ③bindDevice 前 MAC 形态兜底拦截。验收②「断连/B514 失败不残留 MAC」连带钉清空。
+ */
+describe('T707 设备 ID 语义与 MAC 守卫（源码契约）', () => {
+  it('MAC 形态判据：命中六段冒号形态（大小写不敏感），平台 ID/测试家族不误伤', () => {
+    expect(MAC_ADDRESS_SHAPE.test('B0:EF:12:34:56:7A')).toBe(true)
+    expect(MAC_ADDRESS_SHAPE.test('9c:cc:01:e2:ef:65')).toBe(true)
+    expect(MAC_ADDRESS_SHAPE.test('TST_DEV_A')).toBe(false)
+    expect(MAC_ADDRESS_SHAPE.test(DEVICE_ID_EXAMPLE)).toBe(false)
+  })
+
+  it('selectDevice 不再把蓝牙 deviceId 无条件写进设备 ID 栏（含复用路径）', () => {
+    expect(pageSrc).not.toMatch(/manualDeviceId\.value\s*=\s*deviceId\b/)
+  })
+
+  it('设备 ID 栏唯一的自动写入源＝B514 成功且非 MAC 形态的 info.deviceId', () => {
+    expect(pageSrc).toMatch(/if \(info && !MAC_ADDRESS_SHAPE\.test\(info\.deviceId\)\) \{/)
+    expect(pageSrc).toMatch(/manualDeviceId\.value = info\.deviceId/)
+  })
+
+  it('B514 失败/缺 id 与连接失败路径都清空栏并提示（卡面文案逐字）', () => {
+    expect(DEVICE_ID_READ_FAIL).toBe('未能读取设备 ID，请手动填写平台设备 ID')
+    expect(pageSrc).toMatch(/manualDeviceId\.value = ''/)
+    expect(pageSrc).toMatch(/uni\.showToast\(\{ title: DEVICE_ID_READ_FAIL/)
+  })
+
+  it('bindDevice 前有 MAC 形态兜底拦截，命中即拦下提示', () => {
+    expect(DEVICE_ID_MAC_BLOCK).toBe('设备 ID 不能是蓝牙地址，请填写平台设备 ID')
+    const bindStart = pageSrc.indexOf('async function bindManual')
+    const bindCall = pageSrc.indexOf('bindWithSwapConfirm(devId, patId)')
+    expect(bindStart).toBeGreaterThan(-1)
+    expect(bindCall).toBeGreaterThan(bindStart)
+    const guard = pageSrc.slice(bindStart, bindCall)
+    expect(guard).toMatch(/MAC_ADDRESS_SHAPE\.test\(devId\)/)
+  })
+
+  it('栏位语义分离：列表标注「蓝牙地址（仅连接用）」，设备 ID（平台）独立必填', () => {
+    const template = pageSrc.slice(0, pageSrc.indexOf('</template>'))
+    expect(template).toMatch(/蓝牙地址（仅连接用）: \{\{ item\.deviceId \}\}/)
+    expect(template).toMatch(/设备 ID（平台）<span class="required">\*<\/span>/)
   })
 })

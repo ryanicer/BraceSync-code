@@ -39,6 +39,19 @@ export const DEVICE_ID_SHAPE = /^PRS-ML05-RC-\d{11}$/
 
 export const DEVICE_ID_PLACEHOLDER = `例: ${DEVICE_ID_EXAMPLE}`
 
+/**
+ * T707 蓝牙 MAC 形态判据：uni BLE 扫描的 deviceId 在 Android 即 MAC（AA:BB:CC:DD:EE:FF 六段冒号，大小写不敏感）。
+ * 只用作「MAC 不得冒充平台设备 ID」的反向拦截，不判平台 ID 合法性——
+ * 平台合法 ID 家族不止 PRS 前缀（现网另有 TST_DEV_A 一类测试家族，Boss 手输绑定实证可用）。
+ */
+export const MAC_ADDRESS_SHAPE = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/
+
+/** T707 B514 读取失败/缺 device_id 时的栏位提示（卡面口径逐字，不得改写） */
+export const DEVICE_ID_READ_FAIL = '未能读取设备 ID，请手动填写平台设备 ID'
+
+/** T707 绑定前拦下 MAC 形态值的提示 */
+export const DEVICE_ID_MAC_BLOCK = '设备 ID 不能是蓝牙地址，请填写平台设备 ID'
+
 /** 扫码四态提示（T362：取消/失败/无内容都不得回落成"已填入"的假成功） */
 export const SCAN_TOAST = {
   success: '扫码成功',
