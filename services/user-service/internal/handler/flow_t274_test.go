@@ -747,6 +747,63 @@ func TestT681_CleanupFlowFixtures_NonAdmin403(t *testing.T) {
 	assert.Empty(t, e.store.auditRows)
 }
 
+// T701：createdBefore 闭窗透传 + 回显（残留守卫能力面）
+func TestT701_CleanupFlowFixtures_ClosedWindowPassThrough(t *testing.T) {
+	e := flowEnv(t)
+	res701 := fixCleanupResult()
+	res701.CreatedBefore = time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC) // 真库场景 repo 回填请求窗；fake 对齐
+	e.store.flow.cleanupRes = res701
+	w, resp := e.do(http.MethodPost, cleanupFlowFixturesPath,
+		map[string]string{"templatePrefix": "T053流程",
+			"createdAfter": "2026-10-13T01:00:00Z", "createdBefore": "2026-10-15T00:00:00Z"},
+		hdr(flowRoleAdmin, "A0001"))
+	require.Equal(t, http.StatusOK, w.Code, resp.Message)
+
+	assert.Equal(t, time.Date(2026, 10, 13, 1, 0, 0, 0, time.UTC), e.store.flow.lastCleanupAfter, "createdAfter 原样透传")
+	assert.Equal(t, time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC), e.store.flow.lastCleanupBefore, "createdBefore 原样透传 repo（闭窗上界）")
+
+	var dto model.CleanupFlowFixturesResponse
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Equal(t, "2026-10-15T00:00:00Z", dto.CreatedBefore, "闭窗上界回显（CI 能力探针据此判端点已支持）")
+	require.Len(t, e.store.auditRows, 1)
+	assert.Contains(t, e.store.auditRows[0].Description, "[2026-10-13T01:00:00Z, 2026-10-15T00:00:00Z)", "审计标签=闭区间记法")
+}
+
+// T701：createdBefore 不传 = 零值，行为与 T681 完全一致（不回显、审计 >= 记法）
+func TestT701_CleanupFlowFixtures_NoBeforeKeepsLegacy(t *testing.T) {
+	e := flowEnv(t)
+	e.store.flow.cleanupRes = fixCleanupResult()
+	w, resp := e.do(http.MethodPost, cleanupFlowFixturesPath,
+		map[string]string{"templatePrefix": "T053流程", "createdAfter": "2026-10-13T01:00:00Z"},
+		hdr(flowRoleAdmin, "A0001"))
+	require.Equal(t, http.StatusOK, w.Code, resp.Message)
+
+	assert.True(t, e.store.flow.lastCleanupBefore.IsZero(), "不传 createdBefore ⇒ repo 收零值（仅下界旧行为）")
+	var dto model.CleanupFlowFixturesResponse
+	require.NoError(t, json.Unmarshal(resp.Data, &dto))
+	assert.Empty(t, dto.CreatedBefore, "无上界不回显（omitempty，旧客户端兼容）")
+	require.Len(t, e.store.auditRows, 1)
+	assert.Contains(t, e.store.auditRows[0].Description, ">=2026-10-13T01:00:00Z")
+}
+
+// T701：createdBefore 倒挂/非法 = 400，且不得触达 repo（防倒挂窗=零删除假象被当幂等成功）
+func TestT701_CleanupFlowFixtures_BeforeNotLaterThanAfter400(t *testing.T) {
+	cases := map[string]map[string]string{
+		"倒挂": {"templatePrefix": "T053流程", "createdAfter": "2026-10-15T00:00:00Z", "createdBefore": "2026-10-13T01:00:00Z"},
+		"相等": {"templatePrefix": "T053流程", "createdAfter": "2026-10-13T01:00:00Z", "createdBefore": "2026-10-13T01:00:00Z"},
+		"非法": {"templatePrefix": "T053流程", "createdAfter": "2026-10-13T01:00:00Z", "createdBefore": "yesterday"},
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := flowEnv(t)
+			w, resp := e.do(http.MethodPost, cleanupFlowFixturesPath, body, hdr(flowRoleAdmin, "A0001"))
+			assert.Equal(t, http.StatusBadRequest, w.Code, resp.Message)
+			assert.Empty(t, e.store.flow.lastCleanupPrefix, "参数非法不得触达 repo")
+			assert.Empty(t, e.store.auditRows, "参数非法不落审计")
+		})
+	}
+}
+
 func TestT681_CleanupFlowFixtures_ProdHost403(t *testing.T) {
 	// 生产拒靠请求 Host 命中生产 API 域名（网关透传原始 Host）；do() 不设 Host，故手工构造请求
 	e := flowEnv(t)

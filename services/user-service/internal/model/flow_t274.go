@@ -72,9 +72,12 @@ type FlowNodeActionRequest struct {
 
 // CleanupFlowFixturesRequest POST /admin/flow/fixtures/cleanup（T681）
 // 两项均必填：prefix 须命中服务端白名单；createdAfter 为 RFC3339，只清该时刻之后创建/启动的夹具。
+// T701：createdBefore 可选闭窗上界（RFC3339，须晚于 createdAfter）——CI 残留守卫用它清「往轮存量」，
+// 旧客户端不传则行为不变（仅下界）。
 type CleanupFlowFixturesRequest struct {
 	TemplatePrefix string `json:"templatePrefix" binding:"required"`
 	CreatedAfter   string `json:"createdAfter" binding:"required"`
+	CreatedBefore  string `json:"createdBefore"`
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -148,6 +151,7 @@ type FlowFixtureSnapshotDTO struct {
 type CleanupFlowFixturesResponse struct {
 	TemplatePrefix   string                 `json:"templatePrefix"`
 	CreatedAfter     string                 `json:"createdAfter"`
+	CreatedBefore    string                 `json:"createdBefore,omitempty"` // T701：请求带闭窗上界时回显（能力探针据此判端点已支持）
 	Before           FlowFixtureSnapshotDTO `json:"before"`
 	After            FlowFixtureSnapshotDTO `json:"after"`
 	DeletedInstances int64                  `json:"deletedInstances"`

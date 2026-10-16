@@ -752,5 +752,6 @@ type Store interface {
 	ReplaceFlowTypeBindings(ctx context.Context, items []FlowTypeBindingSet) error
 
 	// T681 E2E 夹具清理：按前缀 + 时间窗单事务回收夹具（前后两拍读数随结果返回）。
-	CleanupFlowFixtures(ctx context.Context, templatePrefix string, createdAfter time.Time) (*FlowFixtureCleanupResult, error)
+	// T701：createdBefore 非零=闭窗上界（残留守卫清往轮存量），零值=仅下界。
+	CleanupFlowFixtures(ctx context.Context, templatePrefix string, createdAfter, createdBefore time.Time) (*FlowFixtureCleanupResult, error)
 }

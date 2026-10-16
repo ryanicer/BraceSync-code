@@ -76,6 +76,7 @@ type fakeFlowState struct {
 	cleanupErr        error
 	lastCleanupPrefix string
 	lastCleanupAfter  time.Time
+	lastCleanupBefore time.Time
 	// T679 医护待办读侧：todos 为待办行（含详情单行）；记录 filter 供断言团队/实例谓词。
 	todos          []repo.FlowTodoRow
 	todosErr       error
@@ -161,8 +162,9 @@ func (f *fakeStore) ListFlowNodeActions(_ context.Context, _ string) ([]repo.Flo
 	return f.flow.actions, f.flow.actionsErr
 }
 
-func (f *fakeStore) CleanupFlowFixtures(_ context.Context, templatePrefix string, createdAfter time.Time) (*repo.FlowFixtureCleanupResult, error) {
+func (f *fakeStore) CleanupFlowFixtures(_ context.Context, templatePrefix string, createdAfter, createdBefore time.Time) (*repo.FlowFixtureCleanupResult, error) {
 	f.flow.lastCleanupPrefix, f.flow.lastCleanupAfter = templatePrefix, createdAfter
+	f.flow.lastCleanupBefore = createdBefore
 	return f.flow.cleanupRes, f.flow.cleanupErr
 }
 
