@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>问题反馈 · 矫智通运营</title>
+<style>
+  body { margin:0; padding:24px 16px 60px; background:#e9edf1; color:#1f2329;
+         font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+  .card { max-width:640px; margin:0 auto; background:#fff; border:1px solid #dee0e3;
+          border-radius:10px; padding:24px 22px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { font-size:12.5px; color:#646a73; margin-bottom:18px; }
+  label { display:block; font-size:13px; font-weight:600; margin:14px 0 6px; }
+  label .req { color:#d94848; }
+  input[type=text], select, textarea {
+    width:100%; box-sizing:border-box; border:1px solid #c9cdd4; border-radius:6px;
+    padding:8px 10px; font-size:13.5px; background:#fff; }
+  textarea { min-height:120px; resize:vertical; }
+  input:disabled, select:disabled { background:#f2f4f7; color:#646a73; }
+  .hint { font-size:11.5px; color:#8f959e; margin-top:4px; }
+  .drop { border:1.5px dashed #c9cdd4; border-radius:8px; padding:14px; text-align:center;
+          color:#646a73; font-size:13px; cursor:pointer; background:#fafbfc; }
+  .drop.over { border-color:#2f6bff; background:#f0f5ff; color:#2f6bff; }
+  #thumbs { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .thumb { position:relative; width:84px; height:84px; border:1px solid #dee0e3; border-radius:6px;
+           overflow:hidden; background:#f5f6f8; }
+  .thumb img, .thumb video { width:100%; height:100%; object-fit:cover; }
+  .thumb .rm { position:absolute; top:0; right:0; background:rgba(0,0,0,.55); color:#fff;
+               border:0; width:20px; height:20px; cursor:pointer; font-size:13px; line-height:1; }
+  .thumb .bad { font-size:10.5px; color:#d94848; padding:6px; text-align:center; }
+  button.submit { margin-top:20px; width:100%; padding:10px; font-size:14.5px; font-weight:600;
+                  background:#2f6bff; color:#fff; border:0; border-radius:7px; cursor:pointer; }
+  button.submit:disabled { background:#a8c1ff; cursor:not-allowed; }
+  #result { margin-top:16px; padding:12px 14px; border-radius:7px; font-size:13.5px; display:none; line-height:1.7; }
+  #result.ok { display:block; background:#f0fbf4; border:1px solid #b8e6c8; color:#17422b; }
+  #result.err { display:block; background:#fff8f8; border:1px solid #f2c4c4; color:#8a2727; }
+  .receipt { font-family:ui-monospace,Consolas,monospace; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>问题反馈</h1>
+  <div class="sub">描述问题并附截图/录屏，提交后生成受理号（凭号在群内跟踪结论）。全程无需 TAPD 账号。</div>
+
+  <label>提交环境 <span class="req">*</span></label>
+  <input type="text" id="env" disabled value="加载中…">
+  <div class="hint">由菜单链接自动带入（?env=prod|staging），不可手改。</div>
+
+  <label>问题标题 <span class="req">*</span></label>
+  <input type="text" id="title" maxlength="200" placeholder="一句话概括，如：患者列表分页后白屏">
+
+  <label>问题分类 <span class="req">*</span></label>
+  <select id="category">
+    <option value="">请选择</option>
+    <option>页面报错/白屏</option>
+    <option>数据异常</option>
+    <option>功能不符预期</option>
+    <option>性能卡顿</option>
+    <option>登录/权限</option>
+    <option>其他</option>
+  </select>
+
+  <label>问题描述 <span class="req">*</span></label>
+  <textarea id="desc" maxlength="5000" placeholder="发生了什么、期望行为、复现步骤（1. 2. 3.）"></textarea>
+
+  <label>出错页面路径（选填）</label>
+  <input type="text" id="pagePath" maxlength="500" placeholder="https://… 或 /admin/patients?page=3">
+
+  <label>附件（≤9 张，png/jpg/gif/mp4，单个 ≤10MB）</label>
+  <div class="drop" id="drop">拖拽 / 粘贴 / 点击选择文件</div>
+  <input type="file" id="fileInput" multiple accept="image/png,image/jpeg,image/gif,video/mp4" style="display:none">
+  <div id="thumbs"></div>
+
+  <label>提交人（姓名）<span class="req">*</span></label>
+  <input type="text" id="submitter" maxlength="50" placeholder="用于分拣时联系你，如：王运维">
+
+  <button class="submit" id="go">提交</button>
+  <div id="result"></div>
+</div>
+
+<script>
+(function () {
+  var MAXN = 9, MAXB = 10 * 1024 * 1024;
+  var OK_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'video/mp4'];
+  var files = [];
+
+  // 环境只读：?env= 白名单 prod/staging，缺省拒（服务端同白名单，双端一致）。
+  var env = new URLSearchParams(location.search).get('env') || '';
+  var envEl = document.getElementById('env');
+  if (env === 'prod' || env === 'staging') {
+    envEl.value = env === 'prod' ? '生产（prod）' : '预发（staging）';
+    envEl.dataset.raw = env;
+  } else {
+    envEl.value = '无效环境参数（?env=prod|staging）';
+    document.getElementById('go').disabled = true;
+  }
+
+  var drop = document.getElementById('drop'), fi = document.getElementById('fileInput');
+  drop.addEventListener('click', function () { fi.click(); });
+  fi.addEventListener('change', function () { addFiles(fi.files); fi.value = ''; });
+  ['dragover', 'dragenter'].forEach(function (e) {
+    drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (e) {
+    drop.addEventListener(e, function (ev) { ev.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (ev) { addFiles(ev.dataTransfer.files); });
+  document.addEventListener('paste', function (ev) {
+    if (ev.clipboardData && ev.clipboardData.files.length) addFiles(ev.clipboardData.files);
+  });
+
+  function addFiles(list) {
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i];
+      if (files.length >= MAXN) { toast('最多 9 个附件'); break; }
+      if (OK_TYPES.indexOf(f.type) < 0) { toast(f.name + ' 类型不支持（仅 png/jpg/gif/mp4）'); continue; }
+      if (f.size > MAXB) { toast(f.name + ' 超过 10MB'); continue; }
+      files.push(f);
+    }
+    render();
+  }
+  function toast(msg) {
+    var el = document.getElementById('result');
+    el.className = 'err'; el.textContent = msg;
+    setTimeout(function () { if (el.textContent === msg) el.style.display = 'none'; }, 4000);
+    el.style.display = 'block';
+  }
+  function render() {
+    var t = document.getElementById('thumbs');
+    t.innerHTML = '';
+    files.forEach(function (f, idx) {
+      var d = document.createElement('div'); d.className = 'thumb';
+      var url = URL.createObjectURL(f);
+      if (f.type === 'video/mp4') {
+        var v = document.createElement('video'); v.src = url; d.appendChild(v);
+      } else {
+        var img = document.createElement('img'); img.src = url; d.appendChild(img);
+      }
+      var rm = document.createElement('button');
+      rm.className = 'rm'; rm.textContent = '×';
+      rm.onclick = function () { files.splice(idx, 1); render(); };
+      d.appendChild(rm);
+      t.appendChild(d);
+    });
+  }
+
+  document.getElementById('go').addEventListener('click', function () {
+    var title = document.getElementById('title').value.trim();
+    var cat = document.getElementById('category').value;
+    var desc = document.getElementById('desc').value.trim();
+    var sub = document.getElementById('submitter').value.trim();
+    var res = document.getElementById('result');
+    if (!title || !cat || !desc || !sub) { res.className = 'err'; res.style.display='block'; res.textContent = '请填写必填项（标题/分类/描述/提交人）'; return; }
+
+    var meta = JSON.stringify({
+      env: envEl.dataset.raw, title: title, category: cat,
+      description: desc, submitter: sub,
+      pagePath: document.getElementById('pagePath').value.trim()
+    });
+    var fd = new FormData();
+    fd.append('meta', meta);           // 第一部件=meta（服务端流式顺序依赖）
+    files.forEach(function (f) { fd.append('file', f, f.name); });
+
+    var btn = document.getElementById('go');
+    btn.disabled = true; btn.textContent = '提交中…';
+    fetch('/api/feedback', { method: 'POST', body: fd })
+      .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+      .then(function (o) {
+        if (o.s === 200 && o.j.code === 0) {
+          var d = o.j.data || {};
+          res.className = 'ok'; res.style.display = 'block';
+          res.innerHTML = '已受理，受理号 <span class="receipt">' + d.receipt + '</span>（复制此号，凭号在群内跟踪结论）'
+            + (d.failedFiles && d.failedFiles.length ? '<br>未成功上传：' + d.failedFiles.join('、') + '（可凭受理号补图）' : '');
+        } else {
+          res.className = 'err'; res.style.display = 'block';
+          res.textContent = '提交失败：' + (o.j.message || o.s) + '（内容已保留，可重试）';
+          btn.disabled = false;
+        }
+        btn.textContent = '提交';
+      })
+      .catch(function (e) {
+        res.className = 'err'; res.style.display = 'block';
+        res.textContent = '网络错误，请重试（' + e + '）';
+        btn.disabled = false; btn.textContent = '提交';
+      });
+  });
+})();
+</script>
+</body>
+</html>

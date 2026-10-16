@@ -10,6 +10,7 @@ use (
 	./services/alert-service
 	./services/file-service
 	./services/msg-service
+	./services/feedback-proxy
 	./services/testhelper
 	./scripts/dev/device-simulator
 )

@@ -51,7 +51,7 @@ jobs:
             go.sum
             go.work.sum
       - name: go vet
-        run: go vet ./services/gateway/... ./services/user-service/... ./services/device-service/... ./services/data-service/... ./services/alert-service/... ./services/file-service/... ./services/msg-service/...
+        run: go vet ./services/gateway/... ./services/user-service/... ./services/device-service/... ./services/data-service/... ./services/alert-service/... ./services/file-service/... ./services/msg-service/... ./services/feedback-proxy/...
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
@@ -81,7 +81,7 @@ jobs:
           go test -v -coverprofile=coverage.out -covermode=atomic \
             ./services/gateway/... ./services/user-service/... ./services/device-service/... \
             ./services/data-service/... ./services/alert-service/... ./services/file-service/... \
-            ./services/msg-service/...
+            ./services/msg-service/... ./services/feedback-proxy/...
       - name: Check coverage (diff ≥70% overall, ≥90% high-risk)
         run: |
           TOTAL=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')

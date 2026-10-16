@@ -164,6 +164,27 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # T709 运维反馈代理（独立容器：静态提交页 + 收单 + TAPD 建单/附件转发）
+  # 凭据只走容器 env（宿主 .env 注入变量值，仓库内只有 ${} 变量名；TAPD_API_USER=number+token）
+  feedback-proxy:
+    image: bracesync/feedback-proxy:${TAG:-latest}
+    environment:
+      - PORT=8087
+      - TAPD_BASE_URL=${TAPD_BASE_URL:-https://api.tapd.cn}
+      - TAPD_WORKSPACE_ID=${TAPD_WORKSPACE_ID:-33005753}
+      - TAPD_API_USER=${TAPD_API_USER}
+      - TAPD_API_PASSWORD=${TAPD_API_PASSWORD}
+      - TAPD_ATTACHMENT_TYPE=${TAPD_ATTACHMENT_TYPE:-bug_attachment}
+    ports:
+      - "8087:8087"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8087/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    logging: *default-logging
+
   file-service:
     image: bracesync/file-service:${TAG:-latest}
     environment:
