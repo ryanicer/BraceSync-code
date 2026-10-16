@@ -238,11 +238,13 @@ func TestITT498PartitionInheritance(t *testing.T) {
 	ctx := context.Background()
 	seedT498Patient(ctx, t, t498Device)
 
-	// 取「当月 +2」这个月：既在 cron 的预建口径内（+1/+2），又永远落在 TestMain 的
-	// ensureITPartitions（只建 当月-1 与 当月）之外 —— 写死 202612 会在钟走到 12 月时
-	// 与它抢同一段范围，报 42P17 would overlap。
+	// 取「当月 +3」这个月：须落在所有既有建分区路径之外——TestMain 逐文件跑全量迁移
+	// （000039 起覆盖 当月..当月+2，T705 治本）+ ensureITPartitions（当月-1 与 当月）
+	// + cron 口径（partition.go i=0..2 同 000039）；任一重叠即 42P17 would overlap。
+	// 本用例要的是「后建分区继承印章列/CHECK」，月份只作隔离段，+3 永远无冲突
+	// （写死 202612 会在钟走到 12 月时撞迁移窗，同理弃用）。
 	utc := time.Now().UTC()
-	from := time.Date(utc.Year(), utc.Month()+2, 1, 0, 0, 0, 0, time.UTC)
+	from := time.Date(utc.Year(), utc.Month()+3, 1, 0, 0, 0, 0, time.UTC)
 	child := "pressure_records_it_t498_" + from.Format("200601")
 
 	_, err := dashPool.Exec(ctx, fmt.Sprintf(
