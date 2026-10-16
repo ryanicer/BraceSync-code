@@ -30,6 +30,7 @@
         <text class="section-title">手动输入设备 ID</text>
         <view class="card">
           <view class="form-group">
+            <text class="form-label">设备 ID（平台）<span class="required">*</span></text>
             <input class="form-input" type="text" :placeholder="DEVICE_ID_PLACEHOLDER" v-model="manualDeviceId" />
           </view>
           <view class="form-group">
@@ -57,6 +58,7 @@
           >
             <view class="device-info">
               <text class="device-name">{{ item.name }}</text>
+              <text class="device-mac">蓝牙地址（仅连接用）: {{ item.deviceId }}</text>
               <text class="device-rssi">信号: {{ item.RSSI }}dBm</text>
             </view>
             <view :class="['signal-dot', item.RSSI > -60 ? 'signal-strong' : item.RSSI > -75 ? 'signal-medium' : 'signal-weak']"></view>
@@ -84,7 +86,7 @@ import { useInstallStore } from '../../stores/install'
 import { discoverDevices, initBluetooth, connectDevice, readDeviceInfo, registerBleStateListener, closeBLEConnection } from '../../utils/ble'
 import { bleLog } from '../../utils/ble-log'
 import { readQrCode } from '../../utils/scan'
-import { DEVICE_ID_PLACEHOLDER, PATIENT_ID_PLACEHOLDER, SCAN_TOAST } from '../../utils/bind-copy'
+import { DEVICE_ID_PLACEHOLDER, PATIENT_ID_PLACEHOLDER, SCAN_TOAST, MAC_ADDRESS_SHAPE, DEVICE_ID_READ_FAIL, DEVICE_ID_MAC_BLOCK } from '../../utils/bind-copy'
 import { logger } from '../../utils/logger'
 import { bindDevice, type BindResult } from '../../api/device'
 import { createInstall } from '../../api/install'
@@ -184,6 +186,11 @@ async function bindManual() {
     uni.showToast({ title: '请输入设备 ID', icon: 'none' })
     return
   }
+  // T707 兜底校验：栏内残留/误粘蓝牙 MAC 形态即拦下，不带必失败的绑定请求去撞后端
+  if (MAC_ADDRESS_SHAPE.test(devId)) {
+    uni.showToast({ title: DEVICE_ID_MAC_BLOCK, icon: 'none' })
+    return
+  }
   if (!patId) {
     uni.showToast({ title: '请输入患者 ID', icon: 'none' })
     return
@@ -278,9 +285,9 @@ async function scanBLE() {
 async function selectDevice(deviceId: string) {
   try {
     // T109: 若已连接同一设备，直接复用，避免重复连接触发 Android 断连
+    //       T707: 复用路径不写设备 ID 栏——栏值只认两个来源：B514 成功回填 / 技师手输（平台 ID）
     if (installStore.bleConnected && installStore.bleDeviceId === deviceId) {
       bleLog.info(`selectDevice 设备已连接，复用 deviceId=${deviceId}`)
-      manualDeviceId.value = deviceId
       showToast('设备已连接')
       return
     }
@@ -297,26 +304,33 @@ async function selectDevice(deviceId: string) {
     uni.hideLoading()
     installStore.setBleConnected(connected, deviceId)
     deviceStore.setBleConnected(connected)
-    manualDeviceId.value = deviceId
     if (connected) {
       // 协议 §5：读取 B514 设备信息（snake_case JSON），失败不阻塞绑定流程
       try {
         const info = await readDeviceInfo(deviceId)
-        if (info) {
+        // T707: 仅当 B514 带回非 MAC 形态的 device_id 才填入栏；
+        //       ble.ts 在 JSON 缺 device_id 时会兜底回传入的 BLE MAC，该回落值同样不配进栏。
+        if (info && !MAC_ADDRESS_SHAPE.test(info.deviceId)) {
           // T101: B514 返回的 device_id 才是后端识别的设备 ID，不能用 BLE MAC 地址
           manualDeviceId.value = info.deviceId
           showToast(`设备已连接 · 固件 ${info.firmware} · 电量 ${info.battery}%`)
         } else {
-          showToast('设备已连接')
+          bleLog.warn(`T707 B514 未带回平台设备 ID（info=${info ? '缺id或MAC形态' : 'null'}），栏位清空 deviceId=${deviceId}`)
+          manualDeviceId.value = ''
+          uni.showToast({ title: DEVICE_ID_READ_FAIL, icon: 'none' })
         }
       } catch (e) {
-        showToast('设备已连接')
+        manualDeviceId.value = ''
+        uni.showToast({ title: DEVICE_ID_READ_FAIL, icon: 'none' })
       }
     } else {
+      // T707: 连不上＝拿不到该平台 ID，栏内陈旧值同属残留隐患，清空防误绑
+      manualDeviceId.value = ''
       showToast('连接失败，请靠近设备')
     }
   } catch (e) {
     uni.hideLoading()
+    manualDeviceId.value = ''
     uni.showToast({ title: '连接失败，请靠近设备', icon: 'none' })
   }
 }
@@ -367,6 +381,7 @@ onMounted(() => {
 .device-item { background: #fff; border: 1rpx solid #e2e8f0; border-radius: 16rpx; padding: 24rpx 28rpx; display: flex; align-items: center; justify-content: space-between; }
 .device-info { display: flex; flex-direction: column; gap: 6rpx; }
 .device-name { font-size: 28rpx; font-weight: 500; color: #1e293b; }
+.device-mac { font-size: 22rpx; color: #94a3b8; }
 .device-rssi { font-size: 22rpx; color: #94a3b8; }
 .signal-dot { width: 16rpx; height: 16rpx; border-radius: 50%; flex-shrink: 0; }
 .signal-strong { background: #22c55e; }
