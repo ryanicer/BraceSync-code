@@ -299,12 +299,14 @@ async function residueGuardCleanup(page: Page): Promise<void> {
     }
     const guardBefore = new Date(Date.now() - T701_GUARD_GAP_MS).toISOString()
 
-    // 能力探针：空窗（createdAfter=now > createdBefore 不合法 ⇒ 用 createdAfter=guardBefore、
-    // createdBefore=now 的近窗，正常情况 0 删除，同时验上界被回显）
-    const probeAt = new Date().toISOString()
+    // 能力探针：近窗请求验 createdBefore 回显。窗取 [now-2s, now-1s)——必须严格递增
+    // （服务端校验 createdBefore > createdAfter，相等回 10400；A 案验收实测踩过），
+    // 正常 0 删除，同时验上界被回显。老后端无此字段 ⇒ 回显缺失即跳过守卫。
+    const probeAfter = new Date(Date.now() - 2_000).toISOString()
+    const probeBefore = new Date(Date.now() - 1_000).toISOString()
     const probe = await callApi(page, 'POST', '/api/v1/admin/flow/fixtures/cleanup', {
       token,
-      body: { templatePrefix: FLOW_TPL_PREFIX, createdAfter: probeAt, createdBefore: probeAt },
+      body: { templatePrefix: FLOW_TPL_PREFIX, createdAfter: probeAfter, createdBefore: probeBefore },
     })
     const probeData = probe.data as { createdBefore?: string } | null
     if (probe.code !== 0 || !probeData?.createdBefore) {
