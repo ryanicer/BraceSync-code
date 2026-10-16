@@ -11,25 +11,42 @@
         <span v-if="!sidebarCollapsed || isDesktop">🏥 运营平台</span>
         <span v-else>🏥</span>
       </div>
-      <el-menu
-        :default-active="route.path"
-        router
-        background-color="#2c3e50"
-        text-color="#bdc3c7"
-        active-text-color="#ffffff"
-        :collapse="sidebarCollapsed && isTablet"
-        class="sidebar-menu"
-      >
-        <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
-          <span class="menu-icon">{{ item.icon }}</span>
-          <template #title>
-            <span class="menu-title">
-              <span class="menu-label">{{ item.title }}</span>
-              <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
-            </span>
-          </template>
-        </el-menu-item>
-      </el-menu>
+      <div class="sidebar-scroll">
+        <el-menu
+          :default-active="route.path"
+          router
+          background-color="#2c3e50"
+          text-color="#bdc3c7"
+          active-text-color="#ffffff"
+          :collapse="sidebarCollapsed && isTablet"
+          class="sidebar-menu"
+        >
+          <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
+            <span class="menu-icon">{{ item.icon }}</span>
+            <template #title>
+              <span class="menu-title">
+                <span class="menu-label">{{ item.title }}</span>
+                <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
+              </span>
+            </template>
+          </el-menu-item>
+        </el-menu>
+      </div>
+      <!-- T708 侧栏底部工具区：贴底常驻（业务菜单自己滚）、虚线分隔（设计稿 问题反馈-提交页.html .side .sep）。
+           刻意不在 .sidebar-menu 里 —— 侧栏业务菜单条数由 RBAC 矩阵与 e2e-real/14 逐角色钉死，
+           本页不占权限矩阵（见 permissions.ts INTERNAL_TOOL_PATHS）。 -->
+      <div class="sidebar-tools">
+        <router-link
+          v-for="tool in internalTools"
+          :key="tool.path"
+          :to="tool.path"
+          class="sidebar-tool"
+          :class="{ 'is-active': route.path === tool.path }"
+        >
+          <span class="menu-icon">{{ tool.icon }}</span>
+          <span class="menu-title"><span class="menu-label">{{ tool.title }}</span></span>
+        </router-link>
+      </div>
     </el-aside>
 
     <!-- 移动端：drawer 侧边栏（仅移动端渲染） -->
@@ -43,25 +60,40 @@
     >
       <div class="sidebar sidebar-mobile">
         <div class="sidebar-header">🏥 运营平台</div>
-        <el-menu
-          :default-active="route.path"
-          router
-          background-color="#2c3e50"
-          text-color="#bdc3c7"
-          active-text-color="#ffffff"
-          class="sidebar-menu"
-          @select="handleMenuSelect"
-        >
-          <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
-            <span class="menu-icon">{{ item.icon }}</span>
-            <template #title>
-              <span class="menu-title">
-                <span class="menu-label">{{ item.title }}</span>
-                <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
-              </span>
-            </template>
-          </el-menu-item>
-        </el-menu>
+        <div class="sidebar-scroll">
+          <el-menu
+            :default-active="route.path"
+            router
+            background-color="#2c3e50"
+            text-color="#bdc3c7"
+            active-text-color="#ffffff"
+            class="sidebar-menu"
+            @select="handleMenuSelect"
+          >
+            <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
+              <span class="menu-icon">{{ item.icon }}</span>
+              <template #title>
+                <span class="menu-title">
+                  <span class="menu-label">{{ item.title }}</span>
+                  <span v-if="item.path === '/todos' && todoBadge > 0" class="menu-badge">{{ todoBadge }}</span>
+                </span>
+              </template>
+            </el-menu-item>
+          </el-menu>
+        </div>
+        <div class="sidebar-tools">
+          <router-link
+            v-for="tool in internalTools"
+            :key="tool.path"
+            :to="tool.path"
+            class="sidebar-tool"
+            :class="{ 'is-active': route.path === tool.path }"
+            @click="handleMenuSelect"
+          >
+            <span class="menu-icon">{{ tool.icon }}</span>
+            <span class="menu-title"><span class="menu-label">{{ tool.title }}</span></span>
+          </router-link>
+        </div>
       </div>
     </el-drawer>
 
@@ -154,7 +186,7 @@ import { Menu, Fold } from '@element-plus/icons-vue'
 import { changeOwnPasswordApi, fetchTodoBadgeCount } from '../api'
 import { ADMIN_PWD_RULE, changePasswordErrorCopy, pwdFieldIssue, pwdFormIssue } from '../utils/password'
 import { useAuthStore } from '../stores/auth'
-import { pageRoutes } from '../router'
+import { pageRoutes, internalToolRoutes } from '../router'
 import { canAccess, roleName } from '../router/permissions'
 import { useResponsive, useLocalStorageBool } from '../composables/useResponsive'
 
@@ -213,6 +245,16 @@ const visibleMenus = computed<MenuItem[]>(() => {
       icon: String(r.meta?.icon ?? ''),
     }))
 })
+
+// T708 底部工具区：内部工具页（运维反馈）按角色不过滤——登录态即准入，
+// 它不在 §7D.11 业务权限矩阵里（路径集与守卫同源，见 test/t708-feedback.spec.ts 对齐断言）。
+const internalTools = computed<MenuItem[]>(() =>
+  internalToolRoutes.map((r) => ({
+    path: r.path,
+    title: String(r.meta?.title ?? ''),
+    icon: String(r.meta?.icon ?? ''),
+  })),
+)
 
 // T679 侧栏「我的待办」红角标 = 待我处理条数（mineCount）。仅当前角色能进 /todos 才拉取，
 // 失败静默（角标是增强提醒，不该阻断导航/布局）。
@@ -312,6 +354,14 @@ async function submitPwdChange() {
 .sidebar {
   background: #2c3e50;
   height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* 业务菜单自己滚，底部工具区常驻可见（T708：报障入口不该藏在 17 项之后要翻到底） */
+.sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -327,6 +377,7 @@ async function submitPwdChange() {
   white-space: nowrap;
   overflow: hidden;
   text-align: center;
+  flex-shrink: 0;
 }
 .sidebar-collapsed .sidebar-header {
   padding: 20px 10px;
@@ -337,6 +388,38 @@ async function submitPwdChange() {
 }
 .sidebar-menu :deep(.el-menu-item.is-active) {
   background: #1a6db5;
+}
+/* T708 侧栏底部工具区（问题反馈）：贴底 + 虚线分隔，视觉与 el-menu-item 对齐但不进业务菜单 */
+.sidebar-tools {
+  flex-shrink: 0;
+  padding-bottom: 12px;
+  border-top: 1px dashed #46627a;
+}
+.sidebar-tool {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 20px;
+  color: #bdc3c7;
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sidebar-tool:hover {
+  color: #fff;
+  background: #34495e;
+}
+.sidebar-tool.is-active {
+  color: #fff;
+  background: #1a6db5;
+}
+.sidebar-collapsed .sidebar-tool {
+  justify-content: center;
+  padding: 0;
+}
+.sidebar-collapsed .sidebar-tool .menu-label {
+  display: none;
 }
 .menu-icon {
   margin-right: 10px;

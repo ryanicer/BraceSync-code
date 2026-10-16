@@ -7,7 +7,7 @@ import { createRouter, createMemoryHistory, type RouteRecordRaw } from 'vue-rout
 import { defineComponent } from 'vue'
 import ElementPlus from 'element-plus'
 import MainLayout from '../src/layout/MainLayout.vue'
-import { registerPermissionGuard, pageRoutes } from '../src/router'
+import { registerPermissionGuard, pageRoutes, internalToolRoutes } from '../src/router'
 import { useAuthStore } from '../src/stores/auth'
 
 const Stub = defineComponent({ render: () => null })
@@ -17,7 +17,11 @@ async function mountLayout(role: 'admin' | 'cs') {
   setActivePinia(createPinia())
   const auth = useAuthStore()
   auth.login(role)
-  const children: RouteRecordRaw[] = pageRoutes.map((r) => ({ path: r.path, component: Stub, meta: r.meta }))
+  const children: RouteRecordRaw[] = [
+    ...pageRoutes.map((r) => ({ path: r.path, component: Stub, meta: r.meta })),
+    // T708 内部工具页：应用路由表里有，测试装配须同步，否则 router-link 解析报 No match
+    ...internalToolRoutes.map((r) => ({ path: r.path, component: Stub, meta: r.meta })),
+  ]
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
