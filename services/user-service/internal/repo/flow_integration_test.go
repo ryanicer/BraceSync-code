@@ -767,7 +767,7 @@ func TestITT681CleanupFlowFixturesByPrefixAndWindow(t *testing.T) {
 			[]FlowTypeBindingSet{{AlertType: "pressure_high", TemplateID: ""}})
 	})
 
-	res, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart)
+	res, err := itStore.CleanupFlowFixtures(ctx, it681Prefix, windowStart, time.Time{})
 	require.NoError(t, err)
 
 	// 删除计数：窗口内 3 实例（IN1/IN2/BND）+ 3 模板（IN1/IN2/IN3；BND 因绑定被留存）
