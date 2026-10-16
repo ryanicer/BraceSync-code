@@ -147,8 +147,9 @@ func fakeTapd(t *testing.T) (*httptest.Server, *[]string) {
 			return
 		}
 		_ = r.ParseForm()
-		calls = append(calls, r.Method+" /bugs title="+r.Form.Get("title"))
-		if r.Method == http.MethodPost {
+		calls = append(calls, r.Method+" /bugs id="+r.Form.Get("id")+" title="+r.Form.Get("title"))
+		// TAPD /bugs 同端点双语义：带 id=更新，不带=创建（POST；PUT 实测 405）
+		if r.Method == http.MethodPost && r.Form.Get("id") == "" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": 1,
@@ -156,7 +157,6 @@ func fakeTapd(t *testing.T) (*httptest.Server, *[]string) {
 			})
 			return
 		}
-		// PUT 更新
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": 1})
 	})
 	mux.HandleFunc("/files/upload_attachment", func(w http.ResponseWriter, r *http.Request) {
@@ -193,7 +193,9 @@ func TestTapdClient_CreateUpdateUpload(t *testing.T) {
 		t.Fatalf("upload: %v", err)
 	}
 	joined := strings.Join(*calls, " | ")
-	if !strings.Contains(joined, "POST /bugs title=[运维反馈] x") || !strings.Contains(joined, "upload entry=300100023 type=bug_attachment") {
+	if !strings.Contains(joined, "POST /bugs id= title=[运维反馈] x") ||
+		!strings.Contains(joined, "POST /bugs id=300100023") || // 更新同走 POST 带 id（PUT 405 实测）
+		!strings.Contains(joined, "upload entry=300100023 type=bug_attachment") {
 		t.Fatalf("calls=%s", joined)
 	}
 }

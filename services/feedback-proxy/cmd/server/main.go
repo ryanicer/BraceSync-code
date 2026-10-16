@@ -37,7 +37,7 @@ func main() {
 	port := envOr("PORT", "8087")
 	base := envOr("TAPD_BASE_URL", "https://api.tapd.cn")
 	workspace := envOr("TAPD_WORKSPACE_ID", "33005753")
-	attachType := envOr("TAPD_ATTACHMENT_TYPE", "bug_attachment")
+	attachType := envOr("TAPD_ATTACHMENT_TYPE", "bug") // 实测枚举：bug ✓（bug_attachment=422 type is invalid，2026-10-17 验收帧）
 	user := os.Getenv("TAPD_API_USER")
 	pass := os.Getenv("TAPD_API_PASSWORD")
 
