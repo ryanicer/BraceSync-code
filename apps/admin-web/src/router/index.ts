@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type RouterHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { canAccess, landingPathFor } from './permissions'
+import { canAccess, isInternalToolPath, landingPathFor } from './permissions'
 import { isChunkLoadError, shouldRecoverTo, clearRecoverFlag } from './navRecovery'
 import { logErrorText } from '@bracesync/shared-utils'
 
@@ -34,6 +34,15 @@ export function authLandingPath(): string {
   return landingPathFor(auth.role)
 }
 
+/**
+ * 内部工具页路由（T708 运维反馈）：与 pageRoutes 分开登记 —— 不进权限矩阵、不进模块词表
+ * （那会连带 PAGE_MODULES 模块键 + 库迁移，违反案 C「零表零接口」）。
+ * 侧栏按「底部工具区」渲染（MainLayout.vue），准入条件只有登录态（permissions.ts isInternalToolPath）。
+ */
+export const internalToolRoutes: RouteRecordRaw[] = [
+  { path: '/feedback', name: 'Feedback', component: () => import('../pages/feedback/index.vue'), meta: { title: '问题反馈', icon: '📮' } },
+]
+
 export const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'Login', component: () => import('../pages/login/index.vue'), meta: { title: '登录' } },
   { path: '/403', name: 'Forbidden', component: () => import('../pages/forbidden/index.vue'), meta: { title: '无权限' } },
@@ -43,6 +52,7 @@ export const routes: RouteRecordRaw[] = [
     children: [
       { path: '', redirect: () => authLandingPath() },
       ...pageRoutes,
+      ...internalToolRoutes,
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: () => authLandingPath() },
@@ -56,6 +66,8 @@ export function registerPermissionGuard(router: ReturnType<typeof createRouter>)
     if (!auth.isLoggedIn) {
       return { path: '/login', query: { redirect: to.fullPath } }
     }
+    // T708 内部工具页：有登录态即放行（不占业务权限矩阵，门禁口径 = 登录态 + 内网隔离，Boss 拍板④A）
+    if (isInternalToolPath(to.path)) return true
     if (!canAccess(auth.role ?? '', to.path)) {
       return { path: '/403' }
     }

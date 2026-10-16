@@ -59,6 +59,20 @@ export const ROLE_PAGE_MATRIX: Record<RoleKey, string[]> = {
   cs: ['/communication'],
 }
 
+/**
+ * 内部工具页（T708 运维反馈，Boss 已批案 C）：不进 §7D.11 权限矩阵，任何已登录角色可达。
+ *
+ * 为什么不登记进 ROLE_PAGE_MATRIX / PAGE_MODULES：那两个词表与库里 roles.permissions_json.modules、
+ * 后端 roleTemplates 同源（test/perm-gateway-cross-source.spec.ts 三源门禁钉着），加一页就要
+ * 加一个模块键并落库迁移 —— 而本通道是「零表、零后端接口」的纯前端入口（门禁 = 后台登录态 +
+ * 内网隔离，Boss 拍板④A），不产生任何业务数据，不该占用业务权限词表。
+ */
+export const INTERNAL_TOOL_PATHS = ['/feedback']
+
+export function isInternalToolPath(path: string): boolean {
+  return INTERNAL_TOOL_PATHS.includes(path)
+}
+
 export function canAccess(role: RoleKey | string, path: string): boolean {
   const pages = ROLE_PAGE_MATRIX[role as RoleKey]
   if (!pages) return false

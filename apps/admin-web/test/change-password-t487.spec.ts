@@ -18,7 +18,7 @@ import { defineComponent } from 'vue'
 import ElementPlus, { ElMessage } from 'element-plus'
 import { attachErrorMeta, markUserCopy } from '@bracesync/shared-utils'
 import MainLayout from '../src/layout/MainLayout.vue'
-import { pageRoutes, registerPermissionGuard } from '../src/router'
+import { pageRoutes, internalToolRoutes, registerPermissionGuard } from '../src/router'
 import { useAuthStore } from '../src/stores/auth'
 import { changeOwnPasswordApi } from '../src/api'
 import {
@@ -42,7 +42,11 @@ async function mountLayout() {
   localStorage.clear()
   setActivePinia(createPinia())
   useAuthStore().login('admin')
-  const children: RouteRecordRaw[] = pageRoutes.map((r) => ({ path: r.path, component: Stub, meta: r.meta }))
+  const children: RouteRecordRaw[] = [
+    ...pageRoutes.map((r) => ({ path: r.path, component: Stub, meta: r.meta })),
+    // T708：测试装配跟应用路由表一致，缺内部工具页会让 router-link 解析报 No match
+    ...internalToolRoutes.map((r) => ({ path: r.path, component: Stub, meta: r.meta })),
+  ]
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
