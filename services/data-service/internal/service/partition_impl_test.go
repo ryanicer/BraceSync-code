@@ -10,20 +10,23 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPartitionService_EnsureFuturePartitions_CreatesTwo(t *testing.T) {
+func TestPartitionService_EnsureFuturePartitions_CreatesCurrentPlusTwo(t *testing.T) {
 	store := newFakePartitionStore()
 	svc := NewPartitionService(store)
 	svc.now = func() time.Time { return time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC) } // CST 08-25 08:00
 
 	svc.EnsureFuturePartitions(context.Background())
 
-	assert.Len(t, store.created, 2)
+	// T705/000039：当月（i=0）必须入列——原 i=1..2 跳当月即 prod 缺 202610 的根因
+	assert.Len(t, store.created, 3)
+	assert.Contains(t, store.created, "pressure_records_202608")
 	assert.Contains(t, store.created, "pressure_records_202609")
 	assert.Contains(t, store.created, "pressure_records_202610")
 }
 
 func TestPartitionService_EnsureFuturePartitions_ExistsSkip(t *testing.T) {
 	store := newFakePartitionStore()
+	store.existing["pressure_records_202608"] = true // 当月已存在
 	store.existing["pressure_records_202609"] = true // 9 月已存在
 	svc := NewPartitionService(store)
 	svc.now = func() time.Time { return time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC) }
@@ -36,6 +39,7 @@ func TestPartitionService_EnsureFuturePartitions_ExistsSkip(t *testing.T) {
 
 func TestPartitionService_EnsureFuturePartitions_AllExist(t *testing.T) {
 	store := newFakePartitionStore()
+	store.existing["pressure_records_202608"] = true
 	store.existing["pressure_records_202609"] = true
 	store.existing["pressure_records_202610"] = true
 	svc := NewPartitionService(store)
@@ -72,7 +76,8 @@ func TestPartitionService_YearRollover(t *testing.T) {
 
 	svc.EnsureFuturePartitions(context.Background())
 
-	assert.Len(t, store.created, 2)
+	assert.Len(t, store.created, 3)
+	assert.Contains(t, store.created, "pressure_records_202611") // 当月（i=0，T705/000039）
 	assert.Contains(t, store.created, "pressure_records_202612") // +1 月
 	assert.Contains(t, store.created, "pressure_records_202701") // +2 月（跨年）
 }

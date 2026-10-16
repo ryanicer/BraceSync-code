@@ -1,0 +1,7 @@
+-- T705/000039 down：单向（注释步）——分区承载该月生产上报数据，DROP 即数据丢失，
+-- 不作为回滚步（同 000033 下行口径：DDL 可逆不等于数据可逆）。
+-- 如确需手工移除空分区（仅限确认无数据时），单独授权后逐个执行：
+--   DROP TABLE IF EXISTS pressure_records_202612;  -- 按实际月份改
+--   DROP TABLE IF EXISTS pressure_records_202611;
+--   DROP TABLE IF EXISTS pressure_records_202610;
+-- 幂等补建语义与 up 一致：重跑 up 不报错、不重复建（to_regclass 守卫）。
