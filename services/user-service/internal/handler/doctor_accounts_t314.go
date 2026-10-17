@@ -97,7 +97,8 @@ func normDoctorStatus(p *string) (string, *model.AppError) {
 	}
 }
 
-// checkDoctorProfileFields 姓名/职称/科室/团队四项必填 + 列宽校验。
+// checkDoctorProfileFields 姓名/职称/科室三项必填；团队 T704 起改选填（Boss 产品拍板 2026-10-16：
+// 建号不被团队卡死——空 teamId 放行，repo 侧 NULLIF 落 NULL，可经编辑腿回填；给了值仍验列宽+FK 存在性）。
 // 返回清理过的值；职称与科室按 PRD（0）为自由文本（4 项预置可扩展、科室层级化待裁），不做枚举硬校验。
 func checkDoctorProfileFields(name, title, department, teamID string) (string, string, string, string, *model.AppError) {
 	name, title = strings.TrimSpace(name), strings.TrimSpace(title)
@@ -109,7 +110,6 @@ func checkDoctorProfileFields(name, title, department, teamID string) (string, s
 		{"name", name, doctorNameMaxLen},
 		{"title", title, doctorTitleMaxLen},
 		{"department", department, doctorDeptMaxLen},
-		{"teamId", teamID, doctorTeamMaxLen},
 	} {
 		if f.val == "" {
 			return "", "", "", "", model.ErrInvalidParam("%s is required", f.label)
@@ -117,6 +117,9 @@ func checkDoctorProfileFields(name, title, department, teamID string) (string, s
 		if len(f.val) > f.max {
 			return "", "", "", "", model.ErrInvalidParam("%s too long: %d > %d", f.label, len(f.val), f.max)
 		}
+	}
+	if len(teamID) > doctorTeamMaxLen {
+		return "", "", "", "", model.ErrInvalidParam("teamId too long: %d > %d", len(teamID), doctorTeamMaxLen)
 	}
 	return name, title, department, teamID, nil
 }

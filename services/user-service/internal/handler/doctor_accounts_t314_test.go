@@ -183,12 +183,13 @@ func TestT314_CreateDoctorAccount_DisabledStatusAllowed(t *testing.T) {
 	assert.Equal(t, accountStatusDisabled, e.store.docAcct.lastCreate.Status)
 }
 
-// TestT314_CreateDoctorAccount_RequiredFields PRD（4）：姓名/科室/所属团队/职称必填
+// TestT314_CreateDoctorAccount_RequiredFields PRD（4）+ T704（Boss 拍板 2026-10-16）：
+// 姓名/科室/职称必填；团队已改选填——缺失键/空串/全空白均放行（见 NoTeam 用例），不再在此表判 400
 func TestT314_CreateDoctorAccount_RequiredFields(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.teamExists = true
 	for _, tc := range []struct{ name, key string }{
-		{"姓名缺失", "name"}, {"职称缺失", "title"}, {"科室缺失", "department"}, {"团队缺失", "teamId"},
+		{"姓名缺失", "name"}, {"职称缺失", "title"}, {"科室缺失", "department"},
 	} {
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors", t314Body(nil, tc.key), t314AdminHdr())
 		assert.Equal(t, http.StatusBadRequest, w.Code, tc.name)
@@ -256,6 +257,39 @@ func TestT314_CreateDoctorAccount_TeamNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, model.CodeInvalidParam, resp.Code)
 	t464TechLogContains(t, w, t314Team)
+}
+
+// TestT704_CreateDoctorAccount_NoTeamOK T704（Boss 产品拍板 2026-10-16）：建号不被团队卡死——
+// teamId 缺失键/空串/全空白三种形态都放行（不查团队=空串根本不该发起 FK 存在性探测，故
+// teamExists 刻意置 false 反证放行路径不经 FK 腿）；落库入参清理为空串（repo NULLIF 落 NULL），
+// 回读 DTO teamId=null。后续闭环：无团队医生作 leader 建团队（既有腿）→ 编辑腿回填 teamId。
+func TestT704_CreateDoctorAccount_NoTeamOK(t *testing.T) {
+	for _, tc := range []struct {
+		label string
+		fields map[string]any
+		omit   []string
+	}{
+		{"缺失 teamId 键", nil, []string{"teamId"}},
+		{"teamId 空串", map[string]any{"teamId": ""}, nil},
+		{"teamId 全空白", map[string]any{"teamId": "   "}, nil},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			e := newEnv(t, true, true)
+			e.store.teamExists = false
+			e.store.docAcct.created = func() *repo.DoctorRow {
+				r := t314BoundRow()
+				r.TeamID = nil
+				return r
+			}()
+			w, resp := e.do(http.MethodPost, "/api/v1/admin/doctors", t314Body(tc.fields, tc.omit...), t314AdminHdr())
+			require.Equal(t, http.StatusOK, w.Code, "%s: body=%s", tc.label, resp.Message)
+			require.Equal(t, model.CodeOK, resp.Code)
+			assert.Empty(t, e.store.docAcct.lastCreate.TeamID, "落库入参=空串（repo NULLIF 落 NULL）")
+			dto := t314CreateDTO(t, resp.Data)
+			assert.Nil(t, dto.TeamID, "回读 teamId=null（未入队形态）")
+			assert.NotEmpty(t, dto.InitialPassword, "初始密码照常一次性返回")
+		})
+	}
 }
 
 // TestT314_CreateDoctorAccount_NoEncryptionKey 手机号加密密钥缺失 → 500 配置错误，不静默落明文

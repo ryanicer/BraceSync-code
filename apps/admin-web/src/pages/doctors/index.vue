@@ -109,10 +109,13 @@
         <el-form-item label="科室" required>
           <el-input v-model="form.department" placeholder="如：脊柱外科" maxlength="20" />
         </el-form-item>
-        <el-form-item label="所属团队" required>
-          <el-select v-model="form.teamId" placeholder="请选择团队" style="width: 100%">
+        <!-- T704（Boss 拍板 2026-10-16）：建号不被团队卡死——团队改选填，留空可经编辑回填；
+             clearable 让编辑态也能撤回「未入队」形态（后端空串=落 NULL，与建号腿同口径） -->
+        <el-form-item label="所属团队">
+          <el-select v-model="form.teamId" placeholder="可后补（选填）" clearable style="width: 100%">
             <el-option v-for="t in teams" :key="t.teamId" :label="t.name" :value="t.teamId" />
           </el-select>
+          <span class="form-help">未选团队也可建号；入队可在编辑档案时补选，负责人亦可由建团时自动入团。</span>
         </el-form-item>
         <el-form-item label="职称" required>
           <el-select v-model="form.title" placeholder="请选择职称" style="width: 100%">
@@ -264,7 +267,7 @@ function openEdit(row: MedicalAccount) {
 function validateForm(): boolean {
   if (!form.value.name.trim()) { ElMessage.warning('请填写姓名'); return false }
   if (!form.value.department.trim()) { ElMessage.warning('请填写科室'); return false }
-  if (!form.value.teamId) { ElMessage.warning('请选择所属团队'); return false }
+  // T704：所属团队改选填，不做客户端强校验——留空提交与后端可空口径一致（空串落 NULL，可后补）
   if (!form.value.title) { ElMessage.warning('请选择职称'); return false }
   // 手机号选填（设计稿 :221）：填了就必须是合法新号，留空一律按「不改」处理（T361）
   if (form.value.phone && !PHONE_RE.test(form.value.phone)) {
