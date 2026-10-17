@@ -63,7 +63,7 @@
             <input class="form-input" type="text" placeholder="请输入 WiFi 名称" v-model="manualSSID" />
           </view>
           <view class="wifi-hint">
-            <text>仅支持 2.4GHz Wi-Fi 网络，不支持 5GHz（含 5G 频段的合一路由器请填 2.4G 那个网络名）</text>
+            <text>仅支持 2.4GHz Wi-Fi 网络，不支持 5GHz。若路由器 2.4G 与 5G 同名，请先在路由器设置中改成不同名称后重试</text>
             <text>请手动输入准确的 WiFi 名称与密码</text>
           </view>
           </view>
