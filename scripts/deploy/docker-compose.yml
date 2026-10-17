@@ -174,7 +174,7 @@ services:
       - TAPD_WORKSPACE_ID=${TAPD_WORKSPACE_ID:-33005753}
       - TAPD_API_USER=${TAPD_API_USER}
       - TAPD_API_PASSWORD=${TAPD_API_PASSWORD}
-      - TAPD_ATTACHMENT_TYPE=${TAPD_ATTACHMENT_TYPE:-bug_attachment}
+      - TAPD_ATTACHMENT_TYPE=${TAPD_ATTACHMENT_TYPE:-bug}  # 实测枚举=bug；bug_attachment 会 422 type is invalid（2026-10-17 T709 验收帧实测）
     ports:
       - "8087:8087"
     healthcheck:
