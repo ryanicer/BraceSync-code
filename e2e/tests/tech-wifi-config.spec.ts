@@ -61,7 +61,7 @@ test('配网全流程到成功', async ({ page }) => {
  * 也只有 -4 会落库 failed（写侧判据在 apps/tech-miniapp/test/install-status.spec.ts）。
  * 这条钉的是"别把 -1 也当成云端不可达"——文案与入口都不同形。
  */
-test('-1 密码错：出 PRD §7C.6 那条文案，且不给跳过入口（T459·C2）', async ({ page }) => {
+test('-1 连接失败：出 T713 分档文案（不再单一归因密码），且不给跳过入口（T459·C2）', async ({ page }) => {
   test.setTimeout(60_000)
   await page.evaluate(() => {
     ;(window as unknown as { __mockWifiSeq: number[] }).__mockWifiSeq = [0, -1]
@@ -69,6 +69,22 @@ test('-1 密码错：出 PRD §7C.6 那条文案，且不给跳过入口（T459�
   await fillTechInput(page.locator('.manual-wifi .form-input').first(), 'My_Custom_WiFi')
   await fillTechInput(page.locator('.password-input').first(), 'test1234')
   await page.locator('.btn-primary', { hasText: '开始配网' }).click()
-  await expect(page.locator('.error-title')).toHaveText('密码错误，请检查 WiFi 密码', { timeout: 20_000 })
+  await expect(page.locator('.error-title')).toHaveText('连接失败：请检查密码是否正确、信号强度、以及是否为 2.4GHz 频段', { timeout: 20_000 })
+  await expect(page.locator('.error-title')).not.toContainText('密码错误')
   await expect(page.locator('.skip-hint')).toHaveCount(0)
+})
+
+/**
+ * T713（Boss 真机 5G 实锤）：-2＝设备扫不到该 SSID，最常见真因是填了 5G 网络。
+ * 这条钉的是「-2 出频段口径提示、且不误导成密码问题」，文案走 PRD §7A.9.1 ④ 只认信道不认名字。
+ */
+test('-2 找不到 WiFi：出 2.4GHz 频段提示（T713）', async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.evaluate(() => {
+    ;(window as unknown as { __mockWifiSeq: number[] }).__mockWifiSeq = [0, -2]
+  })
+  await fillTechInput(page.locator('.manual-wifi .form-input').first(), 'My_Custom_WiFi')
+  await fillTechInput(page.locator('.password-input').first(), 'test1234')
+  await page.locator('.btn-primary', { hasText: '开始配网' }).click()
+  await expect(page.locator('.error-title')).toHaveText('找不到该 WiFi：请确认设备支持 2.4GHz 频段（5G 不支持）', { timeout: 20_000 })
 })

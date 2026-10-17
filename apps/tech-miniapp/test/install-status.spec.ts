@@ -342,9 +342,26 @@ describe('TC-2 — 跳过配网写第四档 skipped，不冒充已连接', () =>
     // 三条非 -4 的稿面文案留在页内 toast/errorMessage，不落库
     // （-4 那格取单一真源常量，由上面「每页用到的出口」那条门禁点名）
     const src = pageSrc('wifi-config')
-    for (const copy of ['密码错误，请检查 WiFi 密码', '未找到 WiFi 网络，请检查 SSID', '网络连接失败（DHCP），请检查路由器']) {
+    for (const copy of [
+      '连接失败：请检查密码是否正确、信号强度、以及是否为 2.4GHz 频段',
+      '找不到该 WiFi：请确认设备支持 2.4GHz 频段（5G 不支持）',
+      '网络连接失败（DHCP），请检查路由器',
+    ]) {
       expectVisibleLine(src, copy)
     }
+  })
+
+  // T713（Boss 真机 5G 实锤）：固件 mapWifiFail 把超时/关联失败/解密失败都兜底成 -1，
+  // 端上把 -1 断言成「密码错误」就会把频段问题误导成密码问题（小顾远程测试踩的那条）。
+  it('T713：-1 不得再单一归因密码，超时档另立且贴近设备重试', () => {
+    const src = pageSrc('wifi-config')
+    expect(src).not.toContain('密码错误，请检查 WiFi 密码')
+    expect(src).toContain('|| \'配网超时：请靠近设备重试\'')
+    // 超时（60s 无推送）toast 同档口径
+    const timeoutBody = pageFnBody('wifi-config', 'handleTimeout')
+    expect(timeoutBody).toContain("title: '配网超时：请靠近设备重试'")
+    // -4 的「云端不可达 + 后台持续重试」语义不能被并进超时档
+    expect(src).toContain('[-4]: WIFI_FAILED_NOTE')
   })
 
   it('install 页跳过入口与 wifi-config 同源：两笔成对，写完才留在本页阶段三显示', () => {

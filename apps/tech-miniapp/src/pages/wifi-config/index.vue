@@ -187,14 +187,18 @@ const offBleState = registerBleStateListener((deviceId, connected) => {
   }
 })
 
+// T713：失败文案按设备码分档去误导。-1 在固件侧是兜底码（mapWifiFail 把超时/关联失败/解密失败
+// 全映射成 ST_BAD_PASSWORD，docs/hardware/给小顾-2026-09-16/ble_provision.h:188），
+// 所以不能断言成「密码错误」，只列技师当场可自查的三因；频段说法走 PRD §7A.9.1 ④
+// 「只认信道不认名字」的能力口径，不引导凭 SSID 命名猜频段。
 const errorMessage = computed(() => {
   const map: Record<number, string> = {
-    [-1]: '密码错误，请检查 WiFi 密码',
-    [-2]: '未找到 WiFi 网络，请检查 SSID',
+    [-1]: '连接失败：请检查密码是否正确、信号强度、以及是否为 2.4GHz 频段',
+    [-2]: '找不到该 WiFi：请确认设备支持 2.4GHz 频段（5G 不支持）',
     [-3]: '网络连接失败（DHCP），请检查路由器',
     [-4]: WIFI_FAILED_NOTE,
   }
-  return map[errorCode.value!] || '配网失败，请重试'
+  return map[errorCode.value!] || '配网超时：请靠近设备重试'
 })
 
 function stepStatus(i: number): string {
@@ -490,7 +494,7 @@ function handleTimeout() {
   bleLog.warn(`${PROVISION_TIMEOUT_MS / 1000}s 无推送超时，状态历史`, [...statusHistory])
   // P2-5: 迟到状态 9 回转——继续监听，不立即标失败
   // 这里给提示，但保留 statusListener（未移除），迟到状态 9 仍可触发 handleSuccess
-  uni.showToast({ title: '设备无响应，请靠近设备后重试', icon: 'none' })
+  uni.showToast({ title: '配网超时：请靠近设备重试', icon: 'none' })
 }
 
 function retryWifi() {
