@@ -337,19 +337,23 @@ describe('医护账号页 模态框与写操作（PRD §7D.10 八字段）', () 
     wrapper.unmount()
   })
 
-  it('必填校验卡姓名/科室/团队/职称，手机号不在其列', async () => {
+  // T704（Boss 产品拍板）：所属团队改选填。必填门禁 = 姓名/科室/职称；团队、手机号不在其列。
+  it('必填校验卡姓名/科室/职称，团队与手机号不在其列（T704 团队转选填）', async () => {
     const wrapper = mountPage()
     await flushAll()
     clickByText(wrapper.element, '新建医护账号')
     await flushAll()
-    clickByText(dialogIn(wrapper.element), '确认创建')
+    const dlg = dialogIn(wrapper.element)
+    // 团队栏不再挂必填星号（与手机号同口径，:226 先例）
+    expect(formItem(dlg, '所属团队').className).not.toContain('is-required')
+    clickByText(dlg, '确认创建')
     await flushToast()
     expect(toastText()).toContain('请填写姓名')
     expect(wrapper.findAll('tbody tr').length).toBe(9) // 校验未过不发写请求
     wrapper.unmount()
   })
 
-  it('创建：团队/职称未选齐时停在提示上，不落列表', async () => {
+  it('创建：姓名/科室已填、职称未选时停在「请选择职称」，不落列表（T704 后团队不再拦，同目标非弱化）', async () => {
     const wrapper = mountPage()
     await flushAll()
     clickByText(wrapper.element, '新建医护账号')
@@ -360,8 +364,37 @@ describe('医护账号页 模态框与写操作（PRD §7D.10 八字段）', () 
     await flushAll()
     clickByText(dlg, '确认创建')
     await flushToast()
-    expect(toastText()).toContain('请选择所属团队')
+    // 旧断言咬「请选择所属团队」；T704 起团队放行，门禁落到下一个仍必填的职称栏
+    expect(toastText()).toContain('请选择职称')
+    expect(toastText()).not.toContain('请选择所属团队')
     expect(wrapper.text()).not.toContain('测试医护')
+    wrapper.unmount()
+  })
+
+  it('创建：不选团队也能建号成功（T704 判据②——团队选填、列表该格落横杠）', async () => {
+    const wrapper = mountPage()
+    await flushAll()
+    clickByText(wrapper.element, '新建医护账号')
+    await flushAll()
+    const dlg = dialogIn(wrapper.element)
+    typeInto(dlg, '姓名', '无团医护')
+    typeInto(dlg, '科室', '康复科')
+    openDropdown(formItem(dlg, '职称'))
+    await flushAll()
+    pickDropdownItem('护士')
+    await flushAll()
+    clickByText(dlg, '确认创建')
+    await flushToast(400)
+    // 一次性凭据弹窗照常展示（创建成功路径与选团与否无关）
+    const cred = lastMessageBox()
+    expect(cred.textContent).toContain('创建成功')
+    clickByText(cred, '我已转交本人')
+    await flushToast(400)
+    const created = mockMedicalAccounts().find((r) => r.name === '无团医护')
+    expect(created).toBeTruthy()
+    expect(created!.teamId).toBe('')
+    await flushAll()
+    expect(cellText(wrapper, '所属团队', '无团医护')).toBe('—')
     wrapper.unmount()
   })
 

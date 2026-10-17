@@ -287,6 +287,45 @@ func TestITUpdateDoctorAccount_T314(t *testing.T) {
 	assert.Equal(t, "T314编辑后", same.Name)
 }
 
+// TestIT704_DoctorWithoutTeam_LeaderBackfill T704（Boss 产品拍板 2026-10-16）验收主链在真库的证：
+// 无团队医生可以建出来（team_id 落 NULL）⇒ 以该医生为 leader 建团队（leader 存在性校验天然命中，
+// T671 同事务把负责人写入 doctors.team_id）⇒ 全程零 DB 带外写入，T695 死锁（建团需医生/建医生需
+// 团队互为前提）结构性消失。团队行名字带 T704 前缀避共享种子库撞名，测后按 doctors→teams→admins 清场。
+func TestIT704_DoctorWithoutTeam_LeaderBackfill(t *testing.T) {
+	ctx := context.Background()
+	var tr t314Tracker
+	defer tr.cleanup(ctx, t)
+
+	// ① 无 teamId 建号：入参 TeamID 留空串，repo NULLIF 落 NULL
+	in := t314Input("T704无团队医生")
+	in.TeamID = ""
+	row, err := itStore.CreateDoctorAccount(ctx, in)
+	require.NoError(t, err, "T704：建号不得被团队卡死")
+	tr.addRow(t, row)
+	assert.Nil(t, row.TeamID, "建号回读 teamId=NULL（未入队形态）")
+
+	// 库面直读对账：doctors.team_id 确为 NULL
+	var teamDB *string
+	require.NoError(t, itStore.pool.QueryRow(ctx,
+		`SELECT team_id FROM doctors WHERE doctor_id = $1`, row.DoctorID).Scan(&teamDB))
+	assert.Nil(t, teamDB, "库里不留空串，NULL 是唯一「没有团队」形态")
+
+	// ② 该医生作 leader 建团队：leader 存在性校验命中无团队医生（不再需要带外植入）
+	teamName := fmt.Sprintf("T704闭环团-%s", row.DoctorID)
+	detail, err := itStore.CreateTeam(ctx, TeamInput{Name: teamName, Leader: row.DoctorID, TeamType: "medical"})
+	require.NoError(t, err, "T704：无团队医生应可直接当 leader")
+	t.Cleanup(func() {
+		_, _ = itStore.pool.Exec(ctx, `DELETE FROM teams WHERE team_id = $1`, detail.TeamID)
+	})
+
+	// ③ T671 同事务回填：负责人 doctors.team_id 随建团写入（读侧口径=成员明细唯一来源）
+	got, err := itStore.GetDoctorAccount(ctx, row.DoctorID)
+	require.NoError(t, err)
+	require.NotNil(t, got.TeamID, "建团后负责人必须已入团（T671 同事务口径）")
+	assert.Equal(t, detail.TeamID, *got.TeamID)
+	assert.Equal(t, row.Name, detail.LeaderName, "团队详情 join doctors 回显 leader 姓名")
+}
+
 // TestITSetDoctorAccountStatus_T314 两层 status 同写；读侧两列各归各列不串味。
 func TestITSetDoctorAccountStatus_T314(t *testing.T) {
 	ctx := context.Background()
