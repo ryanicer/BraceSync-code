@@ -265,7 +265,7 @@ func TestT314_CreateDoctorAccount_TeamNotFound(t *testing.T) {
 // 回读 DTO teamId=null。后续闭环：无团队医生作 leader 建团队（既有腿）→ 编辑腿回填 teamId。
 func TestT704_CreateDoctorAccount_NoTeamOK(t *testing.T) {
 	for _, tc := range []struct {
-		label string
+		label  string
 		fields map[string]any
 		omit   []string
 	}{
