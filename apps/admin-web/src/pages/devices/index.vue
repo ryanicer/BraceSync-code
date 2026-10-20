@@ -255,6 +255,9 @@ async function submitRegister() {
   registering.value = true
   try {
     const res = await registerDeviceApi({ deviceId, model: registerForm.value.model.trim() || undefined })
+    // T268 既有行为不动：注册成功一律先给这条 toast（e2e/tests/admin-keypages.spec.ts:223 认它），
+    // T728 的回显窗是叠加在上面的一层，不替代它。
+    ElMessage.success('设备已注册')
     registerVisible.value = false
     await loadData()
     // T728：deviceSecret 键缺席 = 本次没有新建（幂等命中既有行，库里密钥没变）⇒ 不开回显窗，
