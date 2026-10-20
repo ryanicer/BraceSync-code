@@ -344,7 +344,7 @@ func TestT728_BatchExportOnlyTouchesRequestedIDs(t *testing.T) {
 
 	entries := t728ZipEntries(t, w.Body.Bytes())
 	assert.Len(t, entries, 1, "重复勾选只出一台，未勾选的那台绝不进包（红线 5）")
-	assert.NotContains(t, string(w.Body.Bytes()), other, "未勾选设备的密钥不得出现在包里")
+	assert.NotContains(t, w.Body.String(), other, "未勾选设备的密钥不得出现在包里")
 }
 
 // ── G. 留痕是披露的前置条件：审计写不进就不发文件 ────────────────────
