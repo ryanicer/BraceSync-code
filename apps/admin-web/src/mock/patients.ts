@@ -1,5 +1,6 @@
 // 患者域 mock 数据（对齐 api-contracts.ts getPatients/getPatientDetail/getPatientRealtime）
 import type { Patient, PressureRecord, SensorPoint, Alert } from '@bracesync/shared-types'
+import { attachErrorMeta } from '@bracesync/shared-utils'
 import { listDates, type DailyWearDay } from '../utils/workbenchData'
 
 function makePoints(maxValue: number): SensorPoint[] {
@@ -277,6 +278,8 @@ let patientSeq = 100
 
 /** 创建患者：push 到 PATIENTS，返回新行（phone 不入 Patient 类型，mock 忽略） */
 export function mockCreatePatient(input: CreatePatientInput): Patient {
+  // T727：建档同样查重（后端 pg.go:1563 SELECT EXISTS + 唯一索引兜底 ⇒ 同号第二档 409/10606）
+  if (input.phone) assertPhoneFree(input.phone, '')
   patientSeq += 1
   const now = new Date().toISOString()
   const patient: Patient = {
@@ -315,6 +318,28 @@ export const MOCK_PHONE_AUDIT: { patientId: string; phone: string; reason: strin
 /** 与后端 validPhone（handler.go:1021-1028：长度 11、首位 1、全数字）同判据 */
 const PHONE_RE_MOCK = /^1[0-9]{10}$/
 
+/**
+ * T727：撞号错误的 mock 形状 = 真实传输层形状（attachErrorMeta 挂 code/httpStatus/data）。
+ * 不带这三个字段，mock 演示里页面永远只能走「创建失败」通用句，
+ * 点名判据（patientPhoneConflict.ts）就只在真实模式可测——那正是 T432 以来 mock 形不似则必漏的坑。
+ * message 仍是既有中文句：读侧不取它（有码即查表），留着是给本文件的老断言。
+ */
+function phoneTakenError(occupiedPatientId: string): never {
+  const name = PATIENTS.find((x) => x.patientId === occupiedPatientId)?.name ?? ''
+  throw attachErrorMeta(new Error('该手机号已被其他患者使用'), {
+    code: 10606,
+    httpStatus: 409,
+    data: { reason: 'patient_phone_taken', patientId: occupiedPatientId, name },
+  })
+}
+
+/** 台账里找占用该号的患者（excludePatientId 为空 = 新建，不排除自己）；命中即抛，口径同后端排除自身查重 */
+function assertPhoneFree(phone: string, excludePatientId: string): void {
+  for (const [id, taken] of PHONE_BOOK) {
+    if (id !== excludePatientId && taken === phone) phoneTakenError(id)
+  }
+}
+
 /** 后端 editableSet 之外的键一律拒收（admin_patient.go:164-175 DisallowUnknownFields） */
 const PATIENT_EDIT_UNKNOWN_KEYS = ['phone', 'teamId', 'primaryDoctorId', 'doctorId', 'status']
 
@@ -341,9 +366,7 @@ export function mockUpdatePatientPhone(patientId: string, phone: string, reason:
   const p = PATIENTS.find((x) => x.patientId === patientId)
   if (!p) throw new Error('患者不存在')
   if (!PHONE_RE_MOCK.test(phone)) throw new Error('手机号格式不正确：需 11 位且以 1 开头')
-  for (const [id, taken] of PHONE_BOOK) {
-    if (id !== patientId && taken === phone) throw new Error('该手机号已被其他患者使用')
-  }
+  assertPhoneFree(phone, patientId)
   PHONE_BOOK.set(patientId, phone)
   MOCK_PHONE_AUDIT.push({ patientId, phone, reason, at: new Date().toISOString() })
   p.updatedAt = new Date().toISOString()

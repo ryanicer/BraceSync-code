@@ -677,6 +677,17 @@ export interface ApiResponse<T> {
   data: T;
 }
 
+/**
+ * T727：患者手机号撞号（code=10606，HTTP 409）的信封 data。
+ * 后端只在建／改号查重命中时带身份；并发兜底路径（唯一索引 23505）取不到占用方时
+ * data 为 null，前端须退回码表通用句。
+ */
+export interface PatientPhoneTakenPayload {
+  reason: 'patient_phone_taken';
+  patientId: string;           // 占用该号码的患者
+  name: string;                // 占用者姓名（脱敏不涉及：姓名本就在管理端列表可见）
+}
+
 export interface PaginatedResponse<T> {
   list: T[];
   total: number;
