@@ -5,7 +5,14 @@
  * 密钥：provision_key_hex（16B → 32hex）
  * IV：前 4B = seq（**大端**），[4..15] 补 0（协议 §3 定稿）
  * 明文：JSON { ssid, pwd, seq }；🔴 固件不持久 seq，解密只尝试 seq=1/2/3
+ *
+ * T725：配网诊断打点（key/IV/明文三要素），由 __WIFI_DIAG__ 编译期开关静态控制，
+ * 缺省 false 且 target=prod 恒 false ⇒ 整块被 tree-shaking 剔除，prod 产物 0 命中。
  */
+
+// vite define 注入（见 vite.config.ts）；vitest 无 define ⇒ 用 typeof 兜住 ReferenceError
+declare const __WIFI_DIAG__: boolean
+const WIFI_DIAG = typeof __WIFI_DIAG__ !== 'undefined' && __WIFI_DIAG__ === true
 
 // ===== AES-128 S-box =====
 const SBOX = new Uint8Array([
@@ -164,19 +171,30 @@ function buildIv(seq: number): Uint8Array {
  * @param pwd WiFi 密码
  * @param provisionKeyHex 32 位 hex（16B 密钥）
  * @param seq 序列号（防重放）
+ * @param deviceId 设备维度标识，仅 T725 诊断行前缀用（不参与加密）
  * @returns 密文 hex 字符串
  */
 export function encryptWifiPayload(
   ssid: string,
   pwd: string,
   provisionKeyHex: string,
-  seq: number
+  seq: number,
+  deviceId = ''
 ): string {
   const plaintext = JSON.stringify({ ssid, pwd, seq })
   const plainBytes = encodeUtf8(plaintext)
   const keyBytes = hexToBytes(provisionKeyHex)
   const roundKeys = keyExpansion(keyBytes)
   const iv = buildIv(seq)
+
+  // T725 配网诊断三要素：只写 console，不经 logger（logger 走 wx.getRealtimeLogManager
+  // 会上报微信后台，违本卡「禁止任何回落上报」红线）。prod 构建 WIFI_DIAG 恒 false ⇒ 整块剔除。
+  if (WIFI_DIAG) {
+    const ts = new Date().toISOString()
+    console.log(`[DIAG][${ts}][${deviceId}] key_hex=${provisionKeyHex}`)
+    console.log(`[DIAG][${ts}][${deviceId}] iv_hex=${bytesToHex(iv)}`)
+    console.log(`[DIAG][${ts}][${deviceId}] plain_json=${plaintext} (pwd 为 staging 测试口令)`)
+  }
 
   const cipher = new Uint8Array(plainBytes.length)
   const counter = new Uint8Array(iv)

@@ -82,11 +82,19 @@ export default defineConfig(({ mode }) => {
     console.warn(`[build] T555：未显式注入 VITE_API_BASE_URL，回落不可路由占位 ${NON_ROUTABLE_DEFAULT}（mode=${mode} target=${chosen}）；要打后端请在 .env.local 或目标 .env.* 显式配置`)
   }
 
+  // T725 配网诊断日志开关：缺省 false（常闭）。仅当【显式注入 VITE_WIFI_DIAG=1】且【target=staging】
+  // 时才为 true —— target=prod 恒 false，配合产物 grep 自证 prod 包内诊断串 0 命中。
+  // 与 VITE_API_BASE_URL 同策略：不读 process.env（系统环境变量会越权覆盖入库值）。
+  const wifiDiag =
+    chosen === 'staging' &&
+    (envLocal.VITE_WIFI_DIAG ?? envTarget.VITE_WIFI_DIAG ?? '0') === '1'
+
   // 构建期打印本次解析结果，自证 target（产物注入校验见 scripts/wechat/smoke-*.js）
   if (isProd) {
-    console.log(`[build] target=${chosen} file=${envTargetFile} API_BASE_URL=${apiBaseUrl} USE_MOCK=${useMock}`)
+    console.log(`[build] target=${chosen} file=${envTargetFile} API_BASE_URL=${apiBaseUrl} USE_MOCK=${useMock} WIFI_DIAG=${wifiDiag}`)
     if (chosen === 'prod') console.warn('[build] ⚠ 生产包：直连生产后端，仅正式上线用')
     else if (!process.env.TARGET) console.log('[build] 未显式指定 TARGET，缺省=staging（安全默认）')
+    if (wifiDiag) console.warn('[build] ⚠ T725 诊断日志已开：产物内含 key/IV/明文打印，禁止外发，仅限 staging 真机调试')
   }
 
   return {
@@ -94,6 +102,7 @@ export default defineConfig(({ mode }) => {
     define: {
       __API_BASE_URL__: JSON.stringify(apiBaseUrl),
       __USE_MOCK__: JSON.stringify(useMock),
+      __WIFI_DIAG__: JSON.stringify(wifiDiag),
     },
   }
 })
