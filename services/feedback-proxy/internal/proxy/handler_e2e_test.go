@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSubmit_EndToEnd 假 TAPD 全流程（卡验收判据的可本地复算形）：
@@ -88,9 +89,13 @@ func TestSubmit_EndToEnd(t *testing.T) {
 		return rr, out.Data.Receipt
 	}
 
+	// 受理号按北京时间切日（receipt.go），期望值只能由同一函数现算：
+	// 写死日期的断言只在写用例当天为绿（实测 2026-10-21 01:10 北京时间，#434/#435 与本地同判红）。
+	wantReceipt := Receipt(300100023, time.Now())
+
 	rr, receipt := send(false)
-	if rr.Code != 200 || receipt != "FB-20261017-023" {
-		t.Fatalf("first: http=%d receipt=%s", rr.Code, receipt)
+	if rr.Code != 200 || receipt != wantReceipt {
+		t.Fatalf("first: http=%d receipt=%s want=%s", rr.Code, receipt, wantReceipt)
 	}
 	if got.title != "[运维反馈] 患者列表白屏" {
 		t.Fatalf("title=%q", got.title)
@@ -98,7 +103,7 @@ func TestSubmit_EndToEnd(t *testing.T) {
 	if !strings.Contains(got.labels, "triage") || !strings.Contains(got.labels, "环境:生产") || !strings.Contains(got.labels, "分类:页面报错/白屏") {
 		t.Fatalf("labels=%q", got.labels)
 	}
-	if !strings.HasPrefix(got.desc, "受理号 FB-20261017-023（凭此号对应运维侧回执") {
+	if !strings.HasPrefix(got.desc, "受理号 "+wantReceipt+"（凭此号对应运维侧回执") {
 		t.Fatalf("receipt not backfilled first line: %q", strings.SplitN(got.desc, "\n", 2)[0])
 	}
 	if len(got.uploads) != 2 || got.uploads[0] != "a.png=pngdata" || got.uploads[1] != "b.mp4=mp4data" {
