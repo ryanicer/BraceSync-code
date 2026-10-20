@@ -1,8 +1,10 @@
 -- seed-prod.sql —— BraceSync 生产首发最小 seed（T696 手册 V1.2 §9 口径件）
 -- 🔴 纪律（红线同手册）：
---   1. 本文件只含字典与 1 个管理员账号占位参数，禁一切测试家族数据（teams/doctors/patients/设备/告警等一律不进）；
+--   1. 本文件只含字典、1 个管理员账号占位参数与**一对引导组织行（T703 案1）**；除引导组织外禁一切测试家族数据（patients/设备/告警等一律不进）；
 --   2. 禁任何真实口令/hash 入库——admins 行经 psql -v 运行时注入，明文与 hash 都不落本文件；
 --   3. 执行属生产写：🔴 需 Boss 授权 + 双人复核后方可在 prod 跑；staging 不需要本件（staging 用全量 seed.sql）。
+--      例外（T703）：本件的**空库自举实证**在 staging 的独立探针库（迁移全链 + 本文件）上跑，
+--      不写 staging 业务库 bracesync——探针库用完即删，见手册 §9.3。
 -- 执行方式（prod 宿主机，§2.0 首发闸门 b，迁移 000001→000038 之后、冒烟 S2 之前）：
 --   PW 只走现场环境变量；hash 用 python3 bcrypt(cost 10) 现算（宿主无库则线下算好）：
 --   HASH=$(python3 -c 'import bcrypt,sys; print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(10)).decode())' "$PROD_ADMIN_PW")
@@ -65,11 +67,54 @@ INSERT INTO alert_notify_rules (type, channels, notify_targets) VALUES
   ('wear_duration_short',   ARRAY['wechat','sms']::varchar[], ARRAY['patient','doctor']::varchar[])
 ON CONFLICT (type) DO NOTHING;
 
--- ===== 5) 回读自检（=冒烟 S13 判据；输出即留痕，随交件原文落板） =====
+-- ===== 5) 引导组织（T703 案1：1 支引导团队 + 1 名引导医生 + 其登录账号行）=====
+-- 存在理由（T695 一手实证）：全新库 teams/doctors 双空时，建团队要 leader（校验 doctors 存在 → 400）、
+--   建医生要 teamId（校验 teams FK → 400），互为前提 ⇒ admin-web/API 无法自举，必须有一笔带外种子把环打开。
+-- 互相引用：teams.leader='TST_DOC_BOOT01'（软引用无 FK）↔ doctors.team_id='TST_TEAM_BOOT01'（FK 到 teams）。
+-- 🔴 账号行必带（2026-10-16 实建发现）：只插 doctors 行 ⇒ username=None、无登录能力、reset 口令 409，
+--   所以 doctors.admin_id 必须指向一条真实 admins 行；该账号口令 hash **复用第 2) 节的运行时注入值**
+--   （与首发管理员同口令），首登后由业务立即改口令 —— 本文件仍零凭据。
+-- 可清理：业务建出**首个真实团队 + 首个真实医生**（且其可当 leader）后，按 §5c 清理 SQL 删除这三行；
+--   判据 = SELECT count(*) FROM teams WHERE team_id NOT IN ('TST_TEAM_BOOT01') >= 1
+--        AND SELECT count(*) FROM doctors WHERE doctor_id NOT IN ('TST_DOC_BOOT01') >= 1。
+INSERT INTO teams (team_id, name, leader, description, status, team_type)
+VALUES ('TST_TEAM_BOOT01', 'TST_引导团队', 'TST_DOC_BOOT01',
+        'T703 首库引导团队：破「建团队要 leader / 建医生要 teamId」死锁，业务起步后可清理（§5c）',
+        'active', 'medical')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO admins (admin_id, username, name, password_hash, role_id, status)
+VALUES ('ADM_TST_BOOT01', 'TST_bootstrap', 'TST_引导医生账号', :'password_hash', 'ROLE_DOCTOR', 'enabled')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO doctors (doctor_id, name, title, department, team_id, admin_id, status)
+VALUES ('TST_DOC_BOOT01', 'TST_引导医生', '引导岗（可清理）', 'T703 首库引导', 'TST_TEAM_BOOT01', 'ADM_TST_BOOT01', 'enabled')
+ON CONFLICT DO NOTHING;
+
+-- §5c 清理 SQL（业务起步后单独执行，属生产写需 Boss 授权 + 双人复核；顺序 = 子→父，防 FK 挡道）：
+--   DELETE FROM doctors WHERE doctor_id='TST_DOC_BOOT01' AND team_id='TST_TEAM_BOOT01';
+--   DELETE FROM admins  WHERE admin_id ='ADM_TST_BOOT01' AND username='TST_bootstrap';
+--   DELETE FROM teams   WHERE team_id  ='TST_TEAM_BOOT01' AND leader='TST_DOC_BOOT01';
+--   前后各拍一次：SELECT count(*) FROM teams WHERE team_id='TST_TEAM_BOOT01';
+--                 SELECT count(*) FROM doctors WHERE doctor_id='TST_DOC_BOOT01';
+--                 SELECT count(*) FROM admins WHERE admin_id='ADM_TST_BOOT01';   -- 期望 3 → 0
+
+-- ===== 6) 回读自检（=冒烟 S13 判据；输出即留痕，随交件原文落板） =====
 SELECT count(*) AS roles_expect_3            FROM roles;
-SELECT count(*) AS admins_expect_1           FROM admins;
+SELECT count(*) AS admins_expect_2           FROM admins;   -- 1 管理员 + 1 引导医生账号
 SELECT count(*) AS sys_configs_expect_20     FROM sys_configs;  -- V1.2/⑥：迁移后跑本件终值=20（见第 3) 节推导）
 SELECT count(*) AS alert_rules_expect_5      FROM alert_notify_rules;
 SELECT (SELECT count(*) FROM patients) AS patients_expect_0,
-       (SELECT count(*) FROM teams)    AS teams_expect_0,
-       (SELECT count(*) FROM doctors)  AS doctors_expect_0;
+       (SELECT count(*) FROM teams)    AS teams_expect_1,   -- T703 案1：引导团队（业务再增）
+       (SELECT count(*) FROM doctors)  AS doctors_expect_1; -- T703 案1：引导医生（业务再增）
+-- 引导组织双向可解析（死锁已破的判据：leader↔team_id 互指 + 账号行挂上 + 账号可登录角色齐）
+SELECT (SELECT count(*)
+          FROM teams t
+          JOIN doctors d ON d.team_id = t.team_id AND d.doctor_id = t.leader
+          JOIN admins a  ON a.admin_id = d.admin_id
+          JOIN roles r   ON r.role_id = a.role_id
+         WHERE t.team_id = 'TST_TEAM_BOOT01'
+           AND d.doctor_id = 'TST_DOC_BOOT01'
+           AND a.username = 'TST_bootstrap'
+           AND r.role_id = 'ROLE_DOCTOR') AS bootstrap_pair_expect_1;
+
