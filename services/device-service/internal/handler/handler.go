@@ -18,6 +18,9 @@
 //	GET  /api/v1/install-records                  安装记录分页列表（T030：姓名 join）
 //	POST /api/v1/baselines                        校准基线落库（契约 saveBaseline）
 //	GET  /api/v1/devices/:deviceId/baseline       设备当前生效基线只读（T407：avg_pressure 复算入参）
+//	GET  /api/v1/admin/devices/:deviceId/secret-file    设备验签密钥文件下载（T728，仅 admin，每次留痕）
+//	POST /api/v1/admin/device-secrets/export    批量导出勾选设备的密钥 zip（T728，仅 admin，≤50/次）
+//	POST /api/v1/admin/devices/:deviceId/secret-regenerate  重新生成密钥（T728，仅 admin，旧值作废）
 //	POST /internal/devices/:deviceId/report       上报/补传状态校正（服务间，不经网关）
 //	GET  /internal/devices/:deviceId/secret       验签密钥查询（T032，仅 gateway 验签用，不经网关）
 //	GET  /healthz                                 存活探针
@@ -102,6 +105,15 @@ func (h *Handler) Router() *gin.Engine {
 		internal.POST("/devices/:deviceId/report", h.report)
 		internal.GET("/devices/:deviceId/secret", h.getSecret) // T032 gateway 设备验签密钥来源
 	}
+
+	// T728：设备验签密钥的服务端专用端点（仅 ROLE_ADMIN，判定见 admin_secret_t728.go）。
+	// 挂在 /admin/ 前缀下与网关 adminOnlyPatterns 同形；文件响应不是统一 JSON 信封（失败才回信封）。
+	admin := v1.Group("/admin")
+	{
+		admin.GET("/devices/:deviceId/secret-file", h.downloadDeviceSecretFile)      // T728 单台 .env
+		admin.POST("/device-secrets/export", h.exportDeviceSecrets)                  // T728 批量 zip（勾选白名单）
+		admin.POST("/devices/:deviceId/secret-regenerate", h.regenerateDeviceSecret) // T728 重生成（旧值作废）
+	}
 	return r
 }
 
@@ -145,6 +157,14 @@ func operatorID(c *gin.Context) string {
 type registerRequest struct {
 	DeviceID string `json:"deviceId"`
 	Model    string `json:"model"`
+}
+
+// registerResponseDTO 注册响应体（T728）：设备 DTO + 仅本次新建那一次才出现的密钥明文。
+// 密文（device_secret_enc）与解密逻辑都不出后端，前端能拿到的只有这一发一次性明文；
+// 幂等命中既有行时该字段整体省略（omitempty），列表与详情 DTO（model.DeviceDTO）恒不含密钥。
+type registerResponseDTO struct {
+	model.DeviceDTO
+	DeviceSecret string `json:"deviceSecret,omitempty"`
 }
 
 // bindRequest 绑定/换绑入参。ConfirmSwap=T299 确认换绑意图（技师在「该患者已绑定设备 xxx，是否换绑？」
@@ -286,12 +306,15 @@ func (h *Handler) register(c *gin.Context) {
 		fail(c, model.ErrInvalidParam("invalid request body: %v", err))
 		return
 	}
-	dev, _, appErr := h.svc.Register(c.Request.Context(), req.DeviceID, req.Model)
+	dev, _, secret, appErr := h.svc.RegisterWithOneTimeSecret(c.Request.Context(), req.DeviceID, req.Model)
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
-	ok(c, dev.ToDTO())
+	// T728：明文只在本次新建那一发给出（service 保证幂等命中既有行时回空串——那一发本次生成的
+	// 随机数根本没落库，回出去等于回一个与库里不同的密钥）。空串 ⇒ 字段整个不出现，
+	// 前端据此决定弹不弹回显窗；要取已存在设备的密钥走 T728 下载端点（每次都留痕）。
+	ok(c, registerResponseDTO{DeviceDTO: dev.ToDTO(), DeviceSecret: secret})
 }
 
 // getDevice 设备详情

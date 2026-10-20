@@ -65,13 +65,60 @@ export function mockDeviceBindings(deviceId: string): DeviceBindingRecord[] {
 
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{4,48}$/
 
-export function mockRegisterDevice(input: { deviceId: string; model?: string }): Device {
+// ===== T728 设备验签密钥（mock 态）=====
+//
+// 真实链路里明文只存在于「本次新建」那一发，库里此后只有 AES-GCM 密文；mock 没有加密列，
+// 用一个进程内 Map 存「这一世还拿得到的明文」，重生成即覆盖旧值 —— 让「旧 secret 即时失效」
+// 与「关掉回显窗就再也取不到」两件事在本地开发路径上也能跑到。
+// 未登记的设备（初始 6 台 seed 行）刻意不给密钥：镜像 T573 现网那批「密文不成立、只能重生成」
+// 的设备，前端的降级分支才有样本可走。
+const SECRET_BY_DEVICE = new Map<string, string>()
+const SECRET_VERSION_BY_DEVICE = new Map<string, number>()
+
+/** 64 位 hex，形态对齐 device-service crypto.RandomSecret(32)（固件 HKDF ikm 约定） */
+function genDeviceSecret(): string {
+  let out = ''
+  while (out.length < 64) out += Math.random().toString(16).slice(2)
+  return out.slice(0, 64)
+}
+
+/** .env 文件体逐字照 service.SecretEnvBody：两行 + LF 行尾（CRLF 会让固件侧 sha256 对不上） */
+export function mockDeviceSecretEnv(deviceId: string): string {
+  const secret = SECRET_BY_DEVICE.get(deviceId)
+  if (!secret) {
+    throw new Error(`设备 ${deviceId} 没有可导出的验签密钥（历史数据或从未注册），请重新生成后再下载`)
+  }
+  return `DEVICE_ID=${deviceId}\nDEVICE_SECRET=${secret}\n`
+}
+
+/** 批量：逐台降级，拿不出来的进 skipped（真实链路里它们进 zip 的 _skipped.txt 与留痕） */
+export function mockDeviceSecretEnvs(deviceIds: string[]): { envs: string[]; skipped: string[] } {
+  const envs: string[] = []
+  const skipped: string[] = []
+  for (const id of deviceIds) {
+    try {
+      envs.push(mockDeviceSecretEnv(id))
+    } catch {
+      skipped.push(id)
+    }
+  }
+  return { envs, skipped }
+}
+
+export interface DeviceRegisterResult extends Device {
+  deviceSecret?: string
+}
+
+export function mockRegisterDevice(input: { deviceId: string; model?: string }): DeviceRegisterResult {
   const deviceId = input.deviceId.trim()
   if (!DEVICE_ID_RE.test(deviceId)) {
     throw new Error(`无效设备ID: ${deviceId}（4-48 位，字母/数字/-/_）`)
   }
   const existing = DEVICES.find((d) => d.deviceId === deviceId)
-  if (existing) return { ...existing }
+  if (existing) {
+    // 幂等命中：本次生成的随机数没有落库 ⇒ 这一发不回明文（后端同判据，omitempty）
+    return { ...existing }
+  }
   const dev: Device = {
     deviceId,
     model: 'PRS-ML05-RC',
@@ -85,5 +132,19 @@ export function mockRegisterDevice(input: { deviceId: string; model?: string }):
     lastReportAt: null,
   }
   DEVICES.push(dev)
-  return { ...dev }
+  const secret = genDeviceSecret()
+  SECRET_BY_DEVICE.set(deviceId, secret)
+  SECRET_VERSION_BY_DEVICE.set(deviceId, 1)
+  return { ...dev, deviceSecret: secret }
 }
+
+/** 重生成：新值覆盖旧值（一次性回显），版本号自增 —— 旧明文此后取不到也签不过。 */
+export function mockRegenerateDeviceSecret(deviceId: string): { deviceId: string; secret: string; secretVersion: number } {
+  if (!DEVICES.some((d) => d.deviceId === deviceId)) throw new Error(`设备不存在: ${deviceId}`)
+  const secret = genDeviceSecret()
+  const next = (SECRET_VERSION_BY_DEVICE.get(deviceId) ?? 0) + 1
+  SECRET_BY_DEVICE.set(deviceId, secret)
+  SECRET_VERSION_BY_DEVICE.set(deviceId, next)
+  return { deviceId, secret, secretVersion: next }
+}
+
