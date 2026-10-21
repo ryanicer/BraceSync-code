@@ -20,6 +20,21 @@ const PointCount = 20
 // DefaultModel 默认设备型号（devices.model DEFAULT）
 const DefaultModel = "PRS-ML05-RC"
 
+// DefaultContactAreaCm2 压力点有效受压面积的注册默认值（Boss 标称 0.8cm×0.8cm 单点 = 0.64 cm²）。
+//
+// 🔴 这一条是对 T508 口径的反裁：000034 曾刻意「默认值不落库、不作读侧兜底」，代价是每台新注册
+// 设备的 contact_area_cm2 都是 NULL，患者端/admin 端 kPa 档整片 fail-closed 显示 --。
+// Boss 2026-10-17 真机数据链实证后下令注册面自带默认（TAPD 1133005753001000501 / T715）。
+// 换算口径不动（kPa = N / area(cm²) × 10，见 PRD §7A.2.1），本常量只保证分母非空。
+const DefaultContactAreaCm2 = 0.64
+
+// DefaultContactArea 注册默认面积的指针形（字段是 *float64，const 不可取址）。
+// 每次调用返回独立地址，避免调用方改写把同包其余默认值一起改掉。
+func DefaultContactArea() *float64 {
+	area := DefaultContactAreaCm2
+	return &area
+}
+
 // ─────────────────────────────────────────────────────────────
 // 设备状态机（架构 §4.6 + PRD §8.1）
 // ─────────────────────────────────────────────────────────────
@@ -159,8 +174,9 @@ type Device struct {
 	PatientID       *string // NULL=未绑定
 	WifiSSID        *string
 	// ContactAreaCm2 压力点有效受压面积（cm2，T508 / PRD §7A.2.1）。
-	// NULL = 未配置（000034 刻意不带 DEFAULT）——kPa 档据此 fail-closed 显示 --，
-	// 读侧禁止用 0.64 之类的常量默认值补位（那是配置项默认值，不是数据）。
+	// T715 起注册即写 DefaultContactAreaCm2 ⇒ 新设备恒非空；NULL 只余两类：迁移 000040 之前的
+	// 存量未回填行、以及绕过注册端点直接建行的夹具。读侧仍不得用常量补位——库里 NULL 就回 null，
+	// 让 kPa 档 fail-closed 显示 --，这是「这台设备的面积真的没人配过」的唯一可辨态。
 	ContactAreaCm2 *float64
 	BindTime       *time.Time
 	Status         string
@@ -281,7 +297,8 @@ type DeviceDTO struct {
 	FirmwareVersion string  `json:"firmwareVersion"`
 	PatientID       *string `json:"patientId"`
 	WifiSsid        *string `json:"wifiSsid"`
-	// ContactAreaCm2 T508：null = 未配置（前端 kPa 档显示 --），0 也是非法值不会出现
+	// ContactAreaCm2 T508：null = 未配置（前端 kPa 档显示 --），0 也是非法值不会出现。
+	// T715 起注册自带 0.64 ⇒ 新设备这格是数值；无 omitempty，null 也必须把键序列化出来。
 	ContactAreaCm2 *float64 `json:"contactAreaCm2"`
 	BindTime       *string  `json:"bindTime"`
 	Status         string   `json:"status"`

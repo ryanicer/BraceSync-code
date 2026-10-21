@@ -207,8 +207,10 @@ func TestIT_T389_DeviceWritesDeniedForDoctorAndCS(t *testing.T) {
 	t.Run("counterproof/technician-write-is-visible", func(t *testing.T) {
 		before := it389Snapshot(t)
 		beforeDev := it389DeviceRow(t)
-		require.Contains(t, beforeDev, "contactArea=<NULL>",
-			"反证前提：面积列此刻须还是未配置，否则下面的「改写可见」判据是空的：%s", beforeDev)
+		// T715 起注册即带默认值 ⇒ 反证前提从「未配置 NULL」改判为「停在注册默认值上」，
+		// 判据本体不变：面积列此刻必须是可预期的原值，下面的「改写可见」才不是空判据。
+		require.Contains(t, beforeDev, "contactArea=0.64",
+			"反证前提：面积列此刻须还是注册默认值，否则下面的「改写可见」判据是空的：%s", beforeDev)
 		_, r := env.do(t, http.MethodPost, "/api/v1/devices/"+it389Device+"/wifi",
 			map[string]string{"ssid": "T389-LEGIT"}, it389Req("technician", it389Tech))
 		require.Equal(t, 0, r.Code, "技师正常写应成功：%s", r.Message)

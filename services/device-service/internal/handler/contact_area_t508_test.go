@@ -3,7 +3,9 @@
 // 本文件守四件事（角色门禁本身由 write_scope_t387_test.go 的端点表覆盖，不重复）：
 //  1. 整值覆盖 + 详情回显同源（配完立刻能被设备管理页读回，PRD §7A.2.1 五.1「下一次读数即生效」），
 //     以及列表 DTO 不把该列投影丢掉；
-//  2. 未配置回显是 null 而不是 0.64 —— 这一格是「默认值属后台表单项、不落库不兜底」的唯一现网证据；
+//  2. 库里为 NULL 的行回显是 null 而不是 0.64 —— 这一格是「读侧不兜底」（PRD §7A.2.1 五.3）的唯一现网证据。
+//     🔴 T715 反改了 T508 的注册面口径（注册即落 0.64），但读侧兜底禁令一字未动，
+//     所以本格的夹具改为绕过注册端点直建 NULL 行；注册默认值那格由 contact_area_t715_test.go 守。
 //  3. 非法载荷（省略键 / 显式 null / 0 / 负 / 非 JSON）一律 400 + 20400，且库里原值不动：
 //     本列没有回退成 NULL 的通路，「不表态」不能被静默读成清空；
 //  4. 未注册设备 404 + 20404（判定序：门禁 > 体解析 > 参数 > 仓储，查无只在最后一步）。
@@ -64,11 +66,18 @@ func TestT508_ContactArea_WriteThenReadBackSameValue(t *testing.T) {
 	require.NotNil(t, after.ContactAreaCm2)
 	assert.InDelta(t, 1.5, *after.ContactAreaCm2, 1e-9, "PUT 是整写，第二次配置必须完全替换")
 
-	// 写通路唯一：面积只经 SetContactArea 落库，注册与绑定等其他写路径不得顺带改它
+	// 写通路收窄（T715 改判）：注册带默认值，但绑定等其他写路径不得顺带改它；
+	// 且幂等注册绝不覆盖已人工配过的面积——ON CONFLICT DO NOTHING 是这条判据的落点。
 	dev2 := "DEV-T508-A2"
 	t508RegisterDev(t, env, dev2)
 	_, d2 := t508Detail(t, env, dev2)
-	assert.Nil(t, d2.ContactAreaCm2, "新注册设备必须是未配置态（注册 INSERT 不含该列）")
+	require.NotNil(t, d2.ContactAreaCm2, "T715 判据一：新注册设备面积必须非空")
+	assert.InDelta(t, model.DefaultContactAreaCm2, *d2.ContactAreaCm2, 1e-9, "注册默认值=Boss 标称 0.64")
+
+	t508RegisterDev(t, env, dev) // dev 此刻已是人工配的 1.5
+	_, dRe := t508Detail(t, env, dev)
+	require.NotNil(t, dRe.ContactAreaCm2)
+	assert.InDelta(t, 1.5, *dRe.ContactAreaCm2, 1e-9, "T715 判据二：幂等注册不得把既有配置洗回默认值")
 }
 
 // 列表端点必须把面积列透到 wire（前端设备管理页列表列由此取数）。
@@ -118,11 +127,21 @@ func TestT508_ContactArea_ListProjectionNotDropped(t *testing.T) {
 	assert.NotContains(t, w2.Body.String(), "0.64", "列表侧也不得用后台默认值补位")
 }
 
-// 未配置 = null，不是 0.64：这条是「默认值不落库、不作读侧兜底」（PRD §7A.2.1 五.3）的现网证据。
+// 库里真是 NULL 时，回显仍是 null 而不是 0.64：这条是「读侧不作兜底」（PRD §7A.2.1 五.3）的现网证据。
+//
+// T715 之后走注册端点拿不到 NULL 态了（注册即带默认值），所以这里绕过注册端点、
+// 直接经仓储写一行面积为 NULL 的设备——这正是存量行/夹具直建在库里的真实形状。
 func TestT508_ContactArea_UnconfiguredIsNullNotDefault(t *testing.T) {
 	env := newTestEnv(t)
 	const dev = "DEV-T508-NULL"
-	t508RegisterDev(t, env, dev)
+	_, err := env.store.RegisterDevice(context.Background(), &model.Device{
+		DeviceID:       dev,
+		Model:          model.DefaultModel,
+		SecretVersion:  1,
+		Status:         model.StatusUnbound,
+		ContactAreaCm2: nil,
+	})
+	require.NoError(t, err, "夹具直建 NULL 面积行失败")
 
 	raw, dto := t508Detail(t, env, dev)
 	assert.Nil(t, dto.ContactAreaCm2, "未配置必须回 null")
@@ -186,7 +205,10 @@ func TestT508_ContactArea_MalformedJSONRejected(t *testing.T) {
 	httpStatus, code := env.doRaw(t, http.MethodPut, "/api/v1/devices/"+dev+"/contact-area", "not-json")
 	assert.Equal(t, http.StatusBadRequest, httpStatus)
 	assert.Equal(t, model.CodeInvalidParam, code)
-	assert.Nil(t, t508AreaOf(t, env, dev))
+	// 原值=注册默认值（T715 前这里是 nil）：拒绝路径既不写库，也不把默认值洗成 NULL
+	mal := t508AreaOf(t, env, dev)
+	require.NotNil(t, mal)
+	assert.InDelta(t, model.DefaultContactAreaCm2, *mal, 1e-9)
 }
 
 // 未注册设备：门禁与体解析都放行后才判查无 → 404 + 20404
