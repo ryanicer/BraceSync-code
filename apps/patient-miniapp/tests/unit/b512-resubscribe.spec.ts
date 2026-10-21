@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 
 const FILE = fileURLToPath(new URL('../../src/utils/ble.ts', import.meta.url))
 const PAGE = fileURLToPath(new URL('../../src/pages/wifi-setup/index.vue', import.meta.url))
+const FRAME = fileURLToPath(new URL('../../src/utils/b512-frame.ts', import.meta.url))
 const src = fs.readFileSync(FILE, 'utf8')
 
 /** 取顶层（含 export）函数体：以下一个顶格 function 声明为界 */
@@ -142,7 +143,12 @@ describe('T216① — 真机可观测性（判据落到日志）', () => {
     const body = fnBody('subscribeB512Notify')
     expect(body).toContain('B512 Notify 订阅成功 第${round}次')
     expect(body).toContain('B512 发起订阅 第${round}次')
-    expect(body).toContain('帧 订阅轮次=')
+    // T726：收帧日志的措辞搬进 b512-frame.ts（帧判读要能纯函数单测），
+    // 所以这条契约拆两半钉——文案在 frame 模块里，两个计数器必须由 ble.ts 传进去。
+    const frameSrc = fs.readFileSync(FRAME, 'utf8')
+    expect(frameSrc).toContain('帧 订阅轮次=')
+    expect(body).toContain('formatB512FrameLog(')
+    expect(body).toMatch(/formatB512FrameLog\(\s*frame,\s*b512FramesReceived,\s*b512SubscribeRounds\s*\)/)
   })
 
   it('断言确实读到了 ble.ts 源码（防路径写错导致空内容假绿）', () => {
