@@ -5,6 +5,7 @@
 // 实时推送 & 配网状态机在 H5 下使用模拟数据（mock），真机联调以硬件为准。
 
 import { bleLog } from './ble-log'
+import { parseB512Frame } from './b512Frame'
 import { logErrorText } from '@bracesync/shared-utils'
 import { MN_PER_N } from '@bracesync/constants'
 
@@ -924,10 +925,19 @@ function subscribeB512Notify(deviceId: string): void {
     uni.onBLECharacteristicValueChange((res) => {
       if (res.characteristicId?.toLowerCase() !== CHAR_WIFI_STATUS.toLowerCase()) return
       try {
-        const code = new Int8Array(res.value)[0]
+        // T726: 多字节帧按长度分流，禁止再「首字节即状态码」
+        const frame = parseB512Frame(res.value)
         b512FramesReceived += 1
+        if (frame.code === null) {
+          bleLog.warn(
+            `B512 raw=[${frame.hex}] len=${frame.len} → code=不可解析 第${b512FramesReceived}帧 订阅轮次=${b512SubscribeRounds}`
+          )
+          return
+        }
+        const code = frame.code
+        const headerNote = frame.headerHex ? ` 帧头=[${frame.headerHex}]` : ''
         bleLog.info(
-          `B512 状态原始值=${code} 第${b512FramesReceived}帧 订阅轮次=${b512SubscribeRounds}`
+          `B512 raw=[${frame.hex}] len=${frame.len} → code=${code}${headerNote} 第${b512FramesReceived}帧 订阅轮次=${b512SubscribeRounds}`
         )
         wifiStatusCallback?.(code)
         // T240: clear 完成信号分发（一次性回调，与配网状态机解耦）
