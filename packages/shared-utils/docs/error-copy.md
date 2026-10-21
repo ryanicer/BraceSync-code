@@ -27,6 +27,7 @@
 | 10603 | 该就诊档案已被其他微信绑定，请联系门诊工作人员 | user-service model.go:19-34 |
 | 10604 | 手机号授权信息有误，请重新授权 | user-service model.go:19-34 |
 | 10605 | 操作已过期，请重新发起 | user-service model.go:19-34 |
+| 10606 | 该手机号已绑定其他患者档案，请先找到占用该号码的患者，改用其档案或更换号码 | user-service model.go CodePatientPhoneTaken（T727） |
 | 20400 | 设备信息有误，请核对后重试 | device-service model.go:82-88 |
 | 20402 | 数据时间超出可提交范围，请稍后重试 | device-service model.go:82-88 |
 | 20403 | 无权操作该设备，请联系工作人员 | device-service model.go:82-88 |
@@ -92,3 +93,7 @@
 三端一律经 `userErrorCopy(err, { scope, fallback })` 出文案；`logErrorText(err)` 只给日志面，
 返回后端英文原文，禁止接到 toast／ElMessage／模板插值上（防回潮门禁：
 `packages/shared-utils/test/no-bare-message-display.test.ts`）。
+
+信封 `data` 不参与查表：传输层经 `attachErrorMeta(err, { code, httpStatus, data })` 原样带上，
+展示层用 `userErrorData(err)` 取结构化负载点名到具体记录（T727 手机号撞号回占用方
+`{reason, patientId, name}`）。点名句由消费页自己拼，本表只保证「拿不到负载时仍出码表通用句」。

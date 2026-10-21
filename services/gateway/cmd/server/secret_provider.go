@@ -47,6 +47,29 @@ type SecretProvider interface {
 	GetDeviceSecret(ctx context.Context, deviceID string) (string, error)
 }
 
+// secretCacheInvalidator 密钥缓存的**可选**作废能力（T728）。
+//
+// 为什么不进 SecretProvider 接口：那是验签热路径的最小面，测试桩与未来的其它实现
+// （例如直接读库）没有缓存可作废；做成可选能力 + 类型断言，没有实现就是空操作，
+// 而不是逼每个桩都装出一副有缓存的样子。
+type secretCacheInvalidator interface {
+	InvalidateDeviceSecret(deviceID string)
+}
+
+// InvalidateDeviceSecret 作废某台设备的密钥缓存（T728 重新生成成功后调用）。
+//
+// 必要性：secretCacheTTL 是 5 分钟，而卡面红线要求「重新生成 ⇒ 旧值即时失效」。
+// 后端那一行密文已经被覆盖，但网关内存里那份旧明文在 TTL 内仍能签成功 ——
+// 「旧值还能用」和「旧值已废」的差别全在这一格，不在 SQL 里。
+//
+// 只在重生成**成功返回后**调用（见 registerSecretRegenerateProxy）：写库已经完成，
+// 此后任何一次回源拿到的都是新值，缓存里不可能再填进旧值。
+func (p *deviceServiceSecretProvider) InvalidateDeviceSecret(deviceID string) {
+	p.mu.Lock()
+	delete(p.cache, deviceID)
+	p.mu.Unlock()
+}
+
 // secretCacheTTL 密钥缓存时长（密钥仅注册时生成、不轮换，短 TTL 兼顾一致性）
 const secretCacheTTL = 5 * time.Minute
 

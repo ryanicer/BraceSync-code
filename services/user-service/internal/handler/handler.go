@@ -405,13 +405,14 @@ func ok(c *gin.Context, data any) {
 // fail T464 错误响应双通道出口：
 // message 走 model.UserText 的中文用户面文案，原始技术文本（appErr.Message）只写日志；
 // trace 回传错误码 + request_id，供用户反馈时反查同一条日志。
+// data（T727）透传 appErr.Data：绝大多数错误不设 ⇒ 序列化成 null，与改造前逐字同形。
 func fail(c *gin.Context, appErr *model.AppError) {
 	requestID := requestIDOf(c)
 	logTechnical(c, appErr.Code, appErr.HTTPStatus, appErr.Message, requestID)
 	c.JSON(appErr.HTTPStatus, jsonResp{
 		Code:    appErr.Code,
 		Message: model.UserText(appErr.Code),
-		Data:    nil,
+		Data:    appErr.Data,
 		Trace:   &errorTrace{ErrorCode: appErr.Code, RequestID: requestID},
 	})
 }
@@ -1188,7 +1189,15 @@ func newTechID() string {
 	return "TECH" + hex.EncodeToString(buf)
 }
 
-// preparePhone 加密+哈希准备；加密器未配置返回 500 配置错误
+// preparePhone 加密+哈希准备；加密器未配置返回 500 配置错误。
+//
+// T727：查重键口径由 Hash 改为 NormalizeHash（去空白/去 +86/去非数字后再 sha256），
+// 与微信 bind-phone（bind_phone.go:126）、后台双凭证登录（handler.go:557）同一条规范化腿，
+// 消除「三处读同一列、两种哈希口径」的分叉。
+// 🔴 对既有行零失配，理由是恒等而非运气：本函数全部调用点都先过 validPhone
+// （11 位 1 开头纯数字），而 Normalize 对这类输入是恒等变换 ⇒ Hash(x) == NormalizeHash(x)。
+// 该不变量由 phone 包的表驱动测试钉死（TestNormalizeHashIdentityOnValidPhone），
+// 因此不需要重算/回填任何历史 phone_hash。
 func (h *Handler) preparePhone(plain string) (enc []byte, hash string, appErr *model.AppError) {
 	if h.phone == nil {
 		return nil, "", model.ErrInternal("phone encryption key not configured")
@@ -1197,7 +1206,7 @@ func (h *Handler) preparePhone(plain string) (enc []byte, hash string, appErr *m
 	if err != nil {
 		return nil, "", model.ErrInternal("encrypt phone failed")
 	}
-	return enc, phone.Hash(plain), nil
+	return enc, phone.NormalizeHash(plain), nil
 }
 
 // validateTechTeam 团队存在性校验（FK 前置，友好 400 替代 DB 违约）。
@@ -2818,7 +2827,9 @@ func (h *Handler) createPatient(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, repo.ErrPatientExists) {
-			fail(c, model.ErrConflict("patient already exists"))
+			// T727：建档撞号回专用码 + 占用人身份（两条到达路径共用这一个出口：
+			// repo 的 EXISTS 预检 pg.go:1563，以及并发下 phone_hash 唯一索引违约 23505 兜底）。
+			fail(c, h.phoneTakenErr(c.Request.Context(), hash, "", "patient already exists"))
 			return
 		}
 		fail(c, model.ErrInternal("create patient failed"))

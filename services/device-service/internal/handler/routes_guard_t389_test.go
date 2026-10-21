@@ -37,7 +37,8 @@ type t389GatedWrite struct {
 
 // t389GatedWrites 设备域收口的写路由：T387 点名的七条 + T404 补的第八条（POST /api/v1/devices
 // 注册，原先挂在豁免表里等裁，裁后迁来此处）+ T508 补的第九条（PUT /devices/:deviceId/contact-area
-// 有效受压面积配置）。条数与本表逐字对应，少一条即「假覆盖」。
+// 有效受压面积配置）+ T728 补的第十、十一条（密钥重生成 / 批量导出，放行面收窄到只有 admin）。
+// 条数与本表逐字对应，少一条即「假覆盖」。
 var t389GatedWrites = []t389GatedWrite{
 	{"POST /api/v1/devices", "register", "T387 assertDeviceWriteRole（T404 第八条）"},
 	{"POST /api/v1/devices/:deviceId/bind", "bind", "T387 assertDeviceWriteRole"},
@@ -48,6 +49,10 @@ var t389GatedWrites = []t389GatedWrite{
 	{"POST /api/v1/install-records", "create-install", "T387 assertDeviceWriteRole"},
 	{"PUT /api/v1/install-records/:id", "update-install-meta", "T387 assertDeviceWriteRole"},
 	{"POST /api/v1/baselines", "save-baseline", "T387 assertDeviceWriteRole"},
+	// T728 两条：放行面比这一族更窄（只有 ROLE_ADMIN，技师在该也拒），
+	// 门禁是 admin_secret_t728.go 的 assertAdminRole 而不是 assertDeviceWriteRole。
+	{"POST /api/v1/admin/devices/:deviceId/secret-regenerate", "secret-regenerate", "T728 assertAdminRole（第十条）"},
+	{"POST /api/v1/admin/device-secrets/export", "secret-export", "T728 assertAdminRole（第十一条）"},
 }
 
 // t389ExemptWrites 有意不收口的写路由 ⇒ 理由必须写全。
@@ -104,7 +109,7 @@ func TestT389_EveryDerivedWriteRouteIsGatedOrExempt(t *testing.T) {
 		require.False(t, gated[g.pattern] != (t389GatedWrite{}), "已收口表里 %s 重复登记", g.pattern)
 		gated[g.pattern] = g
 	}
-	require.Len(t, t389GatedWrites, 9, "收口面是 T387 点名的七条 + T404 补的注册 + T508 补的面积配置，本表条数须与之相等")
+	require.Len(t, t389GatedWrites, 11, "收口面是 T387 点名的七条 + T404 补的注册 + T508 补的面积配置 + T728 补的两条密钥端点，本表条数须与之相等")
 
 	for _, key := range derived {
 		_, isGated := gated[key]

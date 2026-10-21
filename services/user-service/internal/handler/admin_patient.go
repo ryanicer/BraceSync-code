@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,6 +87,23 @@ func auditBool(bound *bool) any {
 	return *bound
 }
 
+// phoneTakenErr T727：把「手机号撞号」组装成专用错误（HTTP 409 + 码 10606 + data 带占用人 ID/姓名）。
+//
+// 反查失败或反查为空（并发删除、微信-only 行刚被清）⇒ 仍回专用码，只是 data 缺席：
+// 宁缺勿假，不因此降级成 500 也不回落成泛化 10409——那正是 10-20 那次把排查带向密钥的方向。
+func (h *Handler) phoneTakenErr(ctx context.Context, phoneHash, excludePatientID, technical string) *model.AppError {
+	appErr := model.ErrPatientPhoneTaken("%s", technical)
+	conflict, err := h.store.PatientPhoneConflict(ctx, phoneHash, excludePatientID)
+	if err != nil || conflict == nil {
+		return appErr
+	}
+	return appErr.WithData(model.PhoneTakenPayload{
+		Reason:    model.PhoneTakenReason,
+		PatientID: conflict.PatientID,
+		Name:      conflict.Name,
+	})
+}
+
 // updatePhoneRequest PUT /admin/patients/:id/phone 请求体
 type updatePhoneRequest struct {
 	Phone  string `json:"phone"`
@@ -125,27 +143,33 @@ func (h *Handler) updatePatientPhone(c *gin.Context) {
 		return
 	}
 
-	// phone_hash 冲突校验（排除自身）
-	newHash := phone.Hash(req.Phone)
-	taken, err := h.store.PatientPhoneHashTaken(c.Request.Context(), newHash, patientID)
-	if err != nil {
-		fail(c, model.ErrInternal("check phone hash failed"))
-		return
-	}
-	if taken {
-		fail(c, model.ErrConflict("phone already exists"))
-		return
-	}
-
-	// 加密 + 哈希同步更新
-	enc, hash, appErr := h.preparePhone(req.Phone)
+	// 加密 + 哈希（T727：查重键与写入键由同一次 preparePhone 生成，杜绝两处各算一遍再分叉口径）
+	enc, newHash, appErr := h.preparePhone(req.Phone)
 	if appErr != nil {
 		fail(c, appErr)
 		return
 	}
-	if err := h.store.UpdatePatientPhone(c.Request.Context(), patientID, enc, hash); err != nil {
+
+	// phone_hash 占用校验（排除自身：把号改回自己当前值必须放行）
+	conflict, err := h.store.PatientPhoneConflict(c.Request.Context(), newHash, patientID)
+	if err != nil {
+		fail(c, model.ErrInternal("check phone hash failed"))
+		return
+	}
+	if conflict != nil {
+		fail(c, h.phoneTakenErr(c.Request.Context(), newHash, patientID, "phone already exists"))
+		return
+	}
+
+	if err := h.store.UpdatePatientPhone(c.Request.Context(), patientID, enc, newHash); err != nil {
 		if err == repo.ErrPatientNotFound {
 			fail(c, model.ErrNotFound("patient not found"))
+			return
+		}
+		// T727 并发兜底：预检与写之间被并发建档抢先撞了唯一索引 ⇒ 走同一个专用出口
+		// （仍排除自身，绝不把「自己」当占用人报出去）
+		if errors.Is(err, repo.ErrPatientExists) {
+			fail(c, h.phoneTakenErr(c.Request.Context(), newHash, patientID, "phone already exists"))
 			return
 		}
 		fail(c, model.ErrInternal("update patient phone failed"))

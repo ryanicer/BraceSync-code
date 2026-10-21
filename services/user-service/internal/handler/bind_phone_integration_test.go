@@ -125,8 +125,22 @@ func (f *fakeStore) SetPatientPassword(_ context.Context, patientID, passwordHas
 	return f.setPwdErr
 }
 
-func (f *fakeStore) PatientPhoneHashTaken(_ context.Context, _, _ string) (bool, error) {
-	return f.phoneTaken, f.takenErr
+// PatientPhoneConflict T727：手机号占用身份查询（替身）。
+// 置 phoneConflict 可指名道姓；只置 phoneTaken 时回一条泛指占用人 —— 既有 409 用例的开关语义不变。
+func (f *fakeStore) PatientPhoneConflict(_ context.Context, _, excludePatientID string) (*repo.PatientPhoneConflict, error) {
+	if f.takenErr != nil {
+		return nil, f.takenErr
+	}
+	if f.phoneConflict != nil {
+		if excludePatientID != "" && f.phoneConflict.PatientID == excludePatientID {
+			return nil, nil // 号在自己身上：改回自己必须放行
+		}
+		return f.phoneConflict, nil
+	}
+	if !f.phoneTaken {
+		return nil, nil
+	}
+	return &repo.PatientPhoneConflict{PatientID: "P-OCCUPIED", Name: "占用人"}, nil
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -187,11 +201,6 @@ func (s *t085Store) UpdatePatientPhone(_ context.Context, _ string, _ []byte, _ 
 	defer s.mu.Unlock()
 	s.updatePhoneCalls++
 	return nil
-}
-
-// PatientPhoneHashTaken phone_hash 是否已被占用（排除自身）。
-func (s *t085Store) PatientPhoneHashTaken(_ context.Context, _, _ string) (bool, error) {
-	return s.phoneTaken, s.takenErr
 }
 
 // ─────────────────────────────────────────────────────────────

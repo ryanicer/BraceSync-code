@@ -39,7 +39,7 @@ type t399Action struct {
 	action string
 }
 
-// t399ExpectedActions 设备域收口写端点的动作名（T387 七条 + T404 注册 + T508 面积配置 = 九条）。
+// t399ExpectedActions 设备域收口写端点的动作名（T387 七条 + T404 注册 + T508 面积配置 + T728 两条密钥端点 = 十一条）。
 // 增删一条 = 设备域收口面变了，必须同时改 t389GatedWrites 与 api-contracts.ts。
 func t399ExpectedActions() []t399Action {
 	return []t399Action{
@@ -52,6 +52,8 @@ func t399ExpectedActions() []t399Action {
 		{"create-install", "CreateInstall", "create an install record"},
 		{"update-install-meta", "UpdateInstallMeta", "update an install record"},
 		{"save-baseline", "SaveBaseline", "save a calibration baseline"},
+		{"secret-regenerate", "UpdateDeviceSecret", "regenerate a device secret"},
+		{"secret-export", "WriteDeviceSecretReadAudit", "export device secrets"},
 	}
 }
 
@@ -108,7 +110,7 @@ func TestT399_ActionNamesArePairwiseDistinct(t *testing.T) {
 		}
 		seen[a.action] = a.epName
 	}
-	assert.Len(t, acts, 9, "设备域收口面是九条写端点（T387 七条 + T404 注册 + T508 面积配置），本表条数须与之相等")
+	assert.Len(t, acts, 11, "设备域收口面是十一条写端点（T387 七条 + T404 注册 + T508 面积配置 + T728 两条密钥端点），本表条数须与之相等")
 }
 
 // ── 3. 三张表互相对齐：动作名表 / 越权现场表 / 路由守卫表不许各说各话 ──
@@ -118,7 +120,7 @@ func TestT399_ActionTableCoversExactlyTheGatedRoutes(t *testing.T) {
 	for _, g := range t389GatedWrites {
 		gated[g.epName] = true
 	}
-	require.Len(t, t389GatedWrites, 9, "已收口路由表条数漂移（T404 第八条、T508 第九条后是九条），先回看 T389 N3")
+	require.Len(t, t389GatedWrites, 11, "已收口路由表条数漂移（T404 第八条、T508 第九条、T728 第十/十一条后是十一条），先回看 T389 N3")
 
 	acts := t399ExpectedActions()
 	require.Len(t, acts, len(t389GatedWrites), "动作名表与已收口路由表条数不一致")
