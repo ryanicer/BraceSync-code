@@ -26,8 +26,10 @@ type FakeStore struct {
 	nextBaseID int64
 	patients   map[string]bool
 	techs      map[string]bool
-	audits     []repo.WifiClearAuditInput // T448 清除留痕（audit_logs 的内存替身）
-	instAudits []repo.InstallAuditInput   // T485 安装记录写留痕（同一张表的另一类对象）
+	audits     []repo.WifiClearAuditInput              // T448 清除留痕（audit_logs 的内存替身）
+	instAudits []repo.InstallAuditInput                // T485 安装记录写留痕（同一张表的另一类对象）
+	secReads   []repo.DeviceSecretReadAuditInput       // T728 密钥下载留痕
+	secRegens  []repo.DeviceSecretRegenerateAuditInput // T728 密钥重生成留痕
 }
 
 // NewFakeStore 创建空 FakeStore
@@ -477,3 +479,57 @@ func (f *FakeStore) InstallRecordAudits() []repo.InstallAuditInput {
 }
 
 func strPtr(s string) *string { return &s }
+
+// ── T728 设备验签密钥通路（整写密钥列 + 两类留痕）────────────────────
+
+// UpdateDeviceSecret T728 乐观锁语义的内存替身：版本不符返回 ErrConflict（复刻
+// PG 实现的「UPDATE … WHERE secret_version=$3 命中 0 行」），查无设备返回 ErrNotFound。
+func (f *FakeStore) UpdateDeviceSecret(_ context.Context, deviceID string, secretEnc []byte, expectVersion int) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dev, ok := f.devices[deviceID]
+	if !ok {
+		return 0, repo.ErrNotFound
+	}
+	if dev.SecretVersion != expectVersion {
+		return 0, repo.ErrConflict
+	}
+	dev.DeviceSecretEnc = append([]byte(nil), secretEnc...)
+	dev.SecretVersion++
+	dev.UpdatedAt = time.Now()
+	return dev.SecretVersion, nil
+}
+
+// WriteDeviceSecretReadAudit T728 下载留痕的内存替身（只落审计，不动 devices）。
+func (f *FakeStore) WriteDeviceSecretReadAudit(_ context.Context, in repo.DeviceSecretReadAuditInput) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.secReads = append(f.secReads, in)
+	return nil
+}
+
+// DeviceSecretReadAudits 读取已落的下载留痕（T728 用例判据）
+func (f *FakeStore) DeviceSecretReadAudits() []repo.DeviceSecretReadAuditInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]repo.DeviceSecretReadAuditInput, len(f.secReads))
+	copy(out, f.secReads)
+	return out
+}
+
+// WriteDeviceSecretRegenerateAudit T728 重生成留痕的内存替身。
+func (f *FakeStore) WriteDeviceSecretRegenerateAudit(_ context.Context, in repo.DeviceSecretRegenerateAuditInput) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.secRegens = append(f.secRegens, in)
+	return nil
+}
+
+// DeviceSecretRegenerateAudits 读取已落的重生成留痕（T728 用例判据）
+func (f *FakeStore) DeviceSecretRegenerateAudits() []repo.DeviceSecretRegenerateAuditInput {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]repo.DeviceSecretRegenerateAuditInput, len(f.secRegens))
+	copy(out, f.secRegens)
+	return out
+}

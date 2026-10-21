@@ -295,23 +295,25 @@ export async function exportAbnormalReportApi(q: alertMock.AbnormalReportQuery):
       httpStatus: res.status,
     })
   }
-  saveCsvBlob(dispositionFilename(res.headers.get('Content-Disposition')), await res.blob())
+  saveBlob(dispositionFilename(res.headers.get('Content-Disposition')), await res.blob())
 }
 
-/** 从 Content-Disposition 取后端给的文件名（含患者编号与日期范围） */
-export function dispositionFilename(header: string | null): string {
+/** 从 Content-Disposition 取后端给的文件名（含患者编号与日期范围）。
+ *  fallback 由调用方给：告警报表留旧默认名，T728 密钥文件那两条回落各自的设备号/包名。 */
+export function dispositionFilename(header: string | null, fallback = 'abnormal-report.csv'): string {
   // 只认带引号形态：alert-service 的 reportFilename 恒发 filename="..."，
   // 且把 patientId 收敛到 [A-Za-z0-9_-]（services/alert-service/internal/handler/t300_report_test.go 逐字钉住）。
   // T401：上一版 `filename="?([^";]+?)"?` 的惰性量词配可选引号会最短匹配到首字符，落地文件名被截成 a.csv。
   const m = /filename="([^"]+)"/.exec(header ?? '')
-  return m ? m[1].trim() : 'abnormal-report.csv'
+  return m ? m[1].trim() : fallback
 }
 
 function saveCsvText(filename: string, text: string): void {
-  saveCsvBlob(filename, new Blob([text], { type: 'text/csv;charset=utf-8' }))
+  saveBlob(filename, new Blob([text], { type: 'text/csv;charset=utf-8' }))
 }
 
-function saveCsvBlob(filename: string, blob: Blob): void {
+/** 把响应体存成本地文件（告警报表 CSV 与 T728 设备密钥 .env / zip 共用这一条落盘路径） */
+function saveBlob(filename: string, blob: Blob): void {
   const href = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = href
@@ -351,9 +353,104 @@ export async function fetchDeviceBindings(deviceId: string): Promise<DeviceBindi
   return res.list
 }
 
-export async function registerDeviceApi(data: { deviceId: string; model?: string }): Promise<Device> {
+/** T728：注册响应 = 设备 DTO + 「仅本次新建那一发」才出现的密钥明文（device-service
+ *  registerResponseDTO，Go 侧 `json:"deviceSecret,omitempty"`）。
+ *  幂等命中既有行时该键整体缺席 ⇒ 前端据此决定弹不弹一次性回显窗，不能拿它当恒有值读。
+ *  列表与详情 DTO（model.DeviceDTO）恒不含密钥列：这两个类型上不存在这一格，读不到也就不可能被误显示。 */
+export interface DeviceRegisterResult extends Device {
+  deviceSecret?: string
+}
+
+/** T728：重新生成响应（handler.regenerateDeviceSecret）。明文只在本响应出现一次，
+ *  版本号同时是「旧值已作废」的凭据（网关缓存与库里都只认新版）。 */
+export interface DeviceSecretRegenerateResult {
+  deviceId: string
+  secret: string
+  secretVersion: number
+}
+
+export async function registerDeviceApi(data: { deviceId: string; model?: string }): Promise<DeviceRegisterResult> {
   if (USE_MOCK) { await delay(); return deviceMock.mockRegisterDevice(data) }
-  return request<Device>({ url: '/api/v1/devices', method: 'POST', data: data as unknown as Record<string, unknown> })
+  return request<DeviceRegisterResult>({ url: '/api/v1/devices', method: 'POST', data: data as unknown as Record<string, unknown> })
+}
+
+// ========== T728 设备验签密钥的取用面（仅 ROLE_ADMIN，入口闸门见 utils/deviceSecretAccess） ==========
+//
+// 三条端点的形状由 device-service handler/admin_secret_t728.go 定：
+// 下载两条回**文件本体**（.env / zip），失败才回 JSON 信封 ⇒ 与告警报表 CSV 同一条判据：
+// 只能靠 res.ok 分辨「拿到了」与「没拿到」，直接把响应体存盘会把 403 的错误文案存成一个坏 .env。
+// 重新生成回信封，明文取 model 那侧的一次性字段（库里此后只有密文，关掉弹窗只能再重生一次）。
+
+/** 附件下载共用取回路径：带 token、非 2xx 时读信封并走 401 唯一出口，2xx 时按后端文件名落盘。 */
+async function fetchSecretAttachment(url: string, init: RequestInit, fallbackName: string): Promise<void> {
+  const token = getToken()
+  let res: Response
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string> | undefined), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+  } catch {
+    throw new Error('网络错误，下载失败')
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as ApiResponse<unknown> | null
+    if (isAuthExpired(res.status, body?.code)) expiredSession()
+    throw attachErrorMeta(new Error(body?.message || `下载失败（HTTP ${res.status}）`), {
+      code: body?.code,
+      httpStatus: res.status,
+    })
+  }
+  saveBlob(dispositionFilename(res.headers.get('Content-Disposition'), fallbackName), await res.blob())
+}
+
+/** T728 单台下载：GET /admin/devices/:deviceId/secret-file → `<设备号>.env`（两行 DEVICE_ID / DEVICE_SECRET）。
+ *  每次取用都在服务端留痕（action=sensitive_read，detail 只有设备号）；留痕写不进后端直接 500 不发文件。 */
+export async function downloadDeviceSecretFileApi(deviceId: string): Promise<void> {
+  if (USE_MOCK) {
+    await delay()
+    saveBlob(`${deviceId}.env`, new Blob([deviceMock.mockDeviceSecretEnv(deviceId)], { type: 'text/plain;charset=utf-8' }))
+    return
+  }
+  await fetchSecretAttachment(
+    `/api/v1/admin/devices/${encodeURIComponent(deviceId)}/secret-file`,
+    { method: 'GET' },
+    `${deviceId}.env`,
+  )
+}
+
+/** T728 批量下载：POST /admin/device-secrets/export → zip（每台一个 `<设备号>.env`，跳过项进 _skipped.txt）。
+ *  deviceIds 是勾选白名单原样提交，服务端从不自己扩名单；条数上限由调用方按 MAX_SECRET_EXPORT_BATCH 前置，
+ *  后端那道墙（同值）才是真判据 ⇒ 这里不静默截断，超了就让后端回 400 的原文。 */
+export async function exportDeviceSecretsApi(deviceIds: string[]): Promise<void> {
+  if (USE_MOCK) {
+    await delay()
+    // mock 分支只走通交互：浏览器里没有 zip 编码器，真实链路回的是 application/zip（同 T487 mock 改密的处理）
+    const { envs, skipped } = deviceMock.mockDeviceSecretEnvs(deviceIds)
+    if (envs.length === 0) throw new Error('所选设备都没有可导出的验签密钥，请先重新生成')
+    const text = envs.join('\n') + (skipped.length ? `\n# 跳过 ${skipped.length} 台：${skipped.join(', ')}\n` : '')
+    saveBlob(`device-secrets-${envs.length}.txt`, new Blob([text], { type: 'text/plain;charset=utf-8' }))
+    return
+  }
+  await fetchSecretAttachment(
+    '/api/v1/admin/device-secrets/export',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceIds }),
+    },
+    'device-secrets.zip',
+  )
+}
+
+/** T728 重新生成：POST /admin/devices/:deviceId/secret-regenerate。旧 secret 即时失效（网关缓存一并作废）。 */
+export async function regenerateDeviceSecretApi(deviceId: string): Promise<DeviceSecretRegenerateResult> {
+  if (USE_MOCK) { await delay(); return deviceMock.mockRegenerateDeviceSecret(deviceId) }
+  return request<DeviceSecretRegenerateResult>({
+    url: `/api/v1/admin/devices/${encodeURIComponent(deviceId)}/secret-regenerate`,
+    method: 'POST',
+    data: {},
+  })
 }
 
 /** T627：teamType 为可选过滤（空值不传 ⇒ 后端不过滤，返回全部类型）。

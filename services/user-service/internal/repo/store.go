@@ -499,6 +499,13 @@ type PatientInput struct {
 	DoctorID  *string
 }
 
+// PatientPhoneConflict T727：手机号查重命中时的占用人身份。
+// 只取 ID 与姓名两列——密文、哈希、其余档案字段都不在错误响应里出现。
+type PatientPhoneConflict struct {
+	PatientID string
+	Name      string
+}
+
 // BatchBindFailure 批量绑定单条失败记录
 type BatchBindFailure struct {
 	PatientID string
@@ -549,8 +556,9 @@ type Store interface {
 	SetPatientPassword(ctx context.Context, patientID, passwordHash string) error
 	// UpdatePatientProfile 患者自助改本人档案（T226 白名单动态 SET，见 PatientProfileUpdate）。
 	UpdatePatientProfile(ctx context.Context, patientID string, in PatientProfileUpdate) error
-	// PatientPhoneHashTaken phone_hash 是否已被其他患者占用（excludePatientID 排除自身）。
-	PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error)
+	// PatientPhoneConflict T727：按 phone_hash 取占用该号的患者身份（排除自身，空串=不排除）；
+	// 无占用返回 (nil, nil)。判重只回 bool 会让操作者拿到 409 仍不知道该改谁。
+	PatientPhoneConflict(ctx context.Context, phoneHash, excludePatientID string) (*PatientPhoneConflict, error)
 	RoleScope(ctx context.Context, roleID string) (scope string, err error)
 	DoctorIDByAdmin(ctx context.Context, adminID string) (doctorID string, ok bool, err error)
 	// DoctorTeamByAdmin T350：admin_id → 所属团队 team_id（数据范围推导用）。

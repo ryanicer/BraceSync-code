@@ -82,46 +82,12 @@ func patientBusyErr(err error) *model.AppError {
 
 // Register 设备出厂激活：生成 device_secret 加密落库；重复注册幂等返回既有记录。
 // created=true 表示本次新建；密钥明文不出本函数（架构 §5.2，不返回明文）。
+//
+// T728：注册响应需要那一次明文（UI 注册后回显，见 RegisterWithOneTimeSecret）。本签名保留
+// 「明文不外泄」这一形状，service 层的既有调用与用例因此不受影响。
 func (s *DeviceService) Register(ctx context.Context, deviceID, deviceModel string) (*model.Device, bool, *model.AppError) {
-	if !model.ValidDeviceID(deviceID) {
-		return nil, false, model.ErrInvalidParam("invalid device_id %q (4-48 chars, alnum/-/_)", deviceID)
-	}
-	if deviceModel == "" {
-		deviceModel = model.DefaultModel
-	}
-
-	secret, err := crypto.RandomSecret(secretBytes)
-	if err != nil {
-		return nil, false, model.ErrInternal("generate device secret: %v", err)
-	}
-	// A-1（T091 补录）：防御性契约校验——device_secret 必须为 64 字符 hex，
-	// 与固件 HKDF ikm 约定一致（64 ASCII 字节）。当前 RandomSecret 恒合规，
-	// 此处防止未来 RandomSecret 改动静默破坏配网密钥对齐。
-	if !model.ValidDeviceSecret(secret) {
-		return nil, false, model.ErrInvalidParam("device_secret must be 64-char hex, got %q", secret)
-	}
-	encSecret, err := s.enc.Encrypt([]byte(secret))
-	if err != nil {
-		return nil, false, model.ErrInternal("encrypt device secret: %v", err)
-	}
-
-	dev := &model.Device{
-		DeviceID:        deviceID,
-		Model:           deviceModel,
-		DeviceSecretEnc: encSecret,
-		SecretVersion:   1, // 一期固定=1（架构 §4.3，预留双密钥轮换）
-		Status:          model.StatusUnbound,
-	}
-	created, err := s.store.RegisterDevice(ctx, dev)
-	if err != nil {
-		return nil, false, model.ErrInternal("register device: %v", err)
-	}
-
-	stored, err := s.store.GetDevice(ctx, deviceID)
-	if err != nil {
-		return nil, false, mapRepoErr(err, model.ErrNotFound("device %q not found after register", deviceID))
-	}
-	return stored, created, nil
+	dev, created, _, appErr := s.RegisterWithOneTimeSecret(ctx, deviceID, deviceModel)
+	return dev, created, appErr
 }
 
 // GetDevice 设备详情

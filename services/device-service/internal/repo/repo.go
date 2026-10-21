@@ -129,6 +129,14 @@ type Store interface {
 	// target_type=install_record。只写 audit_logs 一行，不动 install_records 任何列；
 	// 失败由调用方记 WARN，不反转主写。实现见 repo/audit_t485.go。
 	WriteInstallRecordAudit(ctx context.Context, in InstallAuditInput) error
+	// UpdateDeviceSecret T728：重新生成验签密钥的落库写（整写 device_secret_enc + secret_version 自增）。
+	// expectVersion 是调用方读到的当前版本（乐观锁），命中 0 行返回 ErrConflict；实现见 repo/secret_t728.go。
+	UpdateDeviceSecret(ctx context.Context, deviceID string, secretEnc []byte, expectVersion int) (int, error)
+	// WriteDeviceSecretReadAudit T728：单台/批量下载密钥文件的留痕，action=sensitive_read。
+	// detail 只记设备 ID 不记 secret；失败由调用方**拒绝发包**（留痕是披露的前置条件）。
+	WriteDeviceSecretReadAudit(ctx context.Context, in DeviceSecretReadAuditInput) error
+	// WriteDeviceSecretRegenerateAudit T728：重生成密钥的留痕，action=data_modify。
+	WriteDeviceSecretRegenerateAudit(ctx context.Context, in DeviceSecretRegenerateAuditInput) error
 }
 
 // PGStore Store 的 pgxpool 实现

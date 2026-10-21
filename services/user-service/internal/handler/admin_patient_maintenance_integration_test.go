@@ -200,7 +200,7 @@ func TestUpdatePhone_FormatValidation_RejectInvalid(t *testing.T) {
 	}
 }
 
-// TestUpdatePhone_409_ConflictWithExistingHash phone_hash 冲突 → 409 Conflict
+// TestUpdatePhone_409_ConflictWithExistingHash phone_hash 撞在别人身上 → 409 专用码 + 占用人身份（T727）
 func TestUpdatePhone_409_ConflictWithExistingHash(t *testing.T) {
 
 	env, _ := newAdminMaintenanceEnv(t)
@@ -208,21 +208,41 @@ func TestUpdatePhone_409_ConflictWithExistingHash(t *testing.T) {
 	// Fixture: 目标患者存在（GetPatient 命中 P20260008）
 	patient := samplePatientForAdmin("P20260008", "active")
 	env.store.patient = &patient
-	// 模拟 phone_hash 已被占用（Winner 实现查重时应返回 409）
-	env.store.phoneTaken = true
+	// 该号已被另一个患者占用（T727 前这里只回 bool，操作者拿不到「撞在谁身上」）
+	env.store.phoneConflict = &repo.PatientPhoneConflict{PatientID: "P20260099", Name: "王辛"}
+	defer func() { env.store.phoneConflict = nil }()
 
 	authToken := env.createSuperAdminJWT(testSuperAdminID)
 
-	t.Run("conflicting_phone_hash_returns_409", func(t *testing.T) {
-		t.Log("KNOWN_RED: stub 未检查 phone_hash 唯一性，预期 409 CodeConflict")
-
+	t.Run("conflicting_phone_hash_returns_409_with_identity", func(t *testing.T) {
 		w, resp := env.doPutPhone("P20260008", "13800138000", "更新手机号", authToken)
 
 		assert.Equal(t, http.StatusConflict, w.Code, "phone_hash 冲突应返回 409")
-		assert.Equal(t, model.CodeConflict, resp.Code, "错误码应为 409")
+		assert.Equal(t, model.CodePatientPhoneTaken, resp.Code, "撞号须走专用码 10606，不再用泛化 10409")
+		assert.Equal(t, model.UserText(model.CodePatientPhoneTaken), resp.Message)
+
+		var payload model.PhoneTakenPayload
+		require.NoError(t, json.Unmarshal(resp.Data, &payload), "data 须带占用人身份（判据 3）")
+		assert.Equal(t, model.PhoneTakenReason, payload.Reason)
+		assert.Equal(t, "P20260099", payload.PatientID)
+		assert.Equal(t, "王辛", payload.Name)
 
 		// 断言：不执行 UPDATE
 		assert.Equal(t, 0, env.store.updatePhoneCalls, "冲突场景不应执行改号写入")
+	})
+
+	// 判据「编辑排除自身」：把号改回自己当前占用的号必须放行，且不报自己撞自己
+	t.Run("same_phone_already_owned_by_self_passes", func(t *testing.T) {
+		env.store.updatePhoneCalls = 0
+		// 占用行就是被编辑的这一行本人（存量同号场景里最常见的合法操作）
+		env.store.phoneConflict = &repo.PatientPhoneConflict{PatientID: "P20260008", Name: "本人"}
+		w, resp := env.doPutPhone("P20260008", "13800138000", "改回本人原号", authToken)
+
+		assert.Equal(t, http.StatusOK, w.Code, "占用人就是自己时不得判撞号")
+		assert.Equal(t, model.CodeOK, resp.Code)
+		assert.Equal(t, 1, env.store.updatePhoneCalls, "排除自身后应正常写入一次")
+
+		env.store.phoneConflict = &repo.PatientPhoneConflict{PatientID: "P20260099", Name: "王辛"}
 	})
 }
 

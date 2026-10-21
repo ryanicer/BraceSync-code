@@ -31,7 +31,11 @@ const (
 	CodePatientNotFound    = 10602 // phone_hash 无匹配或 status!=active（同码防枚举）
 	CodePhoneAlreadyBound  = 10603 // 手机号档案已绑定其他微信 openid
 	CodeInvalidPhoneToken  = 10605 // phoneToken 校验失败（签名/用途/openid/过期）
-	CodeForbiddenScope     = 40301 // scope 越权（如 full JWT 调用 bind-phone）
+	// CodePatientPhoneTaken T727：手机号已被其他患者档案占用（建档/改号查重命中，HTTP 409）。
+	// 与 10603/10604 同族：都是「手机号 → 身份」映射冲突。不复用 10409 是因为该码用户面文案
+	// 泛化为「与现有记录冲突」，调用方无从区分撞号与删除被引用（10-20 事故里 Boss 拿到的正是泛化句）。
+	CodePatientPhoneTaken = 10606
+	CodeForbiddenScope    = 40301 // scope 越权（如 full JWT 调用 bind-phone）
 )
 
 // AppError 业务错误：携带统一响应 code 与建议 HTTP 状态
@@ -39,9 +43,20 @@ type AppError struct {
 	Code       int    `json:"code"`
 	Message    string `json:"message"`
 	HTTPStatus int    `json:"-"`
+	// Data T727：错误响应的数据面负载（落响应体 data 字段）。
+	// 缺省 nil ⇒ 与既有全部错误响应逐字同形（原本硬写 data:null）。
+	// 只放「调用方下一步该拿它做什么」的定位信息（如撞号患者的 ID 与姓名），
+	// 不放密文、不放 SQL/内部路径、不放可解密的明文。
+	Data any `json:"-"`
 }
 
 func (e *AppError) Error() string { return fmt.Sprintf("code=%d: %s", e.Code, e.Message) }
+
+// WithData 挂上响应 data 负载（链式，T727）。
+func (e *AppError) WithData(data any) *AppError {
+	e.Data = data
+	return e
+}
 
 func newAppError(code, httpStatus int, format string, args ...any) *AppError {
 	return &AppError{Code: code, HTTPStatus: httpStatus, Message: fmt.Sprintf(format, args...)}
@@ -107,6 +122,23 @@ func ErrInvalidPhoneCode(format string, args ...any) *AppError {
 func ErrInvalidPhoneToken(format string, args ...any) *AppError {
 	return newAppError(CodeInvalidPhoneToken, 200, format, args...)
 }
+
+// ErrPatientPhoneTaken T727：手机号查重命中（HTTP 409 + 专用码 10606）。
+// 负载用 WithData 挂 PhoneTakenPayload；取不到占用行身份时允许无负载返回（码与状态仍专用，不回落 10409/500）。
+func ErrPatientPhoneTaken(format string, args ...any) *AppError {
+	return newAppError(CodePatientPhoneTaken, 409, format, args...)
+}
+
+// PhoneTakenPayload T727 查重错误的数据面负载（响应体 data）。
+// 只带定位所需的两个字段：撞在谁身上（ID + 姓名）。手机号本身不回传——调用方刚提交的即是该号。
+type PhoneTakenPayload struct {
+	Reason    string `json:"reason"`
+	PatientID string `json:"patientId"`
+	Name      string `json:"name"`
+}
+
+// PhoneTakenReason 负载里的机读判据（前端按它分流文案，不按中文消息匹配）。
+const PhoneTakenReason = "patient_phone_taken"
 
 // ErrForbiddenScope scope 越权（如 full JWT 调用 bind-phone；HTTP 403）
 func ErrForbiddenScope(format string, args ...any) *AppError {

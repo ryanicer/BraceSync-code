@@ -265,6 +265,12 @@ func (s *PGStore) UpdatePatientPhone(ctx context.Context, patientID string, phon
 		 WHERE patient_id = $3`,
 		phoneEnc, phoneHash, patientID)
 	if err != nil {
+		// T727 并发兜底：handler 预检与写之间有窗口，撞 idx_patients_phone_hash（000001:85）
+		// 时回与 CreatePatient 同一条哨兵，让出口是 409 专用码而不是 ErrInternal 500。
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrPatientExists
+		}
 		return err
 	}
 	if tag.RowsAffected() == 0 {
@@ -376,16 +382,28 @@ func isPatientProfileClearColumn(col string) bool {
 	return false
 }
 
-// PatientPhoneHashTaken T085：phone_hash 是否已被其他患者占用（排除自身）。
-func (s *PGStore) PatientPhoneHashTaken(ctx context.Context, phoneHash, excludePatientID string) (bool, error) {
+// PatientPhoneConflict T727：按 phone_hash 取占用该号的患者身份（excludePatientID 排除自身；传空串＝不排除）。
+// 无占用返回 (nil, nil)。
+//
+// 为什么替代 PatientPhoneHashTaken（bool）：判据只问「有没有撞」，操作者拿到 409 仍不知道该改谁，
+// 10-20 那次数小时排查缺的正是这个名字。
+// 为什么 ORDER BY created_at 而不是 QueryRow 任取一行：存量里同号多行是既成事实（按卡面只清册不删），
+// 「同一次撞号在任何轮次都报同一个人」才是要给 Boss 复算的读数。
+func (s *PGStore) PatientPhoneConflict(ctx context.Context, phoneHash, excludePatientID string) (*PatientPhoneConflict, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM patients WHERE phone_hash = $1 AND patient_id <> $2)`,
+		`SELECT patient_id, name FROM patients
+		 WHERE phone_hash = $1 AND ($2 = '' OR patient_id <> $2)
+		 ORDER BY created_at, patient_id
+		 LIMIT 1`,
 		phoneHash, excludePatientID)
-	var taken bool
-	if err := row.Scan(&taken); err != nil {
-		return false, err
+	var c PatientPhoneConflict
+	if err := row.Scan(&c.PatientID, &c.Name); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return taken, nil
+	return &c, nil
 }
 
 // RoleScope 读角色数据范围（permissions_json->>'scope'）；角色不存在返回空串

@@ -14,7 +14,7 @@
 // 实现方转绿清单（单 Agent 全栈）：
 //  1. createPatient：校验 name 非空 + phone validPhone → preparePhone(PhoneEnc/PhoneHash)
 //     → store.CreatePatient → 成功 200+AdminPatientDTO（phone 脱敏）；
-//     ErrPatientExists 映射 409 CodeConflict（phone_hash 查重命中）；其余 error 500
+//     ErrPatientExists 映射 409 CodePatientPhoneTaken（T727：phone_hash 查重命中，专用码 + data 带占用人 ID/姓名）；其余 error 500
 //  2. assignPatientTeam：校验 teamId 非空 → store.AssignPatientTeam → 成功 200+AdminPatientDTO；
 //     patient 不存在映射 404 CodeNotFound；幂等（同 teamId 再分配返回 200）
 //  3. batchBindPatients：校验 patientIds 非空 + teamId 非空 → store.BatchBindPatients
@@ -132,15 +132,36 @@ func TestCreatePatient_KNOWN_RED(t *testing.T) {
 		assert.Equal(t, model.CodeInvalidParam, resp.Code)
 	})
 
-	// phone 已存在（store 按 phone_hash 查重命中 → ErrPatientExists）→ 409 CodeConflict
-	t.Run("duplicate_phone_409", func(t *testing.T) {
-		t.Log("KNOWN_RED: stub handler 返回 500，预期 409 CodeConflict（phone_hash 查重命中 ErrPatientExists）")
+	// phone 已存在（store 按 phone_hash 查重命中 → ErrPatientExists）→ 409 专用码 + 占用人身份（T727）
+	t.Run("duplicate_phone_409_names_the_occupied_patient", func(t *testing.T) {
 		e.store.createdPatient = nil
 		e.store.createPatientErr = repo.ErrPatientExists
+		e.store.phoneConflict = &repo.PatientPhoneConflict{PatientID: "P20260009", Name: "王小宇"}
+		defer func() { e.store.phoneConflict = nil }()
 		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients",
 			model.CreatePatientRequestDTO{Name: "重复手机号患者", Phone: "13800138000"}, adminHdr)
 		assert.Equal(t, http.StatusConflict, w.Code)
-		assert.Equal(t, model.CodeConflict, resp.Code)
+		assert.Equal(t, model.CodePatientPhoneTaken, resp.Code, "撞号必须走专用码")
+		assert.Equal(t, model.UserText(model.CodePatientPhoneTaken), resp.Message,
+			"用户面文案须点明手机号占用，不得是泛化冲突句")
+
+		var payload model.PhoneTakenPayload
+		require.NoError(t, json.Unmarshal(resp.Data, &payload), "data 须带占用人身份（判据 3）")
+		assert.Equal(t, model.PhoneTakenReason, payload.Reason)
+		assert.Equal(t, "P20260009", payload.PatientID)
+		assert.Equal(t, "王小宇", payload.Name)
+	})
+
+	// 反查不到占用人（并发窗口内那行已被删）⇒ 仍是专用码，data 缺席；不得退 500/泛化 10409
+	t.Run("duplicate_phone_409_without_payload_stays_specific", func(t *testing.T) {
+		e.store.createPatientErr = repo.ErrPatientExists
+		e.store.phoneConflict = nil
+		e.store.phoneTaken = false
+		w, resp := e.do(http.MethodPost, "/api/v1/admin/patients",
+			model.CreatePatientRequestDTO{Name: "重复手机号患者", Phone: "13800138001"}, adminHdr)
+		assert.Equal(t, http.StatusConflict, w.Code)
+		assert.Equal(t, model.CodePatientPhoneTaken, resp.Code)
+		assert.JSONEq(t, "null", string(resp.Data), "查不到身份就回 data:null，不编造占用人")
 	})
 }
 

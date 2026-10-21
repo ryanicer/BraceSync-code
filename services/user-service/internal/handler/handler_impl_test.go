@@ -98,6 +98,7 @@ type fakeStore struct {
 	toggleExists      bool
 	toggleErr         error
 	phoneTaken        bool
+	phoneConflict     *repo.PatientPhoneConflict // T727：指名道姓的占用人（优先级高于 phoneTaken）
 	takenErr          error
 	feedbacks         []repo.FeedbackRow
 	feedbacksErr      error

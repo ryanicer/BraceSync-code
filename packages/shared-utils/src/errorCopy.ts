@@ -46,6 +46,7 @@ export const ERROR_CODE_COPY: Record<number, string> = {
   10603: '该就诊档案已被其他微信绑定，请联系门诊工作人员',
   10604: '手机号授权信息有误，请重新授权',
   10605: '操作已过期，请重新发起',
+  10606: '该手机号已绑定其他患者档案，请先找到占用该号码的患者，改用其档案或更换号码',
   // 设备域 2xxxx（device-service/internal/model/model.go:82-88、data-service model.go:70-78）
   20400: '设备信息有误，请核对后重试',
   20402: '数据时间超出可提交范围，请稍后重试',
@@ -126,6 +127,8 @@ export interface UserErrorLike {
   httpStatus?: unknown
   statusCode?: unknown
   userCopy?: unknown
+  /** 信封 data（T727 起部分码位带结构化负载，如手机号撞号的占用方身份）；不参与查表 */
+  data?: unknown
   trace?: { errorCode?: unknown; requestId?: unknown } | null
 }
 
@@ -159,6 +162,18 @@ export function userErrorCodeToken(err: unknown): UserErrorCodeToken {
 }
 
 /**
+ * 取信封 data（T727：撞号一类错误带结构化负载，供展示层点名）。
+ * 只认普通对象——null／数组／字符串／后端原样回的字面 null 一律当「没有负载」，
+ * 调用方据此退回码表通用句，不会因 data 形状不合预期而抛。
+ */
+export function userErrorData(err: unknown): Record<string, unknown> | null {
+  const d = (err ?? {}) as UserErrorLike
+  const data = d.data
+  if (data && typeof data === 'object' && !Array.isArray(data)) return data as Record<string, unknown>
+  return null
+}
+
+/**
  * 代码里刻意写好的中文提示（会话失效、登录凭据错误等）打标：
  * 展示层优先原样用这句，日志面仍可读技术原文。
  */
@@ -168,16 +183,25 @@ export function markUserCopy<T extends Error>(err: T, copy: string): T {
 }
 
 /**
- * 把信封码／HTTP 状态挂到错误对象上（三端传输层调用）。
+ * 把信封码／HTTP 状态／信封 data 挂到错误对象上（三端传输层调用）。
  * 只加字段，不改 message，技术原文保持给日志。
+ *
+ * data（T727）：信封 data 是结构化负载，与 message 分面——message 给日志（英文技术原文），
+ * data 给展示层点名（如手机号撞号的占用方 patientId + name）。原样透传，本包不解释其形状。
  */
 export function attachErrorMeta<T extends Error>(
   err: T,
-  meta: { code?: unknown; httpStatus?: unknown; requestId?: unknown },
+  meta: { code?: unknown; httpStatus?: unknown; requestId?: unknown; data?: unknown },
 ): T {
-  const bag = err as T & { code?: unknown; httpStatus?: unknown; trace?: { errorCode?: unknown; requestId?: unknown } }
+  const bag = err as T & {
+    code?: unknown
+    httpStatus?: unknown
+    data?: unknown
+    trace?: { errorCode?: unknown; requestId?: unknown }
+  }
   if (typeof meta.code === 'number' && Number.isFinite(meta.code)) bag.code = meta.code
   if (typeof meta.httpStatus === 'number' && Number.isFinite(meta.httpStatus)) bag.httpStatus = meta.httpStatus
+  if (meta.data !== undefined) bag.data = meta.data
   if (meta.requestId != null) bag.trace = { errorCode: bag.code, requestId: meta.requestId }
   return err
 }

@@ -9,7 +9,7 @@ import { describe, it, expect } from 'vitest'
 import {
   ADMIN_ERROR_CODE_COPY, ERROR_CODE_COPY, PATIENT_ERROR_CODE_COPY, TECH_ERROR_CODE_COPY,
   attachErrorMeta, errorCodeCopy, logErrorText, markUserCopy,
-  userErrorCode, userErrorCodeToken, userErrorCopy, userErrorHttpStatus,
+  userErrorCode, userErrorCodeToken, userErrorCopy, userErrorData, userErrorHttpStatus,
 } from '../src/errorCopy'
 
 /** 后端在真实链路里会给的英文原文（取自 staging 实测串的形状） */
@@ -152,6 +152,29 @@ describe('attachErrorMeta', () => {
   it('带 requestId 时按 T464 形状落成 trace{errorCode, requestId}', () => {
     const err = attachErrorMeta(new Error('x'), { code: 30403, requestId: 'a1b2c3d4e5f60718' })
     expect((err as Error & { trace?: unknown }).trace).toEqual({ errorCode: 30403, requestId: 'a1b2c3d4e5f60718' })
+  })
+})
+
+describe('信封 data 通道（T727：撞号点名到占用方身份）', () => {
+  it('attachErrorMeta 原样带上 data，userErrorData 取回同一负载', () => {
+    const payload = { reason: 'patient_phone_taken', patientId: 'P20260009', name: '王小宇' }
+    const err = attachErrorMeta(new Error('phone already exists'), {
+      code: 10606,
+      httpStatus: 409,
+      data: payload,
+    })
+    expect(userErrorData(err)).toEqual(payload)
+    // data 不参与查表：码表句仍是那句通用中文，点名句由消费页拼
+    expect(userErrorCopy(err, { scope: 'admin', fallback: '创建失败' })).toBe(ERROR_CODE_COPY[10606])
+  })
+
+  it('非普通对象（字面 null／数组／字符串／缺省）一律当「没有负载」，不抛', () => {
+    for (const data of [null, undefined, ['a'], 'boom', 7]) {
+      const err = attachErrorMeta(new Error('x'), { code: 10606, httpStatus: 409, data })
+      expect(userErrorData(err), `data=${String(data)}`).toBeNull()
+    }
+    expect(userErrorData(new Error('无 meta'))).toBeNull()
+    expect(userErrorData(null)).toBeNull()
   })
 })
 

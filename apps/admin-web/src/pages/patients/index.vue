@@ -291,6 +291,7 @@ import {
 } from '../../api'
 import type { BatchBindFailure, PatientProfilePatch } from '../../mock/patients'
 import { PHONE_RE } from '../../utils/phoneField'
+import { patientPhoneConflictCopy } from '../../utils/patientPhoneConflict'
 import { canSetPatientPassword } from '../../utils/patientPasswordAccess'
 import { useAuthStore } from '../../stores/auth'
 
@@ -514,7 +515,9 @@ async function confirmCreate() {
     loadData()
     loadUnassigned()
   } catch (e: unknown) {
-    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '创建失败' }))
+    // T727：撞号（10606）时后端 data 带占用方身份 ⇒ 点名到「哪一名患者占了这号」，
+    // 拿不到负载（并发兜底路径）才回落码表通用句；两种形状都不许退化成「创建失败」。
+    ElMessage.error(patientPhoneConflictCopy(e) ?? userErrorCopy(e, { scope: 'admin', fallback: '创建失败' }))
   } finally {
     creating.value = false
   }
@@ -665,7 +668,8 @@ async function confirmPhone() {
     phoneVisible.value = false
     loadData()
   } catch (e: unknown) {
-    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '修改失败' }))
+    // T727：与新建同口径。改号端点排除自身查重（admin_patient.go），所以这里的 10606 一定是别人的号。
+    ElMessage.error(patientPhoneConflictCopy(e) ?? userErrorCopy(e, { scope: 'admin', fallback: '修改失败' }))
   } finally {
     savingPhone.value = false
   }
