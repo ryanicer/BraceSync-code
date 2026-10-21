@@ -88,6 +88,9 @@ func (s *DeviceService) RegisterWithOneTimeSecret(ctx context.Context, deviceID,
 		DeviceSecretEnc: encSecret,
 		SecretVersion:   1, // 一期固定=1（架构 §4.3，预留双密钥轮换）；T728 重生成后由 UpdateDeviceSecret 自增
 		Status:          model.StatusUnbound,
+		// T715：注册即带 Boss 标称面积，kPa 换算的分母不再靠人工补。DO NOTHING 的幂等注册
+		// 不会走到这里覆盖既有行，所以已配过面积的设备不受影响（判据「现有设备回归」）。
+		ContactAreaCm2: model.DefaultContactArea(),
 	}
 	created, err := s.store.RegisterDevice(ctx, dev)
 	if err != nil {

@@ -148,12 +148,15 @@ type PGStore struct {
 func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{pool: pool} }
 
 // RegisterDevice 幂等注册（重复注册返回既有记录，不覆盖密钥）
+//
+// T715：列清单带上 contact_area_cm2（值由 service 置 Boss 标称默认 0.64）。DO NOTHING 保证
+// 幂等注册既不覆盖密钥、也不回写既有设备的面积配置。
 func (r *PGStore) RegisterDevice(ctx context.Context, d *model.Device) (bool, error) {
 	tag, err := r.pool.Exec(ctx,
-		`INSERT INTO devices (device_id, model, device_secret_enc, secret_version, status)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO devices (device_id, model, device_secret_enc, secret_version, status, contact_area_cm2)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (device_id) DO NOTHING`,
-		d.DeviceID, d.Model, d.DeviceSecretEnc, d.SecretVersion, d.Status)
+		d.DeviceID, d.Model, d.DeviceSecretEnc, d.SecretVersion, d.Status, d.ContactAreaCm2)
 	if err != nil {
 		return false, fmt.Errorf("register device: %w", err)
 	}
