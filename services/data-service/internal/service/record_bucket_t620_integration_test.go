@@ -17,10 +17,10 @@ import (
 	"github.com/bracesync/bracesync/services/data-service/internal/model"
 )
 
-// itPointsP01 只填 P01 的上报载荷（入参 N，上报口径 mN）
+// itPointsP01 只填 P01 的上报载荷（入参即牛顿 N，T719 固件 1.4 原样上报）
 func itPointsP01(n float64) []float64 {
 	out := make([]float64, model.PointCount)
-	out[0] = n * model.MnPerN
+	out[0] = n
 	return out
 }
 

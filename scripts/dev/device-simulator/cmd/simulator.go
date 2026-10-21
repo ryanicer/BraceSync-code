@@ -23,9 +23,8 @@ const (
 	PathBatch  = "/api/v1/device/records/batch"
 )
 
-// MnPerN 设备侧量纲口径：points 单位 = mN，云端入口统一 ÷1000 归一为 N 后落库/判档
-// （services/data-service/internal/model/model.go 的 SingleFrameRequest.Points 注释，T173 D1 裁定）。
-const MnPerN = 1000
+// 设备侧量纲口径（T719，PRD §7A.2）：固件 1.4 起 points 单位 = 牛顿 N，云端入口原样入库不再 ÷1000。
+// 模拟器据此直接发 N（与 services/data-service/internal/model/model.go 的 SingleFrameRequest.Points 注释同步）。
 
 // defaultFirmware 上报体必填字段 firmware 的默认值（云端仅在版本变化时 UPDATE）。
 const defaultFirmware = "v1.2.0"
@@ -40,7 +39,7 @@ const MaxBatchFrames = 100
 type Frame struct {
 	DeviceID  string    `json:"device_id,omitempty"` // 生产以网关注入的 X-Device-Id 为准
 	Timestamp int64     `json:"timestamp"`           // 采集时刻，Unix 秒
-	Points    []float64 `json:"points"`              // P01–P20 顺序，单位 mN
+	Points    []float64 `json:"points"`              // P01–P20 顺序，单位 N（T719 固件 1.4）
 	Battery   int       `json:"battery"`
 	Firmware  string    `json:"firmware"`
 	WifiRSSI  *int      `json:"wifi_rssi,omitempty"`
@@ -159,12 +158,12 @@ func (e *SimEngine) generateFrame(deviceID string) Frame {
 	return frame
 }
 
-// normalPressures 生成一帧正常压力分布（单位 mN，见 MnPerN 口径），带 ±200 mN 抖动。
+// normalPressures 生成一帧正常压力分布（单位 N，T719 固件 1.4 原样上报），带 ±0.2 N 抖动。
 func normalPressures() []float64 {
 	baseN := [20]float64{1.2, 1.5, 1.8, 2.0, 2.2, 1.9, 1.6, 1.4, 1.3, 1.1, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 1.7, 1.5, 1.3, 1.1}
 	out := make([]float64, len(baseN))
 	for i, v := range baseN {
-		n := v*float64(MnPerN) + float64(rand.Intn(401)-200)
+		n := v + (float64(rand.Intn(401)-200) / 1000.0) // ±200 => ±0.2 N
 		if n < 0 {
 			n = 0
 		}

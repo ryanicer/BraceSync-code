@@ -29,7 +29,7 @@ func TestReportPathsMatchGatewayRegistration(t *testing.T) {
 }
 
 // TestFrameBodyShape 单帧请求体必须对齐 data-service 的 SingleFrameRequest：
-// timestamp 是 Unix 秒（JSON number，不是 RFC3339 串）、points 是 20 个 mN 数，
+// timestamp 是 Unix 秒（JSON number，不是 RFC3339 串）、points 是 20 个 N 数（T719 固件 1.4），
 // 且不再有云端根本不收的 pressures / wearing 字段。
 func TestFrameBodyShape(t *testing.T) {
 	e := NewSimEngine([]SimConfig{{DeviceID: "DEV_SHAPE", Secret: "s", BaseURL: "http://x"}}, time.Minute)
@@ -55,12 +55,12 @@ func TestFrameBodyShape(t *testing.T) {
 	require.True(t, ok, "points 必须是数组")
 	require.Len(t, pts, 20, "points 必须是 20 点（P01–P20 顺序）")
 
-	// 量纲：mN 口径下正常帧的单点应达千位级（1.2N = 1200mN），
-	// 若哪天有人把单位改回 N 或 kPa，这一条会先响（单位口径见 MnPerN 注释）。
+	// 量纲：T719 起 N 口径下正常帧的单点应为个位级（1.2N 左右），
+	// 若哪天有人把单位改回 mN（千位）或 kPa，这一条会先响（单位口径见 simulator.go 顶部注释）。
 	first, ok := pts[0].(float64)
 	require.True(t, ok)
-	assert.GreaterOrEqual(t, first, float64(800), "points[0] 量级不符 mN 口径（应约 1000+ 而非 1–25）")
-	assert.Less(t, first, float64(100000), "points[0] 超出 mN 合理上界")
+	assert.GreaterOrEqual(t, first, float64(0.5), "points[0] 量级不符 N 口径（应约 1 上下而非千位 mN）")
+	assert.Less(t, first, float64(25), "points[0] 超出 N 合理上界")
 
 	assert.Equal(t, defaultFirmware, generic["firmware"], "firmware 是协议必填字段")
 }

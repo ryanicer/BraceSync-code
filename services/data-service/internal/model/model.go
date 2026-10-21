@@ -54,9 +54,10 @@ func DefaultPressureThresholds() PressureThresholds {
 	}
 }
 
-// MnPerN 设备上报 mN（毫牛）→ N 换算分母（PRD §7A.2 数据单位口径，T173 D1 权威裁定：
-// 入口 ÷1000 归一为 N；原「N×100 定点 / ÷100」口径作废）。入口归一点：service.toPendingFrame。
-const MnPerN = 1000.0
+// 设备上报单位口径（PRD §7A.2）：T719 起固件 1.4 上报 points = 牛顿 N，入口原样入库，
+// 全链（DB/Redis/告警帧/校准基线偏移）恒为 N 空间。旧 T173 D1「上报 mN、入口 ÷1000」
+// 换算分母 MnPerN 已随该口径作废并删除——现网若仍 ÷1000 会把真值压成 1/1000
+// （KpaFromN 恒 1、Apply 减 N 基线出负值，即 Boss 真机「全 kPa=1 / 趋势跳负」根因）。
 
 // cstZone 业务切日时区（架构 §3.5：业务切日/定时任务按 Asia/Shanghai）。
 // 用固定偏移避免容器缺 tzdata 导致 LoadLocation 失败。
@@ -157,9 +158,10 @@ type SingleFrameRequest struct {
 	DeviceID  string `json:"device_id,omitempty"`
 	Timestamp int64  `json:"timestamp"` // 采集时刻，Unix 秒
 	// Points 20 点压力值（P01–P20 顺序）。
-	// 🔴 单位 = mN（毫牛，PRD §7A.2 数据单位口径，T173 D1 权威裁定：设备上报 mN）；
-	// 入口统一 ÷1000 归一为 N 后落库/判定（toPendingFrame）。⚠️ docs/api/device-protocol.md
-	// 仍为旧「N×100」量纲，冲突已上报待订正，以本注释口径为准。
+	// 🔴 单位 = N（牛顿，PRD §7A.2 数据单位口径，T719 固件 1.4 权威口径：设备直接上报 N）；
+	// 入口原样入库、不再换算（toPendingFrame）。旧 T173 D1「设备上报 mN、入口 ÷1000」已作废——
+	// 现网若仍 ÷1000 会把真值压成 1/1000（KpaFromN 恒 1）。⚠️ docs/api/device-protocol.md
+	// 若仍写旧量纲以本注释口径为准（订正随本卡 PRD 版本递增同步）。
 	Points    []float64 `json:"points"`
 	Battery   int       `json:"battery"`
 	Firmware  string    `json:"firmware"`
@@ -225,8 +227,8 @@ const (
 	IngestMock = "mock" // 受控注入端点写入
 )
 
-// MockFrameRequest 注入请求体。字段形状对齐 SingleFrameRequest（points 同为 mN 量纲，
-// 同样经 toPendingFrame ÷1000 归一），差别有两处：
+// MockFrameRequest 注入请求体。字段形状对齐 SingleFrameRequest（points 同为牛顿 N 量纲，
+// 同样经 toPendingFrame 原样入库，T719），差别有两处：
 //   - DeviceID 必填：注入端点不经 gateway，没有 X-Device-Id 身份头，目标设备只能显式给；
 //   - Reason 必填：它同时是 audit_logs.detail 里「为什么要造这帧」的唯一答案。
 type MockFrameRequest struct {
@@ -438,7 +440,7 @@ type PressureRecordDTO struct {
 	Timestamp  string        `json:"timestamp"` // ISO 8601 UTC
 	Points     []SensorPoint `json:"points"`
 	UploadTime string        `json:"uploadTime"`
-	// Calibrated 是否已应用基线校准（T173 读侧派生：false = 缺基线，值为 ÷1000 后 raw）。
+	// Calibrated 是否已应用基线校准（T173 读侧派生：false = 缺基线，值为原样入库的 N raw）。
 	// 读取侧在减偏移后设置；DTO 构造默认 false，不得静默当已校准。
 	Calibrated bool `json:"calibrated"`
 	// MaxPressure 库侧生成列 max_pressure 的**原始**值（= raw p01..p20 取最大，迁移 000001:154-156）。

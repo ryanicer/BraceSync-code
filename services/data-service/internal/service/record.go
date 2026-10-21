@@ -210,7 +210,7 @@ func (s *RecordService) UploadSingle(ctx context.Context, headerDeviceID string,
 
 // applyRealtimeCache 单帧上报后的 Redis 三写
 // T173：佩戴判定与 stat:today 用「减偏移后」值（PRD §8.1/§7A.2：判定统一基于校准后值）；
-// rt:frame 缓存存 ÷1000 后 raw 值，读侧统一校准（与 DB 口径一致）。
+// rt:frame 缓存存原样入库的 N raw 值（T719），读侧统一校准（与 DB 口径一致）。
 func (s *RecordService) applyRealtimeCache(ctx context.Context, deviceID, patientID string, frame repo.PendingFrame, now time.Time, countStat bool) *model.AppError {
 	if err := s.cache.SetLastSeen(ctx, deviceID, frame.Ts); err != nil {
 		log.Error().Err(err).Str("device_id", deviceID).Msg("redis set lastseen failed")
@@ -668,7 +668,7 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 }
 
 // getRealtimeFromRedis Redis 回退路径（issue 879 前旧逻辑，测试 stub 走此路径）
-// T173：rt:frame 为 ÷1000 后 raw 值，读侧统一减偏移（与 DB 分支同源）。
+// T173：rt:frame 为原样入库的 N raw 值（T719），读侧统一减偏移（与 DB 分支同源）。
 // T325：帧能解析出 20 点就下发真值（未佩戴时就是接近 0 的真值），解析不出就不渲染热力图——
 // 不再按 allDead 判「无有效帧」后塞 seed（那是无数据造数据）。
 func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, areaCm2 *float64, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
@@ -842,12 +842,14 @@ func pointsToFloat64(points [model.PointCount]float32) []float64 {
 }
 
 // toPendingFrame 请求参数 → 待落库帧。
-// T173 D1（权威口径，PRD §7A.2）：设备上报单位 = mN，入口统一 ÷1000 归一为 N 后落库/缓存/判定；
-// 此后全链路（DB/Redis/告警帧）均为 N 空间（原「÷100 / N×100 定点」口径作废）。
+// T719（Boss 真机实锤，固件 1.4）：设备上报 points 单位 = **牛顿 N 原样**，入口不再换算，
+// 落库/缓存/判档全链均为 N 空间。旧 T173 D1「上报 mN、入口 ÷1000 归一」口径作废——
+// 固件 1.4 已把 HTTP points 从 ADC/mN 改为牛顿 N，云端再 ÷1000 会把真值压成 1/1000，
+// 致 KpaFromN 恒 1、且与「原样存 N」的基线偏移做减法则出负值（Apply 跳负现象）。
 func toPendingFrame(ts time.Time, points []float64, battery, faultCode int) repo.PendingFrame {
 	var arr [model.PointCount]float32
 	for i := 0; i < model.PointCount && i < len(points); i++ {
-		arr[i] = float32(points[i] / model.MnPerN)
+		arr[i] = float32(points[i])
 	}
 	return repo.PendingFrame{Ts: ts, Points: arr, Battery: battery, FaultCode: faultCode}
 }
