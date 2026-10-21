@@ -291,9 +291,9 @@ async function preflightWrites(page: Page, token: string): Promise<void> {
 }
 
 /**
- * 11 位、1 开头的测试号（建档按 phone_hash 查重，pg.go:1275-1284）。
+ * 11 位、1 开头的测试号（建档按 phone_hash 查重，pg.go:1581-1587）。
  * 不许写死：13900000001 是 T041 播种技师账号的手机号（e2e/tech-helpers.ts:12），复用会撞查重
- * 或与技师链互踩。真撞上就是 10409，建档那步的 why 里已写明怎么辨。
+ * 或与技师链互踩。真撞上就是 10606（T727 专用码，不再是泛化 10409），建档那步的 why 里已写明怎么辨。
  */
 function uniqueTestPhone(): string {
   return `135${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`
@@ -570,11 +570,12 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
     //   (甲) 库里根本没有手机号 ⇒ absent 是对的，是我的用例判错；
     //   (乙) 库里有号、读侧没投影 ⇒ 后端缺陷。
     // 两种情形在留痕里长得一模一样，留痕自证不了，所以先把 (甲) 排掉再谈 (乙)。
-    // 判据用查重：同 phone_hash 再建一条必须 409 —— handler.go:2327-2331 把
-    // repo.ErrPatientExists 映射成 409（model.go:23 CodeConflict=10409），而 ErrPatientExists
-    // 只可能来自 phone_hash 命中（pg.go:1286-1294 的 PhoneHashTaken 预检，另有 23505 并发兜底
-    // :1309-1314）；phone_enc 与 phone_hash 是同一条 INSERT 的两列（pg.go:1301-1305，取值都来自
-    // 同一次 preparePhone:1062），⇒ 查重命中即证密文也在库里。
+    // 判据用查重：同 phone_hash 再建一条必须被拒 —— T727 把这条出口换成了专用码：handler.go:2829-2833
+    // 把 repo.ErrPatientExists 交给 phoneTakenErr（admin_patient.go:94-105）→ 409 / code=10606
+    // CodePatientPhoneTaken（model.go:37），不再是泛化 10409（run 39535070436 那根红就是断言还停在旧码）。
+    // ErrPatientExists 只可能来自 phone_hash 命中（pg.go:1581-1587 的 EXISTS 预检，另有并发下
+    // phone_hash 唯一索引违约 23505 兜底 :1601-1604）；phone_enc 与 phone_hash 是同一条 INSERT 的两列
+    // （pg.go:1595-1600，取值都来自同一次 preparePhone：handler.go:1201），⇒ 查重命中即证密文也在库里。
     const dupName = uniqueName(E2E_PATIENT_NAME_PREFIX)
     const dupProbe = await callApi(page, 'POST', '/api/v1/admin/patients', {
       token: token!,
@@ -586,17 +587,26 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
       const extra = (dupProbe.data as { patientId?: string } | null)?.patientId
       if (extra) createdPatientIds.push(extra)
       throw new Error(
-        `[t462-s2s3][正向对照] 同 phone_hash 重复建档回了 code=0（应 409/code=10409）` +
+        `[t462-s2s3][正向对照] 同 phone_hash 重复建档回了 code=0（应 409/code=10606）` +
           `⇒ 建档没把手机号落库，「改前 absent」是用例判错而非读侧缺陷，先修写侧这条：pid=${extra ?? dupName}`,
       )
     }
     expect(
       dupProbe.code,
-      `[t462-s2s3][正向对照] 同键建档应查重命中 10409（以此证明库里确有建档号的哈希与密文），` +
+      `[t462-s2s3][正向对照] 同键建档应查重命中 T727 专用码 10606（以此证明库里确有建档号的哈希与密文），` +
         `实得 status=${dupProbe.status} code=${dupProbe.code} message=${dupProbe.message}`,
-    ).toBe(10409)
+    ).toBe(10606)
+    // 10606 的负载点名占用方（admin_patient.go:100 WithData{reason,patientId,name}）：有 patientId
+    // 才证明命中的是「别人那一行」，不是自己刚建的这行被误判。后端在反查失败/并发删除时按「宁缺勿假」
+    // 省略 data（admin_patient.go:97-99），所以这一格红了要查占用方那行还在不在，不是回头怀疑码值。
+    const dupTaken = (dupProbe.data ?? {}) as { patientId?: string }
+    expect(
+      dupTaken.patientId,
+      `[t462-s2s3][正向对照] code=10606 应带 data.patientId（占用方患者号），` +
+        `实得 status=${dupProbe.status} data=${JSON.stringify(dupProbe.data)} message=${dupProbe.message}`,
+    ).toBeTruthy()
     console.log(
-      `[t462-s2s3][正向对照] 同键查重 status=${dupProbe.status} code=10409 ⇒ 建档手机号已落库，` +
+      `[t462-s2s3][正向对照] 同键查重 status=${dupProbe.status} code=10606 占用方 patientId=${dupTaken.patientId} ⇒ 建档手机号已落库，` +
         `改号留痕的「改前」若仍回 absent 即读侧投影缺陷`,
     )
 
@@ -807,7 +817,7 @@ test.describe('22-链 A 写段（T462 S2/S3，甲案）', () => {
     //       ⇒ GetPatient 回行的 PhoneEnc 恒为空 ⇒ admin_patient.go:158 的
     //         before := h.phoneView(patient.PhoneEnc) 必落 phone/phone.go:105-108 的 len(enc)==0 分支
     //       ⇒ 改前永远记 absent/空串，哪怕库里确有可解开的密文。
-    //     「库里真没号」这一种解释已被第 4.5 节的同键查重 10409 排掉（建档确实把密文落了库）。
+    //     「库里真没号」这一种解释已被第 4.5 节的同键查重 10606 排掉（建档确实把密文落了库）。
     //     契约与既有测试都站在这条断言这边：
     //       docs/api/api-contracts.ts:2097-2099 ——「改前值取不出来时它写 unreadable，同时
     //         before.phone 是占位符而非号码 ⇒ 读侧要分得开『没有号』与『有号但读不出』」；
