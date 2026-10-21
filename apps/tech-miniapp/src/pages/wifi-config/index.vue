@@ -191,10 +191,14 @@ const offBleState = registerBleStateListener((deviceId, connected) => {
 // 全映射成 ST_BAD_PASSWORD，docs/hardware/给小顾-2026-09-16/ble_provision.h:188），
 // 所以不能断言成「密码错误」，只列技师当场可自查的三因；频段说法走 PRD §7A.9.1 ④
 // 「只认信道不认名字」的能力口径，不引导凭 SSID 命名猜频段。
+// T730 增补 1（与患者端同口径）：10-20/21 staging 实战把 -1 归因到配网加密校验失败
+// （密钥派生用的 device_id 与手中设备不一致），故 -1 首因改成「校验没过、请重进配网」，
+// 密码降为并列可能；-2 首因改成频段不支持。超时档（无码兜底分支 + handleTimeout）不动，
+// 它已经是「设备未响应」口径，且被 install-status.spec.ts 逐字钉着。
 const errorMessage = computed(() => {
   const map: Record<number, string> = {
-    [-1]: '连接失败：请检查密码是否正确、信号强度、以及是否为 2.4GHz 频段',
-    [-2]: '找不到该 WiFi：请确认设备支持 2.4GHz 频段（5G 不支持）',
+    [-1]: '配网加密校验失败：请退出重进配网页（也可能密码有误、信号弱、或不在 2.4GHz 频段）',
+    [-2]: '该网络不支持：设备只支持 2.4GHz（5G 连不上），请确认名称输入无误',
     [-3]: '网络连接失败（DHCP），请检查路由器',
     [-4]: WIFI_FAILED_NOTE,
   }

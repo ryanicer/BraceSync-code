@@ -2,7 +2,8 @@
  * T216① — B512 订阅必须「每条链路重发」的结构断言
  *
  * 真机（2026-09-15 夜）：一次冷启动会话 14 次连接只有 1 次订阅成功 ⇒ 之后设备回了状态帧、
- * App 一帧收不到，界面落「设备响应超时」。根因是把「全局监听只注册一次」和「订阅动作」
+ * App 一帧收不到，界面落「设备没有响应」（T730 前的标题是「设备响应超时」）。
+ * 根因是把「全局监听只注册一次」和「订阅动作」
  * 用同一个一次性布尔一起短路了。
  *
  * 为什么只能按源码结构断言：src/utils/ble.ts 在 vitest 里挂不起来——
@@ -46,9 +47,13 @@ describe('T216① — 订阅动作与全局监听解耦', () => {
     expect(body).not.toMatch(/Registered\s*\|\||\|\|\s*\w*Registered/)
   })
 
-  it('uni.onBLECharacteristicValueChange 全文件只注册一次（真机 listener 会叠加，重复注册＝一帧回调多遍）', () => {
-    expect(count(src, 'uni.onBLECharacteristicValueChange(')).toBe(1)
+  it('B512 的 uni.onBLECharacteristicValueChange 只注册一次（真机 listener 会叠加，重复注册＝一帧回调多遍）', () => {
+    expect(count(fnBody('subscribeB512Notify'), 'uni.onBLECharacteristicValueChange(')).toBe(1)
     expect(fnBody('subscribeB512Notify')).toContain('if (!b512ListenerRegistered)')
+    // T730②新增第二处注册＝B514 一次性读监听（读完必 off，见 provision-key-target.spec.ts）。
+    // 全文件计数钉在 2：再多一处就说明有人又叠了个不摘的 listener。
+    expect(count(src, 'uni.onBLECharacteristicValueChange(')).toBe(2)
+    expect(fnBody('readDeviceInfo')).toContain('uni.offBLECharacteristicValueChange(handler)')
   })
 
   it('notify 订阅按「deviceId + 链路代次」判定，且判定在发起之前', () => {

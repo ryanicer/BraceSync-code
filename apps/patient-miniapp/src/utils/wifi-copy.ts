@@ -104,6 +104,21 @@ export const CONNECT = {
   tagDisconnected: '已断开',
   /** 下发前原地重连的过程提示：PRD §7A.9 要求生活化、不出现技术术语 */
   reconnectingToast: '设备连接已断开，正在重新连接…',
+  /**
+   * T730 增补 2：配网按「设备自己报的那台」下发，云端缓存只做一致性校验。
+   * 两台不一致时必须把差异摆明了说（卡面验收 2）——用 02 列表里用户已经见过的广播名，
+   * 不引入编号口径（PRD §7A.9 零技术术语红线）。
+   */
+  mismatch: {
+    title: '云端绑定的设备和你手里这台不是同一台',
+    content:
+      '你手里这台：{ble}\n云端绑定的那台：{cloud}\n配网会按你手里这台进行。若这不是你要配的设备，请先刷新云端绑定。',
+    /** 按钮字串各 ≤4 字：微信小程序 showModal 的 confirmText/cancelText 上限就是 4 个字符，超了真机被截字 */
+    refreshLabel: '刷新绑定',
+    proceedLabel: '继续配网',
+    /** 刷新后仍不一致：不卡死流程（设备侧才是真实那台），如实告知按手里这台下发 */
+    stillDiffToast: '刷新后仍对不上，已按你手里这台进行',
+  },
 } as const
 
 /** 04-progress：写入进度（状态 0→1→2→3，环形进度 + 四步清单） */
@@ -150,7 +165,7 @@ export const SUCCESS = {
 } as const
 
 /** 失败态落点：与 index.vue 视图名一一对应 */
-export type FailureKey = 'pwd' | 'nonet' | 'addr' | 'srv' | 'timeout' | 'linklost'
+export type FailureKey = 'keycheck' | 'pwd' | 'nonet' | 'addr' | 'srv' | 'timeout' | 'linklost'
 
 export interface FailureCopy {
   /** 图标色：设计稿 red = 密码/服务器；amber = 无网络/地址/超时 */
@@ -168,6 +183,26 @@ export interface FailureCopy {
 
 /** 06a–06e：五类失败态独立文案与处置（PRD §7A.9 错误态表） */
 export const FAILURES: Record<FailureKey, FailureCopy> = {
+  // T730 增补 1（卡面口径：-1＝设备配网加密校验失败，请重新进入配网）。
+  // 10-20/21 staging 实战真因是配网会话密钥与手中设备不匹配（HKDF info 里的设备号来自云端缓存），
+  // 旧映射把 -1 说成「WiFi 密码不正确」，把人带偏数小时。
+  // 但 -1 在固件侧同时覆盖连不上/关联超时（T713 已实锤），故 desc 只排除密码、不宣称唯一原因。
+  keycheck: {
+    tone: 'red',
+    title: '设备配网加密校验失败',
+    desc: '设备没有接受这次配网内容，问题不在您输入的 WiFi 密码上。请退出配网，重新进入后再试一次。',
+    actions: [
+      '退出配网页，重新进入后再开始一次配置',
+      '把设备重新上电，等指示灯闪烁后再试',
+      '多次仍失败时，请联系我们核实设备状态',
+    ],
+    primaryLabel: '重新进入配网',
+    primaryTo: 'entry',
+    contactHash: 'keycheck',
+  },
+  // T730 第四支纪律：密码档只在固件明确回传「密码错误」专用码时才接入。
+  // 现网 -1 是兜底码（mapWifiFail 把超时/关联失败/解密失败都映射成它），所以没有任何码指向这一档；
+  // 稿面 06a 页与 07 问题类型保留，防固件拆码时无处落。wifi-copy.spec.ts 有反证断言。
   pwd: {
     tone: 'red',
     title: 'WiFi 密码不正确',
@@ -184,14 +219,16 @@ export const FAILURES: Record<FailureKey, FailureCopy> = {
   },
   nonet: {
     tone: 'amber',
-    title: '找不到您的 WiFi 网络',
+    // T730 增补 1（卡面口径：-2＝5G 频段不支持）。-2 在固件侧是"扫不到这台网络"，
+    // 而 10-20 实锤的最常见真因就是填了 5G 网络 ⇒ 频段限制提到标题，名称输错保留在建议里。
+    title: '找不到这台网络（不支持 5G）',
     // 第 1 条按 PRD §7A.9.1 ③-4 细化到"空格 / 大小写 / 5G"，不得只给泛泛提示
     actions: [
       '检查 WiFi 名称是否输入正确（区分大小写，名称前后不要有空格）',
-      '确认选择的是 2.4GHz 网络，不是 5G',
+      '确认这台网络不是 5G 频段，设备只支持 2.4GHz',
       '将设备移近路由器后重试',
     ],
-    desc: '设备搜索不到您填写的家庭网络，可能是网络名称不对或信号太弱。',
+    desc: '设备搜索不到您填写的家庭网络。可能是这台网络是 5G 频段（设备只支持 2.4GHz），也可能是网络名称里有输错的字。',
     primaryLabel: '换一个网络',
     primaryTo: 'connect',
     secondaryLabel: '重试配网',
@@ -225,7 +262,8 @@ export const FAILURES: Record<FailureKey, FailureCopy> = {
   },
   timeout: {
     tone: 'amber',
-    title: '设备响应超时',
+    // T730 增补 1（卡面口径：超时＝设备未响应）。与 linklost（链路断了，设备可能已配好）继续分开。
+    title: '设备没有响应',
     desc: '长时间没有收到设备的反馈，可能是设备离手机太远或已断电。',
     actions: [
       '确认设备已上电（指示灯闪烁）',
@@ -262,11 +300,14 @@ export const FAILURE_COMMON = {
 } as const
 
 /**
- * B512 状态码 → 失败页（PRD §7A.9 错误态表）。
- * 60s 无推送不走此表，由页面直接落 timeout（§7A.9 超时口径）。
+ * B512 状态码 → 失败页（T730 增补 1 四支映射：-1 加密校验失败 / -2 5G 频段 / -3 地址 / -4 云端；
+ * 超时不走此表，由页面按 60s 无推送落 timeout——见 PROVISION_TIMEOUT_MS；linklost 由断链恢复路径落）。
+ * 🔴 没有任何码指向 'pwd'：卡面第四支要求「密码错误仅限固件明确回传密码错误时」，
+ * 而固件 mapWifiFail 把超时/关联失败/解密失败全兜底成 -1（ble_provision.h:188），
+ * 所以 -1 只能说校验没过，不能说密码错。固件拆出专用码后在这里加一行即可，页面与稿面已就位。
  */
 export const FAILURE_KEY_BY_CODE: Record<number, FailureKey> = {
-  [-1]: 'pwd',
+  [-1]: 'keycheck',
   [-2]: 'nonet',
   [-3]: 'addr',
   [-4]: 'srv',
@@ -300,11 +341,12 @@ export const CONTACT = {
   submitFailToast: '问题记录提交失败，请直接打开客服对话说明情况',
   /** 设计稿 TYPE_MAP：问题类型展示文案（与 06 页标题同源但措辞更短） */
   typeMap: {
+    keycheck: '配网加密校验失败',
     pwd: 'WiFi 密码不正确',
     nonet: '找不到 WiFi 网络',
     addr: '网络地址获取失败',
     srv: '服务器不可达',
-    timeout: '设备响应超时',
+    timeout: '设备没有响应',
     linklost: '连接中断，结果未确认',
     nodevice: '未搜索到设备',
   } as Record<ContactIssue, string>,
