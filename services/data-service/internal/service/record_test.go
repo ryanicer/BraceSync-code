@@ -467,9 +467,7 @@ func newTestEnv() *testEnv {
 // T719：固件 1.4 上报载荷单位即 N（PRD §7A.2），入口原样入库，不再 ×1000/÷1000。
 func pts(values ...float64) []float64 {
 	out := make([]float64, model.PointCount)
-	for i, v := range values {
-		out[i] = v
-	}
+	copy(out, values)
 	return out
 }
 
