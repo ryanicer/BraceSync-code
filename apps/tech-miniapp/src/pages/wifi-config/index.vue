@@ -111,6 +111,7 @@ import {
   stopMockWifiStatusSequence,
   sendWifiClear,
   waitForWifiClear,
+  cancelWifiClearWait,
 } from '../../utils/ble'
 import { pickReconnectTarget, RECONNECT_SCAN_MS } from '../../utils/ble-link'
 import { bleLog } from '../../utils/ble-log'
@@ -391,10 +392,14 @@ const CLEAR_SETTLE_DELAY_MS = 1500
 async function doWifiClear(): Promise<boolean> {
   const bleMac = installStore.bleDeviceId || installStore.deviceId
   const attemptOnce = async (): Promise<boolean> => {
+    // T550: 必须先装等待器、再发 0x02。设备可能在 B513 写回执返回前就 notify 0，
+    // 后装槽会丢掉这一帧（实测：第10帧 code=0 已收到，仍被判 10s 假超时）。
+    const clearWait = waitForWifiClear(10000)
     try {
       await sendWifiClear(bleMac)
-      return await waitForWifiClear(10000)
+      return await clearWait
     } catch (e) {
+      cancelWifiClearWait()
       bleLog.error('sendWifiClear 异常', logErrorText(e))
       return false
     }
