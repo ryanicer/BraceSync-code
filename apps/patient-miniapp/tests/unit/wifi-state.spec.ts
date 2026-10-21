@@ -98,12 +98,13 @@ describe('WiFi 配网 — 状态码解析（PRD §7A.9）', () => {
   it('code 9 → success', () => {
     expect(resolveProvisionStatus(9).kind).toBe('success')
   })
-  it('code -1 → 密码错误', () => {
+  it('code -1 → 配网加密校验失败（T730：-1 是固件兜底码，不得再归因密码）', () => {
     const r = resolveProvisionStatus(-1)
     expect(r.kind).toBe('failure')
     if (r.kind === 'failure') {
       expect(r.code).toBe(-1)
-      expect(r.message).toContain('密码')
+      expect(r.message).toContain('加密校验失败')
+      expect(r.message).not.toContain('密码')
     }
   })
   it('code -2 → 找不到网络', () => {

@@ -39,11 +39,11 @@ describe('T192 — 患者端零技术术语（PRD §7A.9 患技差异表）', ()
   })
 })
 
-describe('T192/T218 — 失败态各自独立（设计稿 06a–06e + T218-B linklost）', () => {
-  const KEYS: FailureKey[] = ['pwd', 'nonet', 'addr', 'srv', 'timeout', 'linklost']
+describe('T192/T218/T730 — 失败态各自独立（设计稿 06a–06e + T218-B linklost + T730 加密校验档）', () => {
+  const KEYS: FailureKey[] = ['keycheck', 'pwd', 'nonet', 'addr', 'srv', 'timeout', 'linklost']
 
   it('失败键齐全且各自有标题/说明/三条建议', () => {
-    expect(Object.keys(FAILURES)).toHaveLength(6)
+    expect(Object.keys(FAILURES)).toHaveLength(7)
     for (const k of KEYS) {
       expect(FAILURES[k].title).not.toBe('')
       expect(FAILURES[k].desc).not.toBe('')
@@ -58,6 +58,7 @@ describe('T192/T218 — 失败态各自独立（设计稿 06a–06e + T218-B lin
   })
 
   it('06a/06b 有次按钮，06c/06d/06e 只有主按钮 + 联系技师（设计稿按钮组）；linklost 有次按钮（T218-B）', () => {
+    expect(FAILURES.keycheck.secondaryLabel).toBeFalsy()
     expect(FAILURES.pwd.secondaryLabel).toBeTruthy()
     expect(FAILURES.nonet.secondaryLabel).toBeTruthy()
     expect(FAILURES.addr.secondaryLabel).toBeFalsy()
@@ -72,7 +73,24 @@ describe('T192/T218 — 失败态各自独立（设计稿 06a–06e + T218-B lin
   })
 
   it('状态码 -1~-4 映射到四个不同失败页', () => {
-    expect(Object.values(FAILURE_KEY_BY_CODE)).toEqual(['pwd', 'nonet', 'addr', 'srv'])
+    expect(Object.values(FAILURE_KEY_BY_CODE)).toEqual(['keycheck', 'nonet', 'addr', 'srv'])
+  })
+
+  // T730 增补 1（卡面四支口径）：-1 是固件兜底码（超时/关联失败/解密失败都回它），
+  // 说成「密码不正确」正是 10-20/21 staging 误导数小时的那条；密码档只在固件明确回传专用码时才接入。
+  it('T730：-1 落加密校验档并要求重新进入配网；没有任何码落密码档', () => {
+    expect(FAILURE_KEY_BY_CODE[-1]).toBe('keycheck')
+    expect(FAILURES.keycheck.title).toBe('设备配网加密校验失败')
+    expect(FAILURES.keycheck.primaryLabel).toContain('重新进入配网')
+    expect(FAILURES.keycheck.primaryTo).toBe('entry')
+    expect(Object.values(FAILURE_KEY_BY_CODE)).not.toContain('pwd')
+    expect(FAILURES.keycheck.desc).toContain('密码')
+  })
+
+  it('T730：-2 标题点明不支持 5G；超时档说设备没有响应', () => {
+    expect(FAILURE_KEY_BY_CODE[-2]).toBe('nonet')
+    expect(FAILURES.nonet.title).toContain('5G')
+    expect(FAILURES.timeout.title).toBe('设备没有响应')
   })
 })
 
@@ -83,8 +101,17 @@ describe('T192 — 状态推进口径（PRD §7A.9 状态 0/1/2/3/9）', () => {
     expect([...pcts].sort((a, b) => a - b)).toEqual(pcts)
   })
 
-  it('联系技师页覆盖六类失败 + 扫描无设备', () => {
-    expect(Object.keys(CONTACT.typeMap)).toEqual(['pwd', 'nonet', 'addr', 'srv', 'timeout', 'linklost', 'nodevice'])
+  it('联系技师页覆盖七类失败 + 扫描无设备', () => {
+    expect(Object.keys(CONTACT.typeMap)).toEqual([
+      'keycheck',
+      'pwd',
+      'nonet',
+      'addr',
+      'srv',
+      'timeout',
+      'linklost',
+      'nodevice',
+    ])
   })
 
   it('前置检查三项：蓝牙 / 位置 / 设备上电', () => {

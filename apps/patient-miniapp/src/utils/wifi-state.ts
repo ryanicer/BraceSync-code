@@ -8,6 +8,8 @@
  * 纯 TS，不依赖 uni.* / DOM / Vue / BLE。
  */
 
+import { FAILURES, FAILURE_KEY_BY_CODE, type FailureKey } from './wifi-copy'
+
 /** BLE 扫描到的设备（仅状态机需要的字段） */
 export interface ScanDevice {
   /** 设备名称（需匹配 BSYNC- 前缀） */
@@ -48,7 +50,9 @@ export function nextProvisionStep(current: ProvisionStep): ProvisionStep {
 
 /**
  * 解析配网状态码 → 进度/成功/失败。
- * PRD §7A.9：0-3 进度，9 成功，-1 密码错，-2 无网络，-3 地址失败，-4 服务器不可达。
+ * T730 增补 1：负码文案不再本文件自持一张表——页面判读走 wifi-copy 的 FAILURE_KEY_BY_CODE，
+ * 两张互不引用的表各自漂移正是「-1 被说成密码错误」的温床，故这里统一取 06 页文案。
+ * 码义：0-3 进度，9 成功，-1 配网加密校验失败（兜底码），-2 找不到网络/5G，-3 地址，-4 云端不可达。
  */
 export function resolveProvisionStatus(code: number): ProvisionStatus {
   if (code >= 0 && code <= 3) {
@@ -57,18 +61,17 @@ export function resolveProvisionStatus(code: number): ProvisionStatus {
   if (code === 9) {
     return { kind: 'success' }
   }
-  switch (code) {
-    case -1:
-      return { kind: 'failure', code: -1, message: 'WiFi 密码错误，请检查密码后重试' }
-    case -2:
-      return { kind: 'failure', code: -2, message: '找不到 WiFi 网络，请检查网络名称' }
-    case -3:
-      return { kind: 'failure', code: -3, message: '网络地址获取失败，请检查路由器' }
-    case -4:
-      return { kind: 'failure', code: -4, message: '服务器不可达，请稍后重试' }
-    default:
-      return { kind: 'failure', code: -1, message: '配网失败，请重试' }
+  const key = FAILURE_KEY_BY_CODE[code]
+  if (key) {
+    return { kind: 'failure', code: code as -1 | -2 | -3 | -4, message: failureMessage(key) }
   }
+  // 未列出的负码：与 -1 同族（固件把各种失败都兜底成 -1），处置也只能是重新进入配网
+  return { kind: 'failure', code: -1, message: failureMessage('keycheck') }
+}
+
+/** 失败消息单一真源：06 页标题 + 该档主按钮处置 */
+function failureMessage(key: FailureKey): string {
+  return `${FAILURES[key].title}，请${FAILURES[key].primaryLabel}`
 }
 
 /**

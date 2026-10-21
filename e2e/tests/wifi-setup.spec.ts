@@ -213,17 +213,18 @@ test('05-success：返回设备管理', async ({ page }) => {
   await page.waitForURL('**/pages/device/**', { timeout: 10_000 })
 })
 
-test.describe('06a–06e：五类失败态各自独立页', () => {
+test.describe('06a–06e：失败态各自独立页（T730 增补 1 后：-1＝加密校验档）', () => {
   const cases: Array<{ query: string; title: string; action: string; primary: string }> = [
     {
+      // T730 验收 1：-1 不再落「WiFi 密码不正确」
       query: '?mock=0,-1',
-      title: 'WiFi 密码不正确',
-      action: '回到上一步，重新输入 WiFi 密码（注意区分大小写）',
-      primary: '重新输入密码',
+      title: '设备配网加密校验失败',
+      action: '退出配网页，重新进入后再开始一次配置',
+      primary: '重新进入配网',
     },
     {
       query: '?mock=0,-2',
-      title: '找不到您的 WiFi 网络',
+      title: '找不到这台网络（不支持 5G）',
       action: '检查 WiFi 名称是否输入正确（区分大小写，名称前后不要有空格）',
       primary: '换一个网络',
     },
@@ -259,24 +260,24 @@ test.describe('06a–06e：五类失败态各自独立页', () => {
     })
   }
 
-  test('06e：60s 无状态推送 → 设备响应超时', async ({ page }) => {
+  test('06e：60s 无状态推送 → 设备没有响应（T730 超时档口径）', async ({ page }) => {
     // T212：阈值 20s→60s，这条必须真等满 60s（mock 只推首帧后不再推送）
     test.setTimeout(150_000)
     await gotoConnectForm(page, '?mock=0')
     await startProvision(page)
 
-    await expect(body(page).getByText('设备响应超时')).toBeVisible({ timeout: 90_000 })
+    await expect(body(page).getByText('设备没有响应')).toBeVisible({ timeout: 90_000 })
     await expect(body(page).getByText('重新配网')).toBeVisible()
   })
 
-  test('06a 主按钮回 03 重填、有次按钮；06c 无次按钮', async ({ page }) => {
+  // T730：加密校验档的主按钮是"重新进入配网"（回 01），不给"原地重试配网"的假出口
+  test('06 加密校验档回 01 重新进入、无次按钮；06c 无次按钮', async ({ page }) => {
     await gotoConnectForm(page, '?mock=0,-1')
     await startProvision(page)
-    await expect(body(page).getByText('WiFi 密码不正确')).toBeVisible({ timeout: 20_000 })
-    await expect(body(page).getByText('重试配网')).toBeVisible()
-    await body(page).getByText('重新输入密码').click()
-    await expect(body(page).getByText('家庭 WiFi 名称')).toBeVisible()
-    await expect(body(page).getByText('已连接')).toBeVisible()
+    await expect(body(page).getByText('设备配网加密校验失败')).toBeVisible({ timeout: 20_000 })
+    await expect(body(page).getByText('重试配网')).toHaveCount(0)
+    await body(page).getByText('重新进入配网').click()
+    await expect(body(page).getByText('开始配置家庭 WiFi')).toBeVisible({ timeout: 10_000 })
 
     await gotoConnectForm(page, '?mock=0,1,-3')
     await startProvision(page)
@@ -289,14 +290,14 @@ test.describe('06a–06e：五类失败态各自独立页', () => {
 test('07-contact：进入即提交反馈，问题类型/设备/时间三项齐', async ({ page }) => {
   await gotoConnectForm(page, '?mock=0,-1')
   await startProvision(page)
-  await expect(body(page).getByText('WiFi 密码不正确')).toBeVisible({ timeout: 20_000 })
+  await expect(body(page).getByText('设备配网加密校验失败')).toBeVisible({ timeout: 20_000 })
 
   // T690（设计稿 07-contact.html 定稿形）：出口改「联系我们」，页形 = 上下文卡 + 绿条 + 三按钮
   await body(page).getByText('联系我们', { exact: true }).click()
   await expect(body(page).getByText('配网遇到问题？')).toBeVisible()
   await expect(body(page).getByText('已自动记录的配网信息')).toBeVisible()
   await expect(body(page).getByText('问题类型')).toBeVisible()
-  await expect(body(page).getByText('WiFi 密码不正确').first()).toBeVisible()
+  await expect(body(page).getByText('配网加密校验失败').first()).toBeVisible()
   await expect(body(page).getByText('BSYNC-')).toBeVisible()
   await expect(body(page).getByText('发生时间')).toBeVisible()
   await expect(body(page).getByText(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)).toBeVisible()
