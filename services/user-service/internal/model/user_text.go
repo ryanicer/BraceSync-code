@@ -25,6 +25,7 @@ var userTextByCode = map[int]string{
 	CodePatientNotFound:    "未找到与该手机号对应的患者档案，请联系客服核对手机号",
 	CodePhoneAlreadyBound:  "该手机号已绑定其他微信，请先在原微信上解绑后再试",
 	CodeInvalidPhoneToken:  "手机号授权已过期，请重新获取手机号",
+	CodePatientPhoneTaken:  "该手机号已绑定其他患者档案，请先在患者管理列表搜索该号码，改档案或换号后再保存",
 	CodeForbiddenScope:     "当前登录方式不支持该操作，请重新登录后再试",
 }
 

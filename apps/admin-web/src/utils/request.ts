@@ -70,6 +70,7 @@ export async function request<T>(options: RequestOptions): Promise<T> {
     throw attachErrorMeta(new Error(errBody?.message || `HTTP ${res.status}`), {
       code: errBody?.code,
       httpStatus: res.status,
+      data: errBody?.data,
     })
   }
   const body = (await res.json()) as ApiResponse<T>
@@ -81,5 +82,6 @@ export async function request<T>(options: RequestOptions): Promise<T> {
   throw attachErrorMeta(new Error(body.message || 'Request failed'), {
     code: body.code,
     httpStatus: res.status,
+    data: body.data,
   })
 }
