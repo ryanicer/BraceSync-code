@@ -46,9 +46,13 @@ describe('T216① — 订阅动作与全局监听解耦', () => {
     expect(body).not.toMatch(/Registered\s*\|\||\|\|\s*\w*Registered/)
   })
 
-  it('uni.onBLECharacteristicValueChange 全文件只注册一次（真机 listener 会叠加，重复注册＝一帧回调多遍）', () => {
-    expect(count(src, 'uni.onBLECharacteristicValueChange(')).toBe(1)
+  it('B512 的 uni.onBLECharacteristicValueChange 只注册一次（真机 listener 会叠加，重复注册＝一帧回调多遍）', () => {
+    expect(count(fnBody('subscribeB512Notify'), 'uni.onBLECharacteristicValueChange(')).toBe(1)
     expect(fnBody('subscribeB512Notify')).toContain('if (!b512ListenerRegistered)')
+    // T730②新增第二处注册＝B514 一次性读监听（读完必 off，见 provision-key-target.spec.ts）。
+    // 全文件计数钉在 2：再多一处就说明有人又叠了个不摘的 listener。
+    expect(count(src, 'uni.onBLECharacteristicValueChange(')).toBe(2)
+    expect(fnBody('readDeviceInfo')).toContain('uni.offBLECharacteristicValueChange(handler)')
   })
 
   it('notify 订阅按「deviceId + 链路代次」判定，且判定在发起之前', () => {

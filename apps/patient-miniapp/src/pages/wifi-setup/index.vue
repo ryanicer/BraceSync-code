@@ -95,6 +95,7 @@ import {
   isBluetoothReady,
   isLocationAuthed,
   onWifiStatus,
+  readDeviceInfo,
   registerBleStateListener,
   rescanOnce,
   startBleScan,
@@ -180,11 +181,21 @@ const enteredSsid = ref('')
 const cloudDeviceId = ref('')
 const bleDeviceId = ref('')
 const scannedName = ref('')
+/**
+ * T730 增补 2：设备自报的协议 device_id（B514 读到才有值，空＝没读到/回退云端）。
+ * 每次下发前重新读一次——链路可能已经换到另一台设备，缓存它比不读更危险。
+ */
+const bleProtocolId = ref('')
 
 /** 凭据提到页面态：03 子组件会被卸载重建，页面不持有就等于每次重进都要重打 */
 const enteredPwd = ref('')
 /** 最近一次建连成功时刻（ms）：断开/重连时上报"距建连秒数"，用来量化固件空闲保活窗口 */
 let connectedAtMs = 0
+/**
+ * T730 增补 2：本轮领 key 实际打给哪台设备。成功页的 WiFi 回写必须跟着它走——
+ * key 发给了手里这台、回写却记到云端绑定的另一台，等于把两台的数据都写错。
+ */
+let keyTargetDeviceId = ''
 let successHandled = false
 // T218-B(A20)：本轮配网期间发生过链路断开。断链后"没等到推送"的结果是不确定的，
 // 超时文案要落 linklost（"可能已配好"），不能落 timeout（暗示设备没响应/没配好）
@@ -555,6 +566,110 @@ async function recoverAfterLinkLoss() {
   armTimeout()
 }
 
+/* ===== 密钥目标判定（T730 增补 2） ===== */
+
+/**
+ * 问设备自己是谁（B514）。读不到就留空串，由调用方回退云端缓存——
+ * B514 不实现/超时不能把配网入口卡死（卡面验收 3：正常配网回归不受伤）。
+ * H5 分支直接返回空：那边 BLE 整条都不可用（readDeviceInfo 的桩只会回手机侧的临时 deviceId，
+ * 拿它和云端 PRS- 编号比必然"不一致"，会把 E2E 的正常路径全部拦停）。
+ */
+async function probeBleProtocolId(): Promise<string> {
+  bleProtocolId.value = ''
+  // #ifdef H5
+  return ''
+  // #endif
+  // #ifndef H5
+  if (!bleDeviceId.value) return ''
+  try {
+    const info = await readDeviceInfo(bleDeviceId.value)
+    if (info?.deviceId) bleProtocolId.value = info.deviceId
+    logger.info('[T730] B514 设备自报读取结果', {
+      deviceId: info?.deviceId ?? '(无)',
+      firmware: info?.firmware ?? '(无)',
+      battery: info?.battery ?? '(无)',
+      bleDeviceId: bleDeviceId.value,
+    })
+  } catch (e) {
+    logger.warn('[T730] B514 读取异常（不阻塞，按回退口径走）', { msg: (e as Error)?.message ?? String(e) })
+  }
+  return bleProtocolId.value
+  // #endif
+}
+
+/** 不一致弹窗：确认＝去刷云端绑定，取消＝按手里这台继续。弹窗自身失败不得挡住配网 */
+function askDeviceMismatch(bleId: string, cloudId: string): Promise<'refresh' | 'proceed'> {
+  return new Promise((resolve) => {
+    uni.showModal({
+      title: CONNECT.mismatch.title,
+      // 患者端只到广播名（PRD §7A.9 不展示完整 device_id），差异照样看得见
+      content: CONNECT.mismatch.content
+        .replace('{ble}', broadcastNameOf(bleId))
+        .replace('{cloud}', broadcastNameOf(cloudId)),
+      confirmText: CONNECT.mismatch.refreshLabel,
+      cancelText: CONNECT.mismatch.proceedLabel,
+      success: (res) => resolve(res.confirm ? 'refresh' : 'proceed'),
+      fail: () => resolve('proceed'),
+    })
+  })
+}
+
+/**
+ * 强制按快照重取云端绑定。ensureCloudDevice 优先吃 store 里的 currentDevice，
+ * 而用户点「刷新」正是因为那份是旧的 ⇒ 刷新必须绕开它，否则刷了个寂寞。
+ */
+async function refreshCloudDeviceId(): Promise<void> {
+  const patientId = authStore.patientId
+  if (!patientId) {
+    logger.warn('[T730] 无 patientId，刷新云端绑定无从下手')
+    return
+  }
+  try {
+    const snap = await request<{ deviceId?: string | null }>({
+      url: `/api/v1/patients/${patientId}/realtime`,
+      method: 'GET',
+    })
+    cloudDeviceId.value = snap?.deviceId || ''
+    logger.info('[T730] 云端绑定已刷新', { patientId, deviceId: cloudDeviceId.value })
+  } catch (e) {
+    logger.warn('[T730] 刷新云端绑定失败', { patientId, msg: (e as Error)?.message ?? String(e) })
+  }
+}
+
+/**
+ * 领 key 的目标设备：以「设备自报 device_id」为准，云端缓存降级为一致性校验。
+ *
+ * 为什么必须改（卡面 10-20 实锤）：原实现拿缓存的 cloudDeviceId 去领 key，切环境/换设备后
+ * 缓存指向的是另一台 ⇒ 领到的 key 与手里这台的 secret 不同源 ⇒ 设备解不出明文回 -1，
+ * 而 -1 当时被映射成「WiFi 密码不正确」，现场按密码排查了数小时。
+ *
+ * 三条出口都返回可用目标，绝不卡死：
+ * ① 读到且与云端一致（或云端为空）→ 直接用设备自报值；
+ * ② 读到但不一致 → 弹窗把两台摆明（验收 2）；用户选刷新则重取一次云端绑定，
+ *    刷新后仍不一致就按手里这台下发（设备侧才是真实那台，不能因为云端陈旧而拒绝配网）；
+ * ③ 没读到 → 回退云端缓存并 warn。
+ */
+async function pickProvisionKeyTarget(): Promise<string> {
+  const ble = await probeBleProtocolId()
+  if (!ble) {
+    logger.warn('[T730] 设备未自报编号，领 key 目标回退云端缓存', { cloudDeviceId: cloudDeviceId.value })
+    return cloudDeviceId.value
+  }
+  if (!cloudDeviceId.value || cloudDeviceId.value === ble) return ble
+
+  const choice = await askDeviceMismatch(ble, cloudDeviceId.value)
+  if (choice === 'refresh') {
+    await refreshCloudDeviceId()
+    if (cloudDeviceId.value !== ble) uni.showToast({ title: CONNECT.mismatch.stillDiffToast, icon: 'none' })
+  }
+  logger.warn('[T730] 云端绑定与实连设备不一致，领 key 按实连设备', {
+    bleProtocolId: ble,
+    cloudDeviceId: cloudDeviceId.value,
+    choice,
+  })
+  return ble
+}
+
 /* ===== 04-progress ===== */
 
 async function runProvision() {
@@ -584,10 +699,20 @@ async function runProvision() {
   deviceStore.setWifiStatus('configuring')
 
   try {
+    // T730 增补 2：先问设备自己是谁再领 key。这一步可能弹窗，必须排在 showLoading 之前
+    // （遮罩层上的弹窗用户点不动，等于把选择权锁死）。
+    keyTargetDeviceId = await pickProvisionKeyTarget()
+
     uni.showLoading({ title: CONNECT.sendingToast, mask: true })
     // provision_key 原文不入日志（实时日志后台可见）
-    const { provision_key_hex } = await getProvisionKey(cloudDeviceId.value)
+    const { provision_key_hex } = await getProvisionKey(keyTargetDeviceId)
     uni.hideLoading()
+    logger.info('[T730] 领 key 目标判定', {
+      target: keyTargetDeviceId,
+      targetFromDevice: !!bleProtocolId.value,
+      cloudDeviceId: cloudDeviceId.value,
+      cloudMatchesDevice: keyTargetDeviceId === cloudDeviceId.value,
+    })
     logger.info('[T192] provision-key 就绪', { keyBytes: provision_key_hex.length / 2 })
 
     // 先订阅 B512 Notify，再写 B511，否则首帧状态（0/1）会丢
@@ -721,13 +846,19 @@ async function onProvisionSuccess() {
   stopMockWifiStatusSequence()
   deviceStore.setWifiStatus('connected')
   await teardownBle()
-  logger.info('[T192] 配网成功 → 05', { deviceId: cloudDeviceId.value, ssid: enteredSsid.value })
+  // T730 增补 2：回写目标跟着领 key 的目标走（WiFi 真正变化的是手里这台）
+  const reportTarget = keyTargetDeviceId || cloudDeviceId.value
+  logger.info('[T192] 配网成功 → 05', {
+    deviceId: reportTarget,
+    cloudDeviceId: cloudDeviceId.value,
+    ssid: enteredSsid.value,
+  })
   view.value = 'success'
 
   try {
-    if (cloudDeviceId.value) await reportDeviceWifi(cloudDeviceId.value, enteredSsid.value)
+    if (reportTarget) await reportDeviceWifi(reportTarget, enteredSsid.value)
   } catch (e) {
-    logger.warn('[T192] WiFi 状态回写失败', { msg: (e as Error)?.message ?? String(e) })
+    logger.warn('[T192] WiFi 状态回写失败', { target: reportTarget, msg: (e as Error)?.message ?? String(e) })
     uni.showToast({ title: SUCCESS.syncFailToast, icon: 'none' })
   }
 }

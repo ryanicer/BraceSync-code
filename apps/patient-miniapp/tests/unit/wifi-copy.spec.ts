@@ -151,3 +151,42 @@ describe('T297 — 患者端不得出现「凭网络名称判断频段」的引�
     expect(SCAN.notice24G).toContain('本设备仅支持 2.4GHz 家庭 WiFi')
   })
 })
+
+/**
+ * T730 增补 2 — 云端绑定与实连设备不一致时的提示
+ * （卡面：不一致要「提示差异并引导刷新」；验收 2：配网页明确提示差异）
+ */
+describe('T730② — 设备不一致提示：差异摆明 + 两条出路', () => {
+  it('四个字段齐全：标题/内容/刷新/继续（少一个就是一条走不通的路）', () => {
+    expect(CONNECT.mismatch.title).not.toBe('')
+    expect(CONNECT.mismatch.content).not.toBe('')
+    expect(CONNECT.mismatch.refreshLabel).not.toBe('')
+    expect(CONNECT.mismatch.proceedLabel).not.toBe('')
+    expect(CONNECT.mismatch.stillDiffToast).not.toBe('')
+  })
+
+  it('内容同时带两台设备的占位符（只说"不一致"不算把差异摆明）', () => {
+    expect(CONNECT.mismatch.content).toContain('{ble}')
+    expect(CONNECT.mismatch.content).toContain('{cloud}')
+    // 手里这台排在前面：这一步的判据是"以设备为准"，顺序即口径
+    expect(CONNECT.mismatch.content.indexOf('{ble}')).toBeLessThan(CONNECT.mismatch.content.indexOf('{cloud}'))
+  })
+
+  it('主按钮是刷新（卡面"引导刷新"），次按钮才是不一致下继续', () => {
+    expect(CONNECT.mismatch.refreshLabel).toContain('刷新')
+    expect(CONNECT.mismatch.proceedLabel).toContain('继续')
+  })
+
+  it('两个按钮字串各 ≤4 字（微信 showModal 的 confirmText/cancelText 上限 4 个字符，超了真机截字）', () => {
+    for (const [name, text] of [
+      ['refreshLabel', CONNECT.mismatch.refreshLabel],
+      ['proceedLabel', CONNECT.mismatch.proceedLabel],
+    ] as const) {
+      expect([...text].length, `${name} 超 4 字`).toBeLessThanOrEqual(4)
+    }
+  })
+
+  it('提示口径不承诺"一定配错"，也不承诺"一定配好"', () => {
+    expect(CONNECT.mismatch.content).toContain('配网会按你手里这台进行')
+  })
+})

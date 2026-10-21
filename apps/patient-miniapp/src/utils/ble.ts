@@ -796,3 +796,73 @@ export function stopMockWifiStatusSequence(): void {
     wifiStatusTimer = null
   }
 }
+
+// ===== T730 增补 2：设备自报信息（B514 Read）=====
+
+export interface BleDeviceInfo {
+  /** 设备自己报的协议 device_id（形如 PRS-ML05-RC-YYYYMMDDNNN） */
+  deviceId: string
+  firmware: string
+  battery: number
+}
+
+/**
+ * 读取设备自报信息（协议 §5：B514 Read 一次返回 UTF-8 JSON，snake_case：
+ * {"device_id":"...","firmware":"...","battery":100}）。
+ *
+ * 为什么配网前必须读它：密钥只能向「设备自己报的那台」申请。10-20 staging 实锤——
+ * 患者端拿云端缓存的 device_id 去领 key，而 BLE 实连的是另一台 ⇒ 拿到的 key 与设备内的
+ * secret 不同源 ⇒ 设备解不出明文回 -1，现场看到的是「密码不正确」（真因与密码无关）。
+ *
+ * 失败口径：读失败/超时/解析不出＝返回 null，由调用方决定回退；这一层绝不猜设备号。
+ * 与技师端 apps/tech-miniapp/src/utils/ble.ts 的 readDeviceInfo 同实现（两端各自成包）。
+ */
+export async function readDeviceInfo(deviceId: string): Promise<BleDeviceInfo | null> {
+  if (isH5()) {
+    return { deviceId, firmware: 'v1.2.3', battery: 85 }
+  }
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (val: BleDeviceInfo | null) => {
+      if (settled) return
+      settled = true
+      uni.offBLECharacteristicValueChange(handler)
+      resolve(val)
+    }
+    const handler = (res: any) => {
+      try {
+        const text = decodeUtf8(new Uint8Array(res.value))
+        const truncated = text.length > 200 ? text.slice(0, 200) + '...(truncated)' : text
+        _log('info', `B514 原始文本=${truncated}`)
+        const data = JSON.parse(text)
+        const result: BleDeviceInfo = {
+          deviceId: data.device_id || deviceId,
+          firmware: data.firmware || '',
+          battery: typeof data.battery === 'number' ? data.battery : 100,
+        }
+        _log('info', 'B514 解析成功', { deviceId: result.deviceId, firmware: result.firmware, battery: result.battery })
+        finish(result)
+      } catch (e) {
+        _log('error', 'B514 解析失败', logErrorText(e))
+        finish(null)
+      }
+    }
+    uni.onBLECharacteristicValueChange(handler)
+    uni.readBLECharacteristicValue({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_DEVICE_INFO,
+      fail: (err: any) => {
+        _log('error', 'B514 读取失败', err?.errMsg)
+        finish(null)
+      },
+    })
+    // 3s 超时兜底：B514 不实现/不回，不能把配网入口卡死
+    setTimeout(() => {
+      if (!settled) {
+        _log('warn', 'B514 读取超时')
+        finish(null)
+      }
+    }, 3000)
+  })
+}
