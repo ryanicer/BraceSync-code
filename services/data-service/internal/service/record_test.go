@@ -463,12 +463,12 @@ func newTestEnv() *testEnv {
 	return env
 }
 
-// pts 生成 20 点上报压力值：前 n 个取 values（参数单位 N），其余 0。
-// T173：上报载荷单位为 mN（PRD §7A.2），此处按 ×1000 转成 mN，保持用例按 N 语义书写。
+// pts 生成 20 点上报压力值：前 n 个取 values（参数单位=牛顿 N），其余 0。
+// T719：固件 1.4 上报载荷单位即 N（PRD §7A.2），入口原样入库，不再 ×1000/÷1000。
 func pts(values ...float64) []float64 {
 	out := make([]float64, model.PointCount)
 	for i, v := range values {
-		out[i] = v * model.MnPerN
+		out[i] = v
 	}
 	return out
 }

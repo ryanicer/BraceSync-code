@@ -18,9 +18,11 @@ import (
 // 覆盖两条读路径：生产 DB 优先分支（getRealtimeFromDB）与 Redis 回退分支
 // ─────────────────────────────────────────────────────────────
 
-// t296RealPayload 设备原始 points（单位 mN）：非零项 idx0=599 / idx7=38 / idx14=14 / idx16=14
+// t296RealPayload 设备原始 points（单位 N，T719 固件 1.4 原样上报）：
+// 非零项 idx0=0.599 / idx7=0.038 / idx14=0.014 / idx16=0.014
+// （物理量级承接 Boss 2026-09-21 真机日志轻压场景，仅按现行 N 契约表达，不再 ×1000 造 mN）
 func t296RealPayload() []float64 {
-	return []float64{599, 0, 0, 0, 0, 0, 0, 38, 0, 0, 0, 0, 0, 0, 14, 0, 14, 0, 0, 0}
+	return []float64{0.599, 0, 0, 0, 0, 0, 0, 0.038, 0, 0, 0, 0, 0, 0, 0.014, 0, 0.014, 0, 0, 0}
 }
 
 // t296DBRecords 让 fakeRecords 参与 DB 优先路径（生产用 repo.RecordRepo.GetLatestRecord）
@@ -49,12 +51,12 @@ func uploadT296(t *testing.T, env *testEnv) {
 		Timestamp: fixedNow.Add(-time.Minute).Unix(),
 		Points:    t296RealPayload(),
 		Battery:   100,
-		Firmware:  "bracesync-prod-1.1",
+		Firmware:  "bracesync-prod-1.4",
 	})
 	require.Nil(t, appErr)
 }
 
-// wantT296Grid 期望网格：÷1000 后 mN→N，下标不位移
+// wantT296Grid 期望网格：points 原样为 N（T719），下标不位移
 func wantT296Grid(t *testing.T, hm []model.HeatmapPoint) {
 	t.Helper()
 	require.Len(t, hm, model.PointCount)
@@ -64,7 +66,7 @@ func wantT296Grid(t *testing.T, hm []model.HeatmapPoint) {
 		if !named {
 			v = 0
 		}
-		assert.InDelta(t, v, hp.PressureValue, 1e-6, "%s(%s) 应等于设备同下标值 ÷1000", hp.PointID, hp.Label)
+		assert.InDelta(t, v, hp.PressureValue, 1e-6, "%s(%s) 应等于设备同下标 N 值（原样入库）", hp.PointID, hp.Label)
 	}
 	assert.Equal(t, "P01", maxPointID(t, hm), "★ 只能标在设备最大值点 idx0")
 }

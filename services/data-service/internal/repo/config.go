@@ -40,7 +40,10 @@ const (
 	configCacheTTL         = 60 * time.Second // 配置读缓存，避免逐帧查库
 )
 
-// sys_configs 阈值键（与 scripts/db/seed/seed.sql 一致；值均为占位，待按 mN/÷1000 量级重定）
+// sys_configs 阈值键（与 scripts/db/seed/seed.sql 一致；值均为占位。
+// T719 提醒：入口去 ÷1000 后 points 原样为牛顿 N，现默认阈值（如 threshold_pressure_high=5N、
+// heatmap_max_n=6N）相对真机施力（Boss 实测 ~16N→kPa≈259）明显偏低，会致每帧判高压/热力图满档；
+// 阈值重标属产品口径（Boss/Peter 定值），本卡不改数值，仅标注待重标）
 const (
 	keyWearingThreshold = "wearing_pressure_threshold"
 	keyHeatmapMax       = "heatmap_max_n"
