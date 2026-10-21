@@ -40,6 +40,11 @@ var deviceManageRoutes = []proxyRoute{
 	{http.MethodPut, "/install-records/:id"},            // T122 回填安装元数据
 	{http.MethodPost, "/baselines"},                     // 校准基线落库
 	{http.MethodGet, "/devices/:deviceId/baseline"},     // T407 设备当前生效基线只读
+	// T728 设备验签密钥三条（RBAC 已收口 admin-only，见 rbac.go adminOnlyPatterns）。
+	// 下载走 GET 但绝不是「读一个普通字段」：拿到明文=能伪造这台设备的上报。
+	{http.MethodGet, "/admin/devices/:deviceId/secret-file"},
+	{http.MethodPost, "/admin/device-secrets/export"},
+	{http.MethodPost, "/admin/devices/:deviceId/secret-regenerate"},
 }
 
 // deviceReportRoutes 设备域上报路由（data-service；走设备验签组，非 JWT）
@@ -52,9 +57,10 @@ var deviceReportRoutes = []proxyRoute{
 // alerts（T028）+ user/device/data/msg 四服务（T030 列表 + T032 补全）。
 func registerAPIProxies(r *gin.Engine, agt *gatewayAuth) {
 	api := r.Group("/api/v1")
-	api.Use(jwtAuth(agt)) // T032：统一 JWT 鉴权（白名单见 middleware.go）
-	api.Use(scopeAuthz()) // T085：scope 授权（bind 仅放行 bind-phone；full 禁 bind-phone）
-	api.Use(roleAuthz())  // T039-H2：端点级 RBAC（admin 专属端点矩阵，见 rbac.go）
+	api.Use(jwtAuth(agt))                     // T032：统一 JWT 鉴权（白名单见 middleware.go）
+	api.Use(scopeAuthz())                     // T085：scope 授权（bind 仅放行 bind-phone；full 禁 bind-phone）
+	api.Use(roleAuthz())                      // T039-H2：端点级 RBAC（admin 专属端点矩阵，见 rbac.go）
+	api.Use(bustSecretCacheOnRegenerate(agt)) // T728：重生成成功后作废网关那一份密钥缓存
 
 	registerAlertsProxyOn(api, envOrURL("ALERT_SERVICE_URL", defaultAlertServiceURL)) // T028 保持
 	registerServiceRoutes(api, envOrURL("USER_SERVICE_URL", defaultUserServiceURL), "user-service", userServiceRoutes)
@@ -76,6 +82,36 @@ func registerAPIProxies(r *gin.Engine, agt *gatewayAuth) {
 	prov.Use(provisionRateLimit(newUserRateLimiter()))
 	registerServiceRoutes(prov, envOrURL("DEVICE_SERVICE_URL", defaultDeviceServiceURL), "device-service",
 		[]proxyRoute{{http.MethodPost, "/devices/:deviceId/provision-key"}})
+}
+
+// t728RegeneratePattern 重生成那条路由在 gin 路由表里的形状（按 FullPath 认，不按真实 URL——
+// 真实 URL 带设备号，逐台不同，认它就得再写一遍路径解析）。
+const t728RegeneratePattern = "/api/v1/admin/devices/:deviceId/secret-regenerate"
+
+// bustSecretCacheOnRegenerate T728：管理员重新生成密钥成功后，立刻作废网关那一份缓存。
+//
+// 为什么这一半的责任在网关：device-service 覆盖库里密文的那一刻，旧值就已经不是任何
+// 端点能交出的东西了；但网关按 T032 那套把明文缓存在内存里（secretCacheTTL=5min），
+// 不清掉的话，拿旧 secret 签名的设备在 TTL 内照样验得过 ⇒ 卡面红线 6「旧值即时失效」
+// 只在数据库侧成立。
+//
+// 挂在组中间件而不是代理本体：代理是逐路由同构转发，这里要的恰恰是「只有这一条路由、
+// 且只在它成功之后」这一格特判；用 FullPath 认路由，就不会跟着设备号变形状。
+// 非 200（越权 403 / 设备不存在 404 / 留痕失败 500）一律不清 —— 库里那版没变，
+// 清缓存只是白白多打一次 device-service。
+func bustSecretCacheOnRegenerate(agt *gatewayAuth) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next() // 先让代理写完响应，再按真实结果决定清不清
+
+		if c.FullPath() != t728RegeneratePattern || c.Writer.Status() != http.StatusOK {
+			return
+		}
+		inv, ok := agt.secrets.(secretCacheInvalidator)
+		if !ok {
+			return // 无缓存的实现（测试桩/直读库）没有可作废的东西
+		}
+		inv.InvalidateDeviceSecret(c.Param("deviceId"))
+	}
 }
 
 // registerDeviceReportRoutes 注册设备域路由（设备验签组，不经 JWT）：

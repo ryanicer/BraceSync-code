@@ -349,6 +349,13 @@
     {
       "role": "ROLE_ADMIN",
       "method": "POST",
+      "path": "/api/v1/admin/devices/S1/secret-regenerate",
+      "deny": false,
+      "why": "admin 全放行"
+    },
+    {
+      "role": "ROLE_ADMIN",
+      "method": "POST",
       "path": "/api/v1/admin/doctors",
       "deny": false,
       "why": "admin 全放行"

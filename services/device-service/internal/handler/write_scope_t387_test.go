@@ -220,6 +220,25 @@ func (s *t387Store) WriteInstallRecordAudit(ctx context.Context, in repo.Install
 	return s.FakeStore.WriteInstallRecordAudit(ctx, in)
 }
 
+// ── T728 密钥通路三格：重生成主写 + 两类留痕 ──────────────────────────
+// 同样纳入计数表：身份门禁（本卡是 admin-only 那一族）放行前必须一格不落，
+// 放行后又必须「恰好一次」——这两条判据都靠键名计数，不靠返回值。
+
+func (s *t387Store) UpdateDeviceSecret(ctx context.Context, deviceID string, secretEnc []byte, expectVersion int) (int, error) {
+	s.writes["UpdateDeviceSecret"]++
+	return s.FakeStore.UpdateDeviceSecret(ctx, deviceID, secretEnc, expectVersion)
+}
+
+func (s *t387Store) WriteDeviceSecretReadAudit(ctx context.Context, in repo.DeviceSecretReadAuditInput) error {
+	s.writes["WriteDeviceSecretReadAudit"]++
+	return s.FakeStore.WriteDeviceSecretReadAudit(ctx, in)
+}
+
+func (s *t387Store) WriteDeviceSecretRegenerateAudit(ctx context.Context, in repo.DeviceSecretRegenerateAuditInput) error {
+	s.writes["WriteDeviceSecretRegenerateAudit"]++
+	return s.FakeStore.WriteDeviceSecretRegenerateAudit(ctx, in)
+}
+
 func (s *t387Store) GetDevice(ctx context.Context, deviceID string) (*model.Device, error) {
 	s.reads["GetDevice"]++
 	return s.FakeStore.GetDevice(ctx, deviceID)
@@ -286,10 +305,25 @@ func t387Req(t *testing.T, r *gin.Engine, method, path, role, uid string, body a
 
 // t387Ep 一条写端点的可复用描述：prepare 造现场并返回实际路径与请求体
 type t387Ep struct {
-	name    string
-	method  string
-	write   string // 本端点应落的那一个写方法
-	prepare func(t *testing.T, st *t387Store, absent bool) (path string, body any)
+	name   string
+	method string
+	write  string // 本端点应落的那一个写方法
+	// allowRoles 本端点放行的身份；nil = T387 原口径「技师 + 管理员」。
+	// T728 那两条属于 admin-only 一族（能取密钥=能伪造设备上报），技师在该被拒 ⇒
+	// 反证腿不得替它代发技师令牌，否则「admin-only」会被这张表跑成「tech 也通」。
+	allowRoles []string
+	// fileResponse 成功时交文件体而不是统一信封（T728 批量导出）。反证腿据此改判
+	// 「200 + 附件头 + zip 魔数」，不许再按 JSON 解响应体——那会让这条恒在解析处炸掉。
+	fileResponse bool
+	prepare      func(t *testing.T, st *t387Store, absent bool) (path string, body any)
+}
+
+// roles 反证腿实际要跑的放行身份（未声明的沿用本族七条的技师+管理员）。
+func (ep t387Ep) roles() []string {
+	if len(ep.allowRoles) > 0 {
+		return ep.allowRoles
+	}
+	return []string{roleTech, roleAdmin}
 }
 
 func t387Register(t *testing.T, st *t387Store, deviceID string) {
@@ -326,7 +360,8 @@ func t387Install(t *testing.T, st *t387Store, deviceID string) int64 {
 	return id
 }
 
-// t387Endpoints 设备域收口的写端点：T387 七条 + T404 注册（第八条）+ T508 面积配置（第九条）。absent=true 时把资源号换成
+// t387Endpoints 设备域收口的写端点：T387 七条 + T404 注册（第八条）+ T508 面积配置（第九条）
+// + T728 密钥重生成与批量导出（第十、十一条，放行面只有 ROLE_ADMIN）。absent=true 时把资源号换成
 // 不存在的号（注册那条的资源号在 body 里，不在路径上），供「拒绝形状与查无同形」那条判据复用同一张表。
 func t387Endpoints() []t387Ep {
 	dev := func(absent bool) string {
@@ -438,6 +473,29 @@ func t387Endpoints() []t387Ep {
 				return "/api/v1/baselines", body
 			},
 		},
+		// T728 两条 admin-only 写路由：放行面只有 ROLE_ADMIN（技师在该也属越权，见 allowRoles）。
+		{
+			name: "secret-regenerate", method: http.MethodPost, write: "UpdateDeviceSecret",
+			allowRoles: []string{roleAdmin},
+			prepare: func(t *testing.T, st *t387Store, absent bool) (string, any) {
+				d := dev(absent)
+				if !absent {
+					t728SeedSecretDevice(t, st, d)
+				}
+				return "/api/v1/admin/devices/" + d + "/secret-regenerate", nil
+			},
+		},
+		{
+			name: "secret-export", method: http.MethodPost, write: "WriteDeviceSecretReadAudit",
+			allowRoles: []string{roleAdmin}, fileResponse: true,
+			prepare: func(t *testing.T, st *t387Store, absent bool) (string, any) {
+				d := dev(absent)
+				if !absent {
+					t728SeedSecretDevice(t, st, d)
+				}
+				return "/api/v1/admin/device-secrets/export", map[string]any{"deviceIds": []string{d}}
+			},
+		},
 	}
 }
 
@@ -491,13 +549,13 @@ func deniedLabel(role string) string {
 func TestT387_WriteAllowedForTechAndAdmin(t *testing.T) {
 	ids := map[string]string{roleTech: t387Tech, roleAdmin: t387AdminUID}
 	for _, ep := range t387Endpoints() {
-		for _, role := range []string{roleTech, roleAdmin} {
+		for _, role := range ep.roles() {
 			t.Run(ep.name+"/"+role, func(t *testing.T) {
 				r, st, ls := t387Env(t)
 				path, body := ep.prepare(t, st, false)
 				before := st.snapshot()
 
-				status, msg, code := t387Req(t, r, ep.method, path, role, ids[role], body)
+				status, msg, code := t387AllowReq(t, ep, r, path, role, ids[role], body)
 
 				require.Equal(t, http.StatusOK, status, "反证失败：%s 以 %s 应照常成功，message=%s", ep.name, role, msg)
 				assert.Equal(t, model.CodeOK, code)
@@ -509,6 +567,20 @@ func TestT387_WriteAllowedForTechAndAdmin(t *testing.T) {
 			})
 		}
 	}
+}
+
+// t387AllowReq 反证腿的请求。文件型端点成功时交的是文件体而非统一信封，
+// 按 JSON 解它会先在解析处炸掉（那既不是判据也不是缺陷），所以改判「200 + 非空 zip」；
+// 放行与否的真凭据仍是上面那格「恰好落一次写方法」。
+func t387AllowReq(t *testing.T, ep t387Ep, r *gin.Engine, path, role, uid string, body any) (int, string, int) {
+	t.Helper()
+	if !ep.fileResponse {
+		return t387Req(t, r, ep.method, path, role, uid, body)
+	}
+	w := t728Do(t, r, ep.method, path, role, uid, body)
+	require.Equal(t, "application/zip", w.Header().Get("Content-Type"), "%s 成功态必须是 zip", ep.name)
+	require.True(t, bytes.HasPrefix(w.Body.Bytes(), []byte("PK")), "%s 成功态必须是 zip 魔数开头", ep.name)
+	return w.Code, w.Header().Get("Content-Disposition"), model.CodeOK
 }
 
 // ── 3. 不泄露存在性：跨身份拒绝与「查无此号」同形 ─────────────────────
@@ -552,6 +624,9 @@ func TestT387_DenyPrecedesBodyParsing(t *testing.T) {
 		{http.MethodPost, "/api/v1/install-records"},
 		{http.MethodPut, "/api/v1/install-records/abc"},
 		{http.MethodPost, "/api/v1/baselines"},
+		// T728：密钥端点的门禁同样排在 JSON 解析之前（重生成那条根本不读 body，一并钉住形状）
+		{http.MethodPost, "/api/v1/admin/device-secrets/export"},
+		{http.MethodPost, "/api/v1/admin/devices/" + t387Device + "/secret-regenerate"},
 	}
 	for _, tc := range cases {
 		r, st, _ := t387Env(t)

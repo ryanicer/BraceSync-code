@@ -107,6 +107,10 @@ export const CONTRACT_MAP = {
     ignore: { patientName: 'patientName 是 GET /devices 列表 join 出的扩展字段，只有 deviceListDTO 会回' },
   },
   deviceListDTO: { ts: 'Device' },
+  // T728 注册响应：整行 DeviceDTO + 一次性验签密钥明文（仅首次新建那发出现，幂等命中 omitempty 省略）。
+  // 🔴 不给契约 Device 加 deviceSecret 键 —— 列表/详情每行都带明文等于鼓励前端留存；
+  // 与 PatientPasswordSetDTO / TechnicianPasswordResetDTO 同口径，页面按本地交叉类型消费。
+  registerResponseDTO: { ts: null, reason: '写响应：整行 DeviceDTO + 一次性验签密钥明文，契约未声明该信封（同 PatientPasswordSetDTO 口径）' },
   installListDTO: { ts: 'InstallRecordRow' },
   // T418 归口（原 ignore 两行）：契约 InstallRecordDetail 按 extends InstallRecordRow 继承了
   // patientName / techName，此前详情 DTO 从不回、靠前端拿列表行兜底。现 GetInstall 补了

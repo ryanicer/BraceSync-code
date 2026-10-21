@@ -147,6 +147,13 @@ var adminOnlyPatterns = []rbacPattern{
 	// T477 患者设登录口令：能给别人设口令 = 能登别人账号，危害与「改手机号」同级甚至更高，
 	// 必须 admin-only（handler 侧另有 requireAdminRole 双层防御，同 T190 口径）。
 	rbacOf(http.MethodPost, "/api/v1/admin/patients/:patientId/password"),
+	// T728 设备验签密钥三条：拿到 secret = 能伪造任意设备的上报（设备侧 HMAC 的唯一凭据），
+	// 危害与「登别人账号」同级 ⇒ 收口面照 T691 phone/reveal 那一族写：连**读**（下载文件）都 admin-only，
+	// 不放技师——技师页只领配网密钥（T193 那条单独矩阵），从不需要验签密钥本体。
+	// device-service 侧 assertAdminRole 是同一判据的第二层（直连绕网关时仍 403）。
+	rbacOf(http.MethodGet, "/api/v1/admin/devices/:deviceId/secret-file"),
+	rbacOf(http.MethodPost, "/api/v1/admin/device-secrets/export"),
+	rbacOf(http.MethodPost, "/api/v1/admin/devices/:deviceId/secret-regenerate"),
 }
 
 // techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T122）：
