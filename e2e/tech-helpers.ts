@@ -228,6 +228,8 @@ export function stopMockWifiStatusSequence() {
 // T240: 清设备 WiFi mock —— 秒级成功，保证 E2E 3s 自动返回时序
 export async function sendWifiClear(deviceId) { }
 export function waitForWifiClear() { return Promise.resolve(true) }
+// T550: 写失败时取消等待器。mock 必须同步导出，否则 ESM 绑定失败＝整页 chunk 加载失败
+export function cancelWifiClearWait() { }
 
 export async function readDeviceInfo(deviceId) {
   return { deviceId, firmware: 'v1.2.3', battery: 85 }

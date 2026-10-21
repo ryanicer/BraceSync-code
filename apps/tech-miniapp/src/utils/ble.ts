@@ -792,6 +792,8 @@ let wifiStatusCallback: ((code: number) => void) | null = null
 // T240: clear 完成信号一次性回调槽（B512 notify 0）。独立于 wifiStatusCallback，
 // 不替换既有配网状态机；由 waitForWifiClear 注册、settle 即清空。
 let wifiClearCallback: ((code: number) => void) | null = null
+// T550: 写 0x02 失败时取消等待器；不清掉会留一个 10s 定时器跨到下一次重试。
+let wifiClearCancel: (() => void) | null = null
 let b512ListenerRegistered = false
 let b512SubscribedKey = ''
 /** 已发出、正等回执的订阅；只在 success/fail 回执里清空——b512SubscribedKey 必须由 success 授予 */
@@ -892,25 +894,37 @@ export function waitForWifiClear(timeoutMs = 10000): Promise<boolean> {
   if (isH5()) return Promise.resolve(true)
   return new Promise<boolean>((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null
+    let cb: ((code: number) => void) | null = null
+    // T550: settle 只清自己注册的槽。写失败被取消的旧等待器定时器仍会到点，
+    // 无条件置空会把重试刚装上的回调槽清掉，重演假超时。
     const settle = (ok: boolean) => {
       if (timer) {
         clearTimeout(timer)
         timer = null
       }
-      wifiClearCallback = null
+      if (wifiClearCallback === cb) wifiClearCallback = null
+      if (wifiClearCancel === cancel) wifiClearCancel = null
       resolve(ok)
     }
-    wifiClearCallback = (code: number) => {
+    const cancel = () => settle(false)
+    cb = (code: number) => {
       if (code === 0) {
         bleLog.info('B512 clear 完成回执收到 (code=0)')
         settle(true)
       }
     }
+    wifiClearCallback = cb
+    wifiClearCancel = cancel
     timer = setTimeout(() => {
       bleLog.warn(`B512 clear 等待超时 ${timeoutMs}ms 未收到 code=0`)
       settle(false)
     }, timeoutMs)
   })
+}
+
+/** T550: 取消尚未 settle 的 clear 等待器（B513 写 0x02 失败时调用）。 */
+export function cancelWifiClearWait(): void {
+  wifiClearCancel?.()
 }
 
 /**

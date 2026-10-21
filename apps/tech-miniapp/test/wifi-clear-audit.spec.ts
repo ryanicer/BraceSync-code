@@ -30,6 +30,10 @@ const API = fs.readFileSync(
   fileURLToPath(new URL('../src/api/device.ts', import.meta.url)),
   'utf8'
 )
+const BLE = fs.readFileSync(
+  fileURLToPath(new URL('../src/utils/ble.ts', import.meta.url)),
+  'utf8'
+)
 
 /** 取一次请求调用的入参（vi.mock 的 request 是全局唯一替身） */
 function lastRequest(): { url: string; method: string; data: Record<string, unknown> } {
@@ -121,13 +125,29 @@ describe('T448 — 页面接线：只在清除成功的那两支上报，且不�
     }
   })
 
-  it('BLE 链路一处没动：发 0x02 与等回执的调用点仍各一次', () => {
-    expect(PAGE).toContain('await sendWifiClear(bleMac)')
-    expect(PAGE).toContain('await waitForWifiClear(10000)')
+  it('T550：先注册 clear 等待器、再发 0x02（设备回执可能早于写回执返回）', () => {
+    const body = PAGE.slice(PAGE.indexOf('async function doWifiClear'), PAGE.indexOf('// T448'))
+    const atWait = body.indexOf('waitForWifiClear(10000)')
+    const atSend = body.indexOf('sendWifiClear(bleMac)')
+    expect(atWait, 'doWifiClear 内应注册等待器').toBeGreaterThanOrEqual(0)
+    expect(atSend, 'doWifiClear 内应发 0x02').toBeGreaterThan(atWait)
+    expect(body).toContain('cancelWifiClearWait()')
+    // 调用点仍各一次：修窗口不能复制出第二条等待/写入路径
     expect(PAGE.match(/sendWifiClear\(bleMac\)/g)).toHaveLength(1)
     expect(PAGE.match(/waitForWifiClear\(10000\)/g)).toHaveLength(1)
     // 清除动作的入口函数没被改写成语义化 HTTP（本卡不动 BLE 形态）
     expect(PAGE).toContain('async function doWifiClear(): Promise<boolean>')
+  })
+
+  it('T550：settle 只清自己的回调槽，并给写失败留取消入口', () => {
+    const start = BLE.indexOf('export function waitForWifiClear')
+    const end = BLE.indexOf('function subscribeB512Notify', start)
+    const body = BLE.slice(start, end)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    expect(body).toContain('wifiClearCallback === cb')
+    expect(body).toContain('wifiClearCancel === cancel')
+    expect(body).toContain('export function cancelWifiClearWait()')
   })
 
   it('页面向云端回写 SSID 的那一次仍在（配网成功 ≠ 清除，两件事各自成立）', () => {
