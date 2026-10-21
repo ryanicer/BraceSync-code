@@ -10,6 +10,7 @@
 // R5: onWifiStatus() 订阅 B512 Notify + mock 状态机
 
 import { bleLog } from './ble-log'
+import { formatB512FrameLog, parseB512Frame } from './b512-frame'
 import { logErrorText } from '@bracesync/shared-utils'
 import { advertisesB510, createScanDeduper } from './wifi-state'
 
@@ -733,10 +734,15 @@ function subscribeB512Notify(deviceId: string): void {
     uni.onBLECharacteristicValueChange((res) => {
       if (res.characteristicId?.toLowerCase() !== CHAR_WIFI_STATUS.toLowerCase()) return
       try {
-        const code = new Int8Array(res.value)[0]
+        // T726：新固件回多字节帧，只取首字节会把 10 当状态码、把真值 0 丢掉。
+        // 判读逻辑在 b512-frame.ts（纯函数，可单测）；这里只负责派发与日志。
+        const frame = parseB512Frame(res.value)
         b512FramesReceived += 1
-        _log('info', `B512 状态原始值=${code} 第${b512FramesReceived}帧 订阅轮次=${b512SubscribeRounds}`)
-        wifiStatusCallback?.(code)
+        const line = formatB512FrameLog(frame, b512FramesReceived, b512SubscribeRounds)
+        if (frame.warn) _log('warn', `${line} warn=${frame.warn}`)
+        else _log('info', line)
+        if (frame.code === null) return
+        wifiStatusCallback?.(frame.code)
       } catch (e) {
         _log('error', 'B512 状态解析失败', logErrorText(e))
       }
