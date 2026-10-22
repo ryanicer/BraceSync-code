@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import { realLogin, getAuthToken, uniqueName, E2E_PATIENT_NAME_PREFIX } from '../real-helpers'
 import { resolveH5Origin } from '../h5-origin'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T462 S4 · 链 C 患者自助资料编辑（真实模式 / staging）
@@ -239,6 +240,28 @@ test.describe('21-链 C 患者自助资料编辑（T462 S4）', () => {
     /** 患者端页面自己发出的 /api/v1 请求（有序）与非 GET 明细 */
     const h5Net: string[] = []
     const h5Writes: Array<{ method: string; path: string; origin: string; body: unknown }> = []
+
+    // ── 0) 部署守卫（T324 口径）：staging 患者端产物不含 T0518 只读形态时，
+    //     本链判据对旧包无意义 ⇒ PR 阶段显式 post-deploy 跳过；部署后/严格档缺标记照常判红。
+    //     探测走匿名上下文：弹层在未登录态也已渲染（loadProfile 只把 errorMsg 置「请先登录」），
+    //     故探测本身零写，不需要先建患者。
+    {
+      const probeCtx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+      try {
+        const probePage = await probeCtx.newPage()
+        await probePage.goto(`${H5_ORIGIN}${H5_PROFILE_PATH}`, { waitUntil: 'domcontentloaded' })
+        await requireDeployedBuild(probePage, {
+          marker: 'T0518-profile-readonly',
+          probe: async (p) => {
+            await p.locator('.page').waitFor({ state: 'attached', timeout: 20_000 })
+            return (await p.locator('.form-hint').count()) > 0
+          },
+          why: '患者端「我的」弹层姓名/性别/年龄只读形态',
+        })
+      } finally {
+        await probeCtx.close()
+      }
+    }
 
     // ── 1) admin 登录（真实表单），拿 JWT ──────────────────────
     await realLogin(page)
