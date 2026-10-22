@@ -34,7 +34,7 @@ func seedQAlerts(ctx context.Context, t *testing.T, n int) {
 	for i := 0; i < n; i++ {
 		_, created, cErr := repo.CreateAlert(ctx, scanner.NewAlert{
 			PatientID: itPatient, DeviceID: itDevice, Type: engine.TypePressureHigh,
-			SensorPoint: "P03", Detail: "IT 压力高", ThresholdValue: 45, ActualValue: 50,
+			SensorPoint: "P03", Detail: "IT 压力高", ThresholdValue: 45000, ActualValue: 50000, // 存储空间 mN
 			Ts: base.Add(time.Duration(i) * time.Minute),
 		})
 		require.NoError(t, cErr)
@@ -132,8 +132,8 @@ func TestIT_T028_ListAlerts_FieldProjection(t *testing.T) {
 	assert.Equal(t, itPatient, row.PatientID)
 	assert.Equal(t, itDevice, row.DeviceID)
 	assert.Equal(t, "P03", row.SensorPoint)
-	assert.InDelta(t, 45.0, row.ThresholdValue, 0.001)
-	assert.InDelta(t, 50.0, row.ActualValue, 0.001)
+	assert.InDelta(t, 45000.0, row.ThresholdValue, 0.001) // 存储层 mN 原样往返，换算只发生在展示层
+	assert.InDelta(t, 50000.0, row.ActualValue, 0.001)
 	assert.Equal(t, "unread", row.ReadStatus)
 	assert.Equal(t, "pending", row.ProcessStatus)
 	assert.Equal(t, "active", row.ResolvedStatus)

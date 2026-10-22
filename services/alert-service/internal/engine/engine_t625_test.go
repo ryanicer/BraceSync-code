@@ -189,11 +189,12 @@ func TestT625_SensorDrift_SmallNegativeAfterCalibrationShouldNotAlert(t *testing
 // T661 把 NewDefaultRuleEvaluator 的兜底改为 0.3，与 config.DefaultThresholds、
 // seed.sql、迁移 000019、user-service 设置默认收成一个权威值；本用例转为常驻跨层门禁，
 // 防止任何一层再私改默认导致 (0.3, 旧值] 区间判定无固定答案。
+// T733 方案A：告警评估层量纲收口为 mN，权威默认由 0.3N 改记 300mN（同一物理值 ×1000）。
 func TestT625_SensorDriftThreshold_OneDocumentedDefaultAcrossLayers(t *testing.T) {
 	engineDefault := engine.NewDefaultRuleEvaluator().SensorDriftThreshold
-	configDefault := config.DefaultThresholds().SensorDriftN
+	configDefault := config.DefaultThresholds().SensorDriftMn
 
 	assert.InDelta(t, configDefault, engineDefault, 0.0001,
 		"引擎默认值必须与配置层默认值同口径（现值：engine %v vs config %v）", engineDefault, configDefault)
-	assert.InDelta(t, 0.3, engineDefault, 0.0001, "T203 后唯一权威默认 = 0.3N")
+	assert.InDelta(t, 300.0, engineDefault, 0.0001, "T203 定 0.3N；T733 方案A 告警评估层唯一权威默认 = 300mN")
 }

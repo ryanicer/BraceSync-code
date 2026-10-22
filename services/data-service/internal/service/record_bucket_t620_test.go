@@ -21,19 +21,31 @@ func cst(y int, mon time.Month, d, hh, mm int) time.Time {
 }
 
 // uploadFrame 按 N 语义写值上传一帧（pts 负责 mN 换算）
+// uploadFrame 造帧上报：values 为**设备载荷原值（mN）**，入口零加工。
 func uploadFrame(t *testing.T, env *testEnv, ts time.Time, values ...float64) {
 	t.Helper()
 	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(ts, pts(values...)))
 	require.Nil(t, appErr)
 }
 
+// uploadFrameN 同上，但 values 按 N 书写（老用例口径），此处 ×1000 换成 mN 载荷——
+// 用例断言仍以 N 写展示值，读侧出口换算负责把两者对上。
+func uploadFrameN(t *testing.T, env *testEnv, ts time.Time, valuesN ...float64) {
+	t.Helper()
+	mn := make([]float64, len(valuesN))
+	for i, v := range valuesN {
+		mn[i] = v * model.MnPerN
+	}
+	uploadFrame(t, env, ts, mn...)
+}
+
 func TestGetHistoryBuckets_DayCoversWholeWindow(t *testing.T) {
 	env := newTestEnv()
 	// 四帧铺在东八区 2026-08-08 的 0/6/12/18 点四个 6h 桶里（08-08 是周六，与老用例同窗）
-	uploadFrame(t, env, cst(2026, time.August, 8, 0, 10), 10)
-	uploadFrame(t, env, cst(2026, time.August, 8, 6, 20), 20)
-	uploadFrame(t, env, cst(2026, time.August, 8, 12, 30), 30)
-	uploadFrame(t, env, cst(2026, time.August, 8, 18, 40), 40)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 0, 10), 10)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 6, 20), 20)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 12, 30), 30)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 18, 40), 40)
 
 	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "6h", 1, 100)
 	require.Nil(t, appErr)
@@ -60,9 +72,9 @@ func TestGetHistoryBuckets_DayCoversWholeWindow(t *testing.T) {
 func TestGetHistoryBuckets_KeepsZeroValueBuckets(t *testing.T) {
 	env := newTestEnv()
 	// 同一 6h 桶两帧（10N 与 0N）→ 均值 5N；相邻桶整桶 0N（患者静息，0 是真实读数不是缺帧）
-	uploadFrame(t, env, cst(2026, time.August, 8, 1, 0), 10)
-	uploadFrame(t, env, cst(2026, time.August, 8, 2, 0), 0)
-	uploadFrame(t, env, cst(2026, time.August, 8, 7, 0), 0)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 1, 0), 10)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 2, 0), 0)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 7, 0), 0)
 
 	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "6h", 1, 100)
 	require.Nil(t, appErr)
@@ -77,7 +89,7 @@ func TestGetHistoryBuckets_KeepsZeroValueBuckets(t *testing.T) {
 
 func TestGetHistoryBuckets_RejectsUnknownAndTooFineInterval(t *testing.T) {
 	env := newTestEnv()
-	uploadFrame(t, env, cst(2026, time.August, 8, 1, 0), 10)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 1, 0), 10)
 
 	// 未知档
 	_, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "15m", 1, 100)

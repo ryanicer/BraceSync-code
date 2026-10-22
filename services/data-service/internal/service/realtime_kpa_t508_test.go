@@ -23,9 +23,9 @@ import (
 // t508Area 面积指针（夹具里 nil 表示未配置，不能靠 0 造）
 func t508Area(v float64) *float64 { return &v }
 
-// t508FrameN 五条可读值：0 / 1 / 2 / 4 / 6 N（PRD 参考换算表的四档分界）+ 其余 0。
-// 取整数量级是为了让两条读路的 float32 往返完全一致：×1000 上报、÷1000 入库都不丢位。
-func t508Frame() []float64 { return []float64{0, 1, 2, 4, 6} }
+// t508Frame 五条可读值（**mN 存储空间**，T733 方案A）：0 / 1 / 2 / 4 / 6 N 等价的 0 / 1000 / 2000 / 4000 / 6000。
+// 取整千是为了让两条读路的 float32 往返完全一致，且出口 ÷1000 后正好落回 PRD 参考换算表的整数 N 档。
+func t508Frame() []float64 { return []float64{0, 1000, 2000, 4000, 6000} }
 
 // t508KpaByPoint 把热力图收成 pointId -> kPa（nil 用 -1 表示，便于两条读路逐格对拍）
 func t508KpaByPoint(hm []model.HeatmapPoint) map[string]int {
@@ -40,7 +40,7 @@ func t508KpaByPoint(hm []model.HeatmapPoint) map[string]int {
 	return out
 }
 
-// t508Record DB 优先路径的最新行：与 t508Frame 同一组 N 值
+// t508Record DB 优先路径的最新行：与 t508Frame 同一组 mN 存储值
 func t508Record(t *testing.T, patientID string, ts time.Time) model.PressureRecord {
 	t.Helper()
 	var pts [model.PointCount]float32
@@ -49,7 +49,7 @@ func t508Record(t *testing.T, patientID string, ts time.Time) model.PressureReco
 	}
 	return model.PressureRecord{
 		RecordID: 1, DeviceID: "DEV-T508-DB", PatientID: patientID,
-		Ts: ts, Points: pts, MaxPressure: 6.0, UploadTime: ts,
+		Ts: ts, Points: pts, MaxPressure: 6000.0, UploadTime: ts,
 	}
 }
 
@@ -84,7 +84,7 @@ func TestT508_Realtime_RedisPathCarriesKpa(t *testing.T) {
 	want := []int{0, 16, 31, 63, 94} // PRD §7A.2.1 三 参考换算表（整数显示值按稿面 kpaOf）
 	for i, w := range want {
 		require.NotNil(t, snap.PressureHeatmap[i].PressureKpa)
-		assert.Equal(t, w, *snap.PressureHeatmap[i].PressureKpa, "%s（%v N）", snap.PressureHeatmap[i].PointID, t508Frame()[i])
+		assert.Equal(t, w, *snap.PressureHeatmap[i].PressureKpa, "%s（存储 %v mN）", snap.PressureHeatmap[i].PointID, t508Frame()[i])
 	}
 	// 无压力点也要出 0，不是 null：0 是读到的真值，null 才是「不可换算」
 	require.NotNil(t, snap.PressureHeatmap[0].PressureKpa)
@@ -142,7 +142,7 @@ func TestT508_Realtime_TwoReadPathsAgree(t *testing.T) {
 	require.Len(t, redisSnap.PressureHeatmap, model.PointCount)
 	require.Len(t, dbSnap.PressureHeatmap, model.PointCount)
 
-	// 正对照：两条路的 N 值本身必须一致，否则下面的 kPa 相等只能证明「两边都算错」
+	// 正对照：两条路的原始存储值（mN）本身必须一致，否则下面的 kPa 相等只能证明「两边都算错」
 	for i := range dbSnap.PressureHeatmap {
 		assert.InDelta(t, dbSnap.PressureHeatmap[i].PressureValue, redisSnap.PressureHeatmap[i].PressureValue, 1e-6,
 			"第 %d 点 N 值应一致", i)

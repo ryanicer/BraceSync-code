@@ -48,7 +48,8 @@ export const POINT_COUNT = 20;
 // DEFAULT_FIRMWARE 与模拟器 defaultFirmware 同值（firmware 为上报体必填字段）。
 export const DEFAULT_FIRMWARE = 'v1.2.0';
 
-// normalPoints 生成 20 点压力（单位 mN，云端入口 ÷1000 归一为 N），1000–2200 mN 带 ±200 抖动。
+// normalPoints 生成 20 点压力（单位 mN，T733 方案A：云端入口不换算、mN 原样入库，÷1000 只在展示层），
+// 1000–2200 mN（＝1–2.2 N）带 ±200 mN 抖动。
 export function normalPoints() {
   const out = [];
   for (let i = 0; i < POINT_COUNT; i++) {

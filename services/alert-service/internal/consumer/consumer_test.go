@@ -121,12 +121,12 @@ func newTestConsumer(queue *fakeQueue, dedup *fakeDedup, alerts *fakeAlerts, not
 
 func TestFrameRef_ToPressureFrame(t *testing.T) {
 	points := make([]float64, PointCount)
-	points[2] = 50.0
+	points[2] = 50000.0 // 50N 的 mN 口径（T733 方案A：帧原值 mN）
 	f := FrameRef{DeviceID: "DEV1", PatientID: "P1", Timestamp: time.Unix(1000, 0), Points: points}
 	frame, err := f.ToPressureFrame()
 	require.NoError(t, err)
-	assert.Equal(t, 50.0, frame.Pressures[2])
-	assert.True(t, frame.Wearing, "max 50N > 0.5N → 佩戴帧")
+	assert.Equal(t, 50000.0, frame.Pressures[2], "帧压力原样透传，链路零换算")
+	assert.True(t, frame.Wearing, "max 50000mN > 50mN 兜底阈值 → 佩戴帧")
 
 	// 空载帧：全部低于佩戴阈值
 	zero := FrameRef{DeviceID: "DEV1", Points: make([]float64, PointCount)}
@@ -139,30 +139,31 @@ func TestFrameRef_ToPressureFrame(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestFrameRef_ToPressureFrameWithThreshold T661 H 项：佩戴判定阈值可注入，
+// TestFrameRef_ToPressureFrameWithThreshold T661 H 项：佩戴判定阈值（mN）可注入，
 // 同一帧在不同阈值下 Wearing 翻转——内联链路据此吃到 sys_configs 的运营调整值。
+// T733 方案A：注入值与帧压力同为 mN，比较不换算（0.2N/0.3N/0.1N → 200mN/300mN/100mN）。
 func TestFrameRef_ToPressureFrameWithThreshold(t *testing.T) {
 	points := make([]float64, PointCount)
-	points[2] = 0.2 // 最大压力 0.2N
+	points[2] = 200 // 最大压力 200mN（=0.2N）
 	f := FrameRef{DeviceID: "DEV1", PatientID: "P1", Timestamp: time.Unix(1000, 0), Points: points}
 
-	// 注入 0.3N：0.2 ≤ 0.3 → 空载
-	frame, err := f.ToPressureFrameWithThreshold(0.3)
+	// 注入 300mN：200 ≤ 300 → 空载
+	frame, err := f.ToPressureFrameWithThreshold(300)
 	require.NoError(t, err)
 	assert.False(t, frame.Wearing, "最大压力未超过注入佩戴阈值 → 空载")
 
-	// 注入 0.1N：0.2 > 0.1 → 佩戴
-	frame, err = f.ToPressureFrameWithThreshold(0.1)
+	// 注入 100mN：200 > 100 → 佩戴
+	frame, err = f.ToPressureFrameWithThreshold(100)
 	require.NoError(t, err)
 	assert.True(t, frame.Wearing, "同一帧在更低阈值下应判佩戴（证明阈值真被读取）")
 
-	// 非正值回退默认兜底 0.05N：0.2 > 0.05 → 佩戴
+	// 非正值回退默认兜底 50mN：200 > 50 → 佩戴
 	frame, err = f.ToPressureFrameWithThreshold(0)
 	require.NoError(t, err)
-	assert.True(t, frame.Wearing, "未注入时回退 DefaultWearingThresholdN")
+	assert.True(t, frame.Wearing, "未注入时回退 DefaultWearingThresholdMn=50")
 
 	// 点数校验不绕过
-	_, err = FrameRef{Points: []float64{1, 2}}.ToPressureFrameWithThreshold(0.3)
+	_, err = FrameRef{Points: []float64{1, 2}}.ToPressureFrameWithThreshold(300)
 	require.Error(t, err)
 }
 
@@ -172,7 +173,7 @@ func TestFrameRef_ToPressureFrameWithThreshold(t *testing.T) {
 
 func TestDrainOnce_AlertedFrameCreatesAlertAndNotifies(t *testing.T) {
 	now := time.Now()
-	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50.0)}}
+	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50000.0)}}
 	alerts := &fakeAlerts{}
 	notifier := &recordingNotifier{}
 	c := newTestConsumer(queue, newFakeDedup(), alerts, notifier)
@@ -192,7 +193,7 @@ func TestDrainOnce_AlertedFrameCreatesAlertAndNotifies(t *testing.T) {
 
 func TestDrainOnce_CleanFrameNoAlert(t *testing.T) {
 	now := time.Now()
-	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 20.0)}}
+	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 20000.0)}}
 	alerts := &fakeAlerts{}
 	notifier := &recordingNotifier{}
 	c := newTestConsumer(queue, newFakeDedup(), alerts, notifier)
@@ -207,7 +208,7 @@ func TestDrainOnce_CleanFrameNoAlert(t *testing.T) {
 func TestDrainOnce_DuplicateFrameIdempotent(t *testing.T) {
 	now := time.Now()
 	frameTS := now.Add(-time.Minute)
-	payload := mkPayload(t, now, "DEV1", "P1", frameTS, 50.0)
+	payload := mkPayload(t, now, "DEV1", "P1", frameTS, 50000.0)
 	// 同一帧重复入队两次（data-service 重试/队列重放）
 	queue := &fakeQueue{items: []string{payload, payload}}
 	alerts := &fakeAlerts{}
@@ -223,7 +224,7 @@ func TestDrainOnce_DuplicateFrameIdempotent(t *testing.T) {
 func TestDrainOnce_StaleFrameRecordsButDoesNotPush(t *testing.T) {
 	now := time.Now()
 	// 入队超过 1h 的积压帧
-	queue := &fakeQueue{items: []string{mkPayload(t, now.Add(-2*time.Hour), "DEV1", "P1", now.Add(-2*time.Hour), 50.0)}}
+	queue := &fakeQueue{items: []string{mkPayload(t, now.Add(-2*time.Hour), "DEV1", "P1", now.Add(-2*time.Hour), 50000.0)}}
 	alerts := &fakeAlerts{}
 	notifier := &recordingNotifier{}
 	c := newTestConsumer(queue, newFakeDedup(), alerts, notifier)
@@ -258,7 +259,7 @@ func TestDrainOnce_StoreErrorsCountedNotPanicked(t *testing.T) {
 	now := time.Now()
 
 	// 幂等键写失败
-	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50.0)}}
+	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50000.0)}}
 	dedup := newFakeDedup()
 	dedup.err = errors.New("redis down")
 	c := newTestConsumer(queue, dedup, &fakeAlerts{}, nil)
@@ -268,7 +269,7 @@ func TestDrainOnce_StoreErrorsCountedNotPanicked(t *testing.T) {
 	assert.EqualValues(t, 1, testutil.ToFloat64(metrics.PendingProcessedTotal.WithLabelValues(metrics.OutcomeError)))
 
 	// 落库失败
-	queue2 := &fakeQueue{items: []string{mkPayload(t, now, "DEV2", "P1", now.Add(-time.Minute), 50.0)}}
+	queue2 := &fakeQueue{items: []string{mkPayload(t, now, "DEV2", "P1", now.Add(-time.Minute), 50000.0)}}
 	alerts := &fakeAlerts{createErr: errors.New("pg down")}
 	c2 := newTestConsumer(queue2, newFakeDedup(), alerts, nil)
 	c2.SetNow(func() time.Time { return now })
@@ -276,7 +277,7 @@ func TestDrainOnce_StoreErrorsCountedNotPanicked(t *testing.T) {
 	require.NoError(t, err)
 
 	// 唯一约束保底命中（created=false）计 deduped
-	queue3 := &fakeQueue{items: []string{mkPayload(t, now, "DEV3", "P1", now.Add(-time.Minute), 50.0)}}
+	queue3 := &fakeQueue{items: []string{mkPayload(t, now, "DEV3", "P1", now.Add(-time.Minute), 50000.0)}}
 	alerts3 := &fakeAlerts{createFalse: true}
 	c3 := newTestConsumer(queue3, newFakeDedup(), alerts3, nil)
 	c3.SetNow(func() time.Time { return now })
@@ -296,7 +297,7 @@ func TestDrainOnce_MaxBatchLimit(t *testing.T) {
 	now := time.Now()
 	var items []string
 	for i := 0; i < 5; i++ {
-		items = append(items, mkPayload(t, now, "DEV1", "P1", now.Add(-time.Duration(i+1)*time.Minute), 50.0))
+		items = append(items, mkPayload(t, now, "DEV1", "P1", now.Add(-time.Duration(i+1)*time.Minute), 50000.0))
 	}
 	queue := &fakeQueue{items: items}
 	alerts := &fakeAlerts{}
@@ -325,7 +326,7 @@ func TestDrainOnce_QueueLengthMetricRefreshed(t *testing.T) {
 
 func TestRun_StopsOnContextCancelAndDrains(t *testing.T) {
 	now := time.Now()
-	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50.0)}}
+	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50000.0)}}
 	alerts := &fakeAlerts{}
 	c := newTestConsumer(queue, newFakeDedup(), alerts, nil)
 	c.SetNow(func() time.Time { return now })

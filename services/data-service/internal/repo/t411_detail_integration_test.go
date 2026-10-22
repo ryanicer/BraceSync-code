@@ -40,18 +40,19 @@ func TestITT411WearDetailMatchesRollup(t *testing.T) {
 	)
 	seedT352Patient(ctx, t, pool, patient, device)
 
-	// CST 08-15：3 帧佩戴（01/03/05 点，跨度 4h）+ 1 帧未佩戴（峰值 0.01）
+	// 🔴 T733 方案A：pressure_records 铺帧量纲 = mN（3000 mN = 3 N），阈值同量纲（50 mN = 0.05 N）
+	// CST 08-15：3 帧佩戴（01/03/05 点，跨度 4h）+ 1 帧未佩戴（峰值 10 mN < 50 mN）
 	// CST 08-16：单帧佩戴（无跨度可确立）
 	seedT352Frames(ctx, t, pool, patient, device, []t352Frame{
-		{"2026-08-15 01:00:00+08", 3.0, 1.0},
-		{"2026-08-15 03:00:00+08", 2.0, 1.0},
-		{"2026-08-15 05:00:00+08", 1.5, 0.5},
-		{"2026-08-15 20:00:00+08", 0.01, 0.0},
-		{"2026-08-16 08:00:00+08", 4.0, 1.0},
+		{"2026-08-15 01:00:00+08", 3000, 1000},
+		{"2026-08-15 03:00:00+08", 2000, 1000},
+		{"2026-08-15 05:00:00+08", 1500, 500},
+		{"2026-08-15 20:00:00+08", 10, 0},
+		{"2026-08-16 08:00:00+08", 4000, 1000},
 	})
 
 	details, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, patient,
-		t352From, t411To, model.WearingThresholdN)
+		t352From, t411To, model.WearingThresholdMn)
 	require.NoError(t, err)
 
 	// 按 CST 日分桶：两桶，且无帧日不进 map（08-17 不在返回值里）
@@ -66,8 +67,9 @@ func TestITT411WearDetailMatchesRollup(t *testing.T) {
 	assert.InDelta(t, 14400.0, d15.WearSpanSeconds, 1.0, "跨度 = 佩戴帧首尾差（未佩戴帧不参与）")
 
 	// 老口径日均（全帧峰值均值）与现口径日均（佩戴帧全点均值）必须不相等 —— 这是代次可判的一手证据
-	wantAvgCurrent := (3.0 + 19.0 + 2.0 + 19.0 + 1.5 + 19*0.5) / 20.0 / 3.0
-	wantAvgLegacy := (3.0 + 2.0 + 1.5 + 0.01) / 4.0
+	// 🔴 T733：两侧候选同为 mN 口径（现口径 = 佩戴帧全点均值，老口径 = 全帧峰值均值）
+	wantAvgCurrent := (3000.0 + 19000.0 + 2000.0 + 19000.0 + 1500.0 + 19*500.0) / 20.0 / 3.0
+	wantAvgLegacy := (3000.0 + 2000.0 + 1500.0 + 10.0) / 4.0
 	assert.InDelta(t, wantAvgCurrent, d15.AvgPointWearing, 1e-4)
 	assert.InDelta(t, wantAvgLegacy, d15.AvgMaxAll, 1e-4)
 	assert.NotEqual(t, d15.AvgPointWearing, d15.AvgMaxAll,
@@ -79,7 +81,7 @@ func TestITT411WearDetailMatchesRollup(t *testing.T) {
 	legacyMinutes := model.WearMinutesLegacy(d15.WearingFrames, DefaultIntervalMinutes)
 	assert.Equal(t, 90, legacyMinutes, "老口径 = 佩戴帧数×采集间隔，与现口径不同值")
 
-	stats, err := NewRollupRepo(pool).AggregateDate(ctx, t352From, t352To, model.WearingThresholdN)
+	stats, err := NewRollupRepo(pool).AggregateDate(ctx, t352From, t352To, model.WearingThresholdMn)
 	require.NoError(t, err)
 	got := findT352Stat(t, stats, patient)
 	assert.Equal(t, currentMinutes, got.WearMinutes, "读侧复算候选必须等于写侧现口径结果")
@@ -109,33 +111,34 @@ func TestITT411WearDetailThresholdIsParameterized(t *testing.T) {
 		device  = "D-T411-IT2"
 	)
 	seedT352Patient(ctx, t, pool, patient, device)
+	// mN 存储（T733）：与主用例同批帧值
 	seedT352Frames(ctx, t, pool, patient, device, []t352Frame{
-		{"2026-08-15 01:00:00+08", 3.0, 1.0},
-		{"2026-08-15 03:00:00+08", 2.0, 1.0},
-		{"2026-08-15 05:00:00+08", 1.5, 0.5},
-		{"2026-08-15 20:00:00+08", 0.01, 0.0},
+		{"2026-08-15 01:00:00+08", 3000, 1000},
+		{"2026-08-15 03:00:00+08", 2000, 1000},
+		{"2026-08-15 05:00:00+08", 1500, 500},
+		{"2026-08-15 20:00:00+08", 10, 0},
 	})
 
 	base, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, patient,
-		t352From, t352To, model.WearingThresholdN)
+		t352From, t352To, model.WearingThresholdMn)
 	require.NoError(t, err)
 
-	high, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, patient, t352From, t352To, 1.6)
+	high, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, patient, t352From, t352To, 1600) // 1.6 N（mN 口径）
 	require.NoError(t, err)
 
 	require.Contains(t, high, "2026-08-15")
 	d := high["2026-08-15"]
 	assert.Equal(t, 4, d.Frames, "帧总数与阈值无关")
-	assert.Equal(t, 2, d.WearingFrames, "1.5 N 那帧被排除")
+	assert.Equal(t, 2, d.WearingFrames, "峰值 1500 mN（1.5 N）那帧被 1600 mN 阈值排除")
 	assert.InDelta(t, 7200.0, d.WearSpanSeconds, 1.0)
 	assert.Equal(t, 240, WearMinutesFromSpan(d.WearingFrames, d.WearSpanSeconds),
 		"跨度 2h×2/1 = 240 分钟，与 T352 阈值断言同值")
-	assert.InDelta(t, (22.0+21.0)/20.0/2.0, d.AvgPointWearing, 1e-4, "日均只算阈值以上帧")
+	assert.InDelta(t, (22000.0+21000.0)/20.0/2.0, d.AvgPointWearing, 1e-4, "日均只算阈值以上帧（mN）")
 	assert.InDelta(t, base["2026-08-15"].AvgMaxAll, d.AvgMaxAll, 1e-4,
 		"老口径日均无佩戴过滤，不随假设阈值变")
 
 	// 阈值高于所有帧峰值：佩戴集为空 → 跨度/日均归零，但帧数仍在（区别于「未统计」）
-	none, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, patient, t352From, t352To, 99.0)
+	none, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, patient, t352From, t352To, 99000) // 99 N，高于所有帧峰值
 	require.NoError(t, err)
 	assert.Equal(t, 4, none["2026-08-15"].Frames)
 	assert.Zero(t, none["2026-08-15"].WearingFrames)
@@ -156,19 +159,19 @@ func TestITT411WearDetailEmptyDayIsAbsent(t *testing.T) {
 	)
 	seedT352Patient(ctx, t, pool, patient, device)
 	seedT352Frames(ctx, t, pool, patient, device, []t352Frame{
-		{"2026-08-15 01:00:00+08", 3.0, 1.0},
+		{"2026-08-15 01:00:00+08", 3000, 1000}, // mN 存储（T733）
 	})
 
 	// 窗口只含 08-15 一天；相邻日不得出现在返回值里
 	details, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, patient,
-		t352From, t352To, model.WearingThresholdN)
+		t352From, t352To, model.WearingThresholdMn)
 	require.NoError(t, err)
 	require.Len(t, details, 1)
 	assert.NotContains(t, details, "2026-08-16", "窗口外不得凭空多出一天")
 
 	// 完全无帧的患者：空 map（不是含零值的 map）
 	empty, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, "P-T411-NOSUCH",
-		t352From, t411To, model.WearingThresholdN)
+		t352From, t411To, model.WearingThresholdMn)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }

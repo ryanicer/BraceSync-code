@@ -2,13 +2,16 @@
  * T675 — 空载校准纯函数单测
  * 纯函数下沉到 apps/tech-miniapp/src/utils/calibration.ts
  * 覆盖：帧完整性、零点偏移计算、故障哨兵（dead/saturated）、偏移摘要、哨兵文案。
+ *
+ * T733（方案A·单位链）：帧与偏移量全程 **raw mN**（采集/存储零换算），
+ * 故本文件的数字全部改写成 mN 量级（1500 mN = 1.5 N），饱和阈值常量改名 CALIBRATION_SATURATED_MN。
  */
 import { describe, it, expect } from 'vitest'
 import {
   CALIBRATION_FRAME_COUNT,
   CALIBRATION_POINT_COUNT,
   CALIBRATION_FRAME_TIMEOUT_MS,
-  CALIBRATION_SATURATED_N,
+  CALIBRATION_SATURATED_MN,
   isValidCalibrationFrame,
   isCalibrationComplete,
   computeCalibrationOffsets,
@@ -36,8 +39,8 @@ describe('CALIBRATION_* 常量', () => {
   it('帧到达超时 = 10000ms（T675 B513 零帧 10s 看门狗）', () => {
     expect(CALIBRATION_FRAME_TIMEOUT_MS).toBe(10_000)
   })
-  it('哨兵饱和阈值 = 10N（只提示不拦截）', () => {
-    expect(CALIBRATION_SATURATED_N).toBe(10)
+  it('哨兵饱和阈值 = 10000 mN（＝10 N，只提示不拦截；T733 起帧为 mN 空间）', () => {
+    expect(CALIBRATION_SATURATED_MN).toBe(10_000)
   })
 })
 
@@ -106,15 +109,15 @@ describe('computeCalibrationOffsets', () => {
     expect(() => computeCalibrationOffsets(frames)).toThrow(/校准帧不完整/)
   })
   it('任何稳定偏置都如实记录不设偏移量门禁已废除 T675', () => {
-    // 治具应力下空载 P01 约 1.5N 也属正常稳定偏置——以前会被 0.05N 门禁挡掉，现在必须算成功
+    // 治具应力下空载 P01 约 1500 mN（=1.5N）也属正常稳定偏置——以前会被门禁挡掉，现在必须算成功
     const frames = Array(5).fill(null).map(() => {
-      const f = Array(20).fill(0.2)
-      f[0] = 1.5
+      const f = Array(20).fill(200) // 200 mN = 0.2 N
+      f[0] = 1500 // 1500 mN = 1.5 N
       return f
     })
     const offsets = computeCalibrationOffsets(frames)
-    expect(offsets[0]).toBeCloseTo(1.5, 5)
-    expect(offsets[1]).toBeCloseTo(0.2, 5)
+    expect(offsets[0]).toBeCloseTo(1500, 5)
+    expect(offsets[1]).toBeCloseTo(200, 5)
   })
 })
 
@@ -133,9 +136,9 @@ describe('detectCalibrationSentinels', () => {
     expect(result).toContainEqual({ channel: 4, reason: 'dead' })
     expect(result.length).toBe(1)
   })
-  it('饱和超量程 = saturated', () => {
-    const frames = Array(5).fill(null).map(() => Array(20).fill(1))
-    frames[2][7] = 12.5  // 第 3 帧 P08 = 12.5N > 10N
+  it('饱和超量程 = saturated（帧为 mN 空间：12500 mN ＝ 12.5 N > 10000 mN）', () => {
+    const frames = Array(5).fill(null).map(() => Array(20).fill(1000))
+    frames[2][7] = 12500  // 第 3 帧 P08 = 12500 mN（12.5N）> 10000 mN（10N）
     const result = detectCalibrationSentinels(frames)
     expect(result).toContainEqual({ channel: 8, reason: 'saturated' })
     expect(result.length).toBe(1)
@@ -147,13 +150,13 @@ describe('detectCalibrationSentinels', () => {
     expect(result.every((s) => s.reason === 'dead')).toBe(true)
     expect(result.length).toBe(20)
   })
-  it('自定义饱和阈值', () => {
-    // 其他通道给 1N 避免被 dead 捕获
-    const frames = [frameWith(1, 5, 1)]
-    // 默认 10N 阈值下 5N 不触发
+  it('自定义饱和阈值（mN）', () => {
+    // 其他通道给 1000 mN（1N）避免被 dead 捕获
+    const frames = [frameWith(1, 5000, 1000)]
+    // 默认 10000 mN（10N）阈值下 5000 mN 不触发
     expect(detectCalibrationSentinels(frames)).toEqual([])
-    // 阈值改成 4N → 触发 saturated
-    expect(detectCalibrationSentinels(frames, 4)).toContainEqual({ channel: 1, reason: 'saturated' })
+    // 阈值改成 4000 mN（4N）→ 触发 saturated
+    expect(detectCalibrationSentinels(frames, 4000)).toContainEqual({ channel: 1, reason: 'saturated' })
   })
 })
 

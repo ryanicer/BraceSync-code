@@ -8,11 +8,17 @@
  *   1. 校准的目的 = 把任何稳定偏置记为偏移量扣掉，「偏移大」不是失败；
  *   2. 只保留点数完整性校验：5 帧 × 20 点全部收齐（且均为有限数）才算汇总；
  *   3. 故障哨兵只提示、不拦截：通道整轮恒 0（死通道）或读数饱和/明显超量程
- *      （>10N），界面出警示条「通道 X 读数异常，请检查传感器」，但允许继续安装。
+ *      （|读数| > 10000 mN ＝ 10 N），界面出警示条「通道 X 读数异常，请检查传感器」，但允许继续安装。
+ * T733（方案A·单位链收口）：本模块全程 **mN 空间**（B513 raw int16 原值，采集/存储零换算），
+ *   汇总出来的零点偏移量也是 mN，原样 POST /baselines；给技师看的 N / kPa 只在展示层换算一次。
  * 失败要说话：超时/点数不完整由页面侧落到失败面板，禁止静默重试。
  */
 
-/** 校准需要的帧数（B513 以 1Hz 推送，取 5 帧） */
+/**
+ * 校准需要的帧数（B513 以 1Hz 推送，取 5 帧）
+ * 帧口径（T733 方案A）：B513 交付的是 **raw int16 mN**（采集层零换算），
+ * 故本模块的入参/均值偏移/哨兵阈值全部在 mN 空间；换算只发生在展示层（utils/nFromMn 腿）。
+ */
 export const CALIBRATION_FRAME_COUNT = 5
 /** 每帧点数（20 个传感器，P01..P20） */
 export const CALIBRATION_POINT_COUNT = 20
@@ -23,11 +29,12 @@ export const CALIBRATION_POINT_COUNT = 20
  */
 export const CALIBRATION_FRAME_TIMEOUT_MS = 10_000
 /**
- * 故障哨兵饱和阈值（N，只提示不拦截）：任一帧某通道 |读数| 超过该值视为
- * 读数饱和/明显超量程。10N 为 Boss 例示值（固件量程 60N 档），非通过/失败门禁，
- * 仅驱动警示条。
+ * 故障哨兵饱和阈值（**mN 空间**，只提示不拦截）：任一帧某通道 |读数|（mN）超过该值视为
+ * 读数饱和/明显超量程。10000 mN = 10 N（Boss 例示值，N 等价口径），固件量程 60N=60000mN 档；
+ * 非通过/失败门禁，仅驱动警示条。
+ * 改名前此常量叫 CALIBRATION_SATURATED_N = 10——名字声称 N、实际拿去比 mN 帧，是 T733 的坑源之一。
  */
-export const CALIBRATION_SATURATED_N = 10
+export const CALIBRATION_SATURATED_MN = 10_000
 
 /** 故障哨兵原因：dead=整轮恒 0；saturated=饱和/超量程 */
 export type SentinelReason = 'dead' | 'saturated'
@@ -56,7 +63,7 @@ export function isCalibrationComplete(frames: readonly number[][]): boolean {
 }
 
 /**
- * 各通道零点偏移 = 该通道跨帧算术平均（N）。
+ * 各通道零点偏移 = 该通道跨帧算术平均（**mN**，与帧同空间；原样上报 /baselines）。
  * 任何稳定偏置都如实记录、不设偏移量门禁；不完整时响亮失败（不许拿残缺帧算假偏移）。
  */
 export function computeCalibrationOffsets(frames: readonly number[][]): number[] {
@@ -73,21 +80,21 @@ export function computeCalibrationOffsets(frames: readonly number[][]): number[]
 }
 
 /**
- * 故障哨兵检测（提示但放行）：
+ * 故障哨兵检测（提示但放行）——入参帧为 **mN** 原值：
  * - dead：该通道整轮每帧恒为 0；
- * - saturated：该通道任一帧 |读数| > saturatedN。
+ * - saturated：该通道任一帧 |读数| > saturatedMn（默认 10000 mN ＝ 10 N）。
  * 恒 0 与超量程互斥（0 不超量程），按事实归一档。
  */
 export function detectCalibrationSentinels(
   frames: readonly number[][],
-  saturatedN: number = CALIBRATION_SATURATED_N,
+  saturatedMn: number = CALIBRATION_SATURATED_MN,
 ): CalibrationSentinel[] {
   const out: CalibrationSentinel[] = []
   for (let p = 0; p < CALIBRATION_POINT_COUNT; p++) {
     const values = frames.map((f) => f[p])
     if (values.length > 0 && values.every((v) => v === 0)) {
       out.push({ channel: p + 1, reason: 'dead' })
-    } else if (values.some((v) => Math.abs(v) > saturatedN)) {
+    } else if (values.some((v) => Math.abs(v) > saturatedMn)) {
       out.push({ channel: p + 1, reason: 'saturated' })
     }
   }
@@ -95,11 +102,11 @@ export function detectCalibrationSentinels(
 }
 
 export interface CalibrationOffsetSummary {
-  /** 最大绝对偏移（N） */
+  /** 最大绝对偏移（mN，与 offsets 同空间；渲染前才换 N） */
   maxAbs: number
   /** 最大绝对偏移所在通道（1-based） */
   maxChannel: number
-  /** 20 通道绝对偏移均值（N） */
+  /** 20 通道绝对偏移均值（mN） */
   meanAbs: number
 }
 

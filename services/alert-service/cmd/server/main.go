@@ -9,6 +9,9 @@
 //  5. T010：/internal/evaluate 内联评估接口（data-service 直连）+ alert:pending
 //     常驻消费者补偿评估（幂等；>1h 积压帧仅补记录不推送）+ /metrics 观测端点
 //
+// 单位口径（T733 方案A）：帧压力与 sys_configs 压力阈值全链路 **mN**（入站/存储/评估零换算）；
+// N 只在 HTTP 展示响应层出现（handler displayValueN ÷config.MnPerN）。
+//
 // 环境变量（对齐 scripts/deploy/docker-compose.yml）：
 //
 //	DB_URL           PostgreSQL DSN
@@ -82,7 +85,9 @@ func main() {
 	}
 
 	// 阈值配置统一入口（T009）：从 sys_configs 读取 + 联动校验（PRD §7D.12）。
-	// 加载失败（校验拒绝/DB 不可达）时保持引擎默认口径（45N/60min/2.8N）并记录错误，
+	// 压力量纲键值与帧压力同为 **mN**（T733 方案A），读取→注入引擎全程不换算；
+	// 日志字段一律 *_mn 后缀，避免再出现「字段名说 N、值其实是 mN」的 1000 倍歧义。
+	// 加载失败（校验拒绝/DB 不可达）时保持引擎默认口径（45000mN/60min/300mN）并记录错误，
 	// 后续每轮扫描前重试热刷新，配置修复后无需重启即生效。
 	eval := engine.NewDefaultRuleEvaluator()
 	// 同一个 repo 实现两份契约：sys_configs 阈值（Store）+ alert_point_rules 逐点规则（PointRuleStore）
@@ -94,14 +99,14 @@ func main() {
 	} else {
 		loadedTh = t
 		log.Info().
-			Float64("pressure_high_n", t.PressureHighN).
+			Float64("pressure_high_mn", t.PressureHighMn).
 			Float64("fluctuation_pct", t.FluctuationPct).
 			Int("wear_interrupt_min", t.WearInterruptMinutes).
-			Float64("sensor_drift_n", t.SensorDriftN).
-			Float64("wearing_n", t.WearingN).
+			Float64("sensor_drift_mn", t.SensorDriftMn).
+			Float64("wearing_mn", t.WearingMn).
 			Int("collect_interval_min", t.CollectIntervalMinutes).
 			Float64("wear_target_hours", t.WearTargetHours).
-			Msg("alert threshold config loaded")
+			Msg("alert threshold config loaded (pressure fields in mN)")
 	}
 
 	// T653：告警入库后按「类型↔模板绑定」自动建流程实例的服务间客户端（三条告警路径共用；
@@ -148,8 +153,8 @@ func main() {
 		notifier,
 	)
 	cons.SetLogger(log.Logger)
-	if loadedTh.WearingN > 0 {
-		cons.SetWearingThreshold(loadedTh.WearingN)
+	if loadedTh.WearingMn > 0 {
+		cons.SetWearingThreshold(loadedTh.WearingMn)
 	}
 	cons.SetFlowStarter(flowStarter) // T653：补偿队列告警自动建实例
 
@@ -163,8 +168,8 @@ func main() {
 	h.SetFlowStarter(flowStarter)   // T653：内联告警自动建实例
 	h.SetProcessGuard(processGuard) // T668：告警处理节点执法
 	h.SetQuickRouter(quickRouter)   // 677：快处有绑定强制转流程
-	if loadedTh.WearingN > 0 {
-		h.SetWearingThreshold(loadedTh.WearingN) // T661 H 项：启动配置的佩戴阈值先注内联链路
+	if loadedTh.WearingMn > 0 {
+		h.SetWearingThreshold(loadedTh.WearingMn) // T661 H 项：启动配置的佩戴阈值先注内联链路
 	}
 
 	// 调度：每 5min（Asia/Shanghai），启动即补跑一轮
@@ -173,12 +178,13 @@ func main() {
 		// 扫描前热刷新阈值（缓存过期自动重读 sys_configs = 热更新生效，引擎读最新值）；
 		// 刷新失败（校验拒绝/DB 不可达）保持上一份生效值，不阻塞本轮扫描。
 		// T173：佩戴阈值经 cons.SetWearingThreshold 随 cfgMgr 热更新注入补偿评估链路。
+		// T733：注入值是 mN（键已迁 mN），与帧压力同量纲，注入路径零换算。
 		if t, cfgErr := cfgMgr.Refresh(scanCtx, eval); cfgErr != nil {
 			log.Error().Err(cfgErr).Msg("alert threshold config hot refresh failed, keep previous effective values")
 		} else {
-			cons.SetWearingThreshold(t.WearingN)
-			h.SetWearingThreshold(t.WearingN) // T661 H 项：内联链路与补偿链路同注一枚佩戴阈值
-			log.Info().Float64("wearing_n", t.WearingN).Msg("wearing threshold injected into inline handler and pending consumer")
+			cons.SetWearingThreshold(t.WearingMn)
+			h.SetWearingThreshold(t.WearingMn) // T661 H 项：内联链路与补偿链路同注一枚佩戴阈值
+			log.Info().Float64("wearing_mn", t.WearingMn).Msg("wearing threshold (mN) injected into inline handler and pending consumer")
 		}
 		report, scanErr := scan.Scan(scanCtx)
 		if scanErr != nil {

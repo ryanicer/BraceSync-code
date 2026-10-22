@@ -54,7 +54,8 @@ func newTestHandler(alerts *fakeAlerts, notifier consumer.Notifier) *Handler {
 	return New(engine.NewDefaultRuleEvaluator(), alerts, notifier)
 }
 
-// evalBody 构造 /internal/evaluate 请求体（与 data-service AlertEvalRequest 字段一致）
+// evalBody 构造 /internal/evaluate 请求体（与 data-service AlertEvalRequest 字段一致）。
+// maxPressure 单位为 **mN**（T733 方案A：入站原值，与 mN 阈值同量纲比较）。
 func evalBody(t *testing.T, deviceID, patientID string, ts time.Time, maxPressure float64) []byte {
 	t.Helper()
 	points := make([]float64, 20)
@@ -88,7 +89,7 @@ func TestEvaluate_HitCreatesAlertAndReturnsResult(t *testing.T) {
 	h := newTestHandler(alerts, notifier)
 	ts := time.Now().Add(-time.Minute).UTC()
 
-	rec := doPost(h, evalBody(t, "DEV1", "P1", ts, 50.0))
+	rec := doPost(h, evalBody(t, "DEV1", "P1", ts, 50000.0))
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var resp respEnvelope
@@ -110,7 +111,7 @@ func TestEvaluate_MissReturnsShouldAlertFalse(t *testing.T) {
 	alerts := &fakeAlerts{}
 	h := newTestHandler(alerts, nil)
 
-	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().UTC(), 20.0))
+	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().UTC(), 20000.0))
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var resp respEnvelope
@@ -152,7 +153,7 @@ func TestEvaluate_PersistFailureReturnsNonZeroCode(t *testing.T) {
 	alerts := &fakeAlerts{createErr: errors.New("pg down")}
 	h := newTestHandler(alerts, nil)
 
-	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().UTC(), 50.0))
+	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().UTC(), 50000.0))
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 
 	var resp respEnvelope
@@ -162,7 +163,7 @@ func TestEvaluate_PersistFailureReturnsNonZeroCode(t *testing.T) {
 	// 唯一约束保底场景（created=false）仍视为成功响应
 	alerts2 := &fakeAlerts{createFalse: true}
 	h2 := newTestHandler(alerts2, nil)
-	rec = doPost(h2, evalBody(t, "DEV1", "P1", time.Now().UTC(), 50.0))
+	rec = doPost(h2, evalBody(t, "DEV1", "P1", time.Now().UTC(), 50000.0))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Equal(t, 0, resp.Code)

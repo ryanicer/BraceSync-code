@@ -6,8 +6,9 @@
 
 import { bleLog } from './ble-log'
 import { formatB512FrameLog, parseB512Frame } from './b512-frame'
+// T733 方案A：B513 帧解码下沉为纯函数模块（采集层零换算，只还原 raw int16 mN）
+import { B513_FRAME_BYTES, decodeB513Frame } from './b513-frame'
 import { logErrorText } from '@bracesync/shared-utils'
-import { MN_PER_N } from '@bracesync/constants'
 
 // 检查是否在 H5 环境（BLE 不可用）
 function isH5(): boolean {
@@ -628,14 +629,16 @@ function invalidateRealtimeSubscription(reason: string): void {
 
 /**
  * 启动 BLE 实时压力推送
- * 协议：向 B513 特征 Write 0x01 启动 Notify，固件以 1Hz 推送 20×int16 小端（有符号，值 = mN，T173 权威口径）。
- * 解析：raw（mN）/ 1000 → number[20]（单位 N）。
+ * 协议：向 B513 特征 Write 0x01 启动 Notify，固件（1.9）以 1Hz 推送 20×int16 小端（有符号，**值 = mN**，T173 权威口径）。
+ * 解析（T733 方案A）：解码即交付 raw mN（number[20] 原样 mN），🔴 采集层零换算——
+ *   旧这里除了 ÷1000（让校准基线落 N 空间、设备帧落 mN 空间，两半对不齐），换算已挪到展示层 `nFromMn`。
+ * 解码实现：utils/b513-frame.ts（纯函数，可在 vitest 直接测）。
  */
 export async function startRealtimePressure(deviceId: string): Promise<void> {
   if (isH5()) {
-    // H5 mock：每秒推送 20 个接近 0 的随机小数（模拟空载）
+    // H5 mock：每秒推送 20 个接近 0 的随机值（模拟空载）——口径与真机一致＝raw mN（±150 mN ≈ ±0.15 N）
     realtimeTimer = setInterval(() => {
-      const frame = Array.from({ length: 20 }, () => Math.random() * 0.3 - 0.15)
+      const frame = Array.from({ length: 20 }, () => Math.round(Math.random() * 300 - 150))
       realtimeCallback?.(frame)
     }, 1000)
     return
@@ -659,19 +662,16 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
         }
         bleLog.info(`B513 收到 ${bytes.length}B，缓冲区=${realtimeBuffer.length}B`)
         // 凑够 40 字节解析一帧
-        while (realtimeBuffer.length >= 40) {
-          const frameBytes = realtimeBuffer.splice(0, 40)
-          const frame: number[] = []
-          const rawSigned: number[] = []
-          for (let i = 0; i < 20; i++) {
-            const raw = frameBytes[i * 2] | (frameBytes[i * 2 + 1] << 8)
-            const signed = raw > 32767 ? raw - 65536 : raw
-            rawSigned.push(signed)
-            frame.push(signed / MN_PER_N)
+        while (realtimeBuffer.length >= B513_FRAME_BYTES) {
+          const frameBytes = realtimeBuffer.splice(0, B513_FRAME_BYTES)
+          // T733 方案A：采集层零换算——解码出的 raw int16（mN）原样交付，不 ÷1000
+          const frame = decodeB513Frame(frameBytes)
+          if (!frame) {
+            bleLog.warn('B513 帧解码返回空（不足 40 字节），丢弃本帧残包')
+            continue
           }
           // T173-dbg：原始 int16（mN）观测日志——供核对设备上报口径，勿删
-          bleLog.info(`B513 raw mN P01..P05=[${rawSigned.slice(0, 5).join(',')}] rawAll=[${rawSigned.join(',')}]`)
-          bleLog.info(`B513 解析一帧 P01..P05=${frame.slice(0, 5).map((v) => v.toFixed(3)).join(',')}N`)
+          bleLog.info(`B513 raw mN P01..P05=[${frame.slice(0, 5).join(',')}] rawAll=[${frame.join(',')}]`)
           realtimeCallback?.(frame)
         }
       } catch (e) {

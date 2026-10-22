@@ -219,7 +219,8 @@ func TestListAlerts_DTOMapping(t *testing.T) {
 		total: 1,
 		rows: []repo.AlertRow{{
 			AlertID: 42, PatientID: "P001", PatientName: "林小雨", DeviceID: "DEV01", Type: "pressure_high",
-			Detail: "P03 超阈值", SensorPoint: "P03", ThresholdValue: 45, ActualValue: 52.5,
+			// 库内压力量纲按 mN 存（T733 方案A），响应出口转 N：45000mN→45、52500mN→52.5
+			Detail: "P03 超阈值", SensorPoint: "P03", ThresholdValue: 45000, ActualValue: 52500,
 			Ts: ts, ReadStatus: "unread", ProcessStatus: "processed", ResolvedStatus: "active",
 			ResolvedAt: &resolvedAt, ProcessedBy: &by, ProcessedAt: &processedAt, ProcessNote: &note,
 		}},
@@ -238,8 +239,9 @@ func TestListAlerts_DTOMapping(t *testing.T) {
 	assert.Equal(t, "DEV01", item.DeviceID)
 	assert.Equal(t, "pressure_high", item.Type)
 	assert.Equal(t, "P03", item.SensorPoint)
-	assert.InDelta(t, 45.0, item.ThresholdValue, 0.001)
-	assert.InDelta(t, 52.5, item.ActualValue, 0.001)
+	// T733 方案A 展示出口：pressure_high 的阈值/实际值 ÷config.MnPerN（mN→N）
+	assert.InDelta(t, 45.0, item.ThresholdValue, 0.001, "mN 存储值出口转 N")
+	assert.InDelta(t, 52.5, item.ActualValue, 0.001, "mN 存储值出口转 N")
 	assert.Equal(t, "2026-08-11T06:30:00Z", item.Timestamp)
 	assert.Equal(t, "unread", item.ReadStatus)
 	assert.Equal(t, "processed", item.ProcessStatus)

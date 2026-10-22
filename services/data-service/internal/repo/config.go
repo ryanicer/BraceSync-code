@@ -40,10 +40,11 @@ const (
 	configCacheTTL         = 60 * time.Second // 配置读缓存，避免逐帧查库
 )
 
-// sys_configs 阈值键（与 scripts/db/seed/seed.sql 一致；值均为占位。
-// T719 提醒：入口去 ÷1000 后 points 原样为牛顿 N，现默认阈值（如 threshold_pressure_high=5N、
-// heatmap_max_n=6N）相对真机施力（Boss 实测 ~16N→kPa≈259）明显偏低，会致每帧判高压/热力图满档；
-// 阈值重标属产品口径（Boss/Peter 定值），本卡不改数值，仅标注待重标）
+// sys_configs 阈值键（与 scripts/db/seed/seed.sql 一致）。
+// 🔴 T733 方案A：帧值存储语义 = 原始 mN，故这些键的**库存值同属 mN 空间**
+// （migration 000041 把 5/6/1/0.05/0.3/0.05 六枚 ×1000 成 5000/6000/1000/50/300/50）。
+// 键名里的 `_n` 后缀（heatmap_max_n）是历史包袱，改名会动配置面属架构级，本卡不改键名只改量纲，
+// 值语义以本注释与 PRD §7D.12 为准。阈值重新标定（Boss 真机施力量级）仍属产品口径，另行递号。
 const (
 	keyWearingThreshold = "wearing_pressure_threshold"
 	keyHeatmapMax       = "heatmap_max_n"
@@ -90,10 +91,13 @@ func (r *ConfigRepo) load(ctx context.Context) (configSnapshot, error) {
 		th:       model.DefaultPressureThresholds(),
 	}
 
+	// T733 顺手补：IN 列表原先漏 threshold_pressure_low，而 applyConfigValue 有该分支
+	// ⇒ 低压边界配置从未生效，患者端 hero「正常范围」下界（T601）一直吃默认值。
 	rows, err := r.pool.Query(ctx,
 		`SELECT config_key, config_value FROM sys_configs WHERE config_key IN
 		 ('collect_interval_minutes','device_config_version',
-		  'wearing_pressure_threshold','heatmap_max_n','threshold_pressure_high')`)
+		  'wearing_pressure_threshold','heatmap_max_n','threshold_pressure_high',
+		  'threshold_pressure_low')`)
 	if err != nil {
 		return snap, err
 	}
@@ -146,19 +150,19 @@ func applyConfigValue(key, value string, snap *configSnapshot) {
 		}
 	case keyWearingThreshold:
 		if v, err := strconv.ParseFloat(value, 64); err == nil && v > 0 {
-			snap.th.WearingN = v
+			snap.th.WearingMn = v
 		}
 	case keyHeatmapMax:
 		if v, err := strconv.ParseFloat(value, 64); err == nil && v > 0 {
-			snap.th.HeatmapMaxN = v
+			snap.th.HeatmapMaxMn = v
 		}
 	case keyPressureHigh:
 		if v, err := strconv.ParseFloat(value, 64); err == nil && v > 0 {
-			snap.th.PressureHighN = v
+			snap.th.PressureHighMn = v
 		}
 	case keyPressureLow:
 		if v, err := strconv.ParseFloat(value, 64); err == nil && v > 0 {
-			snap.th.PressureLowN = v
+			snap.th.PressureLowMn = v
 		}
 	}
 }

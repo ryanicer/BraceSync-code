@@ -104,6 +104,12 @@ test.describe('安装流程 3 阶段', () => {
     // 20 格偏移矩阵
     const cells = page.locator('.pressure-cell')
     await expect(cells).toHaveCount(20)
+    // T733 方案A 量级钉：偏移量存的是 raw mN（mock ±150），完成态矩阵必须显示换过 N 的亚牛顿值。
+    // 展示层漏 ÷1000（或采集层被人把换算加回来）时，格子会写成「150.00」——这条先响。
+    for (let i = 0; i < 20; i++) {
+      const txt = (await cells.nth(i).textContent()) ?? ''
+      expect(Math.abs(Number(txt)) <= 0.2, `P${String(i + 1).padStart(2, '0')} 显示值「${txt}」不是 N 量级（疑为 raw mN 直接上屏）`).toBe(true)
+    }
     // T678：废范围门禁，只留点数完整性校验；偏移量如实记录（治具应力下偏大亦正常，不设通过阈值）
     await expect(page.getByText('数据点数：100/100（5 帧 × 20 点）')).toBeVisible()
     await expect(page.getByText('偏移量为空载稳定偏置实测值（治具应力下偏大亦正常），将从后续读数中扣除，不再设通过阈值')).toBeVisible()
@@ -116,7 +122,7 @@ test.describe('安装流程 3 阶段', () => {
     await page.locator('.unit-seg-btn', { hasText: 'kPa' }).click()
     await page.locator('.btn-primary', { hasText: '开始校准' }).click()
 
-    // 采集中：矩阵整数 kPa（mock 帧 ±0.15N 随机，含负值归零的 0），统计行带 kPa 字母
+    // 采集中：矩阵整数 kPa（T733 mock 帧＝raw mN ±150，换 N 后 ±0.15，含负值归零的 0），统计行带 kPa 字母
     await expect(page.getByText(COLLECTING_ANY_FRAME)).toBeVisible({ timeout: 10_000 })
     const cells = page.locator('.pressure-cell')
     await expect(cells).toHaveCount(20)

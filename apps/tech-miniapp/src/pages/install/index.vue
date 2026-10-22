@@ -48,7 +48,7 @@
           <view class="chip-row">
             <view class="data-source-chip ds-ble"><text class="chip-dot"></text><text>BLE 实时</text></view>
             <view class="data-source-chip ds-cloud"><text class="chip-dot"></text><text>云端保存</text></view>
-            <!-- T662 格2：校准矩阵 N/kPa 展示档切换（纯展示层，存储/判定仍全 N） -->
+            <!-- T662 格2：校准矩阵 N/kPa 展示档切换（纯展示层；T733 方案A 起采集/存储全 raw mN，判定按换算后的 N） -->
             <view class="unit-seg">
               <view
                 v-for="u in PRESSURE_UNITS"
@@ -105,7 +105,7 @@
           </view>
           <view class="pressure-grid">
             <view
-              v-for="(v, i) in displayFrame"
+              v-for="(v, i) in displayFrameMn"
               :key="i"
               :class="['pressure-cell', 'lvl-' + pressureLevel(v)]"
             >
@@ -147,7 +147,7 @@
           </view>
           <view class="pressure-grid">
             <view
-              v-for="(v, i) in offsetValues"
+              v-for="(v, i) in offsetValuesMn"
               :key="i"
               :class="['pressure-cell', 'lvl-' + pressureLevel(v)]"
             >
@@ -155,8 +155,9 @@
             </view>
           </view>
           <view v-if="offsetSummary" class="stat-row">
-            <text class="stat-item">最大 |偏移|: {{ offsetSummary.maxAbs.toFixed(2) }}N（P{{ String(offsetSummary.maxChannel).padStart(2, '0') }}）</text>
-            <text class="stat-item">均值: {{ offsetSummary.meanAbs.toFixed(2) }}N</text>
+            <!-- T733：offsets 存 mN，此处是唯一展示换算点（mnToNText＝nFromMn + 两位小数） -->
+            <text class="stat-item">最大 |偏移|: {{ mnToNText(offsetSummary.maxAbs) }}N（P{{ String(offsetSummary.maxChannel).padStart(2, '0') }}）</text>
+            <text class="stat-item">均值: {{ mnToNText(offsetSummary.meanAbs) }}N</text>
           </view>
           <view class="checks-block">
             <view class="check-item">
@@ -252,9 +253,10 @@ import {
   userErrorCopy,
   PRESSURE_UNITS,
   DEFAULT_SENSOR_AREA_CM2,
-  kpaFromN,
 } from '@bracesync/shared-utils'
 import type { PressureUnit } from '@bracesync/shared-utils'
+// T733 方案A：矩阵所有数字的唯一展示层换算出口（入参一律 mN 原值）
+import { calibCellText as cellTextMn, calibStatText as statTextMn, calibPressureLevel, mnToNText } from '../../utils/pressureDisplay'
 import { useAuthStore } from '../../stores/auth'
 import { useInstallStore } from '../../stores/install'
 import { useDeviceStore } from '../../stores/device'
@@ -315,9 +317,10 @@ const calibError = ref('')
 
 const frameCount = ref(0)
 let frameTimer: ReturnType<typeof setTimeout> | null = null
+// T733 方案A：帧与偏移量全程 raw mN（B513 采集层零换算；POST /baselines 也拿这个原值）
 const collectedFrames: number[][] = []
-const offsetValues = ref<number[]>(Array(20).fill(0))
-const displayFrame = ref<number[]>(Array(20).fill(0))
+const offsetValuesMn = ref<number[]>(Array(20).fill(0))
+const displayFrameMn = ref<number[]>(Array(20).fill(0))
 const calibrationChecks = ref({ pointCount: false })
 const collectedPointCount = ref(0)
 const sentinels = ref<CalibrationResult['sentinels']>([])
@@ -325,30 +328,29 @@ const sentinelText = computed(() => calibrationSentinelText(sentinels.value))
 const offsetSummary = ref<ReturnType<typeof summarizeCalibrationOffsets> | null>(null)
 
 const calibrationProgress = computed(() => Math.min(100, (frameCount.value / CALIBRATION_FRAME_COUNT) * 100))
-const statAvg = computed(() => average(displayFrame.value))
-const statMax = computed(() => max(displayFrame.value))
+// 统计量在 mN 空间算（同空间求均值/最大值），渲染时才换 N/kPa
+const statAvg = computed(() => average(displayFrameMn.value))
+const statMax = computed(() => max(displayFrameMn.value))
 
 // ===== T662 格2：校准矩阵 N/kPa 展示档切换 =====
-// 纯展示层：采集、offsets 计算、范围校验、saveBaseline 上报全用 N（与格1b 告警页同思路），
-// 档位只决定数字怎么写。面积兜底 DEFAULT_SENSOR_AREA_CM2 —— install 上下文无
-// contact_area_cm2（bind 时置 null，见 bind/index.vue T508 注记），按 pressureConversion.ts
-// 顶部约束第 5 条登记为「默认面积兜底」。判色 pressureLevel 恒按 N，不随档（PRD 裁定 4）。
+// 纯展示层：采集（raw mN）、offsets 计算、POST /baselines 上报全在 mN 空间，
+// 档位只决定数字怎么写——写几位数、写 N 还是 kPa，都在 utils/pressureDisplay.ts 这一处换算
+// （mN →N 走 nFromMn，N → kPa 走 kpaFromN，与后端 model.KpaFromN 同公式）。
+// 面积兜底 DEFAULT_SENSOR_AREA_CM2 —— install 上下文无 contact_area_cm2（bind 时置 null，
+// 见 bind/index.vue T508 注记），按 pressureConversion.ts 顶部约束第 5 条登记为「默认面积兜底」。
+// 判色恒按 N、不随档（PRD 裁定 4）。
 const calibUnit = ref<PressureUnit>('N')
 const CAL_AREA_CM2 = DEFAULT_SENSOR_AREA_CM2
-const isCalibKpa = computed(() => calibUnit.value === 'kPa')
 function setCalibUnit(u: PressureUnit) {
   calibUnit.value = u
 }
-// 矩阵单元格：N 档 2 位小数（本页既有口径）；kPa 档整数（同源派生取整，与格1b 一致）
-function calibCellText(n: number): string {
-  if (!isCalibKpa.value) return n.toFixed(2)
-  return String(kpaFromN(n, CAL_AREA_CM2) ?? '--')
+// 矩阵单元格（入参 mN）：N 档 2 位小数（本页既有口径）；kPa 档整数
+function calibCellText(mn: number): string {
+  return cellTextMn(mn, calibUnit.value, CAL_AREA_CM2)
 }
-// 统计行带单位字母
-function calibStatText(n: number): string {
-  if (!isCalibKpa.value) return `${n.toFixed(2)}N`
-  const k = kpaFromN(n, CAL_AREA_CM2)
-  return k === null ? '--' : `${k}kPa`
+// 统计行（入参 mN）：带单位字母
+function calibStatText(mn: number): string {
+  return statTextMn(mn, calibUnit.value, CAL_AREA_CM2)
 }
 
 // 裁定⑥（Boss 2026-09-28）＋稿面 T449·TI-6：「重新采集」只挂在采集中态，
@@ -366,19 +368,14 @@ function max(arr: number[]): number {
   if (!arr.length) return 0
   return Math.max(...arr)
 }
-function pressureLevel(v: number): number {
-  const abs = Math.abs(v)
-  if (abs < 0.5) return 0
-  if (abs < 1) return 1
-  if (abs < 2) return 2
-  if (abs < 5) return 3
-  if (abs < 10) return 4
-  if (abs < 20) return 5
-  return 6
+// 判色：入参 mN，档位阈值恒按 N（换算在 pressureDisplay.calibPressureLevel 里做，不随 N/kPa 档）
+function pressureLevel(mn: number): number {
+  return calibPressureLevel(mn)
 }
 
 function onFrame(frame: number[]) {
-  displayFrame.value = frame
+  // 入参帧＝raw mN（T733 方案A：采集层零换算），原样上屏与入库
+  displayFrameMn.value = frame
   if (calibState.value !== 'collecting') return
   if (!isValidCalibrationFrame(frame)) {
     // 残缺帧不收（不静默补 0 凑点数），继续等下一帧；看门狗到点仍不足就报失败
@@ -424,8 +421,8 @@ async function startCalibration() {
   frameCount.value = 0
   calibrationChecks.value = { pointCount: false }
   collectedPointCount.value = 0
-  offsetValues.value = Array(20).fill(0)
-  displayFrame.value = Array(20).fill(0)
+  offsetValuesMn.value = Array(20).fill(0)
+  displayFrameMn.value = Array(20).fill(0)
   sentinels.value = []
   offsetSummary.value = null
   onRealtimeFrame(onFrame)
@@ -493,32 +490,34 @@ async function finalizeCalibration() {
     return
   }
 
-  // 偏移量（任何稳定偏置都如实记录，不再设偏移量门禁）
-  const offsets = computeCalibrationOffsets(collectedFrames)
-  offsetValues.value = offsets
-  offsetSummary.value = summarizeCalibrationOffsets(offsets)
+  // 偏移量（raw mN，任何稳定偏置都如实记录，不再设偏移量门禁）——落库/上报都用这个原值
+  const offsetsMn = computeCalibrationOffsets(collectedFrames)
+  offsetValuesMn.value = offsetsMn
+  offsetSummary.value = summarizeCalibrationOffsets(offsetsMn)
 
-  // 故障哨兵（只提示不拦截）
+  // 故障哨兵（只提示不拦截；阈值 CALIBRATION_SATURATED_MN 同为 mN 空间）
   const sent = detectCalibrationSentinels(collectedFrames)
   sentinels.value = sent
 
   bleLog.info(
     `T675 校准汇总：frames=${collectedFrames.length} points=${collectedPointCount.value} ` +
-    `maxAbs=${offsetSummary.value.maxAbs.toFixed(4)}N sentinels=${sent.length}`,
+    `maxAbs=${offsetSummary.value.maxAbs.toFixed(0)}mN(${mnToNText(offsetSummary.value.maxAbs)}N) sentinels=${sent.length}`,
   )
 
   const result: CalibrationResult = {
-    offsetValues: offsets,
+    // 字段名 offsetValues 是 API 契约（后端的事），值为 raw mN
+    offsetValues: offsetsMn,
     checks: { ...calibrationChecks.value },
     sentinels: sent.map((s) => ({ channel: s.channel, reason: s.reason })),
   }
   installStore.setCalibrationData(result)
 
   // 保存基线（规矩 A：单次权威校准；重复保存后端 409 → 友好提示）
+  // 🔴 T733 方案A：上报 raw mN 原值（存储层零换算），展示层才 ÷1000
   try {
     const bs = await saveBaseline(
       installStore.installId!,
-      offsets,
+      offsetsMn,
       installStore.deviceId
     )
     installStore.setBaselineSaved(bs.baselineId)

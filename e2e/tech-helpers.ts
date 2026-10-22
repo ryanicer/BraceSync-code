@@ -180,12 +180,14 @@ export async function readFirmwareVersion(deviceId) {
 }
 
 // ===== 实时压力推送 mock（1Hz，20 点接近 0 的随机值）=====
+// T733 方案A：口径与真机一致＝**raw mN**（±150 mN ≈ ±0.15 N），采集/存储零换算，
+// 页面渲染时才 ÷1000 —— mock 若还发 N 量级，就等于替实现藏了一条采集层换算腿。
 let realtimeTimer = null
 let realtimeCallback = null
 
 export async function startRealtimePressure(deviceId) {
   realtimeTimer = setInterval(() => {
-    const frame = Array.from({ length: 20 }, () => Math.random() * 0.3 - 0.15)
+    const frame = Array.from({ length: 20 }, () => Math.round(Math.random() * 300 - 150))
     realtimeCallback && realtimeCallback(frame)
   }, 1000)
 }

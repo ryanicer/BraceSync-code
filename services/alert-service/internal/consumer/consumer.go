@@ -41,18 +41,21 @@ const (
 // PointCount 压力帧点数（与 data-service model.PointCount 契约一致）
 const PointCount = 20
 
-// DefaultWearingThresholdN 佩戴判定阈值默认值（T203 ÷10 后 0.05N）。
-// 🔴 生产生效值走 sys_configs `wearing_pressure_threshold`（config.Thresholds.WearingN，
+// DefaultWearingThresholdMn 佩戴判定阈值默认值，单位 **mN**（T203 ÷10 定 0.05N；
+// T733 方案A 量纲收口 0.05N → 50mN，与本包帧压力 Points 同量纲）。
+// 🔴 生产生效值走 sys_configs `wearing_pressure_threshold`（config.Thresholds.WearingMn，
 // SetWearingThreshold 注入），本常量仅作配置缺失兜底。
-const DefaultWearingThresholdN = 0.05
+const DefaultWearingThresholdMn = 50
 
 // FrameRef 帧引用（跨服务契约：与 data-service AlertEvalRequest / 队列负载 frame 字段一致）。
 // 体积小：device_id + timestamp + 20 点值，不含全量记录。
+// 🔴 Points 单位为 **mN**（固件 1.9 原值，data-service 入站不再 ÷1000；T733 方案A：
+// alert:pending 队列负载与内联请求同为 mN，本服务原样送引擎比较，链路零换算）。
 type FrameRef struct {
 	DeviceID   string    `json:"device_id"`
 	PatientID  string    `json:"patient_id"`
 	Timestamp  time.Time `json:"timestamp"`
-	Points     []float64 `json:"points"`
+	Points     []float64 `json:"points"` // mN
 	UploadTime time.Time `json:"upload_time"`
 	IsBackfill bool      `json:"is_backfill"`
 	// IngestSource 数据来源印章（T498，与 data-service AlertEvalRequest 同名字段）。
@@ -66,25 +69,26 @@ type PendingItem struct {
 	Frame    FrameRef  `json:"frame"`
 }
 
-// ToPressureFrame 帧引用 → 引擎输入。Wearing 按 PRD §8.1 由最大压力推导（默认占位阈值）。
+// ToPressureFrame 帧引用 → 引擎输入。Wearing 按 PRD §8.1 由最大压力推导
+// （默认兜底阈值 50mN，量纲与 Points 同为 mN，比较不换算）。
 func (f FrameRef) ToPressureFrame() (engine.PressureFrame, error) {
-	return f.ToPressureFrameWithThreshold(DefaultWearingThresholdN)
+	return f.ToPressureFrameWithThreshold(DefaultWearingThresholdMn)
 }
 
-// ToPressureFrameWithThreshold 用调用方注入的佩戴阈值推导 Wearing。
-// T661（T621 §4.3 H 项）：内联评估链路原来只走 DefaultWearingThresholdN，
+// ToPressureFrameWithThreshold 用调用方注入的佩戴阈值（**mN**）推导 Wearing。
+// T661（T621 §4.3 H 项）：内联评估链路原来只走 DefaultWearingThresholdMn，
 // 运营在 sys_configs 改 wearing_pressure_threshold 后内联判定不生效；
 // 现由 alert-service 装配侧（Handler/Consumer）经配置热更新注入同一枚生效值。
 // 传非正值（未注入/配置缺失）回退默认兜底，语义与补偿链路一致。
-func (f FrameRef) ToPressureFrameWithThreshold(wearingThresholdN float64) (engine.PressureFrame, error) {
-	if wearingThresholdN <= 0 {
-		wearingThresholdN = DefaultWearingThresholdN
+func (f FrameRef) ToPressureFrameWithThreshold(wearingThresholdMn float64) (engine.PressureFrame, error) {
+	if wearingThresholdMn <= 0 {
+		wearingThresholdMn = DefaultWearingThresholdMn
 	}
-	return f.toPressureFrame(wearingThresholdN)
+	return f.toPressureFrame(wearingThresholdMn)
 }
 
-// toPressureFrame 佩戴阈值可注入的内部实现（T173 可配置化）
-func (f FrameRef) toPressureFrame(wearingThresholdN float64) (engine.PressureFrame, error) {
+// toPressureFrame 佩戴阈值可注入的内部实现（T173 可配置化；入参为 mN，与 Points 同量纲）
+func (f FrameRef) toPressureFrame(wearingThresholdMn float64) (engine.PressureFrame, error) {
 	frame := engine.PressureFrame{
 		DeviceID:   f.DeviceID,
 		PatientID:  f.PatientID,
@@ -102,7 +106,7 @@ func (f FrameRef) toPressureFrame(wearingThresholdN float64) (engine.PressureFra
 			maxP = p
 		}
 	}
-	frame.Wearing = maxP > wearingThresholdN
+	frame.Wearing = maxP > wearingThresholdMn
 	return frame, nil
 }
 
@@ -141,17 +145,17 @@ func (NoopNotifier) Notify(context.Context, scanner.NewAlert) {}
 
 // Consumer alert:pending 常驻消费者
 type Consumer struct {
-	queue             Queue
-	dedup             EvalDeduper
-	alerts            AlertCreator
-	eval              *engine.RuleEvaluator
-	notifier          Notifier
-	flow              flowstarter.Starter // T653：入库后按绑定自动建实例（SetFlowStarter，默认 Noop）
-	staleThreshold    time.Duration
-	maxBatch          int
-	now               func() time.Time
-	log               zerolog.Logger
-	wearingThresholdN float64
+	queue              Queue
+	dedup              EvalDeduper
+	alerts             AlertCreator
+	eval               *engine.RuleEvaluator
+	notifier           Notifier
+	flow               flowstarter.Starter // T653：入库后按绑定自动建实例（SetFlowStarter，默认 Noop）
+	staleThreshold     time.Duration
+	maxBatch           int
+	now                func() time.Time
+	log                zerolog.Logger
+	wearingThresholdMn float64 // 佩戴判定阈值 (mN)，默认 DefaultWearingThresholdMn
 }
 
 // New 组装消费者；staleThreshold/maxBatch 传零值使用默认（1h / 200）
@@ -160,17 +164,17 @@ func New(queue Queue, dedup EvalDeduper, alerts AlertCreator, eval *engine.RuleE
 		notifier = NoopNotifier{}
 	}
 	return &Consumer{
-		queue:             queue,
-		dedup:             dedup,
-		alerts:            alerts,
-		eval:              eval,
-		notifier:          notifier,
-		flow:              flowstarter.Noop{},
-		staleThreshold:    DefaultStaleThreshold,
-		maxBatch:          DefaultMaxBatch,
-		now:               time.Now,
-		log:               zerolog.Nop(),
-		wearingThresholdN: DefaultWearingThresholdN,
+		queue:              queue,
+		dedup:              dedup,
+		alerts:             alerts,
+		eval:               eval,
+		notifier:           notifier,
+		flow:               flowstarter.Noop{},
+		staleThreshold:     DefaultStaleThreshold,
+		maxBatch:           DefaultMaxBatch,
+		now:                time.Now,
+		log:                zerolog.Nop(),
+		wearingThresholdMn: DefaultWearingThresholdMn,
 	}
 }
 
@@ -183,8 +187,9 @@ func (c *Consumer) SetStaleThreshold(d time.Duration) { c.staleThreshold = d }
 // SetNow 注入时钟（测试用）
 func (c *Consumer) SetNow(now func() time.Time) { c.now = now }
 
-// SetWearingThreshold 注入 sys_configs 热更新后的佩戴阈值（T203 ÷10 后默认 0.05N）
-func (c *Consumer) SetWearingThreshold(n float64) { c.wearingThresholdN = n }
+// SetWearingThreshold 注入 sys_configs 热更新后的佩戴阈值，单位 **mN**
+// （T203 ÷10 定 0.05N = 50mN；T733 迁移后键值直接是 mN）。
+func (c *Consumer) SetWearingThreshold(mn float64) { c.wearingThresholdMn = mn }
 
 // SetFlowStarter T653：注入 user-service 自动建实例客户端（不注入 = 不自动建，告警/通知不受影响）。
 func (c *Consumer) SetFlowStarter(s flowstarter.Starter) {
@@ -258,7 +263,7 @@ func (c *Consumer) processItem(ctx context.Context, payload string) {
 		return
 	}
 
-	frame, err := item.Frame.toPressureFrame(c.wearingThresholdN)
+	frame, err := item.Frame.toPressureFrame(c.wearingThresholdMn)
 	if err != nil {
 		metrics.PendingProcessedTotal.WithLabelValues(metrics.OutcomeDropped).Inc()
 		c.log.Warn().Err(err).Str("device_id", item.Frame.DeviceID).Msg("invalid frame ref, dropped")

@@ -25,7 +25,7 @@ import (
 func sourcePayload(t *testing.T, now time.Time, source string, hasKey bool) string {
 	t.Helper()
 	points := make([]float64, PointCount)
-	points[2] = 50.0 // 超 pressure_high 默认阈值，保证命中
+	points[2] = 50000.0 // 50000mN 超 pressure_high 默认阈值 45000mN，保证命中（T733：帧原值 mN）
 	item := PendingItem{
 		QueuedAt: now.UTC(),
 		Frame: FrameRef{

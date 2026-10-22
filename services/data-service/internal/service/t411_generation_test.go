@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	t411N        = 0.05 // 假设佩戴阈值（N）
-	t411Interval = 30   // 假设采集间隔（分钟）
+	t411N         = 0.05 // 假设佩戴阈值（N 展示口径，断言用）
+	t411AssumedMn = 50.0 // 同一枚阈值的 mN 存储空间写法（复算比较与印章都用它，T733）
+	t411Interval  = 30   // 假设采集间隔（分钟）
 )
 
 // t411Day 复算用例统一用的业务日（CST 零点，与 RollupService 写 StatDate 的口径一致）
@@ -46,7 +47,7 @@ func t411Detail(frames, wearing int, span float64, avgPointWearing, avgMaxAll fl
 }
 
 func t411Gen(row model.DailyWearStats, d *repo.WearDayDetail) (string, *model.WearGenerationCheck) {
-	return deriveWearGeneration(row.HasRollupStamp(), row, d, t411N, t411Interval)
+	return deriveWearGeneration(row.HasRollupStamp(), row, d, t411AssumedMn, t411Interval)
 }
 
 // 600 帧、实测约 31 秒一帧：现口径 ≈ 311 分钟，老口径 = 600×30 封顶 1440。
@@ -125,7 +126,7 @@ func TestT411GenerationDoesNotOverstateFrameCorroboration(t *testing.T) {
 // 复算算不符不把它改判成 unmatched——但复算现场照发，看得见不一致。
 func TestT411StampedRowAttributesBySealEvenWhenRecomputeMisses(t *testing.T) {
 	row := t411Row(t411UnmatchRow.WearMinutes, t411UnmatchRow.AvgPressure, 600)
-	t366Stamp(&row, time.Date(2026, 9, 22, 16, 10, 0, 0, time.UTC), t411N)
+	t366Stamp(&row, time.Date(2026, 9, 22, 16, 10, 0, 0, time.UTC), t411AssumedMn)
 	require.True(t, row.HasRollupStamp())
 
 	got, ck := t411Gen(row, &t411Detail600)
@@ -137,12 +138,12 @@ func TestT411StampedRowAttributesBySealEvenWhenRecomputeMisses(t *testing.T) {
 
 // fakeWearConfig T411：sys_configs 假设值来源替身
 type fakeWearConfig struct {
-	wearingN float64
-	interval int
+	wearingMn float64
+	interval  int
 }
 
 func (f *fakeWearConfig) GetPressureThresholds(context.Context) (model.PressureThresholds, error) {
-	return model.PressureThresholds{WearingN: f.wearingN}, nil
+	return model.PressureThresholds{WearingMn: f.wearingMn}, nil
 }
 
 func (f *fakeWearConfig) GetDeviceConfig(context.Context) (int, int, error) {
@@ -154,7 +155,7 @@ func TestT411ServiceUsesConfiguredAssumptions(t *testing.T) {
 	src := &fakeDailyWearSource{details: map[string]repo.WearDayDetail{"2026-09-22": t411Detail600}}
 	svc := NewDailyWearService(
 		&fakeDailyWearStore{rows: []model.DailyWearStats{t411LegacyRow}},
-		src, &fakeWearConfig{wearingN: 0.4, interval: 7},
+		src, &fakeWearConfig{wearingMn: 400, interval: 7},
 		nil,
 	)
 	svc.now = func() time.Time { return time.Date(2026, 9, 24, 10, 0, 0, 0, model.CSTZone()) }
@@ -163,9 +164,9 @@ func TestT411ServiceUsesConfiguredAssumptions(t *testing.T) {
 	require.Nil(t, appErr)
 	require.Len(t, list, 1)
 
-	assert.InDelta(t, 0.4, src.gotN, 0, "复算用的阈值必须来自注入的配置源，不是写死的 model 默认")
+	assert.InDelta(t, 400.0, src.gotMn, 0, "复算用的阈值必须来自注入的配置源，不是写死的 model 默认（配置腿全程 mN）")
 	require.NotNil(t, list[0].WearRecompute)
-	assert.InDelta(t, 0.4, list[0].WearRecompute.AssumedWearingThresholdN, 0)
+	assert.InDelta(t, 0.4, list[0].WearRecompute.AssumedWearingThresholdN, 0, "假设阈值出口以 N 下发（存储 400 mN）")
 	assert.Equal(t, 7, list[0].WearRecompute.AssumedIntervalMinutes)
 	// 间隔改成 7 后老口径候选 = 600×7=4200，夹到 1440 仍等于行值 ⇒ 依旧判老口径
 	assert.Equal(t, 1440, list[0].WearRecompute.ExpectedWearMinutesLegacy)

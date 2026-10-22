@@ -1,0 +1,114 @@
+BEGIN;
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- T733 方案A：压力量纲改为「原始 mN 入库 + 展示层唯一换算」的存量迁移
+-- 依据卡：TAPD 1133005753001000520（Boss 2026-10-22 拍板方案A · P80 · PM 定案四口径）
+--
+-- 🔴 执行面：**只跑 staging**。prod 是否跑，取决于 prod 是否部署过 T719（口径④）——
+--    未部署过 = 零动作，本文件不得进 prod。核实方法与结论落在卡面评论。
+-- 🔴 纪律：本文件假定由 Andy 在目标库单发执行（staging 唯一部署人）。执行前必须先整段跑
+--    000041_t733_unit_mn_leo.precheck.sql 取「前拍」，执行后跑 .postcheck.sql 取「后拍」。
+--
+-- 幂等保护：全文换算只在「threshold_pressure_high 仍是 N 量纲（< 1000）」时执行一次。
+--   跑过之后 config 是 5000 ⇒ 再跑整段跳过（不会二次 ×1000 / 二次 ÷1000）。
+--   因此**必须先跑前拍**：前拍若显示已是 mN，说明本迁移已生效，直接停手回报。
+--
+-- 做什么（对应 PM 定案四条）：
+--   ① sys_configs 六枚压力量纲阈值 ×1000（搬到 mN 存储空间）；baselines.offset_values ×1000
+--   ②③ 存储语义变了，历史行必须同量纲：pressure_records 污染帧（>5000）÷1000、
+--        daily_wear_stats 聚合列 ÷1000 + 印章列改名 wearing_threshold_mn（×1000）、
+--        alerts 两类的 threshold_value/actual_value ×1000（读侧出口按 mN 展示）
+--   ④ 快照先行：四张 *_t733_bak 表在任何写操作之前建立
+--
+-- Redis 不在本文件内（SQL 改不了缓存）：迁移后由 Andy 清 rt:frame:* 与 stat:today:*，
+--   或等 TTL 自然过期；不清的症状 = 实时页峰值差 1000 倍（缓存里还是旧量纲）。
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── ④ 快照先行（四纪律：改前备份，随时可回退）──────────────────────────────
+CREATE TABLE IF NOT EXISTS sys_configs_t733_bak        AS SELECT * FROM sys_configs;
+CREATE TABLE IF NOT EXISTS baselines_t733_bak          AS SELECT * FROM baselines;
+CREATE TABLE IF NOT EXISTS daily_wear_stats_t733_bak   AS SELECT * FROM daily_wear_stats;
+CREATE TABLE IF NOT EXISTS alerts_t733_bak             AS SELECT * FROM alerts;
+-- 帧表可能很大：只备要动的那批（>5000 的污染帧）
+CREATE TABLE IF NOT EXISTS pressure_records_t733_bak AS
+SELECT * FROM pressure_records
+WHERE greatest(p01,p02,p03,p04,p05,p06,p07,p08,p09,p10,
+               p11,p12,p13,p14,p15,p16,p17,p18,p19,p20) > 5000;
+
+-- ── 主迁移（一次性，幂等）─────────────────────────────────────────────────
+DO $t733$
+DECLARE
+    still_n BOOLEAN;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM sys_configs
+        WHERE config_key = 'threshold_pressure_high'
+          AND config_value ~ '^[0-9.]+$'
+          AND config_value::numeric < 1000          -- N 量纲 ⇒ 本迁移未跑
+    ) INTO still_n;
+
+    IF NOT still_n THEN
+        RAISE NOTICE 'T733：threshold_pressure_high 已是 mN 量纲（或键缺失），整段跳过——不重复换算';
+        RETURN;
+    END IF;
+
+    -- ① 阈值配置 ×1000（六枚压力量纲键；其余键一律不动）
+    UPDATE sys_configs
+       SET config_value = trim_scale(config_value::numeric * 1000),
+           updated_at   = NOW()
+     WHERE config_key IN ('threshold_pressure_high', 'threshold_pressure_low',
+                          'heatmap_max_n', 'wearing_pressure_threshold',
+                          'threshold_sensor_drift', 'threshold_calibration_offset')
+       AND config_value ~ '^[0-9.]+$';
+
+    -- ① 基线偏移 ×1000（T733 口径①：与 mN 帧直接相减必须同量纲）
+    UPDATE baselines
+       SET offset_values = (
+             SELECT array_agg(v * 1000 ORDER BY ord)
+               FROM unnest(offset_values) WITH ORDINALITY AS t(v, ord)
+           ),
+           updated_at = NOW();
+
+    -- ②③ 污染帧 ÷1000（PM 定案面：staging 里 >5000 的帧按错标处理）
+    --     注意：物理量程上限 20000 mN（=20 N），5000–20000 这一段本身可能是真高施力，
+    --     前拍 ③ 的桶 b 行数即本句影响面；跑前把该数贴回卡面，异常放大就停手报 PM。
+    UPDATE pressure_records
+       SET p01 = p01 / 1000, p02 = p02 / 1000, p03 = p03 / 1000, p04 = p04 / 1000,
+           p05 = p05 / 1000, p06 = p06 / 1000, p07 = p07 / 1000, p08 = p08 / 1000,
+           p09 = p09 / 1000, p10 = p10 / 1000, p11 = p11 / 1000, p12 = p12 / 1000,
+           p13 = p13 / 1000, p14 = p14 / 1000, p15 = p15 / 1000, p16 = p16 / 1000,
+           p17 = p17 / 1000, p18 = p18 / 1000, p19 = p19 / 1000, p20 = p20 / 1000
+     WHERE greatest(p01,p02,p03,p04,p05,p06,p07,p08,p09,p10,
+                    p11,p12,p13,p14,p15,p16,p17,p18,p19,p20) > 5000;
+
+    -- ②③ 告警行的两枚压力量纲值 ×1000：读侧出口 handler.displayValueN 按 mN 存储 ÷1000 展示，
+    --     不搬这两列，历史告警会显示成 0.005 N（旧行是 N，新行是 mN，同列两种量纲）。
+    UPDATE alerts
+       SET threshold_value = threshold_value * 1000,
+           actual_value    = actual_value * 1000
+     WHERE type IN ('pressure_high', 'pressure_low', 'sensor_drift')
+       AND threshold_value IS NOT NULL;
+
+    -- ②③ 日聚合：印章列改名 + ×1000（列语义与代码 model.DailyWearStats.WearingThresholdMn 对齐）
+    ALTER TABLE daily_wear_stats RENAME COLUMN wearing_threshold_n TO wearing_threshold_mn;
+    UPDATE daily_wear_stats
+       SET wearing_threshold_mn = wearing_threshold_mn * 1000
+     WHERE wearing_threshold_mn IS NOT NULL;
+
+    RAISE NOTICE 'T733 方案A 量纲迁移完成：阈值/基线 ×1000，污染帧 ÷1000，告警压力量纲 ×1000，印章列改名';
+END
+$t733$;
+
+-- ②③ 日聚合的峰值/均值列与帧表同批处理（>5000 判污染，÷1000）
+--     这些列由 RollupService 每日重算，本句只是让历史行与新帧量纲自洽；
+--     迁移后建议顺手复算最近 7 天（卡面判据 5 要求改后回读）。
+UPDATE daily_wear_stats
+   SET max_pressure       = max_pressure / 1000,
+       avg_pressure       = avg_pressure / 1000,
+       avg_point_wearing  = avg_point_wearing / 1000
+ WHERE max_pressure > 5000;
+
+COMMENT ON COLUMN daily_wear_stats.wearing_threshold_mn IS
+  '本次聚合实际生效的佩戴帧判定阈值（单位 mN，T733 方案A 存储空间）；对外 DTO 字段仍为 wearingThresholdN（N）';
+
+COMMIT;

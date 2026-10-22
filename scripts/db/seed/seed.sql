@@ -385,17 +385,17 @@ WHERE NOT EXISTS (SELECT 1 FROM consents WHERE patient_id='P20260004' AND consen
 INSERT INTO sys_configs (config_key, config_value, description) VALUES
   ('collect_interval_minutes', '30', '采集间隔（分钟）'),
   ('wear_target_hours', '22', '每日佩戴目标时长（小时）'),
-  ('threshold_pressure_high', '5', '压力偏高阈值（N，T203 ÷10）'),
+  ('threshold_pressure_high', '5000', '压力偏高阈值（mN，T733 方案A 存储空间；键名沿用历史不改，见卡面注）'),
   -- T281：000016 播的 low=10 是 ÷10 前的旧量纲，000019 漏改该键 ⇒ 与 high=5 倒挂、
   -- /admin/settings 恒 400。迁移 000021 已把存量库改为 1，seed 同口径补上（此前该键不在 seed 里，
   -- 纯 seed 建库也会缺）。已有行由 ON CONFLICT DO NOTHING 保留，值以迁移为准。
-  ('threshold_pressure_low', '1', '统一压力下限（N，T203 ÷10；须小于 threshold_pressure_high）'),
+  ('threshold_pressure_low', '1000', '统一压力下限（mN，T733 存储空间；须小于 threshold_pressure_high；键名沿用历史）'),
   ('threshold_pressure_fluctuation_pct', '30', '压力波动幅度阈值（%）'),
   ('threshold_wear_interrupt_minutes', '60', '佩戴中断判定时间（分钟，须≥2×采集间隔）'),
-  ('threshold_sensor_drift', '0.3', '传感器漂移告警阈值（N，T203 ÷10）'),
-  ('threshold_calibration_offset', '0.05', '空载校准偏差上限（N，T203 ÷10）'),
-  ('wearing_pressure_threshold', '0.05', 'wearing 佩戴判定压力阈值（N，T203 ÷10）'),
-  ('heatmap_max_n', '6', '热力图色阶上界（N，T203 ÷10）'),
+  ('threshold_sensor_drift', '300', '传感器漂移告警阈值（mN，T733 方案A 存储空间；键名沿用历史不改，见卡面注）'),
+  ('threshold_calibration_offset', '50', '空载校准偏差上限（mN，T733 方案A 存储空间；键名沿用历史不改，见卡面注）'),
+  ('wearing_pressure_threshold', '50', 'wearing 佩戴判定压力阈值（mN，T733 方案A 存储空间；键名沿用历史不改，见卡面注）'),
+  ('heatmap_max_n', '6000', '热力图色阶上界（mN，T733 方案A 存储空间；键名沿用历史不改，见卡面注）'),
   ('device_config_version', '1', '设备配置版本（设备侧上报后比对，不一致则应用新配置）'),
   -- T256 12.5（设计稿 系统配置.html:88-90）：采集间隔单位收口为「秒」（T245 §9 K9）。
   -- collect_interval_minutes 仍保留：alert-service / data-service 运行时消费分钟口径，

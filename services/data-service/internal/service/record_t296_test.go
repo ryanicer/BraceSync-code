@@ -18,11 +18,11 @@ import (
 // 覆盖两条读路径：生产 DB 优先分支（getRealtimeFromDB）与 Redis 回退分支
 // ─────────────────────────────────────────────────────────────
 
-// t296RealPayload 设备原始 points（单位 N，T719 固件 1.4 原样上报）：
-// 非零项 idx0=0.599 / idx7=0.038 / idx14=0.014 / idx16=0.014
-// （物理量级承接 Boss 2026-09-21 真机日志轻压场景，仅按现行 N 契约表达，不再 ×1000 造 mN）
+// t296RealPayload 设备原始 points 载荷（🔴 T733 方案A：固件上报量纲 = mN，入口原样入库）：
+// 非零项 idx0=599 / idx7=38 / idx14=14 / idx16=14（mN），即 0.599 / 0.038 / 0.014 / 0.014 N。
+// 数值直接取 Boss 2026-09-21 真机日志原样（T719 曾把它 ÷1000 写成 N，本卡复原为设备口径）。
 func t296RealPayload() []float64 {
-	return []float64{0.599, 0, 0, 0, 0, 0, 0, 0.038, 0, 0, 0, 0, 0, 0, 0.014, 0, 0.014, 0, 0, 0}
+	return []float64{599, 0, 0, 0, 0, 0, 0, 38, 0, 0, 0, 0, 0, 0, 14, 0, 14, 0, 0, 0}
 }
 
 // t296DBRecords 让 fakeRecords 参与 DB 优先路径（生产用 repo.RecordRepo.GetLatestRecord）
@@ -56,7 +56,7 @@ func uploadT296(t *testing.T, env *testEnv) {
 	require.Nil(t, appErr)
 }
 
-// wantT296Grid 期望网格：points 原样为 N（T719），下标不位移
+// wantT296Grid 期望网格：入库 mN、出口 ÷1000 ⇒ 热力图 pressureValue 是**同物理压力的 N**，下标不位移
 func wantT296Grid(t *testing.T, hm []model.HeatmapPoint) {
 	t.Helper()
 	require.Len(t, hm, model.PointCount)
@@ -66,7 +66,7 @@ func wantT296Grid(t *testing.T, hm []model.HeatmapPoint) {
 		if !named {
 			v = 0
 		}
-		assert.InDelta(t, v, hp.PressureValue, 1e-6, "%s(%s) 应等于设备同下标 N 值（原样入库）", hp.PointID, hp.Label)
+		assert.InDelta(t, v, hp.PressureValue, 1e-6, "%s(%s) 应等于设备同下标 mN 值的 N 表达（T733 出口 ÷1000）", hp.PointID, hp.Label)
 	}
 	assert.Equal(t, "P01", maxPointID(t, hm), "★ 只能标在设备最大值点 idx0")
 }
@@ -98,7 +98,7 @@ func TestT296_RealPayload_GridMatchesUpload_RedisPath(t *testing.T) {
 	// T366：Redis 回退分支也要给 maxPressure（无库侧生成列 ⇒ 按 greatest(p01..p20) 现算），
 	// 否则同一字段在两分支一侧有值一侧恒 0，消费方无法一视同仁。
 	require.Len(t, snap.PressureRecords, 1)
-	assert.InDelta(t, 0.599, snap.PressureRecords[0].MaxPressure, 1e-6, "raw 峰值与设备最大点同值")
+	assert.InDelta(t, 0.599, snap.PressureRecords[0].MaxPressure, 1e-6, "raw 峰值（设备 599 mN）换算成 N 后与设备最大点同值")
 }
 
 func TestT296_BothReadPaths_AgreeOnGrid(t *testing.T) {
@@ -140,9 +140,9 @@ func TestT296_PointIDGridMapping_RowMajor(t *testing.T) {
 func TestT296_WithBaseline_OnlyShiftsValuesNotPositions(t *testing.T) {
 	env := newTestEnv()
 	env.useDBPath()
-	// idx0 偏移 0.1N、idx3 偏移 0.2N（其余 0）
+	// idx0 偏移 0.1N（=100 mN）、idx3 偏移 0.2N（=200 mN），其余 0：与帧值同量纲相减（T733）
 	env.withBaselines(map[string]calibration.Baseline{
-		testDevice: {BaselineID: 16, Offsets: mustOffsets(0.1, 0, 0, 0.2)},
+		testDevice: {BaselineID: 16, Offsets: mustOffsets(100, 0, 0, 200)},
 	})
 	uploadT296(t, env)
 
@@ -175,13 +175,13 @@ func TestT296_RealtimeSnapshot_CarriesDisplayScale(t *testing.T) {
 	env.useDBPath()
 	env.svc.configs = &t296ThresholdConfigs{
 		fakeConfigs: env.configs,
-		th:          model.PressureThresholds{HeatmapMaxN: 8, PressureHighN: 4, PressureLowN: 1},
+		th:          model.PressureThresholds{HeatmapMaxMn: 8000, PressureHighMn: 4000, PressureLowMn: 1000},
 	}
 	uploadT296(t, env)
 
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
 	require.Nil(t, appErr)
-	assert.InDelta(t, 8.0, snap.HeatmapMaxN, 1e-9, "色阶上界取 sys_configs 当前值")
+	assert.InDelta(t, 8.0, snap.HeatmapMaxN, 1e-9, "色阶上界取 sys_configs 当前值（mN 8000 → 出口 8 N）")
 	assert.InDelta(t, 4.0, snap.PressureHighN, 1e-9, "偏高分界与告警引擎同源")
 	assert.InDelta(t, 1.0, snap.PressureLowN, 1e-9, "低压边界同链下发（T601：hero 正常范围文案的下边界）")
 
@@ -190,7 +190,7 @@ func TestT296_RealtimeSnapshot_CarriesDisplayScale(t *testing.T) {
 	orphan.svc.configs = &t296ThresholdConfigs{fakeConfigs: orphan.configs, th: model.DefaultPressureThresholds()}
 	none, appErr := orphan.svc.GetRealtime(context.Background(), "P20269999")
 	require.Nil(t, appErr)
-	assert.InDelta(t, model.HeatmapMaxN, none.HeatmapMaxN, 1e-9)
+	assert.InDelta(t, model.MnToN(model.HeatmapMaxMn), none.HeatmapMaxN, 1e-9)
 	assert.InDelta(t, 5.0, none.PressureHighN, 1e-9)
 	assert.InDelta(t, 1.0, none.PressureLowN, 1e-9, "默认低压边界 = 迁移 000021 / seed 同值")
 }

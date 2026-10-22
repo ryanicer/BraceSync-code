@@ -144,20 +144,20 @@ func NewDashboardService(store repo.DashboardStore, cache DashboardCache) *Dashb
 }
 
 // WithThresholdStore 注入 sys_configs 阈值源（T595）：main 装配时链式设置；
-// 不设时今日 live 聚合用 model.WearingThresholdN 默认值（与 rollup 服务的回退分支同源）。
+// 不设时今日 live 聚合用 model.WearingThresholdMn 默认值（mN 存储空间）（与 rollup 服务的回退分支同源）。
 func (s *DashboardService) WithThresholdStore(ts repo.ThresholdStore) *DashboardService {
 	s.thresholds = ts
 	return s
 }
 
-// wearingThresholdN 今日 live 聚合的佩戴阈值，读不到配置回退默认（与 RollupService.wearingThresholdN 同式）。
-func (s *DashboardService) wearingThresholdN(ctx context.Context) float64 {
+// wearingThresholdMn 今日 live 聚合的佩戴阈值（**mN 存储空间**，与帧值同量纲），读不到配置回退默认（与 RollupService.wearingThresholdMn 同式）。
+func (s *DashboardService) wearingThresholdMn(ctx context.Context) float64 {
 	if s.thresholds != nil {
 		if th, err := s.thresholds.GetPressureThresholds(ctx); err == nil {
-			return th.WearingN
+			return th.WearingMn
 		}
 	}
-	return model.WearingThresholdN
+	return model.WearingThresholdMn
 }
 
 // periodWindow period 枚举 → 窗口起点与天数（CST 切日；today=当日，week=近7日，month=近30日）。
@@ -213,7 +213,7 @@ func (s *DashboardService) GetKPI(ctx context.Context, period string, scope mode
 		nowCST := s.now().In(model.CSTZone())
 		todayStart := time.Date(nowCST.Year(), nowCST.Month(), nowCST.Day(), 0, 0, 0, 0, model.CSTZone())
 		live, liveErr := s.store.KPILiveToday(ctx, todayStart, todayStart.AddDate(0, 0, 1),
-			float32(s.wearingThresholdN(ctx)), scope)
+			float32(s.wearingThresholdMn(ctx)), scope)
 		if liveErr != nil {
 			log.Warn().Err(liveErr).Msg("dashboard live-today aggregation failed, fallback to rollup row")
 		} else if live != nil {

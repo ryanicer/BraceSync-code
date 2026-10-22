@@ -83,7 +83,7 @@ func TestT594FakeCache_FrameSpanOutOfOrder(t *testing.T) {
 		base.Add(40 * time.Minute),  // 更晚，应成为 last
 	}
 	for _, ts := range uploads {
-		_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(ts, pts(10, 20)))
+		_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(ts, pts(10000, 20000)))
 		assert.Nil(t, appErr)
 	}
 	st := env.cache.stat[testPatient]

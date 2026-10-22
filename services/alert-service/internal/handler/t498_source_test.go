@@ -25,7 +25,7 @@ import (
 func evalBodyWithSource(t *testing.T, source string, sourceExists bool) []byte {
 	t.Helper()
 	points := make([]float64, 20)
-	points[2] = 50.0 // 超 pressure_high 默认阈值，保证命中
+	points[2] = 50000.0 // 50000mN（=50N）：超引擎兜底默认 45000mN，保证命中（T733：帧原值 mN）
 	body := map[string]any{
 		"device_id":  "DEV1",
 		"patient_id": "P1",

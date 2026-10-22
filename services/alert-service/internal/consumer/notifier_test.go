@@ -89,14 +89,15 @@ func (m *mockMsgServer) server() *httptest.Server {
 
 func makeAlert() scanner.NewAlert {
 	return scanner.NewAlert{
-		AlertID:        "42",
-		PatientID:      "P1",
-		DeviceID:       "DEV1",
-		Type:           engine.TypePressureHigh,
-		SensorPoint:    "P03",
-		Detail:         "压力偏高：采集点 P03 压力 50.0N 超阈值 45.0N",
-		ThresholdValue: 45.0,
-		ActualValue:    50.0,
+		AlertID:     "42",
+		PatientID:   "P1",
+		DeviceID:    "DEV1",
+		Type:        engine.TypePressureHigh,
+		SensorPoint: "P03",
+		// T733 方案A：告警链路上的压力量纲为 mN（引擎产出即 mN，推送 msg-service 不换算）。
+		Detail:         "压力偏高：采集点 P03 压力 50000.0mN 超阈值 45000.0mN",
+		ThresholdValue: 45000.0,
+		ActualValue:    50000.0,
 		Ts:             time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC),
 	}
 }
@@ -130,9 +131,9 @@ func TestHTTPNotifier_NotifySuccess(t *testing.T) {
 	assert.Equal(t, "DEV1", req.DeviceID)
 	assert.Equal(t, "P03", req.SensorPoint)
 	require.NotNil(t, req.ThresholdValue)
-	assert.Equal(t, 45.0, *req.ThresholdValue)
+	assert.Equal(t, 45000.0, *req.ThresholdValue, "推送负载按 mN 透传（传输层零换算）")
 	require.NotNil(t, req.ActualValue)
-	assert.Equal(t, 50.0, *req.ActualValue)
+	assert.Equal(t, 50000.0, *req.ActualValue, "推送负载按 mN 透传（传输层零换算）")
 	assert.Equal(t, "2026-08-10T12:00:00Z", req.Timestamp)
 }
 

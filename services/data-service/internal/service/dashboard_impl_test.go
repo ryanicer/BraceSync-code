@@ -49,7 +49,7 @@ type mockDashboardStore struct {
 	liveCalls int
 	liveFrom  time.Time
 	liveTo    time.Time
-	liveThN   float32
+	liveThMn  float32
 }
 
 // see 记录一次实收 scope（结构体以字面量构造，map 懒初始化）
@@ -78,10 +78,11 @@ func (m *mockDashboardStore) KPI(ctx context.Context, from string, alertFrom, mo
 }
 
 // KPILiveToday T595：记录调用实参（窗口/阈值/scope）并回罐头行；liveErr 非空模拟 live 通道故障
-func (m *mockDashboardStore) KPILiveToday(_ context.Context, from, to time.Time, wearingThresholdN float32, scope model.TeamScope) (*repo.LiveTodayRow, error) {
+// 入参量纲 = mN（🔴 T733 方案A：帧值与佩戴阈值同存储空间，进 SQL 零换算）
+func (m *mockDashboardStore) KPILiveToday(_ context.Context, from, to time.Time, wearingThresholdMn float32, scope model.TeamScope) (*repo.LiveTodayRow, error) {
 	m.see("KPILiveToday", scope)
 	m.liveCalls++
-	m.liveFrom, m.liveTo, m.liveThN = from, to, wearingThresholdN
+	m.liveFrom, m.liveTo, m.liveThMn = from, to, wearingThresholdMn
 	if m.liveErr != nil {
 		return nil, m.liveErr
 	}

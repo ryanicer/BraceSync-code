@@ -36,10 +36,11 @@ func t595TodayWindow() (time.Time, time.Time) {
 }
 
 // t595Thresholds 可控阈值源（只实现 repo.ThresholdStore）
-type t595Thresholds struct{ wearingN float64 }
+// 🔴 T733 方案A：字段量纲 = mN（存储空间），与帧值同量纲，进 SQL 前零换算。
+type t595Thresholds struct{ wearingMn float64 }
 
 func (t t595Thresholds) GetPressureThresholds(context.Context) (model.PressureThresholds, error) {
-	return model.PressureThresholds{WearingN: t.wearingN}, nil
+	return model.PressureThresholds{WearingMn: t.wearingMn}, nil
 }
 
 // 主路径：period=today 时两格取 live 聚合值，日切行的其余四格不动。
@@ -67,12 +68,12 @@ func TestT595GetKPI_TodayOverridesTwoFieldsFromLive(t *testing.T) {
 	assert.Equal(t, int64(3), dto.TodayAlerts)
 	assert.Equal(t, int64(2), dto.MonthNewPatients)
 
-	// live 只在 today 调一次；窗口 = CST 当日半开区间；阈值未注入配置源 ⇒ 用 model 默认（与 rollup 同）
+	// live 只在 today 调一次；窗口 = CST 当日半开区间；阈值未注入配置源 ⇒ 用 model 默认 50 mN（与 rollup 同）
 	require.Equal(t, 1, store.liveCalls)
 	wantFrom, wantTo := t595TodayWindow()
 	assert.True(t, store.liveFrom.Equal(wantFrom), "live from=%v want %v", store.liveFrom, wantFrom)
 	assert.True(t, store.liveTo.Equal(wantTo), "live to=%v want %v", store.liveTo, wantTo)
-	assert.Equal(t, float32(model.WearingThresholdN), store.liveThN)
+	assert.Equal(t, float32(model.WearingThresholdMn), store.liveThMn, "默认佩戴阈值 50 mN 原样进 SQL（mN 存储空间）")
 	assert.Equal(t, model.ScopeAll(), store.scopes["KPILiveToday"], "scope 必须与日切 KPI 同范围")
 }
 
@@ -130,14 +131,14 @@ func TestT595GetKPI_LiveThresholdFromStore(t *testing.T) {
 		kpiRow:  &repo.KPIRow{TotalPatients: 1},
 		liveRow: &repo.LiveTodayRow{ActiveWear: 0, AvgWearMinutes: nil},
 	}
-	svc := t595Svc(store).WithThresholdStore(t595Thresholds{wearingN: 1.6})
+	svc := t595Svc(store).WithThresholdStore(t595Thresholds{wearingMn: 1600}) // 1.6 N（mN 口径）
 
 	_, appErr := svc.GetKPI(context.Background(), "today", model.ScopeAll())
 	require.Nil(t, appErr)
 	require.Equal(t, 1, store.liveCalls)
-	assert.Equal(t, float32(1.6), store.liveThN, "阈值必须来自注入的 sys_configs 源（与 rollup 同源）")
+	assert.Equal(t, float32(1600), store.liveThMn, "阈值必须来自注入的 sys_configs 源（mN，与 rollup 同源）")
 
-	// 未链式注入（nil）⇒ 默认阈值，主路径用例已断言 0.05，这里再确认不 panic
+	// 未链式注入（nil）⇒ 默认阈值 50 mN，主路径用例已断言，这里再确认不 panic
 	plain := t595Svc(&mockDashboardStore{
 		kpiRow:  &repo.KPIRow{TotalPatients: 1},
 		liveRow: &repo.LiveTodayRow{},

@@ -33,7 +33,7 @@ func requireT366Stamped(t *testing.T, rows []model.DailyWearStats, wantAt time.T
 		s := &rows[i]
 		require.True(t, s.HasRollupStamp(), "行 %d(%s) 必须带完整印章", i, s.PatientID)
 		assert.True(t, s.AggregatedAt.Equal(wantAt), "印章时刻 = 本次聚合时刻（UTC）：%s", s.AggregatedAt)
-		assert.InDelta(t, wantThreshold, *s.WearingThresholdN, 1e-9,
+		assert.InDelta(t, wantThreshold, *s.WearingThresholdMn, 1e-9,
 			"印章阈值必须等于传给 AggregateDate 的那一个，否则读侧按它复算就算错")
 	}
 }
@@ -41,7 +41,7 @@ func requireT366Stamped(t *testing.T, rows []model.DailyWearStats, wantAt time.T
 func TestT366DailyRollupStampsRows(t *testing.T) {
 	stats := newFakeDailyWearStats()
 	stats.aggregated = t366AggRows()
-	cfg := &t352ThresholdConfigs{intervalMinutes: 30, wearingN: 0.42}
+	cfg := &t352ThresholdConfigs{intervalMinutes: 30, wearingMn: 420}
 
 	svc := NewRollupService(stats, newFakeCache(), cfg)
 	// CST 2026-08-11 00:10 跑昨日（08-10）聚合
@@ -50,7 +50,7 @@ func TestT366DailyRollupStampsRows(t *testing.T) {
 
 	svc.RunDailyRollup(context.Background())
 
-	requireT366Stamped(t, stats.upserted, now, 0.42)
+	requireT366Stamped(t, stats.upserted, now, 420)
 	for _, s := range stats.upserted {
 		assert.Equal(t, "2026-08-10", s.StatDate.In(model.CSTZone()).Format("2006-01-02"),
 			"盖章不得改坏切日（StatDate 仍是业务日）")
@@ -61,7 +61,7 @@ func TestT366BackfillRecomputeStampsRows(t *testing.T) {
 	stats := newFakeDailyWearStats()
 	stats.aggregated = []model.DailyWearStats{{PatientID: "P1", FrameCount: 20, WearMinutes: 600}}
 	cache := newFakeCache()
-	cfg := &t352ThresholdConfigs{intervalMinutes: 30, wearingN: 0.42}
+	cfg := &t352ThresholdConfigs{intervalMinutes: 30, wearingMn: 420}
 
 	task := rollupTask{PatientID: "P1", Date: "2026-08-10", QueuedAt: "2026-08-11T00:00:00Z"}
 	payload, _ := json.Marshal(task)
@@ -74,7 +74,7 @@ func TestT366BackfillRecomputeStampsRows(t *testing.T) {
 	svc.ProcessBackfillQueue(context.Background())
 
 	// 补传重算也是「聚合任务写的行」，同样必须盖章；否则重算一次就把可信行降级成未佐证
-	requireT366Stamped(t, stats.upserted, now, 0.42)
+	requireT366Stamped(t, stats.upserted, now, 420)
 	assert.Empty(t, cache.rollup)
 }
 
@@ -89,5 +89,5 @@ func TestT366StampFallsBackToDefaultThreshold(t *testing.T) {
 	svc.RunDailyRollup(context.Background())
 
 	// 配置读不到时盖的是代码兜底值——仍然要盖（有章可查），且章里的阈值就是实际用的那个
-	requireT366Stamped(t, stats.upserted, now, model.WearingThresholdN)
+	requireT366Stamped(t, stats.upserted, now, model.WearingThresholdMn)
 }

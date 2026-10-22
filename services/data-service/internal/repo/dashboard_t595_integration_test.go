@@ -36,7 +36,7 @@ const (
 
 // seedT595LiveToday 三名同团队患者：
 // A：2 枚佩戴帧（01:00/04:00，跨度 3h；故意先插 04:00 再插 01:00 验乱序）+ 1 枚窗口外帧；
-// B：当日 1 帧但未佩戴（0.01 < 默认阈值 0.05）⇒ 出行但 0 分钟；
+// B：当日 1 帧但未佩戴（10 mN < 默认阈值 50 mN，🔴 T733 全链 mN）⇒ 出行但 0 分钟；
 // C：建档当日无任何帧 ⇒ 不出 GROUP 行（证明不进均值分母）。
 func seedT595LiveToday(ctx context.Context, t *testing.T) {
 	t.Helper()
@@ -62,14 +62,15 @@ func seedT595LiveToday(ctx context.Context, t *testing.T) {
 		require.NoError(t, err, "t595 seed")
 	}
 	// A：乱序入库 + 窗口外帧（2026-08-16 00:30+08 = UTC 16:30，落在右端 16:00 之外）
+	// 🔴 T733 方案A：铺帧 mN（3000 mN = 3 N）
 	seedT352Frames(ctx, t, dashPool, t595PatA, t595DevA, []t352Frame{
-		{"2026-08-15 04:00:00+08", 3.0, 1.0},
-		{"2026-08-15 01:00:00+08", 3.0, 1.0},
-		{"2026-08-16 00:30:00+08", 9.0, 0.0},
+		{"2026-08-15 04:00:00+08", 3000, 1000},
+		{"2026-08-15 01:00:00+08", 3000, 1000},
+		{"2026-08-16 00:30:00+08", 9000, 0},
 	})
 	// B：唯一一帧未佩戴
 	seedT352Frames(ctx, t, dashPool, t595PatB, t595DevB, []t352Frame{
-		{"2026-08-15 10:00:00+08", 0.01, 0.0},
+		{"2026-08-15 10:00:00+08", 10, 0}, // 10 mN 峰值，低于 50 mN 佩戴阈值
 	})
 	t.Cleanup(func() {
 		for _, s := range []string{
@@ -91,7 +92,7 @@ func TestITKPILiveToday(t *testing.T) {
 	r := NewDashboardRepo(dashPool)
 
 	// 窗口 = CST 2026-08-15 全天（复用 T352 的 UTC 半开区间常量）
-	got, err := r.KPILiveToday(ctx, t352From, t352To, float32(model.WearingThresholdN), model.ScopeTeam(t595Team))
+	got, err := r.KPILiveToday(ctx, t352From, t352To, float32(model.WearingThresholdMn), model.ScopeTeam(t595Team))
 	require.NoError(t, err)
 	require.NotNil(t, got)
 
@@ -102,8 +103,8 @@ func TestITKPILiveToday(t *testing.T) {
 	assert.InDelta(t, 180.0, *got.AvgWearMinutes, 1e-9,
 		"分母=有帧患者 A+B 共 2 名（B 为 0 分钟照入分母），(360+0)/2=180；无帧的 C 不进分母")
 
-	// 阈值进 SQL：抬到 9.5 后 A 的 3.0 帧也不再算佩戴 ⇒ 全员 0 分钟（行仍在，均值=0 非 nil）
-	high, err := r.KPILiveToday(ctx, t352From, t352To, 9.5, model.ScopeTeam(t595Team))
+	// 阈值进 SQL：抬到 9500 mN（9.5 N）后 A 的 3000 mN 帧也不再算佩戴 ⇒ 全员 0 分钟（行仍在，均值=0 非 nil）
+	high, err := r.KPILiveToday(ctx, t352From, t352To, 9500, model.ScopeTeam(t595Team))
 	require.NoError(t, err)
 	assert.Zero(t, high.ActiveWear)
 	require.NotNil(t, high.AvgWearMinutes)
@@ -111,7 +112,7 @@ func TestITKPILiveToday(t *testing.T) {
 
 	// 窗口外那天（CST 2026-08-16 全天）：A 有 1 帧（00:30）但佩戴帧 <2 ⇒ 0 分钟；
 	// B/C 无帧 ⇒ 只 A 出行，ActiveWear=0、均值 0（非 nil，因为有帧患者存在）
-	next, err := r.KPILiveToday(ctx, t352To, t352To.AddDate(0, 0, 1), float32(model.WearingThresholdN), model.ScopeTeam(t595Team))
+	next, err := r.KPILiveToday(ctx, t352To, t352To.AddDate(0, 0, 1), float32(model.WearingThresholdMn), model.ScopeTeam(t595Team))
 	require.NoError(t, err)
 	assert.Zero(t, next.ActiveWear)
 	require.NotNil(t, next.AvgWearMinutes)
@@ -119,13 +120,13 @@ func TestITKPILiveToday(t *testing.T) {
 
 	// 与种子完全不沾边的一天：无任何出行 ⇒ nil 均值（T636 口径，不涂 0）
 	farFrom := t352From.AddDate(0, 0, 30)
-	empty, err := r.KPILiveToday(ctx, farFrom, farFrom.AddDate(0, 0, 1), float32(model.WearingThresholdN), model.ScopeTeam(t595Team))
+	empty, err := r.KPILiveToday(ctx, farFrom, farFrom.AddDate(0, 0, 1), float32(model.WearingThresholdMn), model.ScopeTeam(t595Team))
 	require.NoError(t, err)
 	assert.Zero(t, empty.ActiveWear)
 	assert.Nil(t, empty.AvgWearMinutes, "范围内无任何帧 ⇒ NULL，不得被 COALESCE 涂成 0")
 
 	// T350 同一 scope CTE：空团队（医生无 team_id）fail-closed，不退化全院
-	none, err := r.KPILiveToday(ctx, t352From, t352To, float32(model.WearingThresholdN), model.ScopeTeam(""))
+	none, err := r.KPILiveToday(ctx, t352From, t352To, float32(model.WearingThresholdMn), model.ScopeTeam(""))
 	require.NoError(t, err)
 	assert.Zero(t, none.ActiveWear)
 	assert.Nil(t, none.AvgWearMinutes)

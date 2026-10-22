@@ -24,7 +24,8 @@ func TestPointIDAndLabel(t *testing.T) {
 }
 
 func TestPointStatus(t *testing.T) {
-	th := DefaultPressureThresholds() // T203: PressureHighN=5, warning=3.75, critical=5
+	// T733 方案A：PointStatus 入参恒为展示空间 N，mN 阈值（默认 high=5000）经 ToDisplay 换算（high=5N）
+	th := DefaultPressureThresholds().ToDisplay() // T203: PressureHighN=5, warning=3.75, critical=5
 	assert.Equal(t, "normal", PointStatus(3, th))
 	assert.Equal(t, "warning", PointStatus(4, th))
 	assert.Equal(t, "critical", PointStatus(6, th))
@@ -32,8 +33,8 @@ func TestPointStatus(t *testing.T) {
 
 func TestBuildSensorPoints(t *testing.T) {
 	var points [PointCount]float32
-	points[5] = 50 // P06 critical
-	pts := BuildSensorPoints(points, DefaultPressureThresholds(), nil)
+	points[5] = 50 // P06 critical（本函数入参已是展示空间 N）
+	pts := BuildSensorPoints(points, DefaultPressureThresholds().ToDisplay(), nil)
 	require.Len(t, pts, PointCount)
 	assert.Equal(t, "P06", pts[5].PointID)
 	assert.Equal(t, "critical", pts[5].Status)
@@ -48,8 +49,9 @@ func TestBuildSensorPoints(t *testing.T) {
 func TestBuildSensorPoints_kpaSameSourceAsHeatmap(t *testing.T) {
 	area := 0.64
 	var points [PointCount]float32
-	points[5] = 50
-	pts := BuildSensorPoints(points, DefaultPressureThresholds(), &area)
+	points[5] = 50 // 展示空间 N（T733：mN 帧由调用方 FrameToN 换算后才进这两个 builder）
+	th := DefaultPressureThresholds().ToDisplay()
+	pts := BuildSensorPoints(points, th, &area)
 	hm := BuildHeatmap(points, &area)
 
 	require.Len(t, pts, PointCount)
@@ -59,7 +61,7 @@ func TestBuildSensorPoints_kpaSameSourceAsHeatmap(t *testing.T) {
 	}
 	assert.Equal(t, "critical", pts[5].Status, "判档仍按 N，不受 kPa 影响")
 
-	nilArea := BuildSensorPoints(points, DefaultPressureThresholds(), nil)
+	nilArea := BuildSensorPoints(points, th, nil)
 	assert.Nil(t, nilArea[5].PressureKpa, "面积缺失 ⇒ null")
 	assert.InDelta(t, nilArea[5].PressureValue, pts[5].PressureValue, 1e-9, "N 值不受面积缺失影响")
 }
@@ -70,7 +72,7 @@ func TestPressureRecord_MaxPointAndDTO(t *testing.T) {
 		DeviceID:  "DEV1",
 		PatientID: "P1",
 	}
-	rec.Points[2] = 30.2 // P03 最大
+	rec.Points[2] = 30200 // P03 最大（T733：库行点值 = mN 存储空间，30.2 N）
 	rec.Ts = MinValidTime
 	rec.UploadTime = MinValidTime
 
@@ -83,18 +85,23 @@ func TestPressureRecord_MaxPointAndDTO(t *testing.T) {
 	assert.Equal(t, "2026-01-01T00:00:00Z", dto.Timestamp)
 	assert.Equal(t, "2026-01-01T00:00:00Z", dto.UploadTime)
 	require.Len(t, dto.Points, PointCount)
+	// T733 方案A：库行 mN → DTO N 的唯一换算发生在 ToDTO（FrameToN，分母 MnPerN）
+	assert.InDelta(t, 30.2, dto.Points[2].PressureValue, 1e-6, "DTO 点值必须是 ÷1000 后的 N")
 	assert.False(t, dto.Calibrated) // T173：DTO 构造默认未校准，读取侧按校准结果回填
 }
 
 // T366：maxPressure 是库侧生成列（raw greatest(p01..p20)）的同源值，不是从校准后的 points 现算的。
 // 聚合的佩戴帧判据用的正是这一列，读接口不给它就无法独立复算。
+// T733 方案A：本列与点值同为 mN 存储空间，出库 DTO 时同样只 ÷MnPerN 一次；
+// 「原样透传」指的是不被 max(points) 覆盖、也不经校准，不再指「数值等于库值」。
 func TestPressureRecordDTO_CarriesRawMaxPressure(t *testing.T) {
-	rec := &PressureRecord{MaxPressure: 47.2, Ts: MinValidTime, UploadTime: MinValidTime}
-	rec.Points[2] = 30.2 // 点值刻意与生成列不同（库里点值可能是 ÷1000 后的另一层）
+	rec := &PressureRecord{MaxPressure: 47200, Ts: MinValidTime, UploadTime: MinValidTime} // 47.2 N（mN 存储）
+	rec.Points[2] = 30200                                                                  // 点值刻意与生成列不同（30.2 N，同为 mN）
 
 	dto := rec.ToDTO(DefaultPressureThresholds(), nil)
-	assert.InDelta(t, 47.2, dto.MaxPressure, 1e-6, "DTO 原样透出库侧列，不用点值覆盖")
+	assert.InDelta(t, 47.2, dto.MaxPressure, 1e-6, "DTO 是库侧列同一物理压力的 N 表达，不用点值覆盖")
 	assert.NotEqual(t, 30.2, dto.MaxPressure, "不是 max(points)")
+	assert.InDelta(t, 30.2, dto.Points[2].PressureValue, 1e-6, "点值与峰值各换算一次，不重复除")
 }
 
 // T366：Redis 回退路径没有库侧列，按同一口径现算，保证两分支的 maxPressure 可比

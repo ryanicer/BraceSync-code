@@ -86,42 +86,44 @@ func TestRedisCache_StatTodayLua(t *testing.T) {
 	ctx := context.Background()
 	expireAt := time.Now().Add(time.Hour)
 	base := time.Date(2026, 10, 11, 8, 0, 0, 0, time.UTC)
+	// 🔴 T733 方案A：stat:today 的 max_pressure 属 **mN 存储空间**（Redis 零换算），
+	// 下面 25500/10000/40200/5000 即 25.5N/10N/40.2N/5N，÷1000 只在 API 出口做。
 
 	// 佩戴帧 1：frames=1，首末时刻=本帧，max 刷新
-	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base, 25.5, "P03", 0, expireAt))
+	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base, 25500, "P03", 0, expireAt))
 	stat, err := cache.GetStatToday(ctx, "P1")
 	require.NoError(t, err)
 	assert.Equal(t, "1", stat["wear_frames"])
 	assert.Equal(t, strconv.FormatInt(base.Unix(), 10), stat["wear_first_ts"])
 	assert.Equal(t, strconv.FormatInt(base.Unix(), 10), stat["wear_last_ts"])
-	assert.Equal(t, "25.5", stat["max_pressure"])
+	assert.Equal(t, "25500", stat["max_pressure"])
 	assert.Equal(t, "P03", stat["max_point"])
 
 	// 非佩戴帧：frames/首末时刻不动；更小的 max 不覆盖
-	require.NoError(t, cache.ApplyStatToday(ctx, "P1", false, base.Add(time.Minute), 10.0, "P01", 0, expireAt))
+	require.NoError(t, cache.ApplyStatToday(ctx, "P1", false, base.Add(time.Minute), 10000, "P01", 0, expireAt))
 	stat, _ = cache.GetStatToday(ctx, "P1")
 	assert.Equal(t, "1", stat["wear_frames"])
 	assert.Equal(t, strconv.FormatInt(base.Unix(), 10), stat["wear_first_ts"], "非佩戴帧不动首时刻")
-	assert.Equal(t, "25.5", stat["max_pressure"])
+	assert.Equal(t, "25500", stat["max_pressure"])
 	assert.Equal(t, "P03", stat["max_point"], "较小压力不得覆盖最大点位")
 
 	// 佩戴帧 2（+30min）：frames=2，last 推进、first 不动
-	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base.Add(30*time.Minute), 40.2, "P07", 1, expireAt))
+	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base.Add(30*time.Minute), 40200, "P07", 1, expireAt))
 	stat, _ = cache.GetStatToday(ctx, "P1")
 	assert.Equal(t, "2", stat["wear_frames"])
 	assert.Equal(t, strconv.FormatInt(base.Unix(), 10), stat["wear_first_ts"])
 	assert.Equal(t, strconv.FormatInt(base.Add(30*time.Minute).Unix(), 10), stat["wear_last_ts"])
-	assert.Equal(t, "40.2", stat["max_pressure"])
+	assert.Equal(t, "40200", stat["max_pressure"])
 	assert.Equal(t, "P07", stat["max_point"])
 	assert.Equal(t, "1", stat["abnormal_count"])
 
 	// T594 乱序保护：补传一枚更早的佩戴帧（-10min）→ first 回退，last 不回退、frames 照计
-	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base.Add(-10*time.Minute), 5.0, "P01", 0, expireAt))
+	require.NoError(t, cache.ApplyStatToday(ctx, "P1", true, base.Add(-10*time.Minute), 5000, "P01", 0, expireAt))
 	stat, _ = cache.GetStatToday(ctx, "P1")
 	assert.Equal(t, "3", stat["wear_frames"])
 	assert.Equal(t, strconv.FormatInt(base.Add(-10*time.Minute).Unix(), 10), stat["wear_first_ts"], "补传旧帧要回退 first")
 	assert.Equal(t, strconv.FormatInt(base.Add(30*time.Minute).Unix(), 10), stat["wear_last_ts"], "旧帧不得回退 last")
-	assert.Equal(t, "40.2", stat["max_pressure"], "较小压力不覆盖峰值")
+	assert.Equal(t, "40200", stat["max_pressure"], "较小压力不覆盖峰值")
 
 	// 过期时间到达后 key 失效（生产为今日 24:00 Asia/Shanghai）
 	mr.FastForward(2 * time.Hour)
@@ -182,23 +184,34 @@ func TestApplyConfigValue(t *testing.T) {
 	applyConfigValue("device_config_version", "3", &snap)
 	assert.Equal(t, 3, snap.version)
 
-	// T173 阈值键（占位值重定前的配置化入口）
-	applyConfigValue("wearing_pressure_threshold", "0.6", &snap)
-	assert.InDelta(t, 0.6, snap.th.WearingN, 0.0001)
-	applyConfigValue("heatmap_max_n", "80", &snap)
-	assert.InDelta(t, 80.0, snap.th.HeatmapMaxN, 0.0001)
-	applyConfigValue("threshold_pressure_high", "50", &snap)
-	assert.InDelta(t, 50.0, snap.th.PressureHighN, 0.0001)
+	// T173 阈值键（配置化入口）。🔴 T733 方案A：sys_configs 库存值量纲 = mN（键名 _n 后缀是历史包袱不改），
+	// 解析后直接落 PressureThresholds 的 *Mn 字段，读取与解析处零换算。
+	applyConfigValue("wearing_pressure_threshold", "600", &snap) // 0.6 N
+	assert.InDelta(t, 600.0, snap.th.WearingMn, 0.0001)
+	applyConfigValue("heatmap_max_n", "80000", &snap) // 80 N
+	assert.InDelta(t, 80000.0, snap.th.HeatmapMaxMn, 0.0001)
+	applyConfigValue("threshold_pressure_high", "50000", &snap) // 50 N
+	assert.InDelta(t, 50000.0, snap.th.PressureHighMn, 0.0001)
+	applyConfigValue("threshold_pressure_low", "1200", &snap) // 1.2 N
+	assert.InDelta(t, 1200.0, snap.th.PressureLowMn, 0.0001)
 
 	// 非法/非正值/未知 key 不覆盖
 	applyConfigValue("collect_interval_minutes", "abc", &snap)
 	applyConfigValue("collect_interval_minutes", "0", &snap)
 	applyConfigValue("wearing_pressure_threshold", "-1", &snap)
 	applyConfigValue("heatmap_max_n", "xyz", &snap)
+	applyConfigValue("threshold_pressure_low", "0", &snap)
 	applyConfigValue("unknown_key", "99", &snap)
 	assert.Equal(t, 45, snap.interval)
 	assert.Equal(t, 3, snap.version)
-	assert.InDelta(t, 0.6, snap.th.WearingN, 0.0001)
-	assert.InDelta(t, 80.0, snap.th.HeatmapMaxN, 0.0001)
-	assert.InDelta(t, 50.0, snap.th.PressureHighN, 0.0001)
+	assert.InDelta(t, 600.0, snap.th.WearingMn, 0.0001)
+	assert.InDelta(t, 80000.0, snap.th.HeatmapMaxMn, 0.0001)
+	assert.InDelta(t, 50000.0, snap.th.PressureHighMn, 0.0001)
+	assert.InDelta(t, 1200.0, snap.th.PressureLowMn, 0.0001, "非正值不得覆盖已生效阈值")
+	// T733：出口换算一次到位（ToDisplay），测试顺带证明分母 = MnPerN
+	disp := snap.th.ToDisplay()
+	assert.InDelta(t, 0.6, disp.WearingN, 0.0001)
+	assert.InDelta(t, 80.0, disp.HeatmapMaxN, 0.0001)
+	assert.InDelta(t, 50.0, disp.PressureHighN, 0.0001)
+	assert.InDelta(t, 1.2, disp.PressureLowN, 0.0001)
 }

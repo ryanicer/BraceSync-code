@@ -46,38 +46,38 @@ func (env *testEnv) withBaselines(rows map[string]calibration.Baseline) *fakeBas
 
 func TestCalibration_UploadSingle_WearingJudgedOnCalibrated(t *testing.T) {
 	env := newTestEnv()
-	// P01 偏移 0.3N：raw 0.34N > 0.05N，减偏移后 0.04N ≤ 0.05N → 非佩戴帧（T203 ÷10）
+	// P01 偏移 0.3N（=300 mN）：raw 0.34N（340 mN）> 佩戴阈值 50 mN，减偏移后 40 mN ≤ 50 mN → 非佩戴帧
 	env.withBaselines(map[string]calibration.Baseline{
-		testDevice: {BaselineID: 7, Offsets: mustOffsets(0.3)},
+		testDevice: {BaselineID: 7, Offsets: mustOffsets(300)},
 	})
 
-	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.34)))
+	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(340)))
 	require.Nil(t, appErr)
 	assert.False(t, resp.Duplicated)
 
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 0, st.frames, "佩戴判定用减偏移后值：0.04N ≤ 0.05N 不计佩戴")
-	assert.InDelta(t, 0.04, st.max, 0.001, "stat:today max 记校准后值")
+	assert.Equal(t, 0, st.frames, "佩戴判定用减偏移后值：40 mN ≤ 50 mN 不计佩戴")
+	assert.InDelta(t, 40.0, st.max, 0.001, "🔴 T733：stat:today 记校准后值且量纲为 mN（0.04 N = 40）")
 
-	// rt:frame 存入口 ÷1000 后的 raw（N），偏移减法只发生在读侧
+	// 🔴 T733 方案A：rt:frame 存**入口原样的 mN raw**（零加工），偏移减法只发生在读侧组装
 	var frame realtimeFrame
 	require.NoError(t, json.Unmarshal([]byte(env.cache.rtFrame[testDevice]), &frame))
 	require.Len(t, frame.Points, model.PointCount)
-	assert.InDelta(t, 0.34, frame.Points[0], 0.0001, "rt:frame 保留 raw 值（原始真值）")
+	assert.InDelta(t, 340.0, frame.Points[0], 0.0001, "rt:frame 保留 raw mN 值（未减偏移、未 ÷1000）")
 
-	// 告警入参同样用校准后帧
+	// 告警入参同样用校准后帧（mN 存储空间，alert-service 侧同量纲判档）
 	require.Equal(t, 1, env.alerts.calls)
-	assert.InDelta(t, 0.04, env.alerts.reqs[0].Points[0], 0.0001)
+	assert.InDelta(t, 40.0, env.alerts.reqs[0].Points[0], 0.0001, "告警载荷点位 = 减偏移后的 mN")
 }
 
 func TestCalibration_GetRealtime_FullCalibratedSnapshot(t *testing.T) {
 	env := newTestEnv()
 	env.withBaselines(map[string]calibration.Baseline{
-		testDevice: {BaselineID: 7, Offsets: mustOffsets(0.5, 1.0)},
+		testDevice: {BaselineID: 7, Offsets: mustOffsets(500, 1000)}, // mN 偏移（0.5 N / 1 N）
 	})
 
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10, 25.5)))
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10000, 25500)))
 	require.Nil(t, appErr)
 
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
@@ -102,24 +102,24 @@ func TestCalibration_GetRealtime_NoBaseline_CalibratedFalse(t *testing.T) {
 	env := newTestEnv()
 	fb := env.withBaselines(map[string]calibration.Baseline{})
 
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10)))
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10000)))
 	require.Nil(t, appErr)
 
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
 	require.Nil(t, appErr)
 	require.Len(t, snap.PressureRecords, 1)
 	assert.False(t, snap.PressureRecords[0].Calibrated, "缺基线显式未校准")
-	assert.InDelta(t, 10.0, snap.PressureRecords[0].Points[0].PressureValue, 0.001)
+	assert.InDelta(t, 10.0, snap.PressureRecords[0].Points[0].PressureValue, 0.001, "存储 10000 mN → 展示 10 N")
 	assert.Greater(t, fb.calls, 0, "确实查询过基线（非未装配校准器）")
 }
 
 func TestCalibration_GetHistory_CalibratedDTO(t *testing.T) {
 	env := newTestEnv()
 	env.withBaselines(map[string]calibration.Baseline{
-		testDevice: {BaselineID: 7, Offsets: mustOffsets(1.0)},
+		testDevice: {BaselineID: 7, Offsets: mustOffsets(1000)},
 	})
 
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(12.3)))
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(12300)))
 	require.Nil(t, appErr)
 
 	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "", 1, 20)
@@ -131,7 +131,7 @@ func TestCalibration_GetHistory_CalibratedDTO(t *testing.T) {
 
 	// T366：同一行里 points 是校准后、maxPressure 是库侧生成列（raw），两者刻意不同层。
 	// 日聚合的佩戴帧判据判的是后者 ⇒ 只给前者就无法复算，且拿 max(points) 当代理会算错。
-	assert.InDelta(t, 12.3, page.List[0].MaxPressure, 0.001, "raw 峰值 = 上报原值，不减基线偏移")
+	assert.InDelta(t, 12.3, page.List[0].MaxPressure, 0.001, "raw 峰值（库内 12300 mN）= 上报原值不减偏移，出口 ÷1000 成 N")
 	assert.Greater(t, float64(page.List[0].MaxPressure), page.List[0].Points[0].PressureValue,
 		"raw 峰值必须高于校准后点值（两侧同层就说明有一侧被覆盖）")
 }
@@ -141,17 +141,19 @@ func TestCalibration_BaselineLookupFail_ServesRaw(t *testing.T) {
 	fb := env.withBaselines(nil)
 	fb.err = errors.New("db down")
 
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.6)))
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(600)))
 	require.Nil(t, appErr, "基线查询失败 fail-open 为 raw，不阻塞上报")
 
-	// raw 0.6 > 0.5 → 佩戴帧（fail-open 语义：宁可多计不误判为未佩戴）
+	// raw 600 mN > 佩戴阈值 50 mN → 判为佩戴帧（fail-open 语义：宁可多计不误判为未佩戴）
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 1, st.frames, "raw 0.6 fail-open 判为佩戴帧")
-	assert.InDelta(t, 0.6, st.max, 0.001)
+	assert.Equal(t, 1, st.frames, "raw 0.6 N（600 mN）fail-open 判为佩戴帧")
+	assert.InDelta(t, 600.0, st.max, 0.001, "🔴 T733：stat:today 存 mN")
 }
 
-// mustOffsets 构造偏移矩阵：前 n 个取 values（单位 N），其余 0
+// mustOffsets 构造偏移矩阵：前 n 个取 values，其余 0。
+// 🔴 T733 方案A：baselines.offset_values 量纲 = **mN 存储空间**（与帧值同量纲才能直接相减），
+// 故与 pts() 同一书写口径：用例按 mN 写（物理 0.3 N 的偏移写 300）。
 func mustOffsets(values ...float32) [model.PointCount]float32 {
 	var out [model.PointCount]float32
 	copy(out[:], values)
