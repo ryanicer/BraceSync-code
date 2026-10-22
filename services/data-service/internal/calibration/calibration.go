@@ -24,7 +24,7 @@ const DefaultCacheTTL = 60 * time.Second
 // Baseline 某设备当前生效的权威校准基线（baselines 表行投影）
 type Baseline struct {
 	BaselineID int64
-	Offsets    [model.PointCount]float32 // 单位 N（空载校准采集，写归 device-service；BLE 采集腿量纲对齐列 T719 全链待办）
+	Offsets    [model.PointCount]float32 // 单位 mN（T733 方案A：baselines.offset_values 与帧同存储空间，零换算；旧 N 值由迁移 000041 x1000 搬齐）
 }
 
 // Store 基线只读契约（repo.BaselineRepo 实现；D3：同库只读，写归 device-service）
@@ -77,6 +77,9 @@ func (c *Calibrator) Apply(ctx context.Context, deviceID string, points [model.P
 		return Result{Points: points, Applied: false}, nil
 	}
 	out := points
+	// T733 方案A 口径①③：帧与基线都在 mN 存储空间，直接相减、零换算。
+	// 基线若不迁 mN（迁移 000041 漏跑），这里等价于减去 0.001 量级的数——不报错但校准失效，
+	// 所以量纲对齐必须靠迁移保证，卡面判据要求改后回读 baselines 读数。
 	for i := range out {
 		out[i] -= bl.Offsets[i]
 	}
