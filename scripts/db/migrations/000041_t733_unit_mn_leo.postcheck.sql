@@ -58,13 +58,21 @@ SELECT 'sys_configs'      AS tbl, count(*) FROM sys_configs_t733_bak
 UNION ALL SELECT 'baselines',           count(*) FROM baselines_t733_bak
 UNION ALL SELECT 'pressure_records',    count(*) FROM pressure_records_t733_bak
 UNION ALL SELECT 'daily_wear_stats',    count(*) FROM daily_wear_stats_t733_bak
-UNION ALL SELECT 'alerts',              count(*) FROM alerts_t733_bak;
+UNION ALL SELECT 'alerts',              count(*) FROM alerts_t733_bak
+UNION ALL SELECT 'alert_point_rules',   count(*) FROM alert_point_rules_t733_bak;
 
 -- ⑤ 日聚合行：列名必须已是 wearing_threshold_mn（改名的直接证据），且峰值回到 mN 量程
 SELECT count(*)                                                    AS stat_rows,
        count(*) FILTER (WHERE wearing_threshold_mn IS NOT NULL)    AS stamped_rows,
        round(max(max_pressure)::numeric, 3)                        AS max_pressure_high_water
 FROM daily_wear_stats;
+
+-- ⑤c 逐采集点阈值：upper_n/lower_n 期望已是 mN（量程带 1000–200000；仍是小数=没搬）
+SELECT count(*)                                   AS rule_rows,
+       round(min(upper_n)::numeric, 3)            AS min_upper,
+       round(max(upper_n)::numeric, 3)            AS max_upper,
+       count(*) FILTER (WHERE upper_n < 1000)     AS suspicious_low_rows
+FROM alert_point_rules;
 
 -- ⑥ 告警行压力量纲两列期望已 ×1000（与帧同存储空间；读侧出口 ÷1000 展示）
 SELECT type, count(*) AS rows_cnt,

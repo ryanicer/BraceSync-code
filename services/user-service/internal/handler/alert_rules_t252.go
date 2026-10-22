@@ -98,8 +98,9 @@ func (h *Handler) loadAlertRules(ctx context.Context) (*model.AlertRulesDTO, *mo
 		byID[r.PointID] = r
 	}
 
-	unifiedUpper := numOr(kvs[keyPressureHigh], settingsDefaults.PressureHighThresholdN)
-	unifiedLower := numOr(kvs[keyPressureLow], defaultUnifiedLowerN)
+	// 🔴 T733：库里两枚统一阈值存 mN，出参一律经 numOrMnToN 换算成界面 N（缺行回退默认仍按 N 声明）
+	unifiedUpper := numOrMnToN(kvs[keyPressureHigh], settingsDefaults.PressureHighThresholdN)
+	unifiedLower := numOrMnToN(kvs[keyPressureLow], defaultUnifiedLowerN)
 
 	points := make([]model.AlertPointRuleDTO, 0, alertPointCount)
 	for i := 0; i < alertPointCount; i++ {
@@ -113,8 +114,8 @@ func (h *Handler) loadAlertRules(ctx context.Context) (*model.AlertRulesDTO, *mo
 		}
 		if r, exists := byID[id]; exists {
 			p.Monitored = r.Monitored
-			p.UpperN = r.UpperN
-			p.LowerN = r.LowerN
+			p.UpperN = mnToNPtr(r.UpperN) // 逐点列 upper_n/lower_n 存 mN ⇒ 出参换算成 N（T733）
+			p.LowerN = mnToNPtr(r.LowerN)
 		}
 		p.EffectiveUpperN = floatOr(p.UpperN, unifiedUpper)
 		p.EffectiveLowerN = floatOr(p.LowerN, unifiedLower)
@@ -132,7 +133,7 @@ func (h *Handler) loadAlertRules(ctx context.Context) (*model.AlertRulesDTO, *mo
 			ContinuousWearMaxHours: numOr(kvs[keyContinuousWearMaxHours], 23),
 			ReportTimeoutMinutes:   numOr(kvs[keyReportTimeoutMinutes], 5),
 			// T653 R2：传感器标定异常告警阈值（0.3N），编辑位唯一落点本卡
-			SensorDriftN: numOr(kvs[keySensorDrift], settingsDefaults.SensorDriftN),
+			SensorDriftN: numOrMnToN(kvs[keySensorDrift], settingsDefaults.SensorDriftN),
 		},
 	}, nil
 }
@@ -228,16 +229,16 @@ func (h *Handler) updateAlertPointRules(c *gin.Context) {
 			return
 		}
 		rules = append(rules, repo.AlertPointRuleRow{
-			PointID: u.PointID, Monitored: monitored, UpperN: u.UpperN, LowerN: u.LowerN,
+			PointID: u.PointID, Monitored: monitored, UpperN: nToMnPtr(u.UpperN), LowerN: nToMnPtr(u.LowerN),
 		})
 	}
 
 	var kvs []repo.ConfigKV
 	if req.UnifiedUpperN != nil {
-		kvs = append(kvs, repo.ConfigKV{Key: keyPressureHigh, Value: fmtNum(unifiedUpper)})
+		kvs = append(kvs, repo.ConfigKV{Key: keyPressureHigh, Value: fmtNum(nToMn(unifiedUpper))})
 	}
 	if req.UnifiedLowerN != nil {
-		kvs = append(kvs, repo.ConfigKV{Key: keyPressureLow, Value: fmtNum(unifiedLower)})
+		kvs = append(kvs, repo.ConfigKV{Key: keyPressureLow, Value: fmtNum(nToMn(unifiedLower))})
 	}
 
 	operator := operatorID(c, "ops")
@@ -277,8 +278,8 @@ func pointIDs(rules []repo.AlertPointRuleRow) []string {
 func (h *Handler) resetAlertPointRules(c *gin.Context) {
 	ctx := c.Request.Context()
 	kvs := []repo.ConfigKV{
-		{Key: keyPressureHigh, Value: strconv.FormatFloat(settingsDefaults.PressureHighThresholdN, 'f', -1, 64)},
-		{Key: keyPressureLow, Value: strconv.FormatFloat(defaultUnifiedLowerN, 'f', -1, 64)},
+		{Key: keyPressureHigh, Value: strconv.FormatFloat(nToMn(settingsDefaults.PressureHighThresholdN), 'f', -1, 64)},
+		{Key: keyPressureLow, Value: strconv.FormatFloat(nToMn(defaultUnifiedLowerN), 'f', -1, 64)},
 	}
 	operator := operatorID(c, "ops")
 	if err := h.store.ResetAlertRules(ctx, kvs, operator); err != nil {
@@ -324,13 +325,14 @@ func (h *Handler) updateAlertGlobalRules(c *gin.Context) {
 		field string
 		min   float64
 		max   float64
+		mn    bool // true = 压力量纲键：入库前 N→mN（T733）
 	}{
-		{keyWearInterrupt, req.DeviceOfflineMinutes, current.GlobalRules.DeviceOfflineMinutes, "deviceOfflineMinutes", 10, 720},
-		{keyWearTarget, req.DailyWearMinHours, current.GlobalRules.DailyWearMinHours, "dailyWearMinHours", 1, 24},
-		{keyContinuousWearMaxHours, req.ContinuousWearMaxHours, current.GlobalRules.ContinuousWearMaxHours, "continuousWearMaxHours", 1, 24},
-		{keyReportTimeoutMinutes, req.ReportTimeoutMinutes, current.GlobalRules.ReportTimeoutMinutes, "reportTimeoutMinutes", 1, 1440},
+		{keyWearInterrupt, req.DeviceOfflineMinutes, current.GlobalRules.DeviceOfflineMinutes, "deviceOfflineMinutes", 10, 720, false},
+		{keyWearTarget, req.DailyWearMinHours, current.GlobalRules.DailyWearMinHours, "dailyWearMinHours", 1, 24, false},
+		{keyContinuousWearMaxHours, req.ContinuousWearMaxHours, current.GlobalRules.ContinuousWearMaxHours, "continuousWearMaxHours", 1, 24, false},
+		{keyReportTimeoutMinutes, req.ReportTimeoutMinutes, current.GlobalRules.ReportTimeoutMinutes, "reportTimeoutMinutes", 1, 1440, false},
 		// T653 R2：量程与 settings validateSettings 同档 [0.1,20]
-		{keySensorDrift, req.SensorDriftN, current.GlobalRules.SensorDriftN, "sensorDriftN", 0.1, 20},
+		{key: keySensorDrift, in: req.SensorDriftN, cur: current.GlobalRules.SensorDriftN, field: "sensorDriftN", min: 0.1, max: 20, mn: true},
 	}
 
 	var kvs []repo.ConfigKV
@@ -342,7 +344,11 @@ func (h *Handler) updateAlertGlobalRules(c *gin.Context) {
 			fail(c, appErr)
 			return
 		}
-		kvs = append(kvs, repo.ConfigKV{Key: m.key, Value: fmtNum(*m.in)})
+		val := *m.in
+		if m.mn {
+			val = nToMn(val)
+		}
+		kvs = append(kvs, repo.ConfigKV{Key: m.key, Value: fmtNum(val)})
 	}
 	if len(kvs) == 0 {
 		fail(c, model.ErrInvalidParam("no global rule field provided"))

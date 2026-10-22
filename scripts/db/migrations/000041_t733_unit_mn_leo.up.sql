@@ -18,7 +18,7 @@ BEGIN;
 --   ②③ 存储语义变了，历史行必须同量纲：pressure_records 污染帧（>5000）÷1000、
 --        daily_wear_stats 聚合列 ÷1000 + 印章列改名 wearing_threshold_mn（×1000）、
 --        alerts 两类的 threshold_value/actual_value ×1000（读侧出口按 mN 展示）
---   ④ 快照先行：四张 *_t733_bak 表在任何写操作之前建立
+--   ④ 快照先行：六张 *_t733_bak 表在任何写操作之前建立
 --
 -- Redis 不在本文件内（SQL 改不了缓存）：迁移后由 Andy 清 rt:frame:* 与 stat:today:*，
 --   或等 TTL 自然过期；不清的症状 = 实时页峰值差 1000 倍（缓存里还是旧量纲）。
@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS sys_configs_t733_bak        AS SELECT * FROM sys_conf
 CREATE TABLE IF NOT EXISTS baselines_t733_bak          AS SELECT * FROM baselines;
 CREATE TABLE IF NOT EXISTS daily_wear_stats_t733_bak   AS SELECT * FROM daily_wear_stats;
 CREATE TABLE IF NOT EXISTS alerts_t733_bak             AS SELECT * FROM alerts;
+CREATE TABLE IF NOT EXISTS alert_point_rules_t733_bak  AS SELECT * FROM alert_point_rules;
 -- 帧表可能很大：只备要动的那批（>5000 的污染帧）
 CREATE TABLE IF NOT EXISTS pressure_records_t733_bak AS
 SELECT * FROM pressure_records
@@ -80,6 +81,14 @@ BEGIN
            p17 = p17 / 1000, p18 = p18 / 1000, p19 = p19 / 1000, p20 = p20 / 1000
      WHERE greatest(p01,p02,p03,p04,p05,p06,p07,p08,p09,p10,
                     p11,p12,p13,p14,p15,p16,p17,p18,p19,p20) > 5000;
+
+    -- ②③ 逐采集点阈值表 upper_n / lower_n ×1000（键名沿用历史，语义随存储层改 mN）：
+    --     读端是 alert-service repo/config.go（与 mN 帧直接比较）、写端是 user-service UI 边界，
+    --     这一列不搬，逐点判档会低 1000 倍 ⇒ 每条帧都超阈（等于把热力图满屏 critical 搬进告警表）。
+    UPDATE alert_point_rules
+       SET upper_n = upper_n * 1000,
+           lower_n = lower_n * 1000
+     WHERE upper_n IS NOT NULL OR lower_n IS NOT NULL;
 
     -- ②③ 告警行的两枚压力量纲值 ×1000：读侧出口 handler.displayValueN 按 mN 存储 ÷1000 展示，
     --     不搬这两列，历史告警会显示成 0.005 N（旧行是 N，新行是 mN，同列两种量纲）。

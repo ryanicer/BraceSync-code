@@ -96,10 +96,10 @@ func TestT252_GetAlertRules_EmptyDBFallsBackToDefaults(t *testing.T) {
 
 func TestT252_GetAlertRules_MergesSparsePointRows(t *testing.T) {
 	e := newEnv(t, true, true)
-	upper, lower := 20.0, 5.0
+	upper, lower := 20000.0, 5000.0 // 逐点行存 mN（T733），出参换算成 20 N / 5 N
 	e.store.configs = map[string]string{
-		keyPressureHigh:  "50",
-		keyPressureLow:   "12",
+		keyPressureHigh:  "50000",
+		keyPressureLow:   "12000",
 		keyWearTarget:    "18",
 		keyWearInterrupt: "45",
 	}
@@ -148,9 +148,9 @@ func TestT252_GetAlertRules_StoreErrorsReturn500(t *testing.T) {
 
 func TestT252_UpdateAlertPointRules_WritesUnifiedKVAndIncrement(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.configs = map[string]string{keyPressureHigh: "45", keyWearInterrupt: "30"}
+	e.store.configs = map[string]string{keyPressureHigh: "45000", keyWearInterrupt: "30"}
 	monitored := false
-	upper := 20.0
+	upper := 20.0 // 请求体是界面 N（落库由边界换算成 20000 mN）
 	lower := 5.0
 
 	body := map[string]any{
@@ -168,7 +168,7 @@ func TestT252_UpdateAlertPointRules_WritesUnifiedKVAndIncrement(t *testing.T) {
 	require.Len(t, e.store.savedKVs, 1)
 	v, ok := kvOf(e.store.savedKVs, keyPressureHigh)
 	require.True(t, ok)
-	assert.Equal(t, "50", v)
+	assert.Equal(t, "50000", v, "T733：统一上限落库存 mN（界面 50 N）")
 
 	require.Len(t, e.store.savedRules, 3)
 	p01, ok := ruleFor(e.store.savedRules, "P01")
@@ -180,7 +180,7 @@ func TestT252_UpdateAlertPointRules_WritesUnifiedKVAndIncrement(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, p07.Monitored, "monitored 缺省 = 不改勾选，保持默认勾选")
 	require.NotNil(t, p07.UpperN)
-	assert.Equal(t, 20.0, *p07.UpperN)
+	assert.Equal(t, 20000.0, *p07.UpperN, "T733：逐点行落库存 mN（界面 20 N）")
 
 	p08, ok := ruleFor(e.store.savedRules, "P08")
 	require.True(t, ok)
@@ -221,7 +221,7 @@ func TestT252_UpdateAlertPointRules_RejectsBadInputBeforeWriting(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t, true, true)
-			e.store.configs = map[string]string{keyPressureHigh: "45"}
+			e.store.configs = map[string]string{keyPressureHigh: "45000"}
 			w, resp := e.do(http.MethodPut, t252PointsPath, tc.body, t252AdminHdr())
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 			assert.Equal(t, model.CodeInvalidParam, resp.Code)
@@ -235,8 +235,8 @@ func TestT252_UpdateAlertPointRules_RejectsBadInputBeforeWriting(t *testing.T) {
 
 func TestT252_UpdateAlertPointRules_InheritsCurrentValueForUnlistedPoints(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.configs = map[string]string{keyPressureHigh: "45"}
-	upper := 20.0
+	e.store.configs = map[string]string{keyPressureHigh: "45000"}
+	upper := 20000.0 // mN 存储行
 	e.store.pointRules = []repo.AlertPointRuleRow{{PointID: "P03", Monitored: true, UpperN: &upper}}
 
 	// 只提交 P04 的勾选变更 + 新的独立阈值：P03 的 20N 不能被抹掉
@@ -285,10 +285,10 @@ func TestT252_ResetAlertPointRules(t *testing.T) {
 	require.Len(t, e.store.resetKVs, 2)
 	v, ok := kvOf(e.store.resetKVs, keyPressureHigh)
 	require.True(t, ok)
-	assert.Equal(t, "5", v, "上限回 T203 ÷10 后默认")
+	assert.Equal(t, "5000", v, "上限回 T203 ÷10 后默认")
 	v, ok = kvOf(e.store.resetKVs, keyPressureLow)
 	require.True(t, ok)
-	assert.Equal(t, "1", v, "T287：恢复默认写回的下限必须 = 迁移 000021 / seed 的 1，不能把库里正确值抹成 0.5")
+	assert.Equal(t, "1000", v, "T287：恢复默认写回的下限必须 = 迁移 000021 / seed 的 1，不能把库里正确值抹成 0.5")
 
 	require.Len(t, e.store.auditRows, 1)
 	assert.Equal(t, "config_change", e.store.auditRows[0].Action)
@@ -303,7 +303,7 @@ func TestT252_ResetAlertPointRules(t *testing.T) {
 
 func TestT252_UpdateAlertGlobalRules_PartialWrite(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.configs = map[string]string{keyPressureHigh: "45", keyWearInterrupt: "30", keyWearTarget: "22"}
+	e.store.configs = map[string]string{keyPressureHigh: "45000", keyWearInterrupt: "30", keyWearTarget: "22"}
 
 	body := map[string]any{"reportTimeoutMinutes": 8, "dailyWearMinHours": 18}
 	w, resp := e.do(http.MethodPut, t252GlobalPath, body, t252AdminHdr())
@@ -406,7 +406,7 @@ func TestT257_GlobalRules_DeviceOfflineRangeMatchesSettingsPage(t *testing.T) {
 func TestT653_GlobalRules_SensorDriftRead(t *testing.T) {
 	t.Run("库内现值透传", func(t *testing.T) {
 		e := newEnv(t, true, true)
-		e.store.configs = map[string]string{keySensorDrift: "1.5"}
+		e.store.configs = map[string]string{keySensorDrift: "1500"}
 
 		w, resp := e.do(http.MethodGet, t252RulesPath, nil, t252AdminHdr())
 		require.Equal(t, http.StatusOK, w.Code, resp.Message)
@@ -432,7 +432,7 @@ func TestT653_GlobalRules_SensorDriftWrite(t *testing.T) {
 
 	require.Len(t, e.store.savedKVs, 1, "只提交这一项就只写一个键")
 	assert.Equal(t, keySensorDrift, e.store.savedKVs[0].Key)
-	assert.Equal(t, "0.3", e.store.savedKVs[0].Value)
+	assert.Equal(t, "300", e.store.savedKVs[0].Value, "T733：界面 0.3 N 落库存 mN")
 	dto := decodeRules(t, resp.Data)
 	assert.InDelta(t, 0.3, dto.GlobalRules.SensorDriftN, 1e-9)
 }

@@ -77,11 +77,18 @@ SELECT count(*) AS stat_rows,
        count(*) FILTER (WHERE wearing_threshold_n IS NOT NULL) AS stamped_rows
 FROM daily_wear_stats;
 
+-- ⑤b 逐采集点阈值表现状（000041 会把 upper_n / lower_n ×1000 搬到 mN）
+SELECT count(*)                                        AS rule_rows,
+       count(*) FILTER (WHERE upper_n IS NOT NULL)      AS has_upper,
+       round(max(upper_n)::numeric, 3)                  AS max_upper,
+       round(min(lower_n)::numeric, 3)                  AS min_lower
+FROM alert_point_rules;
+
 -- ⑥ 是否已有 000041 的快照表（有＝本迁移曾跑过/跑了一半，必须先人工核对再决定是否重跑）
 SELECT table_name
 FROM information_schema.tables
 WHERE table_name IN ('sys_configs_t733_bak', 'baselines_t733_bak', 'pressure_records_t733_bak',
-                     'daily_wear_stats_t733_bak')
+                     'daily_wear_stats_t733_bak', 'alerts_t733_bak', 'alert_point_rules_t733_bak')
 ORDER BY 1;
 
 COMMIT;

@@ -31,6 +31,12 @@ UPDATE pressure_records pr
   FROM pressure_records_t733_bak b
  WHERE pr.record_id = b.record_id;
 
+UPDATE alert_point_rules pr
+   SET upper_n = b.upper_n,
+       lower_n = b.lower_n
+  FROM alert_point_rules_t733_bak b
+ WHERE pr.point_id = b.point_id;
+
 UPDATE alerts a
    SET threshold_value = b.threshold_value,
        actual_value    = b.actual_value
