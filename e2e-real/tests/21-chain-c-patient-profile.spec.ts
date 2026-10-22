@@ -7,8 +7,14 @@ import { resolveH5Origin } from '../h5-origin'
  *
  * 链路口径取自 T462 设计稿 §四「链 C」与 §七 S4：
  *   admin 建档（自建患者，T053 前缀）→ admin 设登录口令（T477）→ 患者口令登录拿 JWT
- *   → 注入患者端 H5 存储 → 真 UI 打开「我的」页 → 点编辑 → 改昵称/年龄/身高 → 保存
- *   → 患者侧读端点值级回读 → 域侧删掉自建患者（T467）并核对行数守恒
+ *   → 注入患者端 H5 存储 → 真 UI 打开「我的」页 → 点编辑 → 姓名/性别/年龄三行只读、
+ *     只改身高 → 保存 → 患者侧读端点值级回读（三行不得被患者改、身高落库）
+ *   → admin 写通道改姓名/年龄 → 患者端端点与页面同步新值（T0518：管理端是唯一改档入口）
+ *   → 域侧删掉自建患者（T467）并核对行数守恒
+ *
+ * T0518（甲方反馈 FB-20261021-014）：姓名/性别/年龄属医疗档案关键字段，患者端只读。
+ *   原先「改昵称/年龄/身高」的真 UI 腿收窄为「只改身高」；三行改为静态值 + 无输入控件反证，
+ *   管理端改档后的同步由本用例末段（13）验证。服务端白名单暂未收窄（兼容老客户端）。
  *
  * 覆盖边界（设计稿 §十三 第 1 条要求用例名自证）：
  *   本用例覆盖的是「持患者身份的档案编辑」这条真实业务链，不声称覆盖患者登录 UI。
@@ -218,7 +224,7 @@ test.describe('21-链 C 患者自助资料编辑（T462 S4）', () => {
   /** 建档前的患者总行数，删行后必须回到这个值 */
   let baselineTotal: number | null = null
 
-  test('21.1 自建患者 → 口令登录 → 真 UI 改资料 → 值级回读：患者端页面只发出声明的那一条 PUT', async ({
+  test('21.1 自建患者 → 口令登录 → 真 UI 三行只读 + 只改身高 → 值级回读：患者端页面只发出声明的那一条 PUT', async ({
     page,
     browser,
   }) => {
@@ -347,44 +353,59 @@ test.describe('21-链 C 患者自助资料编辑（T462 S4）', () => {
       expect(pre.heightCm, '新建患者身高应为 null').toBeNull()
       expect(pre.cobbAngle, '建档 Cobb 角应读回').toBe(25)
 
-      // ── 9) 真 UI：点编辑 → 弹层 → 改三格 → 保存 ──────────────
+      // ── 9) 真 UI：点编辑 → 弹层 → 三行只读 + 只改身高 → 保存 ───
       await h5.locator('.profile-edit').click()
       const sheet = h5.locator('.bottom-sheet').filter({ hasText: '编辑个人信息' })
       await expect(sheet, '点「编辑」应展开个人信息弹层').toHaveClass(/bottom-sheet-show/, {
         timeout: 10_000,
       })
-      // 前端代次锚：组标题文案是 T444 才有的口径。读到旧文案说明 staging 上的患者端产物
-      // 早于我读源码的那一代，此后所有选择器判据都不再对应任何一份在库代码。
+      // 前端代次锚 T0518：只读提示是甲方反馈 FB-20261021-014 的逐字口径。
+      // 读到「昵称输入框 / 性别单选 / 年龄输入框」那套旧形态，说明该源患者端产物早于本卡。
+      await expect(
+        sheet.locator('.form-hint'),
+        '弹层应有只读提示（T0518 代次锚：缺它即该源患者端产物早于本卡）',
+      ).toHaveText('姓名、年龄、性别为医疗档案信息，不可自助修改；如需变更请联系运营人员修改。', {
+        timeout: 5_000,
+      })
+      const staticRows = sheet.locator('.form-static')
+      await expect(staticRows, '姓名/性别/年龄应是三行静态值（不是输入控件）').toHaveCount(3)
+      await expect(staticRows.nth(0), '姓名只读行应显示建档姓名').toHaveText(name)
+      await expect(staticRows.nth(1), '性别只读行应显示建档性别').toHaveText('女')
+      await expect(staticRows.nth(2), '年龄只读行应显示建档年龄').toHaveText('14岁')
+      for (const label of ['姓名', '性别', '年龄']) {
+        const row = sheet.locator('.form-label', { hasText: new RegExp(`^\\s*${label}\\s*$`) }).locator('xpath=..')
+        await expect(row.locator('input'), `「${label}」行不得有输入框（患者端只读）`).toHaveCount(0)
+        await expect(row.locator('uni-radio, .uni-radio-input'), `「${label}」行不得有单选控件`).toHaveCount(0)
+      }
+      // 组标题锚保留：T444 口径，顺带证明弹层还是同一代结构。
       await expect(
         sheet.locator('.form-section-label').first(),
         '弹层组标题应为「联系方式」，读到旧文案即 staging 患者端产物早于 T444',
       ).toHaveText('联系方式', { timeout: 5_000 })
 
-      const newName = `${name}-改`
-      await fillUniInput(sheet, '昵称', newName)
-      await fillUniInput(sheet, '年龄', '15')
       await fillUniInput(sheet, '身高', '158')
       await sheet.locator('.sheet-confirm-text').click()
 
       await expect(sheet, '保存后弹层应收起').not.toHaveClass(/bottom-sheet-show/, { timeout: 15_000 })
 
       // ── 10) 值级回读：患者侧端点 + 页面 DOM + admin 侧端点三点对平
+      // 三行只读 ⇒ 患者这次保存只能动身高；姓名/年龄/性别/诊断/Cobb 都必须原样。
       const post = await callOk<PatientProfile>(h5, 'GET', `${H5_ORIGIN}/api/v1/patient/profile`, {
         token: patientToken,
         why: '保存后回读本人档案',
       })
-      expect(post.name, 'PUT 后姓名应落库').toBe(newName)
-      expect(post.age, 'PUT 后年龄应落库').toBe(15)
+      expect(post.name, 'T0518 后患者端不可改姓名，应保持建档值').toBe(name)
+      expect(post.age, 'T0518 后患者端不可改年龄，应保持建档值').toBe(14)
+      expect(post.gender, 'T0518 后患者端不可改性别，应保持建档值').toBe('female')
       expect(post.heightCm, 'PUT 后身高应落库').toBe(158)
-      expect(post.gender, '性别未被弹层改动，应保持建档值').toBe('female')
       expect(post.diagnosis, '诊断不在白名单内，不该被前端空值清掉').toBe('胸段侧弯')
       expect(post.cobbAngle, 'Cobb 角由临床端写，患者保存不得清掉（T230 裁定 B）').toBe(25)
 
-      await expect(h5.locator('.profile-name'), '页面应回显新昵称').toHaveText(newName, {
+      await expect(h5.locator('.profile-name'), '页面应仍显示建档姓名（只读不可改）').toHaveText(name, {
         timeout: 15_000,
       })
       const meta = await h5.locator('.profile-meta').innerText()
-      expect(meta, `档案副行应含新年龄与患者号，实得 ${meta}`).toContain('15岁')
+      expect(meta, `档案副行应仍含建档年龄与患者号，实得 ${meta}`).toContain('14岁')
       expect(meta).toContain(createdPatientId)
 
       const adminView = await callOk<PatientProfile>(
@@ -412,15 +433,24 @@ test.describe('21-链 C 患者自助资料编辑（T462 S4）', () => {
       const keys = Object.keys(putBody!).sort()
       expect(
         keys,
-        `弹层只应提交白名单内的非空字段，实得 ${keys.join('|')}`,
-      ).toEqual(['age', 'gender', 'heightCm', 'name'])
-      expect(putBody!.name, 'PUT 体 name 应等于新昵称').toBe(newName)
-      expect(putBody!.age, 'PUT 体 age 应为数值 15（不是字符串）').toBe(15)
+        `患者端只应提交一条可写字段（身高）；姓名/性别/年龄已只读、不得出现在 PUT 体，实得 ${keys.join('|')}`,
+      ).toEqual(['heightCm'])
       expect(putBody!.heightCm, 'PUT 体 heightCm 应为数值 158').toBe(158)
-      // 白名单外字段一个都不许出现在请求里。服务端 DisallowUnknownFields 会 400，
+      // 只读三键与白名单外字段一个都不许出现在请求里。服务端 DisallowUnknownFields 会 400，
       // 但「前端根本不发」才是这条链要守的口径，不能靠服务端兜。
-      for (const forbidden of ['phone', 'cobbAngle', 'patientId', 'id', 'status', 'teamId']) {
-        expect(putBody!, `PUT 体不得含白名单外字段 ${forbidden}`).not.toHaveProperty(forbidden)
+      for (const forbidden of [
+        'name',
+        'gender',
+        'age',
+        'phone',
+        'cobbAngle',
+        'diagnosis',
+        'patientId',
+        'id',
+        'status',
+        'teamId',
+      ]) {
+        expect(putBody!, `PUT 体不得含 ${forbidden}`).not.toHaveProperty(forbidden)
       }
 
       // ── 12) 反证二：串联顺序（先读 → 再写 → 再读回显）────────
@@ -438,6 +468,46 @@ test.describe('21-链 C 患者自助资料编辑（T462 S4）', () => {
         lastRead,
         `保存后页面应再读一次档案回显，顺序应为 读=${firstRead} 写=${putIdx} 回读=${lastRead}`,
       ).toBeGreaterThan(putIdx)
+
+      // ── 13) T0518 验收：管理端是唯一改档入口，改完患者端同步 ────
+      // 走 admin 写通道（角色来自第 1 步真实表单登录的 JWT）。刻意放在 11/12 之后：
+      // 这几发由 node 侧发出，不进 h5Writes，页面写请求的取证不受污染。
+      const adminName = `${name}-运营改`
+      const adminEdited = await callOk<PatientProfile>(
+        page,
+        'PUT',
+        `/api/v1/admin/patients/${createdPatientId}`,
+        {
+          token: adminToken!,
+          body: { name: adminName, age: 15 },
+          why: 'admin 改档应放行（T0518 后这是唯一修改入口）',
+        },
+      )
+      expect(adminEdited.name, 'admin 改档应回新姓名').toBe(adminName)
+      expect(adminEdited.age, 'admin 改档应回新年龄').toBe(15)
+
+      const afterAdmin = await callOk<PatientProfile>(h5, 'GET', `${H5_ORIGIN}/api/v1/patient/profile`, {
+        token: patientToken,
+        why: 'admin 改档后患者侧回读',
+      })
+      expect(afterAdmin.name, 'admin 改后的姓名应同步到患者读端点').toBe(adminName)
+      expect(afterAdmin.age, 'admin 改后的年龄应同步到患者读端点').toBe(15)
+
+      await h5.reload({ waitUntil: 'domcontentloaded' })
+      await expect(h5.locator('.profile-name'), '患者端页面应显示管理端改后的姓名').toHaveText(adminName, {
+        timeout: 20_000,
+      })
+      await expect(h5.locator('.profile-meta'), '患者端页面应显示管理端改后的年龄').toContainText('15岁')
+
+      // 只读行也必须跟着新值走（不是把建档值写死在模板里）
+      await h5.locator('.profile-edit').click()
+      const sheetAfterAdmin = h5.locator('.bottom-sheet').filter({ hasText: '编辑个人信息' })
+      await expect(sheetAfterAdmin, '管理端改档后弹层应可再次展开').toHaveClass(/bottom-sheet-show/, {
+        timeout: 10_000,
+      })
+      const staticAfter = sheetAfterAdmin.locator('.form-static')
+      await expect(staticAfter.nth(0), '弹层姓名只读行应同步管理端新值').toHaveText(adminName)
+      await expect(staticAfter.nth(2), '弹层年龄只读行应同步管理端新值').toHaveText('15岁')
     } finally {
       await ctx.close()
     }

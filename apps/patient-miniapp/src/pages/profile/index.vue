@@ -77,7 +77,7 @@
       </view>
     </template>
 
-    <!-- T223 编辑资料表单（字段按 profile.html 设计稿；患者资料写接口后端尚未提供，保存暂提示） -->
+    <!-- T223 编辑资料表单（T0518 后：姓名/性别/年龄只读，其余字段仍可编辑） -->
     <view class="sheet-overlay" :class="{ 'sheet-overlay-show': editSheetVisible }" @click="closeEditSheet"></view>
     <view class="bottom-sheet" :class="{ 'bottom-sheet-show': editSheetVisible }">
       <view class="sheet-handle"></view>
@@ -87,24 +87,22 @@
         <text class="sheet-confirm-text" @click="saveProfile">保存</text>
       </view>
       <view class="sheet-form">
+        <!-- T0518（甲方反馈 FB-20261021-014，卡 1133005753001000518）：姓名/性别/年龄属医疗档案
+             关键字段，患者端只读、不提供任何编辑控件；修改入口仅后台 admin-web（运营/技师）。
+             恢复点 = 本段改前形态（昵称 input#editNickname + 性别 radio-group + 年龄 input#editAge），
+             取 docs main b910879c 版 profile.html；服务端白名单暂未收窄（兼容老版本客户端）。 -->
+        <view class="form-hint">姓名、年龄、性别为医疗档案信息，不可自助修改；如需变更请联系运营人员修改。</view>
         <view class="form-row">
-          <text class="form-label">昵称</text>
-          <input v-model="editNickname" class="form-input" type="text" placeholder="请输入昵称" />
+          <text class="form-label">姓名</text>
+          <text class="form-static">{{ nameText }}</text>
         </view>
         <view class="form-row">
           <text class="form-label">性别</text>
-          <radio-group class="form-radio-group" @change="onGenderChange">
-            <label class="form-radio">
-              <radio value="male" :checked="editGender === 'male'" color="#2563EB" style="transform: scale(0.8)" />男
-            </label>
-            <label class="form-radio">
-              <radio value="female" :checked="editGender === 'female'" color="#2563EB" style="transform: scale(0.8)" />女
-            </label>
-          </radio-group>
+          <text class="form-static">{{ genderText(profile?.gender) }}</text>
         </view>
         <view class="form-row">
           <text class="form-label">年龄</text>
-          <input v-model="editAge" class="form-input" type="number" placeholder="请输入年龄" />
+          <text class="form-static">{{ ageText(profile?.age) }}</text>
         </view>
         <view class="form-row">
           <text class="form-label">身高 (cm)</text>
@@ -147,7 +145,7 @@ import { onShow } from '@dcloudio/uni-app'
 import { getPatientProfile, updatePatientProfile, type PatientProfile, type PatientProfileUpdate } from '../../api/profile'
 import { useAuthStore } from '../../stores/auth'
 import { logger } from '../../utils/logger'
-import { avatarCharOf, cobbText as fmtCobb, textOrDash, CONTACT_GROUP_LABEL } from '../../utils/profile-format'
+import { ageText, avatarCharOf, cobbText as fmtCobb, genderText, textOrDash, CONTACT_GROUP_LABEL } from '../../utils/profile-format'
 
 const auth = useAuthStore()
 
@@ -174,9 +172,6 @@ const metaText = computed(() => {
 // T646 收口后端：患者侧 profile 载荷中医护姓名两枚键值恒 null（weide-duty 2026-10-09 22:52 裁定甲）。
 
 const editSheetVisible = ref(false)
-const editNickname = ref('')
-const editGender = ref<'male' | 'female' | ''>('')
-const editAge = ref('')
 const editHeight = ref('')
 const editWeight = ref('')
 const editEmergencyName = ref('')
@@ -184,12 +179,10 @@ const editEmergencyPhone = ref('')
 const editEmergencyRelation = ref('')
 const savingProfile = ref(false)
 
-// T223 编辑资料表单（字段按 profile.html 设计稿）；手机号行按 PM 2026-09-16 裁定移除：
+// T223 编辑资料表单；手机号行按 PM 2026-09-16 裁定移除：
 // 手机号由微信登录授权写入，患者不可自助改、无任何填号入口
+// T0518：姓名/性别/年龄改为只读展示（不在弹层里编辑），故不再有对应 ref
 function openEditSheet() {
-  editNickname.value = profile.value?.name ?? ''
-  editGender.value = profile.value?.gender ?? ''
-  editAge.value = profile.value?.age != null ? String(profile.value.age) : ''
   editHeight.value = profile.value?.heightCm != null ? String(profile.value.heightCm) : ''
   editWeight.value = profile.value?.weightKg != null ? String(profile.value.weightKg) : ''
   editEmergencyName.value = profile.value?.emergencyContactName ?? ''
@@ -200,11 +193,6 @@ function openEditSheet() {
 
 function closeEditSheet() {
   editSheetVisible.value = false
-}
-
-function onGenderChange(e: unknown) {
-  const value = (e as { detail?: { value?: string } })?.detail?.value
-  if (value === 'male' || value === 'female') editGender.value = value
 }
 
 // 空串→不提交该字段（服务端指针语义 nil=不改）；数字字段非法时忽略
@@ -222,11 +210,8 @@ async function saveProfile() {
     uni.showToast({ title: '登录态缺失，请重新登录', icon: 'none' })
     return
   }
+  // T0518：姓名/性别/年龄已只读，本弹层只写身高/体重/紧急联系人
   const payload: PatientProfileUpdate = {}
-  if (editNickname.value.trim()) payload.name = editNickname.value.trim()
-  if (editGender.value) payload.gender = editGender.value
-  const age = numOrUndef(editAge.value)
-  if (age !== undefined) payload.age = age
   const height = numOrUndef(editHeight.value)
   if (height !== undefined) payload.heightCm = height
   const weight = numOrUndef(editWeight.value)
@@ -234,6 +219,12 @@ async function saveProfile() {
   if (editEmergencyName.value.trim()) payload.emergencyContactName = editEmergencyName.value.trim()
   if (editEmergencyPhone.value.trim()) payload.emergencyContactPhone = editEmergencyPhone.value.trim()
   if (editEmergencyRelation.value.trim()) payload.emergencyContactRelation = editEmergencyRelation.value.trim()
+  // T0518：姓名/性别/年龄退场后，三个可写字段全空是合法状态（新患者尚无身高体重/紧急联系人）；
+  // 此时不发 PUT —— 服务端对空载荷回 400「no updatable fields」，不应把它当保存失败弹给患者。
+  if (Object.keys(payload).length === 0) {
+    uni.showToast({ title: '未修改任何信息', icon: 'none' })
+    return
+  }
 
   savingProfile.value = true
   try {
@@ -350,8 +341,9 @@ function goContact() {
 .form-row { display: flex; align-items: center; padding: 24rpx 0; border-bottom: 1rpx solid #f1f5f9; }
 .form-label { font-size: 28rpx; color: #1e293b; width: 220rpx; flex-shrink: 0; }
 .form-input { flex: 1; height: 80rpx; min-height: 80rpx; box-sizing: border-box; border: 1rpx solid #e2e8f0; border-radius: 16rpx; padding: 0 24rpx; font-size: 28rpx; color: #1e293b; }
-.form-radio-group { display: flex; gap: 32rpx; }
-.form-radio { font-size: 28rpx; color: #64748b; display: flex; align-items: center; }
+/* T0518：只读档案行（姓名/性别/年龄）与常驻提示；无输入控件、无编辑态（对齐 profile.html） */
+.form-hint { font-size: 24rpx; color: #94a3b8; line-height: 1.6; background: #f8fafc; border-radius: 16rpx; padding: 20rpx 24rpx; margin: 4rpx 0 8rpx; }
+.form-static { flex: 1; font-size: 28rpx; color: #64748b; }
 .form-section-label { display: block; font-size: 24rpx; color: #94a3b8; padding: 28rpx 0 8rpx; font-weight: 500; }
 
 /* T690：原「设置」弹层样式（sheet-option / sheet-option-danger / sheet-cancel）随抽屉整组删除；
