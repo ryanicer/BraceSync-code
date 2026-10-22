@@ -242,7 +242,8 @@ func (s *RecordService) applyRealtimeCache(ctx context.Context, deviceID, patien
 		// T594 甲案：佩戴维度只交「本帧是否佩戴 + 帧时刻」两个原始量，Redis 侧 O(1) 维护
 		// 佩戴帧数与首末帧时间戳；今日分钟在读侧与日聚合同源现算（见 statTodayWearMinutes），
 		// 不再把设备配置上报间隔（秒）当分钟逐帧累加（旧口径放大约 60 倍）。
-		wearing := calibMaxP > s.pressureThresholds(ctx).WearingN // PRD §8.1（减偏移后值，T173）
+		// 🔴 T733：calibMaxP 与 wearing 阈值同为 **mN 存储空间**，直接比较、零换算（PRD §8.1，减偏移后值，T173）
+		wearing := calibMaxP > s.pressureThresholds(ctx).WearingMn
 		if err := s.cache.ApplyStatToday(ctx, patientID, wearing, frame.Ts, calibMaxP, model.PointID(calibMaxIdx), 0, endOfTodayCST(now)); err != nil {
 			log.Error().Err(err).Str("patient_id", patientID).Msg("redis update stat:today failed")
 			return model.ErrInternal("redis unavailable")
@@ -275,7 +276,8 @@ func statTodayWearMinutes(stats map[string]string) int {
 func fillSnapshotFromStatToday(snapshot *model.RealtimeSnapshot, stats map[string]string) {
 	snapshot.TodayHours = float64(statTodayWearMinutes(stats)) / 60.0
 	if v, convErr := strconv.ParseFloat(stats["max_pressure"], 64); convErr == nil && v > 0 {
-		snapshot.MaxPressure = v
+		// 🔴 T733：stat:today 存 mN（写入侧原样累计），快照字段是 N ⇒ 出口换算
+		snapshot.MaxPressure = model.MnToN(v)
 	}
 	if stats["max_point"] != "" {
 		snapshot.MaxPoint = stats["max_point"]
@@ -548,7 +550,8 @@ func (s *RecordService) GetHistory(ctx context.Context, patientID, period, date,
 func (s *RecordService) calibratedRecordDTO(ctx context.Context, th model.PressureThresholds, areaCm2 *float64, rec model.PressureRecord) model.PressureRecordDTO {
 	res := s.calibrate(ctx, rec.DeviceID, rec.Points)
 	dto := rec.ToDTO(th, areaCm2)
-	dto.Points = model.BuildSensorPoints(res.Points, th, areaCm2)
+	// 🔴 T733 唯一换算层：校准后仍是 mN，出口这一步 FrameToN + ToDisplay（分母 model.MnPerN）
+	dto.Points = model.BuildSensorPoints(model.FrameToN(res.Points), th.ToDisplay(), areaCm2)
 	dto.Calibrated = res.Applied
 	return dto
 }
@@ -578,15 +581,17 @@ func contactAreaForPatient(ctx context.Context, devices repo.DeviceStore, patien
 // pressureHeatmap 返回空数组（JSON 仍为 []，不再是按 patientID 造的梯度网格）。
 func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*model.RealtimeSnapshot, *model.AppError) {
 	th := s.pressureThresholds(ctx)
+	// 🔴 T733 方案A：sys_configs 阈值与帧值同存 mN，快照三枚展示字段在此一次换算（前端拿到的恒是 N）
+	thd := th.ToDisplay()
 	snapshot := &model.RealtimeSnapshot{
 		Status:          "offline",
 		MaxPoint:        "",
 		PressureRecords: []model.PressureRecordDTO{},
 		PressureHeatmap: []model.HeatmapPoint{}, // T325：无真实帧即空，绝不下发伪造网格
 		Alerts:          []any{},
-		HeatmapMaxN:     th.HeatmapMaxN,
-		PressureHighN:   th.PressureHighN,
-		PressureLowN:    th.PressureLowN,
+		HeatmapMaxN:     thd.HeatmapMaxN,
+		PressureHighN:   thd.PressureHighN,
+		PressureLowN:    thd.PressureLowN,
 	}
 
 	deviceID, dbStatus, areaCm2, exists, err := s.devices.GetDeviceByPatient(ctx, patientID)
@@ -597,7 +602,7 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 	// T508：面积与色阶上界的 kPa 档随设备行同源回填（换算只在这一次做，两条读路共用同一个 areaCm2）。
 	// 未绑定 / 未配置 → 保持 nil，前端显示「--」，不用后台默认 0.64 补位。
 	snapshot.ContactAreaCm2 = areaCm2
-	snapshot.HeatmapMaxKpa = model.KpaFromN(th.HeatmapMaxN, areaCm2)
+	snapshot.HeatmapMaxKpa = model.KpaFromN(thd.HeatmapMaxN, areaCm2)
 	// T200 真机取证点：配网入口「无设备」弹窗的唯一判据
 	log.Info().Str("patient_id", patientID).Str("device_id", deviceID).Bool("bound", exists).
 		Msg("realtime: snapshot device resolved (T200)")
@@ -619,6 +624,8 @@ func (s *RecordService) GetRealtime(ctx context.Context, patientID string) (*mod
 // 热力图 & PressureRecords 取 pressure_records 最新行（读侧减偏移，T173），
 // stat:today 为空时回退到最新帧的 max（避免前端空值）。
 func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, deviceID, dbStatus string, areaCm2 *float64, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
+	// 🔴 T733：本分支的换算全在出口层函数内做（calibratedRecordDTO → FrameToN + ToDisplay、
+	// BuildHeatmap 前一处 FrameToN），此处不再另起分母。
 	rec, hasRecord, err := s.latest.GetLatestRecord(ctx, patientID)
 	if err != nil {
 		return nil, model.ErrInternal("read latest record: %v", err)
@@ -629,7 +636,7 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 
 	res := s.calibrate(ctx, deviceID, rec.Points)
 	snapshot.PressureRecords = []model.PressureRecordDTO{s.calibratedRecordDTO(ctx, th, areaCm2, rec)}
-	snapshot.PressureHeatmap = model.BuildHeatmap(res.Points, areaCm2)
+	snapshot.PressureHeatmap = model.BuildHeatmap(model.FrameToN(res.Points), areaCm2)
 
 	// 一次性读 stat:today：T594 后为 wear_frames/wear_first_ts/wear_last_ts（同源算 TodayHours）
 	// + max_pressure / max_point / abnormal_count
@@ -638,9 +645,9 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 	}
 	// stat:today 缺今日峰值或读取失败：用最新帧兜底（防止首次上报当日无统计时前端空白）
 	if snapshot.MaxPressure <= 0 || snapshot.MaxPoint == "" {
-		calibMaxP, calibMaxIdx := maxPoint(res.Points)
+		calibMaxP, calibMaxIdx := maxPoint(res.Points) // mN 存储空间
 		if snapshot.MaxPressure <= 0 {
-			snapshot.MaxPressure = calibMaxP
+			snapshot.MaxPressure = model.MnToN(float64(calibMaxP)) // 🔴 T733 出口换算
 		}
 		if snapshot.MaxPoint == "" {
 			snapshot.MaxPoint = model.PointID(calibMaxIdx)
@@ -668,10 +675,12 @@ func (s *RecordService) getRealtimeFromDB(ctx context.Context, patientID, device
 }
 
 // getRealtimeFromRedis Redis 回退路径（issue 879 前旧逻辑，测试 stub 走此路径）
-// T173：rt:frame 为原样入库的 N raw 值（T719），读侧统一减偏移（与 DB 分支同源）。
+// T173：rt:frame 为原样入库的 **mN** raw 值（T733 方案A），读侧统一减偏移（与 DB 分支同源），
+// 出口再 FrameToN 成 N——两分支的展示口径必须逐字同形（T508 六面等式）。
 // T325：帧能解析出 20 点就下发真值（未佩戴时就是接近 0 的真值），解析不出就不渲染热力图——
 // 不再按 allDead 判「无有效帧」后塞 seed（那是无数据造数据）。
 func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, deviceID, dbStatus string, areaCm2 *float64, snapshot *model.RealtimeSnapshot, th model.PressureThresholds) (*model.RealtimeSnapshot, *model.AppError) {
+	thd := th.ToDisplay() // 🔴 T733：本函数内唯一阈值换算（帧值换算见 FrameToN 各出口）
 	// 状态推导：abnormal 优先，其次 lastseen ≤2h 判 online
 	if dbStatus == "abnormal" {
 		snapshot.Status = "abnormal"
@@ -704,11 +713,11 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 					DeviceID:   rf.DeviceID,
 					PatientID:  rf.PatientID,
 					Timestamp:  rf.Timestamp.UTC().Format(time.RFC3339),
-					Points:     model.BuildSensorPoints(res.Points, th, areaCm2),
+					Points:     model.BuildSensorPoints(model.FrameToN(res.Points), thd, areaCm2),
 					UploadTime: rf.UploadTime.UTC().Format(time.RFC3339),
 					Calibrated: res.Applied,
 					// T366：与 DB 分支同口径的 raw 峰值（Redis 无库侧生成列，按 greatest(p01..p20) 现算）
-					MaxPressure: model.MaxPointValue(raw),
+					MaxPressure: float32(model.MnToN(float64(model.MaxPointValue(raw)))),
 				})
 				snapshot.Battery = rf.Battery
 			}
@@ -717,7 +726,7 @@ func (s *RecordService) getRealtimeFromRedis(ctx context.Context, patientID, dev
 		}
 	}
 	if frameValid {
-		snapshot.PressureHeatmap = model.BuildHeatmap(hmPoints, areaCm2)
+		snapshot.PressureHeatmap = model.BuildHeatmap(model.FrameToN(hmPoints), areaCm2)
 	}
 
 	// 今日统计（stat:today：T594 后佩戴分钟同源现算）
@@ -904,7 +913,7 @@ type DailyWearService struct {
 	// 且 detailFrameCount 下发 null（「没查」不能说成「0 帧」）、代次判 unknown 且不带复算现场。
 	detail repo.DailyWearDetailSource
 	// configs T411 复算假设来源（sys_configs 的佩戴阈值 + 采集间隔）。
-	// nil = 未注入 ⇒ 回退 model.WearingThresholdN / repo.DefaultIntervalMinutes，并把回退值随行下发。
+	// nil = 未注入 ⇒ 回退 model.WearingThresholdMn / repo.DefaultIntervalMinutes，并把回退值随行下发。
 	configs repo.WearRecomputeConfig
 	// devices T643 A 路 kPa 展示档的分母来源（devices.contact_area_cm2，只读）。
 	// nil = 未注入 ⇒ 逐行 kPa 下发 null（fail-closed，与面积未配置同形），不影响 N 值那两列。
@@ -958,7 +967,7 @@ func deriveWearProvenance(stamped bool, declaredFrameCount int, detailFrameCount
 // 🔴 分钟与均值必须**同时**对上才算命中该代：只对上其一可能是巧合
 // （老口径日均 = 全帧峰值均值、现口径日均 = 佩戴帧点均值，两式的巧合面远大于两式同时成立）。
 func deriveWearGeneration(stamped bool, row model.DailyWearStats,
-	detail *repo.WearDayDetail, assumedN float64, assumedInterval int) (string, *model.WearGenerationCheck) {
+	detail *repo.WearDayDetail, assumedMn float64, assumedInterval int) (string, *model.WearGenerationCheck) {
 	if detail == nil {
 		if stamped {
 			return model.GenSealed, nil
@@ -969,7 +978,7 @@ func deriveWearGeneration(stamped bool, row model.DailyWearStats,
 	expCurrent := repo.WearMinutesFromSpan(detail.WearingFrames, detail.WearSpanSeconds)
 	expLegacy := model.WearMinutesLegacy(detail.WearingFrames, assumedInterval)
 	ck := &model.WearGenerationCheck{
-		AssumedWearingThresholdN:   assumedN,
+		AssumedWearingThresholdN:   model.MnToN(assumedMn), // 🔴 T733：复算比较用 mN，下发给复核者的这个字段是 N
 		AssumedIntervalMinutes:     assumedInterval,
 		DetailFrames:               detail.Frames,
 		FrameCountMatchesDetail:    detail.Frames == row.FrameCount,
@@ -1002,12 +1011,12 @@ func deriveWearGeneration(stamped bool, row model.DailyWearStats,
 // recomputeAssumptions T411：复算用的两个假设值（佩戴阈值 / 采集间隔）。
 // 读不到配置不报错——回退默认值并原样随行下发，让复核者看得见用的是哪个值。
 func (s *DailyWearService) recomputeAssumptions(ctx context.Context) (float64, int) {
-	n, interval := model.WearingThresholdN, repo.DefaultIntervalMinutes
+	n, interval := model.WearingThresholdMn, repo.DefaultIntervalMinutes // 🔴 佩戴阈值 mN 存储空间（与帧值同量纲）
 	if s.configs == nil {
 		return n, interval
 	}
 	if th, err := s.configs.GetPressureThresholds(ctx); err == nil {
-		n = th.WearingN
+		n = th.WearingMn
 	} else {
 		log.Warn().Err(err).Msg("daily-wear recompute: wearing threshold unreadable, falls back to model default")
 	}
@@ -1022,11 +1031,11 @@ func (s *DailyWearService) recomputeAssumptions(ctx context.Context) (float64, i
 // wearDetailByDay 取区间内逐 CST 日的明细复算输入；未注入或查询失败返回 nil（不分档）。
 // 复算失败只降级不报错：daily-wear 的可用性优先，判档按「未复算」走。
 func (s *DailyWearService) wearDetailByDay(ctx context.Context, patientID string, from, to time.Time,
-	assumedN float64) map[string]repo.WearDayDetail {
+	assumedMn float64) map[string]repo.WearDayDetail {
 	if s.detail == nil {
 		return nil
 	}
-	details, err := s.detail.WearDetailByCSTDay(ctx, patientID, from, to, assumedN)
+	details, err := s.detail.WearDetailByCSTDay(ctx, patientID, from, to, assumedMn)
 	if err != nil {
 		log.Warn().Err(err).Str("patient_id", patientID).
 			Msg("daily-wear provenance: detail read failed, rows degrade to unsupported")
@@ -1099,8 +1108,8 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 	}
 
 	// T366/T411：同窗口取逐日明细复算输入，用于给无印章的行找佐证并判定口径代次
-	assumedN, assumedInterval := s.recomputeAssumptions(ctx)
-	dayDetails := s.wearDetailByDay(ctx, patientID, fromUTC, toUTC, assumedN)
+	assumedMn, assumedInterval := s.recomputeAssumptions(ctx)
+	dayDetails := s.wearDetailByDay(ctx, patientID, fromUTC, toUTC, assumedMn)
 
 	// T643 A 路：整趟查询共用一枚面积（与 realtime / 历史同源的 devices.contact_area_cm2），
 	// 逐行 avg/max 的 kPa 由它派生；读不到就是 null，不补默认面积。
@@ -1127,7 +1136,7 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 				dayDetail = &empty
 			}
 		}
-		generation, genCheck := deriveWearGeneration(r.HasRollupStamp(), r, dayDetail, assumedN, assumedInterval)
+		generation, genCheck := deriveWearGeneration(r.HasRollupStamp(), r, dayDetail, assumedMn, assumedInterval)
 		abnormal := r.AbnormalCount // 源未注入时保持表内值
 		if abnByDay != nil {
 			abnormal = abnByDay[date] // 现算覆盖：报告面同口径下该日无告警即 0（旧表值可能是历史错值）
@@ -1150,7 +1159,7 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 		if r.HasRollupStamp() {
 			agg := r.AggregatedAt.UTC().Format(time.RFC3339)
 			dto.AggregatedAt = &agg
-			dto.WearingThresholdN = r.WearingThresholdN
+			dto.WearingThresholdN = model.MnStampToN(r.WearingThresholdMn)
 		}
 		out = append(out, dto)
 	}
@@ -1185,7 +1194,7 @@ func (s *DailyWearService) GetDailyWear(ctx context.Context, patientID, startStr
 				}
 			}
 			zeroRow := model.DailyWearStats{}
-			generation, genCheck := deriveWearGeneration(false, zeroRow, dayDetail, assumedN, assumedInterval)
+			generation, genCheck := deriveWearGeneration(false, zeroRow, dayDetail, assumedMn, assumedInterval)
 			out = append(out, &model.DailyWearDayDTO{
 				Date:             ds,
 				AbnormalCount:    n,

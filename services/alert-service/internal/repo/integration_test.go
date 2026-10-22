@@ -440,10 +440,11 @@ func TestIT_A6_Manager_LinkageValidation(t *testing.T) {
 // ─────────────────────────────────────────────────────────────
 
 // itPendingPayload 构造与 data-service pendingAlertItem 格式一致的队列负载
-func itPendingPayload(t *testing.T, queuedAt, frameTS time.Time, maxPressure float64) string {
+// 入参 maxPressureMn = 帧峰值（原始 mN，T733 方案A 存储/链路量纲；默认压力偏高阈 45000mN）
+func itPendingPayload(t *testing.T, queuedAt, frameTS time.Time, maxPressureMn float64) string {
 	t.Helper()
 	points := make([]float64, consumer.PointCount)
-	points[2] = maxPressure // P03 超阈值 → pressure_high
+	points[2] = maxPressureMn // P03 超阈值 → pressure_high
 	b, err := json.Marshal(consumer.PendingItem{
 		QueuedAt: queuedAt.UTC(),
 		Frame: consumer.FrameRef{
@@ -522,9 +523,9 @@ func TestIT_A10_CompensationDrainsQueueIdempotently(t *testing.T) {
 	frameTS := now.Add(-2 * time.Minute).Truncate(time.Second)
 
 	// 同一帧被重复入队两次（模拟 data-service 重试/重放）+ 一帧正常帧
-	payload := itPendingPayload(t, now, frameTS, 50.0)
+	payload := itPendingPayload(t, now, frameTS, 50000)
 	require.NoError(t, itRedis.LPush(ctx, "alert:pending",
-		payload, payload, itPendingPayload(t, now, frameTS.Add(-30*time.Minute), 12.0)).Err())
+		payload, payload, itPendingPayload(t, now, frameTS.Add(-30*time.Minute), 12000)).Err())
 
 	notifier := &itNotifier{}
 	c := itNewConsumer(notifier)
@@ -562,7 +563,7 @@ func TestIT_A10_StaleFrameRecordsWithoutPush(t *testing.T) {
 
 	// 入队时刻在 2h 前（积压 >1h）
 	require.NoError(t, itRedis.LPush(ctx, "alert:pending",
-		itPendingPayload(t, now.Add(-2*time.Hour), now.Add(-2*time.Hour), 50.0)).Err())
+		itPendingPayload(t, now.Add(-2*time.Hour), now.Add(-2*time.Hour), 50000)).Err())
 
 	notifier := &itNotifier{}
 	c := itNewConsumer(notifier)
@@ -611,9 +612,9 @@ func TestIT_T019_AlertNotifyEndToEnd(t *testing.T) {
 		RetryQueue:    retryQueue,
 	})
 
-	// 构造超阈值帧（50N > 45N → pressure_high，P03 点）
+	// 构造超阈值帧（50000mN=50N > 45000mN → pressure_high，P03 点；T733 方案A 量纲）
 	points := make([]float64, 20)
-	points[2] = 50.0 // P03
+	points[2] = 50000.0 // P03
 	frameTS := now.Add(-time.Minute)
 	payload := consumer.PendingItem{
 		QueuedAt: now.UTC(),
@@ -703,9 +704,9 @@ func TestIT_T019_NotifyFailureRetryQueue(t *testing.T) {
 		RetryQueue:    retryQueue,
 	})
 
-	// 构造帧入队列
+	// 构造帧入队列（50000mN = 50N，超 45000mN 阈）
 	points := make([]float64, 20)
-	points[2] = 50.0
+	points[2] = 50000.0
 	payload := consumer.PendingItem{
 		QueuedAt: now.UTC(),
 		Frame: consumer.FrameRef{

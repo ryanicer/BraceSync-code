@@ -31,7 +31,7 @@ func kvValue(kvs []repo.ConfigKV, key string) (string, bool) {
 func TestT302_GetSettings_ReturnsThreeNewKeys(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.configs = map[string]string{
-		keyCalibrationOffset: "0.05",
+		keyCalibrationOffset: "50", // mN（= 0.05 N），T733 起
 		keyWechatTemplateID:  "TPL_wx-AbC001",
 		keySmsTemplateID:     "SMS_20261001",
 	}
@@ -69,7 +69,7 @@ func TestT302_UpdateSettings_LegacyBodyDoesNotTouchNewKeys(t *testing.T) {
 	e := newEnv(t, true, true)
 	e.store.configs = map[string]string{
 		keyCollectInterval:   "30",
-		keyCalibrationOffset: "0.05",
+		keyCalibrationOffset: "50", // mN（= 0.05 N），T733 起
 		keyWechatTemplateID:  "TPL_keep_me",
 		keySmsTemplateID:     "SMS_keep_me",
 	}
@@ -103,7 +103,7 @@ func TestT302_UpdateSettings_WritesThreeKeysAndTrims(t *testing.T) {
 
 	v, ok := kvValue(e.store.lastUpsert, keyCalibrationOffset)
 	require.True(t, ok)
-	assert.Equal(t, "0.2", v)
+	assert.Equal(t, "200", v, "T733：落库写 mN（请求 0.2 N）")
 	v, ok = kvValue(e.store.lastUpsert, keyWechatTemplateID)
 	require.True(t, ok)
 	assert.Equal(t, "TPL_wx-AbC001", v, "入库前 trim，别把空白存进配置")

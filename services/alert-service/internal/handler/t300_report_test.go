@@ -192,13 +192,16 @@ func t300ExportRows() []repo.AlertRow {
 	return []repo.AlertRow{
 		{ // 后一条：ts 更晚，但 repo 返回顺序不定，导出需按时间升序
 			AlertID: 12, PatientID: "P001", PatientName: "林小雨", DeviceID: "DEV01",
-			Type: "wear_interrupt", Detail: "中断 35 分钟", Ts: time.Date(2026, 9, 2, 1, 30, 0, 0, time.UTC),
+			Type: "wear_interrupt", Detail: "中断 35 分钟",
+			// 分钟类告警：阈值/实际值单位是分钟，T733 出口换算只作用于压力量纲类型 ⇒ 原样导出
+			ThresholdValue: 60, ActualValue: 35,
+			Ts:         time.Date(2026, 9, 2, 1, 30, 0, 0, time.UTC),
 			ReadStatus: "read", ProcessStatus: "processed", ProcessNote: &note, ProcessedBy: &by,
 			ProcessedAt: t300Time(2026, 9, 2, 2, 0, 0),
 		},
 		{
 			AlertID: 11, PatientID: "P001", DeviceID: "DEV01", Type: "pressure_high",
-			SensorPoint: "P03", ThresholdValue: 45, ActualValue: 52.5,
+			SensorPoint: "P03", ThresholdValue: 45000, ActualValue: 52500, // 库内 mN（T733 方案A）
 			Ts:         time.Date(2026, 9, 1, 16, 5, 0, 0, time.UTC), // 北京 9-2 00:05
 			ReadStatus: "unread", ProcessStatus: "pending", InProgressAt: t300Time(2026, 9, 1, 17, 0, 0),
 		},
@@ -238,14 +241,16 @@ func TestT300_ExportHeadersAndRows(t *testing.T) {
 	assert.Equal(t, "2026-09-02 01:00:00", records[1][12], "开始处理时间同样转北京")
 	assert.Equal(t, "", records[1][13], "未处理 ⇒ 处理时间留空")
 	assert.Equal(t, "压力偏高", records[1][4])
-	assert.Equal(t, "45.00", records[1][7])
-	assert.Equal(t, "52.50", records[1][8])
+	assert.Equal(t, "45.00", records[1][7], "CSV 与界面同口径：压力量纲 mN→N")
+	assert.Equal(t, "52.50", records[1][8], "CSV 与界面同口径：压力量纲 mN→N")
 	assert.Equal(t, "未读", records[1][10])
 	assert.Equal(t, "待处理", records[1][11])
 
 	assert.Equal(t, "12", records[2][0])
 	// T421：wear_interrupt 的显示名收口为「设备离线」（Boss Q1=方案A，改名不改判定）
 	assert.Equal(t, "设备离线", records[2][4])
+	assert.Equal(t, "60.00", records[2][7], "分钟类告警不除 1000（wear_interrupt 阈值 = 60 分钟）")
+	assert.Equal(t, "35.00", records[2][8], "分钟类告警不除 1000（实际间隔 35 分钟）")
 	assert.Equal(t, "林小雨", records[2][2])
 	assert.Equal(t, "已处理", records[2][11])
 	assert.Equal(t, "2026-09-02 10:00:00", records[2][13])

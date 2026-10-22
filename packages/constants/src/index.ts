@@ -37,8 +37,28 @@ export const NONCE_DEDUP_MINUTES = 10
 /** Sensor count per frame */
 export const SENSOR_COUNT = 20
 
-/** T173：设备上报单位 mN → N 换算因子（权威口径 mN，÷1000 归一） */
+/**
+ * T173 权威口径：设备上报单位 = mN。T733 方案A（Boss 拍板）的**全仓唯一分母**：
+ *   采集层（BLE 解析）与存储层（DB / API 落库）**零换算**，raw mN 原样走；
+ *   ÷ 本常数**只允许出现在展示层**（页面渲染前的一次换算），且必须走 `nFromMn`。
+ * 🔴 T719 事故根因：删了后端入口的 ÷1000，却没在出口补换算 ⇒ 346 mN 被显示成「346 N」
+ *   （5401 kPa 而非 ~5.4 kPa）。修单向不修双向、只删不加，都会把同一个量纲坑换个位置再犯一次。
+ */
 export const MN_PER_N = 1000
+
+/**
+ * T733 方案A：mN → N 的**唯一展示层换算出口**（存储/采集层禁调）。
+ *
+ * 入参是设备/库里存的 raw mN 值，返回给渲染用的 N 值；N → kPa 再接 shared-utils
+ * `kpaFromN`（那一步是 N↔kPa 的档位换算，不是量纲换算，两者不混用）。
+ * 非有限入参（NaN/Infinity）回 NaN：让调用方的数字文本出「--」，
+ * 不许把脏值当 0 N 渲染出去（与 pressureUnit 的 fail-closed 同语义）。
+ *
+ * @example nFromMn(346) // → 0.346 N
+ */
+export function nFromMn(mn: number): number {
+  return Number.isFinite(mn) ? mn / MN_PER_N : NaN
+}
 
 /**
  * 患者端热力图色阶（N）——T203 ÷10 后量纲。

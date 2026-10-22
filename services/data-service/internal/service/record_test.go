@@ -463,8 +463,10 @@ func newTestEnv() *testEnv {
 	return env
 }
 
-// pts 生成 20 点上报压力值：前 n 个取 values（参数单位=牛顿 N），其余 0。
-// T719：固件 1.4 上报载荷单位即 N（PRD §7A.2），入口原样入库，不再 ×1000/÷1000。
+// pts 生成 20 点上报压力值：前 n 个取 values，其余 0。
+// 🔴 T733 方案A：values 就是**设备载荷原值（mN）**——入口零加工，故落库/Redis/告警入参同为这些数；
+// 展示层（heatmap / DTO / snapshot）拿到的是 values ÷ model.MnPerN 后的 N。
+// 书写口径：物理 4 N 的帧点写 4000，断言热力图/DTO 时写 4。
 func pts(values ...float64) []float64 {
 	out := make([]float64, model.PointCount)
 	copy(out, values)
@@ -574,7 +576,7 @@ func TestEndOfTodayCST(t *testing.T) {
 func TestUploadSingle_Success(t *testing.T) {
 	env := newTestEnv()
 	ts := fixedNow.Add(-5 * time.Minute)
-	points := pts(12.3, 20.1, 30.2) // max=30.2 @P03，>0.5N 佩戴帧
+	points := pts(12300, 20100, 30200) // max=30200 mN（30.2 N）@P03 > 佩戴阈值 50 mN → 佩戴帧
 
 	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(ts, points))
 	require.Nil(t, appErr)
@@ -596,7 +598,7 @@ func TestUploadSingle_Success(t *testing.T) {
 	assert.Equal(t, 1, st.frames)
 	assert.True(t, st.first.Equal(ts))
 	assert.True(t, st.last.Equal(ts))
-	assert.InDelta(t, 30.2, st.max, 0.01)
+	assert.InDelta(t, 30200.0, st.max, 0.01, "🔴 T733：stat:today 存 mN（30.2 N = 30200），Redis 侧零换算")
 	assert.Equal(t, "P03", st.point)
 	assert.Equal(t, endOfTodayCST(fixedNow), st.expire)
 
@@ -608,20 +610,20 @@ func TestUploadSingle_Success(t *testing.T) {
 
 func TestUploadSingle_NotWearing(t *testing.T) {
 	env := newTestEnv()
-	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.01, 0.04)))
+	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10, 40)))
 	require.Nil(t, appErr)
 	assert.False(t, resp.Duplicated)
 	st := env.cache.stat[testPatient]
 	require.NotNil(t, st)
-	assert.Equal(t, 0, st.frames) // ≤0.05N 非佩戴帧（T203 ÷10），不计佩戴帧、首末时刻不设
+	assert.Equal(t, 0, st.frames) // 峰值 40 mN ≤ 佩戴阈值 50 mN（0.05 N）：非佩戴帧，不计帧、首末时刻不设
 	assert.True(t, st.first.IsZero())
 	assert.True(t, st.last.IsZero())
-	assert.InDelta(t, 0.04, st.max, 0.001)
+	assert.InDelta(t, 40.0, st.max, 0.001, "🔴 T733：载荷原样入库（40 mN = 0.04 N），峰值照实累计")
 }
 
 func TestUploadSingle_IdempotentDuplicate(t *testing.T) {
 	env := newTestEnv()
-	req := singleReq(fixedNow.Add(-time.Minute), pts(10, 20))
+	req := singleReq(fixedNow.Add(-time.Minute), pts(10000, 20000))
 
 	resp1, appErr := env.svc.UploadSingle(context.Background(), testDevice, req)
 	require.Nil(t, appErr)
@@ -640,20 +642,20 @@ func TestUploadSingle_IdempotentDuplicate(t *testing.T) {
 func TestUploadSingle_DeviceErrors(t *testing.T) {
 	// 未注册 20404
 	env := newTestEnv()
-	_, appErr := env.svc.UploadSingle(context.Background(), "UNKNOWN", &model.SingleFrameRequest{DeviceID: "UNKNOWN", Timestamp: fixedNow.Unix(), Points: pts(1)})
+	_, appErr := env.svc.UploadSingle(context.Background(), "UNKNOWN", &model.SingleFrameRequest{DeviceID: "UNKNOWN", Timestamp: fixedNow.Unix(), Points: pts(1000)})
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeDeviceNotFound, appErr.Code)
 	assert.Equal(t, 404, appErr.HTTPStatus)
 
 	// 未绑定 20409
 	env.devices.bindings[testDevice] = [2]string{"", "unbound"}
-	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(1)))
+	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(1000)))
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeDeviceUnbound, appErr.Code)
 
 	// 查询失败 90001
 	env.devices.err = errors.New("db down")
-	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(1)))
+	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(1000)))
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeInternal, appErr.Code)
 }
@@ -667,19 +669,19 @@ func TestUploadSingle_ValidationErrors(t *testing.T) {
 	assert.Equal(t, model.CodeInvalidParam, appErr.Code)
 
 	// timestamp 非法 20402
-	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, &model.SingleFrameRequest{DeviceID: testDevice, Timestamp: 1, Points: pts(1)})
+	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, &model.SingleFrameRequest{DeviceID: testDevice, Timestamp: 1, Points: pts(1000)})
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeBadTimestamp, appErr.Code)
 
 	// 分区缺失 → 20402
 	env.records.insertErr = repo.ErrNoPartition
-	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(1)))
+	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(1000)))
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeBadTimestamp, appErr.Code)
 
 	// 其他存储错误 → 90001
 	env.records.insertErr = errors.New("connection refused")
-	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(1)))
+	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(1000)))
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeInternal, appErr.Code)
 }
@@ -687,7 +689,7 @@ func TestUploadSingle_ValidationErrors(t *testing.T) {
 func TestUploadSingle_RateLimited(t *testing.T) {
 	env := newTestEnv()
 	env.svc.limiter = NewRateLimiter(0.5, 1, 0.5, 1) // burst=1
-	req := singleReq(fixedNow.Add(-time.Minute), pts(5))
+	req := singleReq(fixedNow.Add(-time.Minute), pts(5000))
 
 	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, req)
 	require.Nil(t, appErr)
@@ -706,7 +708,7 @@ func TestUploadSingle_AlertDegradeAndRecover(t *testing.T) {
 
 	degradeBefore := testutil.ToFloat64(metrics.AlertDegradeTotal)
 
-	req1 := singleReq(fixedNow.Add(-30*time.Minute), pts(50))
+	req1 := singleReq(fixedNow.Add(-30*time.Minute), pts(5000))
 	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, req1)
 	require.Nil(t, appErr, "降级不阻塞上报成功返回")
 	assert.False(t, resp.Duplicated)
@@ -720,7 +722,7 @@ func TestUploadSingle_AlertDegradeAndRecover(t *testing.T) {
 	assert.False(t, item.Frame.IsBackfill)
 
 	// 下一帧评估恢复且命中
-	req2 := singleReq(fixedNow.Add(-time.Minute), pts(52))
+	req2 := singleReq(fixedNow.Add(-time.Minute), pts(5200))
 	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, req2)
 	require.Nil(t, appErr)
 	assert.Equal(t, 1, env.cache.stat[testPatient].abn, "命中告警 → 今日异常数 +1")
@@ -734,7 +736,7 @@ func TestUploadSingle_DegradeOver5MinAlarm(t *testing.T) {
 	// 预置降级已持续 6 分钟 → 触发 >5min 可观测分支
 	env.svc.degradedSinceUnixNano = fixedNow.Add(-6 * time.Minute).UnixNano()
 
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(5)))
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(5000)))
 	require.Nil(t, appErr)
 	assert.Len(t, env.cache.pending, 1)
 	assert.NotZero(t, env.svc.degradedSinceUnixNano)
@@ -747,7 +749,7 @@ func TestUploadSingle_PushPendingFailsStillSucceeds(t *testing.T) {
 	env.alerts.push(errors.New("down"), nil)
 	env.cache.errPending = errors.New("redis down")
 
-	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(5)))
+	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(5000)))
 	require.Nil(t, appErr, "帧已落库，pending 写入失败不判上报失败")
 	assert.False(t, resp.Duplicated)
 	assert.Empty(t, env.cache.pending)
@@ -757,21 +759,21 @@ func TestUploadSingle_RedisFailures(t *testing.T) {
 	// lastseen 写失败 → 90001
 	env := newTestEnv()
 	env.cache.errLastSeen = errors.New("redis down")
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(5)))
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(5000)))
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeInternal, appErr.Code)
 
 	// rt:frame 写失败 → 90001
 	env = newTestEnv()
 	env.cache.errFrame = errors.New("redis down")
-	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(5)))
+	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(5000)))
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeInternal, appErr.Code)
 
 	// stat:today 写失败 → 90001
 	env = newTestEnv()
 	env.cache.errStat = errors.New("redis down")
-	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(5)))
+	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow, pts(5000)))
 	require.NotNil(t, appErr)
 	assert.Equal(t, model.CodeInternal, appErr.Code)
 }
@@ -779,7 +781,7 @@ func TestUploadSingle_RedisFailures(t *testing.T) {
 func TestUploadSingle_ConfigFallback(t *testing.T) {
 	env := newTestEnv()
 	env.configs.err = errors.New("config read failed")
-	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(5)))
+	resp, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(5000)))
 	require.Nil(t, appErr)
 	assert.Equal(t, 30, resp.Config.IntervalMinutes)
 	assert.Equal(t, 1, resp.Config.ConfigVersion)
@@ -801,11 +803,11 @@ func TestUploadBatch_SuccessWithMixedFrames(t *testing.T) {
 		DeviceID: testDevice,
 		Firmware: "v1.2.0",
 		Frames: []model.BatchFrame{
-			{Timestamp: fixedNow.Add(-24 * time.Hour).Unix(), Points: pts(11), Battery: 80},         // 幂等去重
-			{Timestamp: fixedNow.Add(-23 * time.Hour).Unix(), Points: pts(12), Battery: 79},         // accepted
+			{Timestamp: fixedNow.Add(-24 * time.Hour).Unix(), Points: pts(11000), Battery: 80},      // 幂等去重
+			{Timestamp: fixedNow.Add(-23 * time.Hour).Unix(), Points: pts(12000), Battery: 79},      // accepted
 			{Timestamp: fixedNow.Add(-22 * time.Hour).Unix(), Points: []float64{1, 2}, Battery: 78}, // rejected：points 长度
-			{Timestamp: fixedNow.Add(-8 * 24 * time.Hour).Unix(), Points: pts(13), Battery: 77},     // rejected：>7 天
-			{Timestamp: 1, Points: pts(14), Battery: 76},                                            // rejected：timestamp 非法
+			{Timestamp: fixedNow.Add(-8 * 24 * time.Hour).Unix(), Points: pts(13000), Battery: 77},  // rejected：>7 天
+			{Timestamp: 1, Points: pts(14000), Battery: 76},                                         // rejected：timestamp 非法
 		},
 	}
 
@@ -847,7 +849,7 @@ func TestUploadBatch_Limits(t *testing.T) {
 
 	tooMany := make([]model.BatchFrame, model.MaxBatchFrames+1)
 	for i := range tooMany {
-		tooMany[i] = model.BatchFrame{Timestamp: fixedNow.Add(-time.Duration(i) * time.Minute).Unix(), Points: pts(1)}
+		tooMany[i] = model.BatchFrame{Timestamp: fixedNow.Add(-time.Duration(i) * time.Minute).Unix(), Points: pts(1000)}
 	}
 	_, appErr = env.svc.UploadBatch(context.Background(), testDevice, &model.BatchRequest{DeviceID: testDevice, Frames: tooMany})
 	require.NotNil(t, appErr)
@@ -858,7 +860,7 @@ func TestUploadBatch_RateLimitIndependentChannel(t *testing.T) {
 	env := newTestEnv()
 	env.svc.limiter = NewRateLimiter(1e9, 1e9, 0.5, 1) // 补传 burst=1，实时放开
 
-	frames := []model.BatchFrame{{Timestamp: fixedNow.Add(-time.Hour).Unix(), Points: pts(1)}}
+	frames := []model.BatchFrame{{Timestamp: fixedNow.Add(-time.Hour).Unix(), Points: pts(1000)}}
 	_, appErr := env.svc.UploadBatch(context.Background(), testDevice, &model.BatchRequest{DeviceID: testDevice, Frames: frames})
 	require.Nil(t, appErr)
 	_, appErr = env.svc.UploadBatch(context.Background(), testDevice, &model.BatchRequest{DeviceID: testDevice, Frames: frames})
@@ -866,14 +868,14 @@ func TestUploadBatch_RateLimitIndependentChannel(t *testing.T) {
 	assert.Equal(t, model.CodeRateLimited, appErr.Code)
 
 	// 实时通道不受补传限流影响
-	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(5)))
+	_, appErr = env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(5000)))
 	require.Nil(t, appErr, "batch rate limit must not affect realtime channel")
 }
 
 func TestUploadBatch_RollupIdempotentEnqueue(t *testing.T) {
 	env := newTestEnv()
 	mk := func(offset time.Duration) model.BatchFrame {
-		return model.BatchFrame{Timestamp: fixedNow.Add(offset).Unix(), Points: pts(1)}
+		return model.BatchFrame{Timestamp: fixedNow.Add(offset).Unix(), Points: pts(1000)}
 	}
 	// 同一天的两帧 → 仅一条 rollup 任务
 	req := &model.BatchRequest{DeviceID: testDevice, Frames: []model.BatchFrame{mk(-2 * time.Hour), mk(-time.Hour)}}
@@ -890,7 +892,7 @@ func TestUploadBatch_RollupIdempotentEnqueue(t *testing.T) {
 
 func TestUploadBatch_DeviceErrors(t *testing.T) {
 	env := newTestEnv()
-	frames := []model.BatchFrame{{Timestamp: fixedNow.Add(-time.Hour).Unix(), Points: pts(1)}}
+	frames := []model.BatchFrame{{Timestamp: fixedNow.Add(-time.Hour).Unix(), Points: pts(1000)}}
 
 	_, appErr := env.svc.UploadBatch(context.Background(), "UNKNOWN", &model.BatchRequest{DeviceID: "UNKNOWN", Frames: frames})
 	require.NotNil(t, appErr)
@@ -910,11 +912,11 @@ func TestGetHistory_PaginationAndFilter(t *testing.T) {
 	env := newTestEnv()
 	// 造 3 帧当日数据 + 1 帧他日数据
 	for i := 0; i < 3; i++ {
-		req := singleReq(fixedNow.Add(-time.Duration(90+i*30)*time.Minute), pts(float64(10+i)))
+		req := singleReq(fixedNow.Add(-time.Duration(90+i*30)*time.Minute), pts(float64(10000+i*1000)))
 		_, appErr := env.svc.UploadSingle(context.Background(), testDevice, req)
 		require.Nil(t, appErr)
 	}
-	outReq := singleReq(fixedNow.Add(-48*time.Hour), pts(99))
+	outReq := singleReq(fixedNow.Add(-48*time.Hour), pts(99000))
 	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, outReq)
 	require.Nil(t, appErr)
 
@@ -954,7 +956,7 @@ func TestGetHistory_PaginationAndFilter(t *testing.T) {
 func TestGetRealtime_FullSnapshot(t *testing.T) {
 	env := newTestEnv()
 	// 先上报一帧生成缓存
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10, 25.5)))
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10000, 25500)))
 	require.Nil(t, appErr)
 
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
@@ -1041,8 +1043,8 @@ func TestGetRealtime_StoreErrors(t *testing.T) {
 
 func TestGetRealtime_HeatmapFromFrame(t *testing.T) {
 	env := newTestEnv()
-	// 上报一帧（25.5N 在 P02 为最大值）
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10, 25.5, 8, 5)))
+	// 上报一帧（25500 mN = 25.5 N 在 P02 为最大值）
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10000, 25500, 8000, 5000)))
 	require.Nil(t, appErr)
 
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)
@@ -1102,7 +1104,7 @@ func TestGetRealtime_HeatmapEmptyWhenNoFrame_DBPath(t *testing.T) {
 func TestGetRealtime_HeatmapRealValuesWhenUnwornFrame(t *testing.T) {
 	env := newTestEnv()
 	env.useDBPath()
-	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(0.01, 0.02)))
+	_, appErr := env.svc.UploadSingle(context.Background(), testDevice, singleReq(fixedNow.Add(-time.Minute), pts(10, 20)))
 	require.Nil(t, appErr)
 
 	snap, appErr := env.svc.GetRealtime(context.Background(), testPatient)

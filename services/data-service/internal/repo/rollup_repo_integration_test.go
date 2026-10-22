@@ -51,13 +51,14 @@ func TestITT352RollupSpanAvgAndAbnormal(t *testing.T) {
 	)
 	seedT352Patient(ctx, t, pool, patient, device)
 
-	// 3 帧佩戴（01:00/03:00/05:00，跨度 4h）+ 1 帧未佩戴（峰值 0.01 < 0.05）+ 1 帧窗口外
+	// 🔴 T733 方案A：pressure_records 落库量纲 = **原始 mN**（零换算），故铺帧用 mN 数值
+	// （3000 mN = 3 N）。3 帧佩戴（01:00/03:00/05:00，跨度 4h）+ 1 帧未佩戴（峰值 10 < 阈值 50 mN）+ 1 帧窗口外
 	frames := []t352Frame{
-		{"2026-08-15 01:00:00+08", 3.0, 1.0},
-		{"2026-08-15 03:00:00+08", 2.0, 1.0},
-		{"2026-08-15 05:00:00+08", 1.5, 0.5},
-		{"2026-08-15 20:00:00+08", 0.01, 0.0},
-		{"2026-08-16 00:30:00+08", 9.0, 0.0}, // 窗口外，不得参与任何字段
+		{"2026-08-15 01:00:00+08", 3000, 1000},
+		{"2026-08-15 03:00:00+08", 2000, 1000},
+		{"2026-08-15 05:00:00+08", 1500, 500},
+		{"2026-08-15 20:00:00+08", 10, 0},
+		{"2026-08-16 00:30:00+08", 9000, 0}, // 窗口外，不得参与任何字段
 	}
 	seedT352Frames(ctx, t, pool, patient, device, frames)
 
@@ -69,7 +70,7 @@ func TestITT352RollupSpanAvgAndAbnormal(t *testing.T) {
 	})
 
 	r := NewRollupRepo(pool)
-	stats, err := r.AggregateDate(ctx, t352From, t352To, model.WearingThresholdN)
+	stats, err := r.AggregateDate(ctx, t352From, t352To, model.WearingThresholdMn)
 	require.NoError(t, err)
 	got := findT352Stat(t, stats, patient)
 
@@ -81,16 +82,16 @@ func TestITT352RollupSpanAvgAndAbnormal(t *testing.T) {
 	assert.NotEqual(t, 120, got.WearMinutes, "不得按帧数×collect_interval(30 分钟)折算")
 	assert.NotEqual(t, 90, got.WearMinutes, "不得按佩戴帧数×collect_interval 折算")
 
-	// 日均压力 = 佩戴帧全点均值 (1.10+1.05+0.55)/3 = 0.90；帧峰值均值会是 3.0/2.0/1.5 量级
+	// 日均压力 = 佩戴帧全点均值 (1100+1050+550)/3 = 900 mN；帧峰值均值会是 3000/2000/1500 量级
 	wantAvg := (frames[0].pointSum() + frames[1].pointSum() + frames[2].pointSum()) / 20.0 / 3.0
 	assert.InDelta(t, wantAvg, float64(got.AvgPressure), 1e-4, "日均压力 = 佩戴帧 20 点全点均值")
-	assert.InDelta(t, 3.0, float64(got.MaxPressure), 1e-4, "窗口外那帧 9.0 不得参与")
+	assert.InDelta(t, 3000.0, float64(got.MaxPressure), 1e-4, "库列存 mN（3000 = 3 N）；窗口外那帧 9000 不得参与")
 	assert.Equal(t, "P01", got.MaxPoint)
 
 	assert.Equal(t, 2, got.AbnormalCount, "abnormal_count = 同窗口 alerts 行数")
 
-	// 阈值同源：抬高到 1.6 后只剩 2 帧佩戴 → 跨度 2h、均值取这两帧
-	stats2, err := r.AggregateDate(ctx, t352From, t352To, 1.6)
+	// 阈值同源：抬高到 1600 mN（1.6 N）后只剩 2 帧佩戴 → 跨度 2h、均值取这两帧
+	stats2, err := r.AggregateDate(ctx, t352From, t352To, 1600)
 	require.NoError(t, err)
 	got2 := findT352Stat(t, stats2, patient)
 	assert.Equal(t, 240, got2.WearMinutes, "佩戴帧集合随配置阈值变化（阈值进 SQL，不在 Go 侧写死）")
@@ -149,18 +150,18 @@ func TestITT352RollupSingleWearingFrameIsZero(t *testing.T) {
 	)
 	seedT352Patient(ctx, t, pool, patient, device)
 	seedT352Frames(ctx, t, pool, patient, device, []t352Frame{
-		{"2026-08-15 01:00:00+08", 3.0, 1.0},
-		{"2026-08-15 20:00:00+08", 0.01, 0.0},
+		{"2026-08-15 01:00:00+08", 3000, 1000}, // mN 存储（T733）
+		{"2026-08-15 20:00:00+08", 10, 0},
 	})
 
-	stats, err := NewRollupRepo(pool).AggregateDate(ctx, t352From, t352To, model.WearingThresholdN)
+	stats, err := NewRollupRepo(pool).AggregateDate(ctx, t352From, t352To, model.WearingThresholdMn)
 	require.NoError(t, err)
 	got := findT352Stat(t, stats, patient)
 
 	assert.Equal(t, 2, got.FrameCount)
 	assert.Zero(t, got.WearMinutes, "单帧不成立跨度，不折算分钟")
 	assert.Zero(t, got.AbnormalCount, "当日无告警则为 0（非缺列零值）")
-	assert.InDelta(t, 22.0/20.0, float64(got.AvgPressure), 1e-4, "均值只算那 1 帧佩戴帧")
+	assert.InDelta(t, 22000.0/20.0, float64(got.AvgPressure), 1e-4, "均值只算那 1 帧佩戴帧（mN：22000/20=1100）")
 }
 
 // TestITT352RollupWearMinutesClampedToPhysicalDay 跨度撑过物理日时仍夹到 1440
@@ -175,11 +176,11 @@ func TestITT352RollupWearMinutesClampedToPhysicalDay(t *testing.T) {
 	)
 	seedT352Patient(ctx, t, pool, patient, device)
 	seedT352Frames(ctx, t, pool, patient, device, []t352Frame{
-		{"2026-08-15 00:15:00+08", 3.0, 1.0},
-		{"2026-08-15 23:45:00+08", 2.0, 1.0},
+		{"2026-08-15 00:15:00+08", 3000, 1000}, // mN 存储（T733）
+		{"2026-08-15 23:45:00+08", 2000, 1000},
 	})
 
-	stats, err := NewRollupRepo(pool).AggregateDate(ctx, t352From, t352To, model.WearingThresholdN)
+	stats, err := NewRollupRepo(pool).AggregateDate(ctx, t352From, t352To, model.WearingThresholdMn)
 	require.NoError(t, err)
 	got := findT352Stat(t, stats, patient)
 
@@ -271,9 +272,10 @@ func seedT352Alerts(ctx context.Context, t *testing.T, pool *pgxpool.Pool,
 	t.Helper()
 	const sql = `INSERT INTO alerts (patient_id, device_id, type, detail, sensor_point,
 	    threshold_value, actual_value, ts, read_status, process_status, resolved_status)
-		VALUES ($1, $2, 'pressure_high', 'T352 集成测试告警', 'P01', 5.0, 6.0, $3,
+		VALUES ($1, $2, 'pressure_high', 'T352 集成测试告警', 'P01', 5000, 6000, $3,
 		        'unread', 'pending', 'active')
 		ON CONFLICT (patient_id, device_id, type, ts) DO NOTHING`
+	// T733：alerts 的 threshold_value/actual_value 与帧值同量纲（mN，5000 = 5 N）
 	for _, tsLiteral := range tsList {
 		_, err := pool.Exec(ctx, sql, patient, device, mustT352Time(t, tsLiteral))
 		require.NoError(t, err, "seed alert %s", tsLiteral)

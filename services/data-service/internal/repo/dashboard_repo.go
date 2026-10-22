@@ -74,9 +74,9 @@ type DashboardStore interface {
 	KPI(ctx context.Context, fromDate string, alertFrom, monthStart time.Time, scope model.TeamScope) (*KPIRow, error)
 	// KPILiveToday T595：「今日」两格不再只读昨日日切表，直接对当日 pressure_records 明细
 	// 按日聚合同式（佩戴帧 COUNT + 首末帧跨度）聚合，Go 侧走 WearMinutesFromSpan 与 rollup 同源。
-	// 窗口 [from,to) 由 service 按 Asia/Shanghai 当日给出；wearingThresholdN 与 rollup 同一阈值源。
+	// 窗口 [from,to) 由 service 按 Asia/Shanghai 当日给出；wearingThresholdMn 与 rollup 同一阈值源。
 	// 返回「有佩戴分钟患者数」与「当日有帧患者的平均佩戴分钟」（无帧患者群体 ⇒ avg=nil，T636 同口径）。
-	KPILiveToday(ctx context.Context, from, to time.Time, wearingThresholdN float32, scope model.TeamScope) (*LiveTodayRow, error)
+	KPILiveToday(ctx context.Context, from, to time.Time, wearingThresholdMn float32, scope model.TeamScope) (*LiveTodayRow, error)
 	// KPICompare 上一等长周期的对比基准（T248 1.1）。prevFromDate/fromDate 为半开区间两端（YYYY-MM-DD），
 	// prevAlertFrom/alertFrom 为同一区间的 timestamptz 表达，monthStart/prevMonthStart 为自然月起点。
 	KPICompare(ctx context.Context, prevFromDate, fromDate string, prevAlertFrom, alertFrom, monthStart, prevMonthStart time.Time, scope model.TeamScope) (*KPICompareRow, error)
@@ -164,8 +164,8 @@ GROUP BY patient_id`
 
 // KPILiveToday 当日明细同源聚合（T595 甲案配套）
 func (r *DashboardRepo) KPILiveToday(ctx context.Context, from, to time.Time,
-	wearingThresholdN float32, scope model.TeamScope) (*LiveTodayRow, error) {
-	rows, err := r.pool.Query(ctx, kpiLiveTodaySQL, from, to, wearingThresholdN,
+	wearingThresholdMn float32, scope model.TeamScope) (*LiveTodayRow, error) {
+	rows, err := r.pool.Query(ctx, kpiLiveTodaySQL, from, to, wearingThresholdMn,
 		scope.Scoped(), scope.TeamArg())
 	if err != nil {
 		return nil, fmt.Errorf("query dashboard live today: %w", err)

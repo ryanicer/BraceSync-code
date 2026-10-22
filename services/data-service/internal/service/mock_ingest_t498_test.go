@@ -48,7 +48,7 @@ func mockReq(reason string) *model.MockFrameRequest {
 	return &model.MockFrameRequest{
 		DeviceID:  testDevice,
 		Timestamp: fixedNow.Unix(),
-		Points:    pts(3.0, 2.0, 1.0), // 前 3 点 3.0/2.0/1.0 N（上报载荷单位是 mN，pts 负责换算）
+		Points:    pts(3000, 2000, 1000), // 设备载荷原值 mN（3.0/2.0/1.0 N）：入口零加工，pts 原样透传
 		Battery:   80,
 		Reason:    reason,
 	}
@@ -107,8 +107,8 @@ func TestT498_GateOnWritesStampedFrameAndStopsCountingStat(t *testing.T) {
 	assert.Equal(t, "ops-script", in.Operator, "自报标识去空白后入审计")
 	assert.Equal(t, "boss acceptance: pressure_high", in.Reason)
 	assert.Equal(t, "10.0.0.9", in.IP)
-	assert.Equal(t, float32(3.0), in.Frame.Points[0], "注入与真实上报共用 ÷1000 归一，库里形状一致")
-	assert.Equal(t, float32(1.0), in.Frame.Points[2], "下标不得错位：P01..P20 与传感器点位一一对应")
+	assert.Equal(t, float32(3000.0), in.Frame.Points[0], "注入与真实上报同为 mN 原样入库（采集/存储零换算），库里形状一致")
+	assert.Equal(t, float32(1000.0), in.Frame.Points[2], "下标不得错位：P01..P20 与传感器点位一一对应")
 	assert.Equal(t, float32(0), in.Frame.Points[3], "未给的点位补 0，不落脏值")
 	assert.True(t, in.Frame.Ts.Equal(fixedNow))
 

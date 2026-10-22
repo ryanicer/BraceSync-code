@@ -23,7 +23,7 @@ func (s *t653RecordStarter) AutoStart(_ context.Context, alertID, alertType stri
 
 func TestT653_DrainOnce_NewAlertTriggersFlowAutoStart(t *testing.T) {
 	now := time.Now()
-	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50.0)}}
+	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50000.0)}}
 	c := newTestConsumer(queue, newFakeDedup(), &fakeAlerts{}, &recordingNotifier{})
 	c.SetNow(func() time.Time { return now })
 	starter := &t653RecordStarter{}
@@ -38,7 +38,7 @@ func TestT653_DrainOnce_NewAlertTriggersFlowAutoStart(t *testing.T) {
 
 func TestT653_DrainOnce_StaleFrameStillTriggersFlowAutoStart(t *testing.T) {
 	now := time.Now()
-	queue := &fakeQueue{items: []string{mkPayload(t, now.Add(-2*time.Hour), "DEV1", "P1", now.Add(-2*time.Hour), 50.0)}}
+	queue := &fakeQueue{items: []string{mkPayload(t, now.Add(-2*time.Hour), "DEV1", "P1", now.Add(-2*time.Hour), 50000.0)}}
 	notifier := &recordingNotifier{}
 	c := newTestConsumer(queue, newFakeDedup(), &fakeAlerts{}, notifier)
 	c.SetNow(func() time.Time { return now })
@@ -54,7 +54,7 @@ func TestT653_DrainOnce_StaleFrameStillTriggersFlowAutoStart(t *testing.T) {
 
 func TestT653_DrainOnce_DedupDoesNotTriggerFlowAutoStart(t *testing.T) {
 	now := time.Now()
-	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50.0)}}
+	queue := &fakeQueue{items: []string{mkPayload(t, now, "DEV1", "P1", now.Add(-time.Minute), 50000.0)}}
 	c := newTestConsumer(queue, newFakeDedup(), &fakeAlerts{createFalse: true}, &recordingNotifier{})
 	c.SetNow(func() time.Time { return now })
 	starter := &t653RecordStarter{}

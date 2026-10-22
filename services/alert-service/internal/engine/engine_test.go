@@ -27,7 +27,7 @@ import (
 )
 
 // ============================================================
-// A1: 压力偏高 >45N 触发告警
+// A1: 压力偏高 >45（阈值）触发告警 —— T733 方案A：引擎量纲为 mN，用例字面量为同量纲相对值
 // ============================================================
 func TestA1_PressureHigh_OverThreshold(t *testing.T) {
 	evaluator := &engine.RuleEvaluator{
@@ -57,7 +57,7 @@ func TestA1_PressureHigh_OverThreshold(t *testing.T) {
 	assert.Equal(t, engine.TypePressureHigh, result.AlertType)
 	assert.Equal(t, "P03", result.SensorPoint)
 	assert.True(t, result.ShouldAlert)
-	assert.Equal(t, "压力偏高：采集点 P03 压力 47.2N 超阈值 45.0N", result.Message)
+	assert.Equal(t, "压力偏高：采集点 P03 压力 47.2mN 超阈值 45.0mN", result.Message, "T733：引擎文案按 mN 自标量纲")
 }
 
 // A1-Boundary: 临界值 45.0N（等于阈值不触发——严格大于）
@@ -233,7 +233,7 @@ func TestA4_SensorDrift_OverThreshold(t *testing.T) {
 	assert.InDelta(t, 3.5, result.ActualValue, 0.001)
 	assert.InDelta(t, 2.8, result.ThresholdValue, 0.001)
 	assert.Equal(t, "medium", result.Severity)
-	assert.Equal(t, "传感器标定异常：空载采集点 P08 读数 3.5N 超阈值 2.8N（漂移超标），通知技师+运营",
+	assert.Equal(t, "传感器标定异常：空载采集点 P08 读数 3.5mN 超阈值 2.8mN（漂移超标），通知技师+运营",
 		result.Message)
 }
 

@@ -271,8 +271,10 @@ func (h *Handler) exportAbnormalReport(w http.ResponseWriter, r *http.Request) {
 			csvCell(labelOf(reportAlertTypeLabels, row.Type)),
 			csvCell(row.SensorPoint),
 			csvCell(row.Detail),
-			strconv.FormatFloat(row.ThresholdValue, 'f', 2, 64),
-			strconv.FormatFloat(row.ActualValue, 'f', 2, 64),
+			// 与 GET /api/v1/alerts 同口径：压力量纲（pressure_high / sensor_drift）
+			// 库内 mN → 导出 N（displayValueN ÷config.MnPerN），分钟/百分比类原样导出。
+			strconv.FormatFloat(displayValueN(row.Type, row.ThresholdValue), 'f', 2, 64),
+			strconv.FormatFloat(displayValueN(row.Type, row.ActualValue), 'f', 2, 64),
 			row.Ts.In(scheduler.CSTZone()).Format(reportTimeLayout),
 			csvCell(labelOf(reportReadStatusLabels, row.ReadStatus)),
 			csvCell(labelOf(reportProcessStatusLabels, row.ProcessStatus)),

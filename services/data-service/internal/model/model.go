@@ -26,38 +26,86 @@ var (
 	BackfillMaxAge = 7 * 24 * time.Hour
 )
 
-// WearingThresholdN 佩戴判定阈值默认值（PRD §8.1：帧 max_pressure > 阈值视为佩戴帧）。
-// 🔴 T203 ÷10 后兜底值 0.05；生产生效值走 sys_configs `wearing_pressure_threshold`。
-const WearingThresholdN = 0.05
+// MnPerN 全链唯一换算分母（T733 方案A，Boss 2026-10-22 拍板）：设备毫牛 mN 换展示牛顿 N。
+// 🔴 存储语义 = **原始 mN 入库零加工**；÷MnPerN 只允许发生在 API 出口（响应组装层）。
+// 任何在入库、缓存、队列、聚合、告警判档、校准减除处 ÷ 或 × 本常数的写法都是违规
+// （T719 事故正是把换算从入口删掉后，展示层再没补，导致 mN 当 N 显示差 1000 倍）。
+const MnPerN = 1000.0
 
-// PressureThresholds 压力量纲阈值（PRD §7D.12：可配置参数，sys_configs 驱动，不硬编码）。
-// T203 ÷10 后量纲：所有数值已同步下调。
-type PressureThresholds struct {
-	// WearingN 佩戴判定阈值（sys_configs: wearing_pressure_threshold，T203 后默认 0.05）
-	WearingN float64
-	// HeatmapMaxN 热力图色阶上界（sys_configs: heatmap_max_n，T203 后默认 6）
-	HeatmapMaxN float64
-	// PressureHighN 压力偏高告警阈值（sys_configs: threshold_pressure_high，T203 后默认 5）
-	PressureHighN float64
-	// PressureLowN 压力低压边界（sys_configs: threshold_pressure_low，迁移 000021 后默认 1；
-	// 与 user-service 系统参数 / 告警页 Tab2 同键。T601：患者端 hero 正常范围文案的下边界来源）
-	PressureLowN float64
+// MnToN 存储层 mN → 展示层 N（唯一换算出口原语；负值原样保留，归零口径仍由 KpaFromN 把）
+func MnToN(mn float64) float64 { return mn / MnPerN }
+
+// MnStampToN 聚合印章里的佩戴阈值（*float64，mN）→ 展示层 N；nil（无印章）原样传 nil，不退 0
+func MnStampToN(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	n := MnToN(*v)
+	return &n
 }
 
-// DefaultPressureThresholds T203 ÷10 后默认口径（配置缺失/非法时兜底）
-func DefaultPressureThresholds() PressureThresholds {
-	return PressureThresholds{
-		WearingN:      WearingThresholdN,
-		HeatmapMaxN:   6.0, // T203: 60 → 6
-		PressureHighN: 5.0, // T203: 45 → 5
-		PressureLowN:  1.0, // 迁移 000021 / seed 同值（T281 量纲修复后的默认）
+// FrameToN 20 点帧 存储层 mN → 展示层 N（整帧一次性换算，读侧组装唯一入口）
+func FrameToN(points [PointCount]float32) [PointCount]float32 {
+	var out [PointCount]float32
+	for i, v := range points {
+		out[i] = float32(MnToN(float64(v)))
+	}
+	return out
+}
+
+// WearingThresholdMn 佩戴判定阈值默认值（PRD §8.1：帧 max_pressure > 阈值视为佩戴帧）。
+// 🔴 T733 起存储量纲 = mN，默认 50 mN（＝旧 N 口径 0.05N）；生产生效值走 sys_configs `wearing_pressure_threshold`。
+const WearingThresholdMn = 50.0
+
+// PressureThresholds 压力量纲阈值（PRD §7D.12：可配置参数，sys_configs 驱动，不硬编码）。
+// 🔴 T733 量纲 = **mN（存储空间）**，与帧值/基线同量纲，比较运算无需换算；
+// 给前端与色阶/文案用的 N 值一律经 ToDisplay()，不在本结构上混填两种量纲。
+type PressureThresholds struct {
+	// WearingMn 佩戴判定阈值（sys_configs: wearing_pressure_threshold，默认 50 mN）
+	WearingMn float64
+	// HeatmapMaxMn 热力图色阶上界（sys_configs: heatmap_max_n，默认 6000 mN）
+	HeatmapMaxMn float64
+	// PressureHighMn 压力偏高告警阈值（sys_configs: threshold_pressure_high，默认 5000 mN）
+	PressureHighMn float64
+	// PressureLowMn 压力低压边界（sys_configs: threshold_pressure_low，默认 1000 mN；
+	// 与 user-service 系统参数 / 告警页 Tab2 同键。T601：患者端 hero 正常范围文案的下边界来源）
+	PressureLowMn float64
+}
+
+// DisplayThresholds 展示空间（N）阈值：只在 API 出口组装 DTO 时用（PointStatus/色阶/文案）
+type DisplayThresholds struct {
+	WearingN      float64
+	HeatmapMaxN   float64
+	PressureHighN float64
+	PressureLowN  float64
+}
+
+// ToDisplay 存储空间（mN）阈值整体换算到展示空间（N）——本卡唯一允许的阈值换算点
+func (t PressureThresholds) ToDisplay() DisplayThresholds {
+	return DisplayThresholds{
+		WearingN:      MnToN(t.WearingMn),
+		HeatmapMaxN:   MnToN(t.HeatmapMaxMn),
+		PressureHighN: MnToN(t.PressureHighMn),
+		PressureLowN:  MnToN(t.PressureLowMn),
 	}
 }
 
-// 设备上报单位口径（PRD §7A.2）：T719 起固件 1.4 上报 points = 牛顿 N，入口原样入库，
-// 全链（DB/Redis/告警帧/校准基线偏移）恒为 N 空间。旧 T173 D1「上报 mN、入口 ÷1000」
-// 换算分母 MnPerN 已随该口径作废并删除——现网若仍 ÷1000 会把真值压成 1/1000
-// （KpaFromN 恒 1、Apply 减 N 基线出负值，即 Boss 真机「全 kPa=1 / 趋势跳负」根因）。
+// DefaultPressureThresholds 配置缺失/非法时兜底（T733 mN 口径；括号为迁移前 N 等价值）
+func DefaultPressureThresholds() PressureThresholds {
+	return PressureThresholds{
+		WearingMn:      WearingThresholdMn, // = 旧 0.05 N
+		HeatmapMaxMn:   6000.0,             // = 旧 6 N
+		PressureHighMn: 5000.0,             // = 旧 5 N
+		PressureLowMn:  1000.0,             // = 旧 1 N
+	}
+}
+
+// 设备上报单位口径（PRD §7A.2）：🔴 **T733 方案A 定案**——固件 1.9 上报 points = **毫牛 mN**，
+// 入口原样入库，DB/Redis rt:frame/stat:today/alert:pending/告警判档/校准基线偏移**全链恒为 mN 空间**；
+// N 只在 API 出口派生（FrameToN / ToDisplay，分母唯一 = MnPerN）。
+// 历史三次翻覆留此备案：T173 D1「入口 ÷1000 存 N」→ T719「入口原样存 N」（因当时以为固件 1.4 发 N）
+// → T733「入口原样存 mN + 出口唯一换算」。现网若某一环再私自 ÷1000 或漏 ÷1000，
+// 症状固定为「压力显示差 1000 倍 / KpaFromN 恒 1 或恒 5401 / 基线相减出负值」。
 
 // cstZone 业务切日时区（架构 §3.5：业务切日/定时任务按 Asia/Shanghai）。
 // 用固定偏移避免容器缺 tzdata 导致 LoadLocation 失败。
@@ -158,10 +206,11 @@ type SingleFrameRequest struct {
 	DeviceID  string `json:"device_id,omitempty"`
 	Timestamp int64  `json:"timestamp"` // 采集时刻，Unix 秒
 	// Points 20 点压力值（P01–P20 顺序）。
-	// 🔴 单位 = N（牛顿，PRD §7A.2 数据单位口径，T719 固件 1.4 权威口径：设备直接上报 N）；
-	// 入口原样入库、不再换算（toPendingFrame）。旧 T173 D1「设备上报 mN、入口 ÷1000」已作废——
-	// 现网若仍 ÷1000 会把真值压成 1/1000（KpaFromN 恒 1）。⚠️ docs/api/device-protocol.md
-	// 若仍写旧量纲以本注释口径为准（订正随本卡 PRD 版本递增同步）。
+	// 🔴 单位 = **mN（毫牛，设备原值）**，PRD §7A.2 数据单位口径 · T733 方案A（Boss 2026-10-22 拍板，
+	// 固件 1.9 三证：四点标定 ADC 500→200mN/1500→1000mN/2000→2000mN/2500→5000mN ＋ IKMH79 毫牛约定
+	// ＋ 346 当 N 物理不可能、当 mN≈35g 合理）。入口原样入库（toPendingFrame），
+	// 全链存储/判档/校准减除均 mN，**÷1000 只在 API 出口一处**（model.FrameToN / ToDisplay）。
+	// ⚠️ docs/api/device-protocol.md 若仍写旧量纲以本注释口径为准（订正随本卡 PRD 版本递增同步）。
 	Points    []float64 `json:"points"`
 	Battery   int       `json:"battery"`
 	Firmware  string    `json:"firmware"`
@@ -227,8 +276,8 @@ const (
 	IngestMock = "mock" // 受控注入端点写入
 )
 
-// MockFrameRequest 注入请求体。字段形状对齐 SingleFrameRequest（points 同为牛顿 N 量纲，
-// 同样经 toPendingFrame 原样入库，T719），差别有两处：
+// MockFrameRequest 注入请求体。字段形状对齐 SingleFrameRequest（points 同为 **mN 设备原值**，
+// 同样经 toPendingFrame 原样入库，T733 方案A），差别有两处：
 //   - DeviceID 必填：注入端点不经 gateway，没有 X-Device-Id 身份头，目标设备只能显式给；
 //   - Reason 必填：它同时是 audit_logs.detail 里「为什么要造这帧」的唯一答案。
 type MockFrameRequest struct {
@@ -303,12 +352,13 @@ func PointLabel(i int) (row, col int, label string) {
 }
 
 // 压力展示分级阈值（仅用于前端 status 渲染，非告警阈值）：
-// warning/critical 分界由 PressureThresholds.PressureHighN 派生（0.75×/1.0×，与告警引擎 pressure_high 同源）。
-func pressureWarningN(th PressureThresholds) float64  { return 0.75 * th.PressureHighN }
-func pressureCriticalN(th PressureThresholds) float64 { return th.PressureHighN }
+// warning/critical 分界由 DisplayThresholds.PressureHighN 派生（0.75×/1.0×，与告警引擎 pressure_high 同源）。
+// 🔴 入参恒为展示空间（N）：mN 阈值须先 PressureThresholds.ToDisplay()，直接拿 mN 阈值比 N 值会满屏 critical。
+func pressureWarningN(th DisplayThresholds) float64  { return 0.75 * th.PressureHighN }
+func pressureCriticalN(th DisplayThresholds) float64 { return th.PressureHighN }
 
-// PointStatus 依据压力值返回展示状态（阈值可配置，T173）
-func PointStatus(v float32, th PressureThresholds) string {
+// PointStatus 依据压力值（**N，展示空间**）返回展示状态（阈值可配置，T173）
+func PointStatus(v float32, th DisplayThresholds) string {
 	switch {
 	case float64(v) >= pressureCriticalN(th):
 		return "critical"
@@ -333,8 +383,10 @@ type SensorPoint struct {
 }
 
 // BuildSensorPoints 将 20 点已校准值转为前端 SensorPoint 数组（阈值可配置，T173）；
+// 🔴 points 与 th 均须是**展示空间 N**（mN 帧由调用方 model.FrameToN 换算、mN 阈值由 ToDisplay 换算，
+// 换算只发生在读侧组装那一处）；
 // areaCm2 为设备有效受压面积（devices.contact_area_cm2，与 BuildHeatmap 同一枚来源），用于派生逐点 kPa 展示档。
-func BuildSensorPoints(points [PointCount]float32, th PressureThresholds, areaCm2 *float64) []SensorPoint {
+func BuildSensorPoints(points [PointCount]float32, th DisplayThresholds, areaCm2 *float64) []SensorPoint {
 	out := make([]SensorPoint, PointCount)
 	for i, v := range points {
 		row, col, label := PointLabel(i)
@@ -351,8 +403,8 @@ func BuildSensorPoints(points [PointCount]float32, th PressureThresholds, areaCm
 	return out
 }
 
-// HeatmapMaxN 热力图色阶上界默认值（T203 ÷10 后 6N）。
-const HeatmapMaxN = 6.0
+// HeatmapMaxMn 热力图色阶上界默认值（T733 mN 口径 = 旧 N 口径 6N）。
+const HeatmapMaxMn = 6000.0
 
 // KpaFromN 展示层 N 到 kPa 的换算（T508，PRD §7A.2.1 三）。三步序，逐字对齐稿面图：
 // ①归零（负值按 0，零点漂移不折算成负压力）→ ②kPa = N / area(cm²) × 10 →
@@ -407,6 +459,7 @@ type HeatmapPoint struct {
 }
 
 // BuildHeatmap 将 20 点压力值构造为 HeatmapPoint 数组（唯一 IsMax 标记）；
+// 🔴 points 必须是**展示空间 N**（mN 帧由读侧调用方 model.FrameToN 换算，见 T733）；
 // areaCm2 为设备有效受压面积（devices.contact_area_cm2，T508），用于派生每点 kPa 展示值。
 func BuildHeatmap(points [PointCount]float32, areaCm2 *float64) []HeatmapPoint {
 	out := make([]HeatmapPoint, PointCount)
@@ -440,7 +493,7 @@ type PressureRecordDTO struct {
 	Timestamp  string        `json:"timestamp"` // ISO 8601 UTC
 	Points     []SensorPoint `json:"points"`
 	UploadTime string        `json:"uploadTime"`
-	// Calibrated 是否已应用基线校准（T173 读侧派生：false = 缺基线，值为原样入库的 N raw）。
+	// Calibrated 是否已应用基线校准（T173 读侧派生：false = 缺基线，值为原样入库的 mN raw）。
 	// 读取侧在减偏移后设置；DTO 构造默认 false，不得静默当已校准。
 	Calibrated bool `json:"calibrated"`
 	// MaxPressure 库侧生成列 max_pressure 的**原始**值（= raw p01..p20 取最大，迁移 000001:154-156）。
@@ -449,20 +502,23 @@ type PressureRecordDTO struct {
 	// 缺它则验收侧只能拿 max(points) 当代理，而代理与判据不是同一件东西（T352 交件 §三实测）。
 	// T620 桶行例外：带 interval 的降采样查询里本列与 Points 同为**桶内均值**（不是单帧最大值，
 	// 仍不做校准），此时 Timestamp 是桶起点、recordId 是桶起点秒。
+	// 🔴 本结构是**库行（mN 存储空间）**；对外展示的 N 值见 ToDTO（T733）。
 	MaxPressure float32 `json:"maxPressure"`
 }
 
-// ToDTO 领域实体 → 前端 DTO（阈值可配置，T173；Calibrated 由读取侧按校准结果回填；
-// areaCm2 供逐点 kPa 展示档派生，T643 A 路）
+// ToDTO 领域实体（**mN 存储空间**）→ 前端 DTO（**N 展示空间**）。
+// T733 方案A：这是压力链唯一换算层的一部分——帧值走 FrameToN、阈值走 ToDisplay，
+// 分母唯一 MnPerN；前端与 KpaFromN 拿到的恒是 N（Calibrated/MaxPressure 同层换算）。
+// areaCm2 供逐点 kPa 展示档派生（T643 A 路）。
 func (r *PressureRecord) ToDTO(th PressureThresholds, areaCm2 *float64) PressureRecordDTO {
 	return PressureRecordDTO{
 		RecordID:    fmt.Sprintf("%d", r.RecordID),
 		DeviceID:    r.DeviceID,
 		PatientID:   r.PatientID,
 		Timestamp:   r.Ts.UTC().Format(time.RFC3339),
-		Points:      BuildSensorPoints(r.Points, th, areaCm2),
+		Points:      BuildSensorPoints(FrameToN(r.Points), th.ToDisplay(), areaCm2),
 		UploadTime:  r.UploadTime.UTC().Format(time.RFC3339),
-		MaxPressure: r.MaxPressure,
+		MaxPressure: float32(MnToN(float64(r.MaxPressure))),
 	}
 }
 
@@ -498,13 +554,14 @@ type DailyWearStats struct {
 	UpdatedAt     time.Time
 	// T366 聚合印章（迁移 000027）：只由本服务聚合任务的 UPSERT 写，读侧据此判来源。
 	// 两者同生同灭；任一为 nil = 该行无印章 = 不是聚合任务写的（seed 示例行 / 印章上线前的历史行）。
-	AggregatedAt      *time.Time // 本次聚合发生的时刻（UTC）
-	WearingThresholdN *float64   // 本次聚合实际生效的佩戴帧判定阈值（N）
+	AggregatedAt       *time.Time // 本次聚合发生的时刻（UTC）
+	WearingThresholdMn *float64   // 🔴 本次聚合实际生效的佩戴帧判定阈值（**mN 存储空间**，T733；
+	// 表列名同量纲 migration 000041 改名 wearing_threshold_mn；对外 DTO 字段仍叫 wearingThresholdN=N）
 }
 
 // HasRollupStamp 行上是否带聚合印章（两列都在才算；半枚按无印章处理）
 func (s *DailyWearStats) HasRollupStamp() bool {
-	return s.AggregatedAt != nil && s.WearingThresholdN != nil
+	return s.AggregatedAt != nil && s.WearingThresholdMn != nil
 }
 
 // 日聚合行来源（T366，读侧派生，非表列）
@@ -559,7 +616,8 @@ const AvgPressureToleranceAbs = 1e-6
 // 消费方据此可自行核对判定过程，而不是只接受一个结论字符串。
 // 整块为 nil = 未做复算（GenUnknown），与「做了但两代都不符」（GenUnmatched）是两回事。
 type WearGenerationCheck struct {
-	// AssumedWearingThresholdN 本次复算用的佩戴阈值（N）：有印章时取行上印章值，
+	// AssumedWearingThresholdN 本次复算用的佩戴阈值（**N 展示空间**；行上印章与复算比较均为 mN，
+	// 出口在此换算）：有印章时取行上印章值，
 	// 无印章时取当前 sys_configs 值（历史行真实阈值不可知，故这只是假设，不是事实）。
 	AssumedWearingThresholdN float64 `json:"assumedWearingThresholdN"`
 	// AssumedIntervalMinutes 老口径候选用的采集间隔（分钟，sys_configs collect_interval_minutes）。

@@ -2423,25 +2423,34 @@ func (h *Handler) getStoredPermissions(c *gin.Context, roleID string) (*model.Ro
 // ─────────────────────────────────────────────────────────────
 
 // 配置键（对齐 scripts/db/seed/seed.sql sys_configs）
+//
+// 🔴 单位口径（T733 方案A）：以下压力量纲键 threshold_pressure_high / threshold_pressure_low /
+// threshold_sensor_drift / threshold_calibration_offset 库里存 **mN**；
+// 非压力量纲键（wear_target_hours 小时、threshold_pressure_fluctuation_pct 百分比、
+// threshold_wear_interrupt_minutes 分钟、collect_interval_* 秒/分、data_retention_days 天、
+// max_patients 个、wifi_presets / 模板 ID 字符串）语义与量纲均未变，本卡不动。
+// N↔mN 只在 unit_t733.go 的边界换算，读写两侧都不允许出现裸值。
 const (
 	keyWearTarget             = "wear_target_hours"
-	keyPressureHigh           = "threshold_pressure_high"
+	keyPressureHigh           = "threshold_pressure_high" // 压力偏高阈值（mN，T733 起）
 	keyFluctuationPct         = "threshold_pressure_fluctuation_pct"
 	keyWearInterrupt          = "threshold_wear_interrupt_minutes"
-	keySensorDrift            = "threshold_sensor_drift"
+	keySensorDrift            = "threshold_sensor_drift" // 传感器标定异常阈值（mN，T733 起）
 	keyWifiPresets            = "wifi_presets"
 	keyCollectInterval        = "collect_interval_minutes" // 内部分钟（device/alert 服务依赖）
 	keyCollectIntervalSeconds = "collect_interval_seconds" // T256 #4：API 秒口径（设计稿）
 	keyRetentionDays          = "data_retention_days"      // T256 #4：数据保留天数
 	keyMaxPatients            = "max_patients"             // T256 #4：最大患者数
 	// T302 F1 后端半边：PRD §7D.12 已有语义、此前只有 seed 行没有读写口的三项
-	keyCalibrationOffset = "threshold_calibration_offset" // 空载校准偏差上限（N），000019 已 ÷10 到 0.05
+	keyCalibrationOffset = "threshold_calibration_offset" // 空载校准偏差上限（mN，T733 起；000019 ÷10 后 N 口径为 0.05 ⇒ 迁移 ×1000 = 50）
 	keyWechatTemplateID  = "notify_wechat_template_id"    // 微信模板消息 ID（PRD §7D.12 通知模板配置）
 	keySmsTemplateID     = "notify_sms_template_id"       // 短信模板 ID（同上）
 )
 
-// defaultCalibrationOffsetN 缺行兜底，与 seed.sql:354 / 000019 ÷10 后同值
-// （🔴 T173 口径：阈值是配置参数，此处只是「库里没行时显示什么」，不是硬编码判定值）。
+// defaultCalibrationOffsetN 缺行兜底，与 seed.sql:354 / 000019 ÷10 后同值。
+// 🔴 口径：这是**展示空间 (N)** 的默认（缺行时界面显示什么）；库里现值是 mN，
+// 读取一律经 numOrMnToN(raw, defaultCalibrationOffsetN) 换算，不裸用。
+// （🔴 T173 口径：阈值是配置参数，此处只是「库里没行时显示什么」，不是硬编码判定值。）
 const defaultCalibrationOffsetN = 0.05
 
 // 模板 ID 形状守卫：只挡控制字符与超长，不校验厂商格式
@@ -2450,6 +2459,9 @@ const defaultCalibrationOffsetN = 0.05
 const maxTemplateIDLen = 128
 
 // 缺失键默认值（PRD §7D.12 + T203 ÷10，与 @bracesync/constants DEFAULT_THRESHOLDS 对齐）
+// 🔴 单位口径（T733 方案A）：本表是**展示空间 (N / 分钟 / 百分比)** 的默认值，
+// 与前端表单 min/max 同档；压力量纲字段落库时经 nToMn ×1000（5N ⇒ 5000mN、0.3N ⇒ 300mN），
+// 读取时经 numOrMnToN 换算回来，故此处数值本身不变。
 var settingsDefaults = model.SystemSettingsDTO{
 	DailyWearTargetHours:   22,
 	PressureHighThresholdN: 5, // T203: 45 → 5
@@ -2527,6 +2539,8 @@ func maskWifiPasswords(list []model.WifiPresetDTO) []model.WifiPresetDTO {
 // getSettings GET /api/v1/admin/settings —— sys_configs 映射（缺失键回默认值）
 // T256 #4：collectIntervalSeconds 直接读 collect_interval_seconds（设计稿秒口径）；
 // 内部分钟键 collect_interval_minutes 由写入端点同步维护，供 device/alert 服务消费。
+// 🔴 T733 方案A：本端点是**展示出口** —— 库里压力量纲键是 mN，出参 N 字段 ÷MnPerN；
+// 非压力量纲键（小时/分钟/百分比/秒/天/个）原样透出，不参与换算。
 func (h *Handler) getSettings(c *gin.Context) {
 	keys := []string{keyWearTarget, keyPressureHigh, keyPressureLow, keyFluctuationPct, keyWearInterrupt, keySensorDrift, keyWifiPresets, keyCollectIntervalSeconds, keyRetentionDays, keyMaxPatients, keyCalibrationOffset, keyWechatTemplateID, keySmsTemplateID}
 	kvs, err := h.store.GetConfigs(c.Request.Context(), keys)
@@ -2534,18 +2548,18 @@ func (h *Handler) getSettings(c *gin.Context) {
 		fail(c, model.ErrInternal("read settings failed"))
 		return
 	}
-	pressureLow := numOr(kvs[keyPressureLow], defaultUnifiedLowerN)
+	pressureLow := numOrMnToN(kvs[keyPressureLow], defaultUnifiedLowerN)
 	// T302：三项 GET 恒回值（缺行按默认 / 空串），指针只为让 PUT 能表达「本次不改」
-	calibrationOffset := numOr(kvs[keyCalibrationOffset], defaultCalibrationOffsetN)
+	calibrationOffset := numOrMnToN(kvs[keyCalibrationOffset], defaultCalibrationOffsetN)
 	wechatTemplateID := strings.TrimSpace(kvs[keyWechatTemplateID]) // 缺键 = 未配置 = 空串
 	smsTemplateID := strings.TrimSpace(kvs[keySmsTemplateID])
 	dto := model.SystemSettingsDTO{
 		DailyWearTargetHours:   numOr(kvs[keyWearTarget], settingsDefaults.DailyWearTargetHours),
-		PressureHighThresholdN: numOr(kvs[keyPressureHigh], settingsDefaults.PressureHighThresholdN),
+		PressureHighThresholdN: numOrMnToN(kvs[keyPressureHigh], settingsDefaults.PressureHighThresholdN),
 		PressureLowThresholdN:  &pressureLow, // T257 12.4：GET 恒回数值，前端不用判缺失
 		PressureFluctuationPct: numOr(kvs[keyFluctuationPct], settingsDefaults.PressureFluctuationPct),
 		WearInterruptMinutes:   numOr(kvs[keyWearInterrupt], settingsDefaults.WearInterruptMinutes),
-		SensorDriftN:           numOr(kvs[keySensorDrift], settingsDefaults.SensorDriftN),
+		SensorDriftN:           numOrMnToN(kvs[keySensorDrift], settingsDefaults.SensorDriftN),
 		WifiPresets:            maskWifiPasswords(parseWifiPresets(kvs[keyWifiPresets])),
 		CollectIntervalSeconds: int(numOr(kvs[keyCollectIntervalSeconds], float64(settingsDefaults.CollectIntervalSeconds))),
 		RetentionDays:          int(numOr(kvs[keyRetentionDays], float64(settingsDefaults.RetentionDays))),
@@ -2559,6 +2573,10 @@ func (h *Handler) getSettings(c *gin.Context) {
 
 // validateSettings 参数范围校验（对齐前端表单 min/max 与 T009 阈值联动口径）
 // T256 #4：collectIntervalSeconds 需为 60 的整数倍（内部分钟存储）；retentionDays/maxPatients 正数。
+//
+// 🔴 单位口径（T733 方案A）：校验发生在**展示空间 (N)** —— 入参 DTO 与前端表单 min/max
+// （[1,200] / [0.1,20] / [0.01,20]）都是 N，故量程常量一律不换算；换算只发生在
+// 校验通过之后的落库处（updateSettings 写 kvs 时 ×MnPerN），校验语义与 T733 前完全一致。
 //
 // T257 12.4（三档合两键）：pressureLow 为**本次生效的**统一压力下限
 // （请求给了就用请求值，没给则取库里现值 threshold_pressure_low，该键由告警管理页 Tab2 维护）——
@@ -2583,9 +2601,10 @@ func validateSettings(s model.SystemSettingsDTO, collectInterval, pressureLow fl
 	case s.SensorDriftN < 0.1 || s.SensorDriftN > 20:
 		return model.ErrInvalidParam("sensorDriftN must be in [0.1,20]")
 	case s.CalibrationOffsetN != nil && (*s.CalibrationOffsetN < 0.01 || *s.CalibrationOffsetN > 20):
-		// 上限与 sensorDriftN 同档（都是「偏差类」阈值，N 量纲，T203 ÷10 后量级）；
-		// 下限不给 0：0 容差会让每次空载校准必判失败。区间是形状守卫，不代表量纲已定
-		// （🔴 T173：现值仍是占位，待按 mN/÷1000 量级重定后随配置调整，不改代码）。
+		// 上限与 sensorDriftN 同档（都是「偏差类」阈值，T203 ÷10 后量级）；
+		// 下限不给 0：0 容差会让每次空载校准必判失败。
+		// 🔴 T733 方案A：量程单位已定 = **展示空间 N**（库里同键存 mN，落库时 ×MnPerN），
+		// 本区间是形状守卫，数值本身不随量纲迁移改动。
 		return model.ErrInvalidParam("calibrationOffsetN must be in [0.01,20]")
 	case s.CollectIntervalSeconds < 60 || s.CollectIntervalSeconds%60 != 0:
 		return model.ErrInvalidParam("collectIntervalSeconds must be a positive multiple of 60 (seconds)")
@@ -2653,6 +2672,11 @@ func fmtNum(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 // retentionDays / maxPatients 写入新键。
 // T257 12.4：pressureLowThresholdN 与告警页共用 threshold_pressure_low（三档合两键，不加第三键）；
 // 上下限做联动校验（上限必须严格大于下限）。
+// 🔴 T733 方案A：入参与回显都是**展示空间 N**；写 sys_configs 的四枚压力量纲键
+// （high/low/sensor_drift/calibration_offset）在落库那一步 ×MnPerN 存 mN，
+// 读库里现值（联动校验用的 low / calibration_offset）经 numOrMnToN 换算回 N。
+// 非压力量纲键（wear_target_hours、fluctuation_pct、wear_interrupt_minutes、
+// collect_interval_*、retention_days、max_patients、wifi_presets、两个模板 ID）一律原样写。
 func (h *Handler) updateSettings(c *gin.Context) {
 	var req model.SystemSettingsDTO
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2676,7 +2700,7 @@ func (h *Handler) updateSettings(c *gin.Context) {
 		fail(c, model.ErrInternal("read existing settings failed"))
 		return
 	}
-	pressureLow := numOr(currentKVs[keyPressureLow], defaultUnifiedLowerN)
+	pressureLow := numOrMnToN(currentKVs[keyPressureLow], defaultUnifiedLowerN)
 	if req.PressureLowThresholdN != nil {
 		pressureLow = *req.PressureLowThresholdN
 	}
@@ -2693,7 +2717,7 @@ func (h *Handler) updateSettings(c *gin.Context) {
 		req.SmsTemplateID = &trimmed
 		smsTemplateID = trimmed
 	}
-	calibrationOffset := numOr(currentKVs[keyCalibrationOffset], defaultCalibrationOffsetN)
+	calibrationOffset := numOrMnToN(currentKVs[keyCalibrationOffset], defaultCalibrationOffsetN)
 	if req.CalibrationOffsetN != nil {
 		calibrationOffset = *req.CalibrationOffsetN
 	}
@@ -2711,12 +2735,14 @@ func (h *Handler) updateSettings(c *gin.Context) {
 		return
 	}
 
+	// 🔴 T733 落库口径：四枚压力量纲键（上限/下限/漂移/校准上限）一律 nToMn 后写，
+	// 其余键（小时/百分比/分钟/天/个/字符串）语义未变，原样写。
 	kvs := []repo.ConfigKV{
 		{Key: keyWearTarget, Value: fmtNum(req.DailyWearTargetHours)},
-		{Key: keyPressureHigh, Value: fmtNum(req.PressureHighThresholdN)},
+		{Key: keyPressureHigh, Value: fmtNum(nToMn(req.PressureHighThresholdN))},
 		{Key: keyFluctuationPct, Value: fmtNum(req.PressureFluctuationPct)},
 		{Key: keyWearInterrupt, Value: fmtNum(req.WearInterruptMinutes)},
-		{Key: keySensorDrift, Value: fmtNum(req.SensorDriftN)},
+		{Key: keySensorDrift, Value: fmtNum(nToMn(req.SensorDriftN))},
 		{Key: keyWifiPresets, Value: string(wifiJSON)},
 		{Key: keyCollectIntervalSeconds, Value: strconv.Itoa(req.CollectIntervalSeconds)}, // API 秒口径
 		{Key: keyCollectInterval, Value: fmtNum(intervalMinutes)},                         // 内部分钟（device/alert）
@@ -2725,11 +2751,11 @@ func (h *Handler) updateSettings(c *gin.Context) {
 	}
 	// 下限只在请求给出时写：nil = 保持现值（老前端不带该字段，一次保存不该把下限抹掉）
 	if req.PressureLowThresholdN != nil {
-		kvs = append(kvs, repo.ConfigKV{Key: keyPressureLow, Value: fmtNum(pressureLow)})
+		kvs = append(kvs, repo.ConfigKV{Key: keyPressureLow, Value: fmtNum(nToMn(pressureLow))}) // 界面 N → 落库 mN（T733）
 	}
 	// T302 三项同规则：给出才写
 	if req.CalibrationOffsetN != nil {
-		kvs = append(kvs, repo.ConfigKV{Key: keyCalibrationOffset, Value: fmtNum(calibrationOffset)})
+		kvs = append(kvs, repo.ConfigKV{Key: keyCalibrationOffset, Value: fmtNum(nToMn(calibrationOffset))}) // 界面 N → 落库 mN（T733）
 	}
 	if req.WechatTemplateID != nil {
 		kvs = append(kvs, repo.ConfigKV{Key: keyWechatTemplateID, Value: wechatTemplateID})

@@ -312,11 +312,11 @@ type WearDayDetail struct {
 // 加方法会牵动无关卡片；注入侧用类型断言取用（同 ThresholdStore 的先例）。
 type DailyWearDetailSource interface {
 	// WearDetailByCSTDay 按 Asia/Shanghai 切日统计某患者区间内每天的帧数与复算输入。
-	// wearingThresholdN 决定 WearingFrames / WearSpanSeconds / AvgPointWearing 的判据。
+	// wearingThresholdMn 决定 WearingFrames / WearSpanSeconds / AvgPointWearing 的判据。
 	// 返回 map["YYYY-MM-DD"]WearDayDetail；区间内无帧的日期不出现在 map 里
 	// （调用方据此区分「0 帧」与「未统计」）。
 	WearDetailByCSTDay(ctx context.Context, patientID string, from, to time.Time,
-		wearingThresholdN float64) (map[string]WearDayDetail, error)
+		wearingThresholdMn float64) (map[string]WearDayDetail, error)
 }
 
 // wearDetailByCSTDaySQL 与 rollup 的 aggregateDateSQL 同窗口口径：[$1,$2) UTC，
@@ -343,8 +343,8 @@ ORDER BY 1`
 
 // WearDetailByCSTDay 实现 DailyWearDetailSource
 func (r *RecordRepo) WearDetailByCSTDay(ctx context.Context, patientID string, from, to time.Time,
-	wearingThresholdN float64) (map[string]WearDayDetail, error) {
-	rows, err := r.pool.Query(ctx, wearDetailByCSTDaySQL, patientID, from, to, float32(wearingThresholdN))
+	wearingThresholdMn float64) (map[string]WearDayDetail, error) {
+	rows, err := r.pool.Query(ctx, wearDetailByCSTDaySQL, patientID, from, to, float32(wearingThresholdMn))
 	if err != nil {
 		return nil, fmt.Errorf("read pressure_records detail by cst day: %w", err)
 	}

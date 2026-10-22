@@ -75,8 +75,8 @@ func t498AlertInput(ts time.Time, source string) scanner.NewAlert {
 		Type:           engine.TypePressureHigh,
 		SensorPoint:    "P01",
 		Detail:         "T498 集成告警",
-		ThresholdValue: 45,
-		ActualValue:    60,
+		ThresholdValue: 45000, // 存储空间 mN（T733 方案A）
+		ActualValue:    60000,
 		Ts:             ts,
 		IngestSource:   source,
 	}

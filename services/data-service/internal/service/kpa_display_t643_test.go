@@ -21,7 +21,7 @@ const t643AreaCm2 = 0.64
 func TestT643HistoryFramesCarryKpaSameSource(t *testing.T) {
 	env := newTestEnv()
 	env.devices.setArea(testDevice, t643AreaCm2)
-	uploadFrame(t, env, cst(2026, time.August, 8, 9, 0), 10, 20)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 9, 0), 10, 20)
 
 	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "", 1, 10)
 	require.Nil(t, appErr)
@@ -42,8 +42,8 @@ func TestT643HistoryFramesCarryKpaSameSource(t *testing.T) {
 func TestT643HistoryBucketsCarryKpaSameSource(t *testing.T) {
 	env := newTestEnv()
 	env.devices.setArea(testDevice, t643AreaCm2)
-	uploadFrame(t, env, cst(2026, time.August, 8, 0, 10), 10)
-	uploadFrame(t, env, cst(2026, time.August, 8, 6, 20), 20)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 0, 10), 10)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 6, 20), 20)
 
 	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "6h", 1, 100)
 	require.Nil(t, appErr)
@@ -61,7 +61,7 @@ func TestT643HistoryBucketsCarryKpaSameSource(t *testing.T) {
 // 反证一：设备未配置面积 ⇒ kPa 全 null，且 N 值与判档一个字都不许变（fail-closed 不是 0）
 func TestT643HistoryKpaIsNullWhenAreaMissing(t *testing.T) {
 	env := newTestEnv() // bind 了设备但没 setArea
-	uploadFrame(t, env, cst(2026, time.August, 8, 9, 0), 10, 20)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 9, 0), 10, 20)
 
 	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "", 1, 10)
 	require.Nil(t, appErr)
@@ -81,7 +81,7 @@ func TestT643HistoryKpaIsNullWhenAreaMissing(t *testing.T) {
 // 反证二：设备查询挂掉也不能把整条历史读路判失败
 func TestT643HistoryDegradesWhenDeviceLookupFails(t *testing.T) {
 	env := newTestEnv()
-	uploadFrame(t, env, cst(2026, time.August, 8, 9, 0), 10)
+	uploadFrameN(t, env, cst(2026, time.August, 8, 9, 0), 10)
 	env.devices.err = context.DeadlineExceeded // 上传成功后再断设备源，只影响读侧换算
 
 	page, appErr := env.svc.GetHistory(context.Background(), testPatient, "day", "2026-08-08", "", 1, 10)

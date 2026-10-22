@@ -140,12 +140,13 @@ func (m *Manager) Refresh(ctx context.Context, eval *engine.RuleEvaluator) (Thre
 	return th, nil
 }
 
-// ApplyThresholds 阈值快照写入评估器（采集间隔同步注入，扫描器状态机推导依赖）
+// ApplyThresholds 阈值快照写入评估器（采集间隔同步注入，扫描器状态机推导依赖）。
+// 压力量纲按 **mN** 直接下发：快照字段与引擎阈值、帧压力同量纲，此处零换算（T733 方案A）。
 func ApplyThresholds(t Thresholds, eval *engine.RuleEvaluator) {
-	eval.PressureHighThreshold = t.PressureHighN
+	eval.PressureHighThreshold = t.PressureHighMn // mN → mN
 	// T257 2.6：不再下发 FluctuationThresholdPct —— 压力波动规则已从引擎摘除，
 	// 配置键仅为解释历史告警行保留（Thresholds.FluctuationPct 仍读，供 /internal/config 回显）。
 	eval.WearInterruptMinutes = t.WearInterruptMinutes
-	eval.SensorDriftThreshold = t.SensorDriftN
+	eval.SensorDriftThreshold = t.SensorDriftMn // mN → mN
 	eval.CollectionIntervalMin = t.CollectIntervalMinutes
 }

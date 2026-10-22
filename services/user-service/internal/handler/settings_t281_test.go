@@ -18,10 +18,10 @@ import (
 	"github.com/bracesync/bracesync/services/user-service/internal/model"
 )
 
-// 迁移落库后的库里现值：000019 ⇒ high=5，000021 ⇒ low=1
+// 迁移落库后的库里现值：000019 ⇒ high=5 N，000021 ⇒ low=1 N；T733（000041）起同两枚存 mN
 const (
-	t281MigratedHigh = "5"
-	t281MigratedLow  = "1"
+	t281MigratedHigh = "5000"
+	t281MigratedLow  = "1000"
 )
 
 func TestT281_UpdateSettings_NoOpWithMigratedValuesPasses(t *testing.T) {
@@ -50,7 +50,7 @@ func TestT281_UpdateSettings_InvertedPairStillRejected(t *testing.T) {
 	e.store.configs = map[string]string{
 		keyCollectInterval: "30",
 		keyPressureHigh:    t281MigratedHigh,
-		keyPressureLow:     "10", // 未跑 000021 的库
+		keyPressureLow:     "10000", // 未跑 000021 的库（10 N，mN 存储）
 	}
 
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/settings",

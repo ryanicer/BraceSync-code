@@ -103,14 +103,14 @@ func TestParseThresholds(t *testing.T) {
 		KeyWearInterrupt:   "90",
 		KeySensorDrift:     "3",
 		KeyCollectInterval: "40",
-		KeyWearingN:        "0.8",
+		KeyWearingMn:       "0.8",
 	})
-	assert.Equal(t, 50.0, th.PressureHighN)
+	assert.Equal(t, 50.0, th.PressureHighMn)
 	assert.Equal(t, 25.0, th.FluctuationPct)
 	assert.Equal(t, 90, th.WearInterruptMinutes)
-	assert.Equal(t, 3.0, th.SensorDriftN)
+	assert.Equal(t, 3.0, th.SensorDriftMn)
 	assert.Equal(t, 40, th.CollectIntervalMinutes)
-	assert.Equal(t, 0.8, th.WearingN)
+	assert.Equal(t, 0.8, th.WearingMn)
 
 	// 非法值（非数值/非正）与缺失键均回退 PRD 默认
 	def := DefaultThresholds()
@@ -118,7 +118,7 @@ func TestParseThresholds(t *testing.T) {
 		KeyPressureHigh:  "abc",
 		KeyWearInterrupt: "-5",
 		KeySensorDrift:   "0",
-		KeyWearingN:      "0",
+		KeyWearingMn:     "0",
 	})
 	assert.Equal(t, def, got)
 }
@@ -143,7 +143,7 @@ func TestManager_Load_FromStoreValues(t *testing.T) {
 	mgr := NewManager(store)
 	th, err := mgr.Load(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, 50.0, th.PressureHighN)
+	assert.Equal(t, 50.0, th.PressureHighMn)
 	assert.Equal(t, 90, th.WearInterruptMinutes)
 	assert.Equal(t, 40, th.CollectIntervalMinutes)
 	assert.Equal(t, 30.0, th.FluctuationPct, "缺失键回退默认")
@@ -195,14 +195,14 @@ func TestManager_Update_Accept_InvalidatesCache(t *testing.T) {
 
 	// A6 联动修改通过路径：采集间隔 40min + 中断阈值 80min（=2× 边界，PRD ≥ 语义）
 	th, err := mgr.Update(ctx, ThresholdPatch{
-		PressureHighN:          fPtr(50),
+		PressureHighMn:         fPtr(50),
 		CollectIntervalMinutes: iPtr(40),
 		WearInterruptMinutes:   iPtr(80),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 40, th.CollectIntervalMinutes)
 	assert.Equal(t, 80, th.WearInterruptMinutes)
-	assert.Equal(t, 50.0, th.PressureHighN, "浮点阈值补丁同步生效")
+	assert.Equal(t, 50.0, th.PressureHighMn, "浮点阈值补丁同步生效")
 	assert.Equal(t, 1, store.upserts, "校验通过后写库一次")
 	assert.Equal(t, "40", store.data[KeyCollectInterval])
 	assert.Equal(t, "80", store.data[KeyWearInterrupt])

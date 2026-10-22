@@ -31,9 +31,9 @@ func t366Day(t *testing.T, dateCST string) time.Time {
 }
 
 // t366Stamp 给行盖聚合印章（模拟 RollupService.stampStats 的产物）
-func t366Stamp(s *model.DailyWearStats, at time.Time, thresholdN float64) {
+func t366Stamp(s *model.DailyWearStats, at time.Time, thresholdMn float64) {
 	s.AggregatedAt = &at
-	s.WearingThresholdN = &thresholdN
+	s.WearingThresholdMn = &thresholdMn
 }
 
 func TestT366DeriveWearProvenance(t *testing.T) {
@@ -63,7 +63,7 @@ func TestT366DeriveWearProvenance(t *testing.T) {
 
 func TestT366HasRollupStampRequiresBothColumns(t *testing.T) {
 	full := model.DailyWearStats{}
-	t366Stamp(&full, time.Now().UTC(), model.WearingThresholdN)
+	t366Stamp(&full, time.Now().UTC(), model.WearingThresholdMn)
 	assert.True(t, full.HasRollupStamp())
 
 	// 反证：半枚印章（只盖了时刻、没盖阈值）不得判成 rollup —— 否则读侧给出的
@@ -71,7 +71,7 @@ func TestT366HasRollupStampRequiresBothColumns(t *testing.T) {
 	halfTime := model.DailyWearStats{AggregatedAt: ptrTime(time.Now().UTC())}
 	assert.False(t, halfTime.HasRollupStamp(), "只有 aggregated_at 不算印章")
 
-	halfTh := model.DailyWearStats{WearingThresholdN: ptrFloat(model.WearingThresholdN)}
+	halfTh := model.DailyWearStats{WearingThresholdMn: ptrFloat(model.WearingThresholdMn)}
 	assert.False(t, halfTh.HasRollupStamp(), "只有 wearing_threshold_n 不算印章")
 
 	assert.False(t, (&model.DailyWearStats{}).HasRollupStamp(), "两列皆空 = 无印章")
@@ -86,7 +86,7 @@ var _ repo.DailyWearDetailSource = (*fakeDailyWearSource)(nil)
 func TestT366NilCounterKeepsStampedRowsTrustworthy(t *testing.T) {
 	ctx := context.Background()
 	stamped := model.DailyWearStats{PatientID: "P1", StatDate: t366Day(t, "2026-09-23"), FrameCount: 588}
-	t366Stamp(&stamped, time.Date(2026, 9, 23, 16, 10, 0, 0, time.UTC), 0.05)
+	t366Stamp(&stamped, time.Date(2026, 9, 23, 16, 10, 0, 0, time.UTC), 50) // 50 mN = 0.05 N
 
 	svc := newDailyWearSvcWithNow(&fakeDailyWearStore{rows: []model.DailyWearStats{
 		stamped,
@@ -119,7 +119,7 @@ func TestT366GetDailyWearDerivesThreeTierProvenance(t *testing.T) {
 		WearMinutes: 300, AvgPressure: 1.2, MaxPressure: 3.4, MaxPoint: "P03",
 		FrameCount: 588, AbnormalCount: 1,
 	}
-	t366Stamp(&stamped, aggAt, 0.05)
+	t366Stamp(&stamped, aggAt, 50) // 50 mN = 0.05 N
 
 	corroborated := model.DailyWearStats{
 		PatientID: "P1", StatDate: t366Day(t, "2026-09-22"),

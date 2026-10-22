@@ -34,7 +34,7 @@ func TestT653_Evaluate_NewAlertTriggersFlowAutoStart(t *testing.T) {
 	starter := &t653RecordStarter{}
 	h.SetFlowStarter(starter)
 
-	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().Add(-time.Minute).UTC(), 50.0))
+	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().Add(-time.Minute).UTC(), 50000.0))
 	require.Equal(t, 200, rec.Code)
 
 	require.Len(t, starter.calls, 1, "新建告警应恰好触发一次自动建流程")
@@ -48,7 +48,7 @@ func TestT653_Evaluate_DedupHitDoesNotTriggerFlowAutoStart(t *testing.T) {
 	starter := &t653RecordStarter{}
 	h.SetFlowStarter(starter)
 
-	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().Add(-time.Minute).UTC(), 50.0))
+	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().Add(-time.Minute).UTC(), 50000.0))
 	require.Equal(t, 200, rec.Code)
 	assert.Empty(t, starter.calls, "一告警一实例：去重命中不重复触发，否则可能给同一告警建出第二个实例")
 }
@@ -71,7 +71,7 @@ func TestT653_Evaluate_DefaultStarterIsNoop(t *testing.T) {
 	notifier := &recordingNotifier{}
 	h := newTestHandler(alerts, notifier)
 
-	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().Add(-time.Minute).UTC(), 50.0))
+	rec := doPost(h, evalBody(t, "DEV1", "P1", time.Now().Add(-time.Minute).UTC(), 50000.0))
 	require.Equal(t, 200, rec.Code)
 	require.Len(t, alerts.created, 1)
 	require.Len(t, notifier.notified, 1, "通知链不受流程链缺失影响")

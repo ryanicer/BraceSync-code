@@ -37,17 +37,17 @@ func NewRollupService(stats repo.DailyWearStatsStore, cache repo.CacheStore, con
 	}
 }
 
-// wearingThresholdN 佩戴帧判定阈值（T352：与上报链路同源，走 sys_configs
+// wearingThresholdMn 佩戴帧判定阈值（**mN 存储空间**，T733；与帧值同量纲直接比较。T352：与上报链路同源，走 sys_configs
 // wearing_pressure_threshold，读不到回退 model 默认）。
 // 旧实现按 sys_configs collect_interval_minutes（默认 30 分钟）折算佩戴分钟，
 // 实际上报间隔约 31 秒，单日可放大近 58 倍，故改为时间跨度口径、不再读采集间隔。
-func (s *RollupService) wearingThresholdN(ctx context.Context) float64 {
+func (s *RollupService) wearingThresholdMn(ctx context.Context) float64 {
 	if ts, ok := s.configs.(repo.ThresholdStore); ok {
 		if th, err := ts.GetPressureThresholds(ctx); err == nil {
-			return th.WearingN
+			return th.WearingMn
 		}
 	}
-	return model.WearingThresholdN
+	return model.WearingThresholdMn
 }
 
 // RunDailyRollup 聚合昨日（Asia/Shanghai）所有患者明细 → daily_wear_stats UPSERT
@@ -113,14 +113,14 @@ func (s *RollupService) ProcessBackfillQueue(ctx context.Context) {
 
 // stampStats 给聚合行盖 T366 聚合印章：聚合发生时刻 + 本次实际生效的佩戴帧阈值，
 // 并统一回填 StatDate（CST 切日）。
-// 🔴 thresholdN 必须是传给 AggregateDate 的那一个值（同源），否则读侧「按印章复算」
+// 🔴 thresholdMn 必须是传给 AggregateDate 的那一个值（同源），否则读侧「按印章复算」
 // 用的是另一个阈值，印章就成了假证据。
 // 印章只由这里写：seed 示例行、迁移前的历史行永远是无印章，读侧据此判为未佐证。
-func stampStats(stats []model.DailyWearStats, date time.Time, at time.Time, thresholdN float64) {
+func stampStats(stats []model.DailyWearStats, date time.Time, at time.Time, thresholdMn float64) {
 	for i := range stats {
 		stats[i].StatDate = date
 		stats[i].AggregatedAt = &at
-		stats[i].WearingThresholdN = &thresholdN
+		stats[i].WearingThresholdMn = &thresholdMn
 	}
 }
 
@@ -130,13 +130,13 @@ func (s *RollupService) aggregateAndUpsert(ctx context.Context, date time.Time, 
 	from := date.UTC()
 	to := date.AddDate(0, 0, 1).UTC()
 
-	thN := s.wearingThresholdN(ctx)
-	stats, err := s.stats.AggregateDate(ctx, from, to, thN)
+	thMn := s.wearingThresholdMn(ctx)
+	stats, err := s.stats.AggregateDate(ctx, from, to, thMn)
 	if err != nil {
 		return err
 	}
 
-	stampStats(stats, date, s.now().UTC(), thN)
+	stampStats(stats, date, s.now().UTC(), thMn)
 
 	if len(stats) == 0 {
 		log.Info().Str("date", dateStr).Msg("daily rollup: no records found for date")
@@ -156,12 +156,12 @@ func (s *RollupService) aggregatePatientDate(ctx context.Context, date time.Time
 	from := date.UTC()
 	to := date.AddDate(0, 0, 1).UTC()
 
-	thN := s.wearingThresholdN(ctx)
-	stats, err := s.stats.AggregateDate(ctx, from, to, thN)
+	thMn := s.wearingThresholdMn(ctx)
+	stats, err := s.stats.AggregateDate(ctx, from, to, thMn)
 	if err != nil {
 		return err
 	}
-	stampStats(stats, date, s.now().UTC(), thN)
+	stampStats(stats, date, s.now().UTC(), thMn)
 
 	// 过滤出目标患者
 	var filtered []model.DailyWearStats

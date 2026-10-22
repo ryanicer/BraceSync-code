@@ -34,21 +34,22 @@ func TestITT366StampRoundTripAndDemoRow(t *testing.T) {
 	seedT366Patient(ctx, t, pool)
 
 	aggAt := time.Date(2026, 8, 15, 16, 10, 0, 0, time.UTC) // CST 08-16 00:10 跑 08-15 的聚合
-	thN := 0.42
+	// 🔴 T733 方案A：印章阈值与库列同为 mN 存储空间（420 mN = 0.42 N；只为验读写闭环，不取物理合理性）
+	thMn := 420.0
 	stamped := model.DailyWearStats{
 		PatientID: t366Patient, StatDate: t366Day("2026-08-15"),
-		WearMinutes: 300, AvgPressure: 1.25, MaxPressure: 3.5, MaxPoint: "P01",
+		WearMinutes: 300, AvgPressure: 1250, MaxPressure: 3500, MaxPoint: "P01", // mN（1.25 N / 3.5 N）
 		FrameCount: 2, AbnormalCount: 0,
 	}
 	stamped.AggregatedAt = &aggAt
-	stamped.WearingThresholdN = &thN
+	stamped.WearingThresholdMn = &thMn
 	require.NoError(t, NewRollupRepo(pool).Upsert(ctx, []model.DailyWearStats{stamped}))
 
-	// 手写一行（seed 示例行的形态）：数值完全合理，但没有印章
+	// 手写一行（seed 示例行的形态）：数值完全合理（mN 口径），但没有印章
 	_, err := pool.Exec(ctx, `
 		INSERT INTO daily_wear_stats
 		  (patient_id, stat_date, wear_minutes, avg_pressure, max_pressure, max_point, frame_count, abnormal_count)
-		VALUES ($1, '2026-08-16', 1200, 22.4, 47.2, 'P03', 40, 1)
+		VALUES ($1, '2026-08-16', 1200, 22400, 47200, 'P03', 40, 1)
 		ON CONFLICT (patient_id, stat_date) DO NOTHING`, t366Patient)
 	require.NoError(t, err, "seed 形态示例行写入失败（列清单与 000001 建表不符？）")
 
@@ -65,15 +66,15 @@ func TestITT366StampRoundTripAndDemoRow(t *testing.T) {
 	require.NotNil(t, got)
 	require.True(t, got.HasRollupStamp(), "聚合任务写的行必须能把印章读回来")
 	assert.True(t, got.AggregatedAt.Equal(aggAt), "印章时刻落库再读出应完全一致，实得 %v", got.AggregatedAt)
-	require.NotNil(t, got.WearingThresholdN)
-	assert.InDelta(t, thN, *got.WearingThresholdN, 1e-6, "REAL 列回读保留生效阈值（复算要用它）")
+	require.NotNil(t, got.WearingThresholdMn)
+	assert.InDelta(t, thMn, *got.WearingThresholdMn, 1e-6, "REAL 列回读保留生效阈值（mN，复算要用它）")
 	assert.Equal(t, 2, got.FrameCount, "盖章不影响原有列")
 
 	demo := byDate["2026-08-16"]
 	require.NotNil(t, demo)
 	assert.False(t, demo.HasRollupStamp(), "无印章行绝不能被读成有印章")
 	assert.Nil(t, demo.AggregatedAt, "NULL 必须读成 nil，不能退化成零值时间")
-	assert.Nil(t, demo.WearingThresholdN, "NULL 必须读成 nil，不能退化成 0 阈值")
+	assert.Nil(t, demo.WearingThresholdMn, "NULL 必须读成 nil，不能退化成 0 阈值")
 	assert.Equal(t, 40, demo.FrameCount, "行本身照常返回（本卡不改数据，只让它可辨）")
 }
 
@@ -85,13 +86,14 @@ func TestITT366CountFramesByCSTDay(t *testing.T) {
 	require.NotNil(t, pool, "集成测试池未初始化")
 	seedT366Patient(ctx, t, pool)
 	seedT352Frames(ctx, t, pool, t366Patient, t366Device, []t352Frame{
-		{"2026-08-15 10:00:00+08", 3.0, 1.0},
-		{"2026-08-15 23:30:00+08", 2.0, 1.0}, // UTC 已是 08-15 15:30
-		{"2026-08-16 00:30:00+08", 1.0, 1.0}, // UTC 仍是 08-15 16:30 ⇒ 按 UTC 分组会算进前一天
-		{"2026-08-17 09:00:00+08", 1.0, 1.0}, // 区间外
+		// 🔴 T733 方案A：铺帧量纲 mN（3000 mN = 3 N），阈值同量纲传 50 mN
+		{"2026-08-15 10:00:00+08", 3000, 1000},
+		{"2026-08-15 23:30:00+08", 2000, 1000}, // UTC 已是 08-15 15:30
+		{"2026-08-16 00:30:00+08", 1000, 1000}, // UTC 仍是 08-15 16:30 ⇒ 按 UTC 分组会算进前一天
+		{"2026-08-17 09:00:00+08", 1000, 1000}, // 区间外
 	})
 
-	counts, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, t366Patient, t352From, t352To.AddDate(0, 0, 1), 0.05)
+	counts, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, t366Patient, t352From, t352To.AddDate(0, 0, 1), 50)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, counts["2026-08-15"].Frames, "CST 08-15 两帧")
@@ -100,7 +102,7 @@ func TestITT366CountFramesByCSTDay(t *testing.T) {
 	assert.Len(t, counts, 2, "区间内只应有这两天有帧")
 
 	// 无帧的患者/日期不返回条目（读侧据「缺键」判 0 帧，与「未查」区分开）
-	empty, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, "P-T366-NONE", t352From, t352To, 0.05)
+	empty, err := NewRecordRepo(pool).WearDetailByCSTDay(ctx, "P-T366-NONE", t352From, t352To, 50)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
 }

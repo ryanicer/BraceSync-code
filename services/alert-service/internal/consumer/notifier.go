@@ -27,7 +27,9 @@ import (
 	"github.com/bracesync/bracesync/services/alert-service/internal/scanner"
 )
 
-// notifyRequest msg-service sendAlertNotification 请求体（契约 docs/
+// notifyRequest msg-service sendAlertNotification 请求体（契约 docs/）。
+// 🔴 单位口径（T733 方案A）：ThresholdValue / ActualValue 为 **mN** 原值透传
+// （传输层零换算）；N 口径属通知文案的展示层职责，归 msg-service 侧改造。
 type notifyRequest struct {
 	AlertID        string   `json:"alertId"`
 	Type           string   `json:"type"`

@@ -30,7 +30,8 @@ export default function () {
   const deviceID = `DEV_${String(Math.floor(Math.random() * DEVICE_COUNT)).padStart(4, '0')}`;
   // tsUnix 只取一次：签名串里的时刻与 X-Timestamp 头必须是同一个数，两次取秒会跨界造成 20401
   const tsUnix = Math.floor(Date.now() / 1000);
-  // 单帧上报请求体，对齐 data-service 的 SingleFrameRequest：points 单位 mN、
+  // 单帧上报请求体，对齐 data-service 的 SingleFrameRequest：points 单位 mN（T733 方案A：
+  // 入口不换算、mN 原样入库，÷1000 只发生在展示层）、
   // timestamp 为 Unix 秒、firmware 必填、无 wearing（佩戴由云端按 max(points) 推导）
   const payload = JSON.stringify({
     device_id: deviceID,

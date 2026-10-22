@@ -20,10 +20,10 @@ type DailyWearStatsStore interface {
 	Upsert(ctx context.Context, stats []model.DailyWearStats) error
 	// AggregateDate 聚合指定 UTC 时间窗口内所有患者的明细 → 返回 DailyWearStats 切片。
 	// from/to 为 UTC 时间（由调用方传入 Asia/Shanghai 切日转换后的 UTC 范围），
-	// wearingThresholdN 为佩戴帧判定阈值（单帧 20 点峰值高于该值视为佩戴帧）。
+	// wearingThresholdMn 为佩戴帧判定阈值（单帧 20 点峰值高于该值视为佩戴帧）。
 	// 口径（T352）：佩戴分钟 = 佩戴帧时间跨度 + 一个实测帧间隔；日均压力 = 佩戴帧 20 点全点均值；
 	// 异常数 = 同窗口 alerts 行数（与告警落库口径一致）。
-	AggregateDate(ctx context.Context, from, to time.Time, wearingThresholdN float64) ([]model.DailyWearStats, error)
+	AggregateDate(ctx context.Context, from, to time.Time, wearingThresholdMn float64) ([]model.DailyWearStats, error)
 	// QueryRange 查询日期范围内的日聚合数据（报告生成用），按 stat_date ASC 排列。
 	QueryRange(ctx context.Context, patientID string, from, to time.Time) ([]model.DailyWearStats, error)
 	// ListPatientsWithStats 列出指定日期范围内有聚合数据的所有患者 ID（报告生成时批量遍历）。
@@ -53,13 +53,13 @@ type RollupRepo struct {
 func NewRollupRepo(pool *pgxpool.Pool) *RollupRepo { return &RollupRepo{pool: pool} }
 
 // upsertDailyWearStatsSQL T366：后两列是聚合印章，只由本 UPSERT 写
-// （aggregated_at / wearing_threshold_n 由 RollupService 在调用前盖到每行上）。
+// （aggregated_at / wearing_threshold_mn 由 RollupService 在调用前盖到每行上）。
 // 读侧据此把「聚合任务写的行」与「seed 示例行 / 印章上线前的历史行」分开；
 // DO UPDATE 一并覆盖，重算即重新盖章，不会留旧印章。
 const upsertDailyWearStatsSQL = `
 INSERT INTO daily_wear_stats
   (patient_id, stat_date, wear_minutes, avg_pressure, max_pressure, max_point, frame_count, abnormal_count,
-   updated_at, aggregated_at, wearing_threshold_n)
+   updated_at, aggregated_at, wearing_threshold_mn)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),$9,$10)
 ON CONFLICT (patient_id, stat_date) DO UPDATE SET
   wear_minutes   = EXCLUDED.wear_minutes,
@@ -70,7 +70,7 @@ ON CONFLICT (patient_id, stat_date) DO UPDATE SET
   abnormal_count = EXCLUDED.abnormal_count,
   updated_at     = now(),
   aggregated_at  = EXCLUDED.aggregated_at,
-  wearing_threshold_n = EXCLUDED.wearing_threshold_n`
+  wearing_threshold_mn = EXCLUDED.wearing_threshold_mn`
 
 // Upsert 批量幂等 UPSERT
 func (r *RollupRepo) Upsert(ctx context.Context, stats []model.DailyWearStats) error {
@@ -82,7 +82,7 @@ func (r *RollupRepo) Upsert(ctx context.Context, stats []model.DailyWearStats) e
 		batch.Queue(upsertDailyWearStatsSQL,
 			s.PatientID, s.StatDate, s.WearMinutes, s.AvgPressure,
 			s.MaxPressure, s.MaxPoint, s.FrameCount, s.AbnormalCount,
-			s.AggregatedAt, s.WearingThresholdN,
+			s.AggregatedAt, s.WearingThresholdMn,
 		)
 	}
 	br := r.pool.SendBatch(ctx, batch)
@@ -155,8 +155,8 @@ WHERE ts >= $1 AND ts < $2
 GROUP BY patient_id`
 
 // AggregateDate 聚合指定 UTC 时间窗口内的所有患者明细
-func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, wearingThresholdN float64) ([]model.DailyWearStats, error) {
-	rows, err := r.pool.Query(ctx, aggregateDateSQL, from, to, float32(wearingThresholdN))
+func (r *RollupRepo) AggregateDate(ctx context.Context, from, to time.Time, wearingThresholdMn float64) ([]model.DailyWearStats, error) {
+	rows, err := r.pool.Query(ctx, aggregateDateSQL, from, to, float32(wearingThresholdMn))
 	if err != nil {
 		return nil, fmt.Errorf("aggregate pressure_records: %w", err)
 	}
@@ -205,7 +205,7 @@ func WearMinutesFromSpan(wearingFrames int, spanSeconds float64) int {
 const queryRangeSQL = `
 SELECT patient_id, stat_date, wear_minutes, avg_pressure, max_pressure,
        COALESCE(max_point, ''), frame_count, abnormal_count, updated_at,
-       aggregated_at, wearing_threshold_n
+       aggregated_at, wearing_threshold_mn
 FROM daily_wear_stats
 WHERE patient_id = $1
   AND stat_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
@@ -224,14 +224,14 @@ func (r *RollupRepo) QueryRange(ctx context.Context, patientID string, from, to 
 	for rows.Next() {
 		var s model.DailyWearStats
 		var aggregatedAt *time.Time
-		var thresholdN *float64
+		var thresholdMn *float64
 		if err := rows.Scan(&s.PatientID, &s.StatDate, &s.WearMinutes, &s.AvgPressure,
 			&s.MaxPressure, &s.MaxPoint, &s.FrameCount, &s.AbnormalCount, &s.UpdatedAt,
-			&aggregatedAt, &thresholdN); err != nil {
+			&aggregatedAt, &thresholdMn); err != nil {
 			return nil, fmt.Errorf("scan daily_wear_stats: %w", err)
 		}
 		s.AggregatedAt = aggregatedAt
-		s.WearingThresholdN = thresholdN
+		s.WearingThresholdMn = thresholdMn
 		stats = append(stats, s)
 	}
 	return stats, rows.Err()

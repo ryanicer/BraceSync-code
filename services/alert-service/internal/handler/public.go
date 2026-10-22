@@ -23,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/bracesync/bracesync/services/alert-service/internal/config"
 	"github.com/bracesync/bracesync/services/alert-service/internal/flowstarter"
 	"github.com/bracesync/bracesync/services/alert-service/internal/repo"
 )
@@ -96,13 +97,20 @@ type PublicAlertStore interface {
 
 // AlertItem 公开查询返回的告警记录（字段名对齐 shared-types Alert）
 type AlertItem struct {
-	AlertID        string  `json:"alertId"`
-	PatientID      string  `json:"patientId"`
-	PatientName    string  `json:"patientName"`
-	DeviceID       string  `json:"deviceId"`
-	Type           string  `json:"type"`
-	Detail         string  `json:"detail"`
-	SensorPoint    string  `json:"sensorPoint"`
+	AlertID     string `json:"alertId"`
+	PatientID   string `json:"patientId"`
+	PatientName string `json:"patientName"`
+	DeviceID    string `json:"deviceId"`
+	Type        string `json:"type"`
+	// Detail 引擎生成的告警文案（alerts.detail 原值）：压力类文案里的数字按 T733 方案A
+	// 以 **mN** 自标量纲（"…压力 6000.0mN 超阈值 5000.0mN"），本层不改写字符串；
+	// 若产品侧要 N 口径文案，属展示层模板改造（data/前端域），不在本卡。
+	Detail      string `json:"detail"`
+	SensorPoint string `json:"sensorPoint"`
+	// ThresholdValue / ActualValue 为**展示层 N 口径**（T733 方案A 出口换算）：
+	// 库里 pressure_high / sensor_drift 两类的值按 mN 存，响应前 ÷config.MnPerN；
+	// 分钟类（wear_interrupt / wear_duration_short）与百分比类（pressure_fluctuation）原样透出。
+	// 前端 packages/shared-utils formatAlertValue 对这两类拼「N」后缀，量纲靠本函数对齐。
 	ThresholdValue float64 `json:"thresholdValue"`
 	ActualValue    float64 `json:"actualValue"`
 	Timestamp      string  `json:"timestamp"`
@@ -116,7 +124,24 @@ type AlertItem struct {
 	ProcessNote    *string `json:"processNote"`
 }
 
-// toAlertItem repo 投影 → 契约 DTO（时间 RFC3339；alertId 字符串化）
+// pressureDisplayAlertTypes 值为**压力量纲**（库内 mN）的告警类型集合：
+// 只有这两类需要出口换算 mN→N（与前端 formatAlertValue 的 N 分支逐键同形）。
+var pressureDisplayAlertTypes = map[string]bool{
+	"pressure_high": true,
+	"sensor_drift":  true,
+}
+
+// displayValueN 存储值 → 展示值：压力量纲按 mN 存、按 N 展示（÷config.MnPerN，T733 方案A
+// 唯一的展示层换算点）；分钟/百分比等其余类型原样透出，不做换算。
+func displayValueN(alertType string, stored float64) float64 {
+	if pressureDisplayAlertTypes[alertType] {
+		return stored / config.MnPerN
+	}
+	return stored
+}
+
+// toAlertItem repo 投影 → 契约 DTO（时间 RFC3339；alertId 字符串化；
+// 压力量纲阈值/实际值经 displayValueN 转 N）。
 func toAlertItem(r repo.AlertRow) AlertItem {
 	item := AlertItem{
 		AlertID:        strconv.FormatInt(r.AlertID, 10),
@@ -126,8 +151,8 @@ func toAlertItem(r repo.AlertRow) AlertItem {
 		Type:           r.Type,
 		Detail:         r.Detail,
 		SensorPoint:    r.SensorPoint,
-		ThresholdValue: r.ThresholdValue,
-		ActualValue:    r.ActualValue,
+		ThresholdValue: displayValueN(r.Type, r.ThresholdValue),
+		ActualValue:    displayValueN(r.Type, r.ActualValue),
 		Timestamp:      r.Ts.Format(time.RFC3339),
 		ReadStatus:     r.ReadStatus,
 		ProcessStatus:  r.ProcessStatus,

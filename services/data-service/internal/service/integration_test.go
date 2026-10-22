@@ -185,11 +185,17 @@ func newITSvc(t *testing.T, alerts AlertEvaluator) *RecordService {
 }
 
 // itPoints 生成 20 点上报帧：P03 为最大点。
-// T719：固件 1.4 上报载荷单位即牛顿 N（PRD §7A.2），原样入参、入口不再换算。
-func itPoints(v float64) []float64 {
+// T733 方案A：入参即设备原始 mN，采集层零换算（需要按界面量纲 N 写用例的调用点用 itPointsN）。
+func itPoints(mn float64) []float64 {
 	out := make([]float64, model.PointCount)
-	out[2] = v // P03 为最大点
+	out[2] = mn // P03 为最大点
 	return out
+}
+
+// itPointsN 是测试侧便利：入参按界面量纲 N 写，×1000 变成设备上报的原始 mN。
+// 换算只发生在造数这一层，被测链路（入口→库→Redis）内部零换算。
+func itPointsN(n float64) []float64 {
+	return itPoints(n * model.MnPerN)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -205,7 +211,7 @@ func TestIT_SingleFrame_IdempotentAndRedisKeys(t *testing.T) {
 	// 协议口径 timestamp 为 Unix 秒：构造与断言统一用整秒值，
 	// 避免 time.Now() 亚秒分量与库内整秒值做等值比较导致查无行。
 	ts := time.Unix(time.Now().Add(-5*time.Minute).Unix(), 0)
-	req := &model.SingleFrameRequest{DeviceID: itDevice, Timestamp: ts.Unix(), Points: itPoints(32.5), Battery: 90, Firmware: "v1.2.0"}
+	req := &model.SingleFrameRequest{DeviceID: itDevice, Timestamp: ts.Unix(), Points: itPointsN(32.5), Battery: 90, Firmware: "v1.2.0"}
 
 	resp, appErr := svc.UploadSingle(ctx, itDevice, req)
 	require.Nil(t, appErr)
@@ -219,11 +225,11 @@ func TestIT_SingleFrame_IdempotentAndRedisKeys(t *testing.T) {
 		`SELECT count(*) FROM pressure_records WHERE device_id = $1 AND ts = $2`, itDevice, ts.UTC()).Scan(&count))
 	assert.Equal(t, 1, count)
 
-	// max_pressure 生成列自动计算
+	// max_pressure 生成列自动计算 —— 库内是原始 mN（T733 方案A 存储语义）
 	var maxP float32
 	require.NoError(t, itPool.QueryRow(ctx,
 		`SELECT max_pressure FROM pressure_records WHERE device_id = $1 AND ts = $2`, itDevice, ts.UTC()).Scan(&maxP))
-	assert.InDelta(t, 32.5, float64(maxP), 0.01)
+	assert.InDelta(t, 32500.0, float64(maxP), 0.01)
 
 	// Redis 三 key
 	lastseen, err := itRedis.Get(ctx, "dev:lastseen:"+itDevice).Result()
@@ -245,7 +251,7 @@ func TestIT_SingleFrame_IdempotentAndRedisKeys(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("%d", ts.Unix()), stat["wear_first_ts"])
 	assert.Equal(t, fmt.Sprintf("%d", ts.Unix()), stat["wear_last_ts"])
 	assert.NotContains(t, stat, "wear_minutes")
-	assert.Equal(t, "32.5", stat["max_pressure"])
+	assert.Equal(t, "32500", stat["max_pressure"], "stat:today 属存储空间（mN），出口才 ÷1000")
 	assert.Equal(t, "P03", stat["max_point"])
 
 	// 降级场景（NoopAlerts）：帧引用入 alert:pending
@@ -343,7 +349,7 @@ func TestIT_HistoryAndRealtime(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		req := &model.SingleFrameRequest{
 			DeviceID: itDevice, Timestamp: now.Add(-time.Duration(90+i*30) * time.Minute).Unix(),
-			Points: itPoints(20 + float64(i)), Battery: 85, Firmware: "v1.2.0",
+			Points: itPointsN(20 + float64(i)), Battery: 85, Firmware: "v1.2.0",
 		}
 		_, appErr := svc.UploadSingle(ctx, itDevice, req)
 		require.Nil(t, appErr)

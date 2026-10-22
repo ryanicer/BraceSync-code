@@ -413,7 +413,7 @@ func (c *captureAggStore) ListPatientsWithStats(_ context.Context, _, _ time.Tim
 // t352ThresholdConfigs 同时实现 ConfigStore 与 ThresholdStore（生产 ConfigRepo 的形态）
 type t352ThresholdConfigs struct {
 	intervalMinutes       int
-	wearingN              float64
+	wearingMn             float64
 	thresholdCalls, devNm int
 }
 
@@ -425,7 +425,7 @@ func (c *t352ThresholdConfigs) GetDeviceConfig(context.Context) (int, int, error
 func (c *t352ThresholdConfigs) GetPressureThresholds(context.Context) (model.PressureThresholds, error) {
 	c.thresholdCalls++
 	th := model.DefaultPressureThresholds()
-	th.WearingN = c.wearingN
+	th.WearingMn = c.wearingMn
 	return th, nil
 }
 
@@ -437,7 +437,7 @@ func TestRollupService_AggregateUsesConfiguredWearingThresholdNotInterval(t *tes
 		gotThreshold = wearingThresholdN
 		called++
 	}}
-	cfg := &t352ThresholdConfigs{intervalMinutes: 30, wearingN: 0.42}
+	cfg := &t352ThresholdConfigs{intervalMinutes: 30, wearingMn: 420}
 
 	svc := NewRollupService(stats, newFakeCache(), cfg)
 	svc.now = func() time.Time { return time.Date(2026, 8, 10, 16, 10, 0, 0, time.UTC) }
@@ -445,7 +445,7 @@ func TestRollupService_AggregateUsesConfiguredWearingThresholdNotInterval(t *tes
 	svc.RunDailyRollup(context.Background())
 
 	require.Equal(t, 1, called)
-	assert.InDelta(t, 0.42, gotThreshold, 1e-9, "佩戴阈值取配置 WearingN")
+	assert.InDelta(t, 420, gotThreshold, 1e-9, "佩戴阈值取配置（mN 存储空间）")
 	assert.Equal(t, 1, cfg.thresholdCalls)
 	assert.Zero(t, cfg.devNm, "rollup 不再读 collect_interval_minutes")
 }
@@ -461,7 +461,7 @@ func TestRollupService_FallsBackToDefaultWearingThreshold(t *testing.T) {
 
 	svc.RunDailyRollup(context.Background())
 
-	assert.InDelta(t, model.WearingThresholdN, gotThreshold, 1e-9)
+	assert.InDelta(t, model.WearingThresholdMn, gotThreshold, 1e-9)
 }
 
 // 确保 repo 接口编译正确

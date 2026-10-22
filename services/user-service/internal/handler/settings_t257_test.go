@@ -20,7 +20,7 @@ import (
 func TestT257_UpdateSettings_RejectsUpperNotAboveStoredLower(t *testing.T) {
 	for _, upper := range []float64{5, 10} { // 10 = 与下限相等，同样拒绝
 		e := newEnv(t, true, true)
-		e.store.configs = map[string]string{keyPressureLow: "10"}
+		e.store.configs = map[string]string{keyPressureLow: "10000"} // mN 存储空间（= 10 N）
 
 		w, resp := e.do(http.MethodPut, "/api/v1/admin/settings",
 			mergeBody(validSettingsBody(), "pressureHighThresholdN", upper), nil)
@@ -46,14 +46,14 @@ func TestT257_UpdateSettings_MissingLowerKeyFallsBackToDefault(t *testing.T) {
 
 func TestT257_UpdateSettings_LowerThanUpperStillAccepted(t *testing.T) {
 	e := newEnv(t, true, true)
-	e.store.configs = map[string]string{keyPressureLow: "44"}
+	e.store.configs = map[string]string{keyPressureLow: "44000"} // mN（= 44 N）
 
 	w, resp := e.do(http.MethodPut, "/api/v1/admin/settings",
 		mergeBody(validSettingsBody(), "pressureHighThresholdN", 45), nil)
 	require.Equal(t, http.StatusOK, w.Code, resp.Message)
 	v, ok := kvOf(e.store.lastUpsert, keyPressureHigh)
 	require.True(t, ok)
-	assert.Equal(t, "45", v)
+	assert.Equal(t, "45000", v, "T733：落库写 mN，界面给 N")
 }
 
 // ── 12.4：设计稿「低压上限」= 告警页「统一压力下限」，同键读写 ──
@@ -66,7 +66,7 @@ func TestT257_GetSettings_ExposesPressureLowThreshold(t *testing.T) {
 	require.NotNil(t, dto.PressureLowThresholdN, "GET 恒回数值，前端不用判缺失")
 	assert.Equal(t, float64(defaultUnifiedLowerN), *dto.PressureLowThresholdN)
 
-	e.store.configs = map[string]string{keyPressureLow: "20", keyPressureHigh: "60"}
+	e.store.configs = map[string]string{keyPressureLow: "20000", keyPressureHigh: "60000"} // mN
 	w, resp = e.do(http.MethodGet, "/api/v1/admin/settings", nil, nil)
 	require.Equal(t, http.StatusOK, w.Code)
 	dto = settingsOf(t, resp.Data)
@@ -84,7 +84,7 @@ func TestT257_UpdateSettings_WritesPressureLowWhenGiven(t *testing.T) {
 	require.Len(t, e.store.lastUpsert, 11, "多写一个键（下限），其余 10 项不变")
 	v, ok := kvOf(e.store.lastUpsert, keyPressureLow)
 	require.True(t, ok)
-	assert.Equal(t, "20", v)
+	assert.Equal(t, "20000", v, "T733：落库写 mN（请求 20 N）")
 
 	dto := settingsOf(t, resp.Data)
 	require.NotNil(t, dto.PressureLowThresholdN)

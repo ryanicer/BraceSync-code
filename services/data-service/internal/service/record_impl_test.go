@@ -315,13 +315,13 @@ type fakeDailyWearSource struct {
 	details map[string]repo.WearDayDetail
 	err     error
 	calls   int
-	gotN    float64 // 记录服务透传给取数层的佩戴阈值，供 T411 断言「假设值确实来自配置」
+	gotMn   float64 // 记录服务透传给取数层的佩戴阈值（mN 存储空间），供 T411 断言「假设值确实来自配置」
 }
 
 func (f *fakeDailyWearSource) WearDetailByCSTDay(_ context.Context, _ string, _, _ time.Time,
-	wearingThresholdN float64) (map[string]repo.WearDayDetail, error) {
+	wearingThresholdMn float64) (map[string]repo.WearDayDetail, error) {
 	f.calls++
-	f.gotN = wearingThresholdN
+	f.gotMn = wearingThresholdMn
 	if f.err != nil {
 		return nil, f.err
 	}

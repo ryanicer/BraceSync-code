@@ -1,8 +1,9 @@
 // Package engine — 告警规则引擎实现（T003）
 //
 // 行为契约：engine_test.go（T002 Ella；T661 起按卡面口径补强断言）——各用例断言是唯一行为契约。
-// 阈值口径：压力偏高 45N / 中断 60min / 传感器标定异常 0.3N（T203 ÷10 调 0.3；
-// 与 config.DefaultThresholds、seed、迁移 000019、user-service 设置默认四处同值）。
+// 阈值口径：压力偏高 45000mN / 中断 60min / 传感器标定异常 300mN
+// （T733 方案A：压力量纲统一 mN，与帧压力同量纲，引擎内零换算；
+// 与 config.DefaultThresholds、seed+mN 迁移、user-service 设置默认同谱系）。
 // T257 2.6（方案A）：按帧规则摘除「压力波动」，新增按自然日的「佩戴时长不足」
 // （EvaluateWearDurationShort，由扫描器调用）；波动 30% 阈值仅保留配置键供历史数据解释。
 package engine
@@ -15,11 +16,12 @@ import (
 
 // NewDefaultRuleEvaluator 返回带默认阈值的评估器（生产调用方使用）。
 // 注意：规则字段零值 = 该规则不启用（测试契约），默认值只经由此构造函数注入。
+// 压力量纲默认为 mN（T733 方案A）：45N → 45000mN、0.3N → 300mN，量值放大 1000 倍、判定行为不变。
 func NewDefaultRuleEvaluator() *RuleEvaluator {
 	return &RuleEvaluator{
-		PressureHighThreshold: 45,
+		PressureHighThreshold: 45000,
 		WearInterruptMinutes:  60,
-		SensorDriftThreshold:  0.3, // T661：兜底默认与 config.DefaultThresholds 收口同值（T203 由 2.8 调 0.3）
+		SensorDriftThreshold:  300, // T661：兜底默认与 config.DefaultThresholds 收口同值（T203 由 2.8N 调 0.3N；T733 迁 300mN）
 		DedupWindowMinutes:    30,
 		CollectionIntervalMin: 30,
 		// T257 2.6：不再注入 FluctuationThresholdPct（压力波动规则已摘除）。
@@ -32,8 +34,9 @@ func sensorPointName(index int) string {
 }
 
 // checkPressureHigh 压力偏高：任一采集点压力严格大于阈值（A1/A2）。
+// 量纲：帧读数与阈值同为 mN，直接比较、不换算（T733 方案A）。
 // 多点超阈值时报告压力最大的点（A1-Edge）。
-// T252 2.2：逐点规则可关闭某点监控（monitored=false 跳过）或覆盖其上限（upperN>0）；
+// T252 2.2：逐点规则可关闭某点监控（monitored=false 跳过）或覆盖其上限（upperMn>0）；
 // 未注入逐点规则时全部点位跟随统一上限，判定与 A1/A2 契约完全一致。
 func (e *RuleEvaluator) checkPressureHigh(frame PressureFrame, _ *PressureFrame) *AlertResult {
 	if e.PressureHighThreshold <= 0 {
@@ -47,8 +50,8 @@ func (e *RuleEvaluator) checkPressureHigh(frame PressureFrame, _ *PressureFrame)
 			if !rule.Monitored {
 				continue // 该采集点已在 admin 告警规则配置里取消勾选
 			}
-			if rule.UpperN > 0 {
-				thr = rule.UpperN
+			if rule.UpperMn > 0 {
+				thr = rule.UpperMn
 			}
 		}
 		if p > thr && (maxIdx < 0 || p > maxVal) {
@@ -66,12 +69,16 @@ func (e *RuleEvaluator) checkPressureHigh(frame PressureFrame, _ *PressureFrame)
 		ThresholdValue: maxThr,
 		ActualValue:    maxVal,
 		Severity:       "high",
-		Message: fmt.Sprintf("压力偏高：采集点 %s 压力 %.1fN 超阈值 %.1fN",
+		// 文案按 mN 自标量纲（maxVal/maxThr 为 mN）；换算成 N 属展示层职责，见 handler 出口。
+		Message: fmt.Sprintf("压力偏高：采集点 %s 压力 %.1fmN 超阈值 %.1fmN",
 			point, maxVal, maxThr),
 	}
 }
 
 // checkSensorDrift 传感器标定异常：仅空载（Wearing=false）时判定（A4）。
+//
+// 量纲：空载读数与阈值同为 mN（阈值 = sys_configs threshold_sensor_drift，T733 迁移 0.3→300），
+// 判定链路零换算。
 //
 // T661（Boss 物理模型，T621 调研收敛）：读侧减校准基线后，压力片应力释放会产出负值，
 // 容差带内的负偏是合理物理现象而非故障。判据改为**双向对称容差**——读数绝对值严格
@@ -100,10 +107,10 @@ func (e *RuleEvaluator) checkSensorDrift(frame PressureFrame, _ *PressureFrame) 
 	actual := frame.Pressures[maxIdx]
 	message := ""
 	if actual > 0 {
-		message = fmt.Sprintf("传感器标定异常：空载采集点 %s 读数 %.1fN 超阈值 %.1fN（漂移超标），通知技师+运营",
+		message = fmt.Sprintf("传感器标定异常：空载采集点 %s 读数 %.1fmN 超阈值 %.1fmN（漂移超标），通知技师+运营",
 			point, actual, e.SensorDriftThreshold)
 	} else {
-		message = fmt.Sprintf("传感器标定异常：空载采集点 %s 读数 %.1fN 负向超出容差 %.1fN（应力释放异常），建议检查佩戴或考虑重新校准，通知技师+运营",
+		message = fmt.Sprintf("传感器标定异常：空载采集点 %s 读数 %.1fmN 负向超出容差 %.1fmN（应力释放异常），建议检查佩戴或考虑重新校准，通知技师+运营",
 			point, actual, e.SensorDriftThreshold)
 	}
 	return &AlertResult{

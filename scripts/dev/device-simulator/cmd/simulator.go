@@ -23,8 +23,10 @@ const (
 	PathBatch  = "/api/v1/device/records/batch"
 )
 
-// 设备侧量纲口径（T719，PRD §7A.2）：固件 1.4 起 points 单位 = 牛顿 N，云端入口原样入库不再 ÷1000。
-// 模拟器据此直接发 N（与 services/data-service/internal/model/model.go 的 SingleFrameRequest.Points 注释同步）。
+// 设备侧量纲口径（T733 方案A，固件 1.9）：points 单位 = 毫牛 mN，云端入口**不换算、原样入库**，
+// ÷1000 只发生在展示层（前端 nFromMn / 后端 API 出口）。模拟器据此直接发 mN
+// （与 services/data-service/internal/model/model.go 的 SingleFrameRequest.Points 注释同步）。
+// 历史坑：T719 删掉了入口 ÷1000 却没补出口换算，346 mN 被显示成「346 N」——别再往回改。
 
 // defaultFirmware 上报体必填字段 firmware 的默认值（云端仅在版本变化时 UPDATE）。
 const defaultFirmware = "v1.2.0"
@@ -39,7 +41,7 @@ const MaxBatchFrames = 100
 type Frame struct {
 	DeviceID  string    `json:"device_id,omitempty"` // 生产以网关注入的 X-Device-Id 为准
 	Timestamp int64     `json:"timestamp"`           // 采集时刻，Unix 秒
-	Points    []float64 `json:"points"`              // P01–P20 顺序，单位 N（T719 固件 1.4）
+	Points    []float64 `json:"points"`              // P01–P20 顺序，单位 mN（T733 方案A，固件 1.9 原样上报）
 	Battery   int       `json:"battery"`
 	Firmware  string    `json:"firmware"`
 	WifiRSSI  *int      `json:"wifi_rssi,omitempty"`
@@ -140,7 +142,7 @@ func (e *SimEngine) generateFrame(deviceID string) Frame {
 		// 故障模式：随机注入异常
 		switch rand.Intn(10) {
 		case 0:
-			// 传感器漂移：某点异常偏高（超云端现行高阈 5N）
+			// 传感器漂移：某点异常偏高（云端现行高阈 5N ＝ 5000 mN，T733 起 points 全程 mN）
 			frame.Points[rand.Intn(len(frame.Points))] = 8000 + float64(rand.Intn(4000))
 		case 1:
 			// 电池低电量
@@ -158,12 +160,13 @@ func (e *SimEngine) generateFrame(deviceID string) Frame {
 	return frame
 }
 
-// normalPressures 生成一帧正常压力分布（单位 N，T719 固件 1.4 原样上报），带 ±0.2 N 抖动。
+// normalPressures 生成一帧正常压力分布（单位 **mN**，T733 方案A：固件 1.9 原样上报、云端不换算入库），
+// 幅值取支具常见受压 1.1–2.2 N ＝ 1100–2200 mN，带 ±200 mN（±0.2 N）抖动。
 func normalPressures() []float64 {
-	baseN := [20]float64{1.2, 1.5, 1.8, 2.0, 2.2, 1.9, 1.6, 1.4, 1.3, 1.1, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 1.7, 1.5, 1.3, 1.1}
-	out := make([]float64, len(baseN))
-	for i, v := range baseN {
-		n := v + (float64(rand.Intn(401)-200) / 1000.0) // ±200 => ±0.2 N
+	baseMN := [20]float64{1200, 1500, 1800, 2000, 2200, 1900, 1600, 1400, 1300, 1100, 1000, 1200, 1400, 1600, 1800, 2000, 1700, 1500, 1300, 1100}
+	out := make([]float64, len(baseMN))
+	for i, v := range baseMN {
+		n := v + float64(rand.Intn(401)-200) // ±200 mN
 		if n < 0 {
 			n = 0
 		}

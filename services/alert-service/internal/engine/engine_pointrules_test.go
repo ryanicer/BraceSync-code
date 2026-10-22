@@ -2,7 +2,8 @@
 //
 // 钉住 admin「告警规则配置」Tab2 网格两列在引擎侧的生效语义：
 //   - monitored=false ⇒ 该点不参与压力偏高判定；
-//   - upperN>0 ⇒ 该点用自己的上限，未配置的点仍跟随统一上限；
+//   - upperMn>0 ⇒ 该点用自己的上限（mN，T733 方案A 告警评估层量纲），未配置的点仍跟随统一上限；
+//     用例内字面量为同量纲相对值（45 ≡ 统一上限、点上限 20/60 等），判定与 N 口径时代等价；
 //   - 未注入逐点规则（SetPointRules(nil)）⇒ 与 A1/A2 契约行为完全一致。
 //
 // engine_test.go（T002 Ella）仍是唯一行为契约，本文件只覆盖其未触达的新分支。
@@ -53,8 +54,8 @@ func TestPointRules_UnmonitoredPointSkipped(t *testing.T) {
 func TestPointRules_PerPointUpperOverridesUnified(t *testing.T) {
 	evaluator := newUnified45()
 	evaluator.SetPointRules(map[string]engine.PointRule{
-		"P01": {Monitored: true, UpperN: 20}, // 收紧
-		"P02": {Monitored: true, UpperN: 60}, // 放宽
+		"P01": {Monitored: true, UpperMn: 20}, // 收紧
+		"P02": {Monitored: true, UpperMn: 60}, // 放宽
 	})
 
 	// 30N：仅 P01 的独立上限被突破
@@ -86,9 +87,9 @@ func TestPointRules_UpperZeroFollowsUnified(t *testing.T) {
 func TestPointRules_PicksHighestPressureAmongBreached(t *testing.T) {
 	evaluator := newUnified45()
 	evaluator.SetPointRules(map[string]engine.PointRule{
-		"P01": {Monitored: true, UpperN: 50}, // 30N 未破
-		"P02": {Monitored: true, UpperN: 10}, // 25N 已破
-		"P05": {Monitored: true, UpperN: 20}, // 40N 已破（与 P02 比较时取压力更大者）
+		"P01": {Monitored: true, UpperMn: 50}, // 30N 未破
+		"P02": {Monitored: true, UpperMn: 10}, // 25N 已破
+		"P05": {Monitored: true, UpperMn: 20}, // 40N 已破（与 P02 比较时取压力更大者）
 	})
 	result := evaluator.Evaluate(pressureFrame(map[int]float64{0: 30, 1: 25, 4: 40}), nil)
 	require.NotNil(t, result)

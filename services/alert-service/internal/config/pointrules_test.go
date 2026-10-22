@@ -63,12 +63,12 @@ func newPointManager(t *testing.T) (*Manager, *fakeStore, *fakePointStore, func(
 
 func TestPointRules_RefreshInjectsIntoEvaluator(t *testing.T) {
 	m, _, ps, _ := newPointManager(t)
-	ps.rules["P05"] = engine.PointRule{Monitored: true, UpperN: 20}
+	ps.rules["P05"] = engine.PointRule{Monitored: true, UpperMn: 20}
 
 	eval := newEval()
 	th, err := m.Refresh(context.Background(), eval)
 	require.NoError(t, err)
-	assert.Equal(t, 5.0, th.PressureHighN)
+	assert.Equal(t, 5.0, th.PressureHighMn)
 
 	assert.Nil(t, eval.Evaluate(pointFrameAt(2, 50), nil), "P03 未勾选应被跳过")
 	res := eval.Evaluate(pointFrameAt(4, 30), nil)
