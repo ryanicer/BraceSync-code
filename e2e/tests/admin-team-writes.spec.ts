@@ -17,7 +17,7 @@ import { adminRoutes, adminLogin, adminMessage, pickSelectOption, tableRows } fr
  *   2. el-table 增加"操作"列：成员 / 编辑 / 删除 三个按钮
  *   3. 新建/编辑团队 el-dialog（团队名称 + 负责人 select + 描述）
  *   4. 成员管理面板（点"成员"切换显示）：搜索 + 角色筛选 + "添加成员"按钮 + 成员表
- *   5. 添加成员 el-dialog（选择成员 select + 分配角色 select）
+ *   5. 添加成员 el-dialog（仅选择成员 select；T736 已移除职称项，职称随 doctors.title）
  *   6. 成员表"移除"按钮 + 删除团队二次确认 ElMessageBox
  *   7. mock 层补 POST /api/v1/teams、PUT .../teams/:teamId、DELETE .../teams/:teamId、
  *      POST .../teams/:teamId/members、PUT .../teams/:teamId/members/:memberId、
@@ -219,16 +219,20 @@ test.describe('成员添加', () => {
     const dialog = page.locator('.el-dialog').filter({ hasText: '添加成员' })
     await expect(dialog).toBeVisible()
 
-    // 选择成员（医生/技师）
+    // T736：弹窗只剩「成员」一项，职称输入不得回潮（职称唯一维护入口=医护账号页）
+    await expect(dialog.locator('.el-form-item').filter({ hasText: '职称' })).toHaveCount(0)
+    await expect(dialog.locator('.el-select')).toHaveCount(1)
+
+    // 选择成员（医生）
     await pickSelectOption(page, dialog.locator('.el-select').first(), '刘医生')
-    // 分配角色
-    await pickSelectOption(page, dialog.locator('.el-select').nth(1), '主治医师')
     await dialog.getByRole('button', { name: '确认添加' }).click()
 
     // 成功提示
     await expect(adminMessage(page)).toContainText('成功')
-    // 成员表中含新成员
-    await expect(tableRows(page, memberPanel).filter({ hasText: '刘医生' })).toHaveCount(1)
+    // 成员表中含新成员，职称列显示医护账号档案里的真实职称（刘医生=主治医师）
+    const addedRow = tableRows(page, memberPanel).filter({ hasText: '刘医生' })
+    await expect(addedRow).toHaveCount(1)
+    await expect(addedRow.locator('td').nth(1)).toHaveText('主治医师')
   })
 })
 

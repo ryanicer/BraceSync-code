@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
-import { adminLogin, adminRoutes, gotoMenu, pickSelectOption, tableRows } from '../admin-helpers'
+import { adminLogin, adminMessage, adminRoutes, gotoMenu, pickSelectOption, tableRows } from '../admin-helpers'
 
 /**
  * admin-web 团队管理 · 列表只读渲染：T270 补齐 README §5 第一类缺口 A-FLOW-14
@@ -251,5 +251,32 @@ test.describe('T658 团队治理', () => {
     for (const tech of ['周师傅', '吴师傅', '郑师傅', '冯师傅', '孙师傅', '马师傅']) {
       expect(joined, `技师 ${tech} 不得出现在医护团队候选`).not.toContain(tech)
     }
+  })
+
+  /**
+   * T736（T658 返工）：添加成员弹窗残留「职称」项，Boss 拍板职称唯一维护入口=医护账号页。
+   * 走原始反馈路径全程：开弹窗（无职称项）→ 添加成功 → 成员列表职称列=doctors.title 真实值。
+   */
+  test('T736 回归：添加成员弹窗无职称项，添加后职称列显示 doctors.title 真实值', async ({ page }) => {
+    await tableRows(page).first().getByRole('button', { name: '成员' }).click()
+    await expect(page.locator('.member-panel-header')).toBeVisible()
+    await page.getByRole('button', { name: '添加成员' }).click()
+    const dialog = page.locator('.el-dialog').filter({ hasText: '添加成员' })
+    await expect(dialog).toBeVisible()
+
+    // 弹窗只剩「成员」一项；职称输入与硬编码角色下拉不得回潮
+    await expect(dialog.locator('.el-form-item').filter({ hasText: '职称' })).toHaveCount(0)
+    await expect(dialog.locator('.el-select')).toHaveCount(1)
+
+    // 添加刘医生（mock 档案 DOC-104，职称=主治医师）并确认
+    await pickSelectOption(page, dialog.locator('.el-select').first(), '刘医生')
+    await dialog.getByRole('button', { name: '确认添加' }).click()
+    await expect(adminMessage(page)).toContainText('成功')
+    await expect(dialog).toBeHidden()
+
+    // 成员行职称列（第 2 列）取 doctors.title 真实值，而不是弹窗里手选的职称
+    const addedRow = tableRows(page).filter({ hasText: '刘医生' })
+    await expect(addedRow).toHaveCount(1)
+    await expect(addedRow.locator('td').nth(1)).toHaveText('主治医师')
   })
 })
