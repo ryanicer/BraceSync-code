@@ -152,6 +152,8 @@ WHERE NOT EXISTS (
 );
 
 -- ===== 压力采集样本（落入 202607/202608 分区，多患者多时段）=====
+-- T733 遗留注：下列数值是 T173 的 N 量纲字面值（存储层现按 mN 解释，演示读数会偏小 1000 倍），
+--   是否整体 ×1000 重写待 PM 定案；本轮只改 sys_configs 阈值键（判定链路必须与 mN 帧同量纲）。
 INSERT INTO pressure_records (device_id, patient_id, ts,
   p01,p02,p03,p04,p05,p06,p07,p08,p09,p10,p11,p12,p13,p14,p15,p16,p17,p18,p19,p20, upload_time) VALUES
   ('PRS-ML05-RC-20260701001', 'P20260001', '2026-07-26 09:00:00+08',
@@ -228,8 +230,10 @@ SELECT 'PRS-ML05-RC-20260701001', 'P20260001', 'T0001', '2026-07-16 10:00:00+08'
        '安装顺利，各点偏差在阈值内', 'cos://signatures/P20260001-20260716.png', 'connected'
 WHERE NOT EXISTS (SELECT 1 FROM install_records WHERE install_id = 1);
 
--- T173（D5）：offset_values 单位 = N（技师端 BLE 原始 mN ÷1000 后 5 帧均值，PRD §7A.2 数据单位口径）。
--- 数值不动（碰生产数据须另批）；原「N×100 定点」量纲已作废（T173-decision D1 更正 2026-09-14）。
+-- T733 方案A（2026-10-22 Boss 拍板）：offset_values 存储空间 = 原始 mN，采集/存储层零换算，
+--   ÷1000 只发生在展示层出口。下面这批数值仍是 T173（D5）的 N 量纲字面值（0.1 N = 100 mN），
+--   属演示数据遗留：改动面覆盖 T467/引擎/报表多处断言，是否 ×1000 重写由 PM 定（卡面已递）。
+--   同段遗留还有：压力样本帧、daily_wear_stats 的 avg/max、alerts 的 threshold/actual。
 INSERT INTO baselines (install_id, device_id, offset_values, calibrator_id)
 SELECT 1, 'PRS-ML05-RC-20260701001',
        ARRAY[0.1,0.2,0.1,0.0,0.3,0.2,0.1,0.0,0.2,0.1,0.1,0.2,0.3,0.1,0.2,0.0,0.1,0.2,0.1,0.0]::real[], 'T0001'

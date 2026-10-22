@@ -17,10 +17,11 @@ import (
 	"github.com/bracesync/bracesync/services/data-service/internal/model"
 )
 
-// itPointsP01 只填 P01 的上报载荷（入参即牛顿 N，T719 固件 1.4 原样上报）
-func itPointsP01(n float64) []float64 {
+// itPointsP01 只填 P01 的上报载荷：入参即设备原始 mN（T733 方案A，采集层零换算）。
+// 本文件的断言侧同时是证据：库里存 15000（mN），DTO 出口必须是 15.0（N）。
+func itPointsP01(mn float64) []float64 {
 	out := make([]float64, model.PointCount)
-	out[0] = n
+	out[0] = mn
 	return out
 }
 
@@ -45,10 +46,10 @@ func TestIT_HistoryBuckets_CSTAlignedAndZeroKept(t *testing.T) {
 	base := time.Date(local.Year(), local.Month(), local.Day()-2, 0, 0, 0, 0, model.CSTZone())
 	dateStr := base.Format("2006-01-02")
 
-	uploadITFrame(t, svc, base.Add(10*time.Minute), 10)
-	uploadITFrame(t, svc, base.Add(150*time.Minute), 20) // 同一 6h 桶 → 均值 15
+	uploadITFrame(t, svc, base.Add(10*time.Minute), 10000)
+	uploadITFrame(t, svc, base.Add(150*time.Minute), 20000) // 同一 6h 桶 → 均值 15000 mN = 15 N
 	uploadITFrame(t, svc, base.Add(6*time.Hour+20*time.Minute), 0)
-	uploadITFrame(t, svc, base.Add(18*time.Hour+40*time.Minute), 30)
+	uploadITFrame(t, svc, base.Add(18*time.Hour+40*time.Minute), 30000)
 
 	page, appErr := svc.GetHistory(ctx, itPatient, "day", dateStr, "6h", 1, 100)
 	require.Nil(t, appErr)

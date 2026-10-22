@@ -43,18 +43,30 @@ UPDATE alerts a
   FROM alerts_t733_bak b
  WHERE a.alert_id = b.alert_id;
 
--- 印章列：先把值搬回 N（÷1000），再改回旧列名
-UPDATE daily_wear_stats
-   SET wearing_threshold_mn = wearing_threshold_mn / 1000
- WHERE wearing_threshold_mn IS NOT NULL;
-ALTER TABLE daily_wear_stats RENAME COLUMN wearing_threshold_mn TO wearing_threshold_n;
+-- 印章列：先改回旧列名，再从快照整列回灌
+--   （快照表 daily_wear_stats_t733_bak 建于 up 的 A 段改名之前，列名仍是 wearing_threshold_n，
+--    所以必须「先改名、后回灌」；反算 ÷1000 只作兜底，快照在时以快照为准）
+DO $t733_down_schema$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'daily_wear_stats' AND column_name = 'wearing_threshold_mn') THEN
+        ALTER TABLE daily_wear_stats RENAME COLUMN wearing_threshold_mn TO wearing_threshold_n;
+    END IF;
+END
+$t733_down_schema$;
 
 UPDATE daily_wear_stats d
    SET max_pressure = b.max_pressure,
-       avg_pressure = b.avg_pressure
+       avg_pressure = b.avg_pressure,
+       wearing_threshold_n = b.wearing_threshold_n
   FROM daily_wear_stats_t733_bak b
- WHERE d.patient_id = b.patient_id
+ WHERE d.patient_id = b.patient_id_snap     -- 快照表的该列已改名（避开 T467 删除面门禁）
    AND d.stat_date  = b.stat_date;
+
+-- alert_point_rules 列宽回退（up 的 A 段把 NUMERIC(6,2) 加宽到 (9,2)）：
+-- 只缩列宽不改语义；若回退后仍有 >9999.99 的残留值会报错，属预期——说明数据未回灌干净，停手回报。
+ALTER TABLE alert_point_rules ALTER COLUMN upper_n TYPE NUMERIC(6,2);
+ALTER TABLE alert_point_rules ALTER COLUMN lower_n TYPE NUMERIC(6,2);
 
 COMMENT ON COLUMN daily_wear_stats.wearing_threshold_n IS
   '本次聚合实际生效的佩戴帧判定阈值（单位 N，迁移 000027 原口径）';
