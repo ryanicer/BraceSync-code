@@ -50,9 +50,8 @@ UPDATE daily_wear_stats
 ALTER TABLE daily_wear_stats RENAME COLUMN wearing_threshold_mn TO wearing_threshold_n;
 
 UPDATE daily_wear_stats d
-   SET max_pressure      = b.max_pressure,
-       avg_pressure      = b.avg_pressure,
-       avg_point_wearing = b.avg_point_wearing
+   SET max_pressure = b.max_pressure,
+       avg_pressure = b.avg_pressure
   FROM daily_wear_stats_t733_bak b
  WHERE d.patient_id = b.patient_id
    AND d.stat_date  = b.stat_date;

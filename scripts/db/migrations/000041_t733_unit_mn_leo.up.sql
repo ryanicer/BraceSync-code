@@ -111,10 +111,10 @@ $t733$;
 -- ②③ 日聚合的峰值/均值列与帧表同批处理（>5000 判污染，÷1000）
 --     这些列由 RollupService 每日重算，本句只是让历史行与新帧量纲自洽；
 --     迁移后建议顺手复算最近 7 天（卡面判据 5 要求改后回读）。
+-- 峰值与均值两列与帧表同规则（>5000 判污染 ÷1000）；本表列名以 000001:172-182 为准
 UPDATE daily_wear_stats
-   SET max_pressure       = max_pressure / 1000,
-       avg_pressure       = avg_pressure / 1000,
-       avg_point_wearing  = avg_point_wearing / 1000
+   SET max_pressure = max_pressure / 1000,
+       avg_pressure = avg_pressure / 1000
  WHERE max_pressure > 5000;
 
 COMMENT ON COLUMN daily_wear_stats.wearing_threshold_mn IS
