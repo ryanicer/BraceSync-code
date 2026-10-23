@@ -57,11 +57,11 @@ export async function getPatientProfile(): Promise<PatientProfile> {
 /**
  * T226 可编辑白名单字段（phone 不在内：由微信登录授权写入，患者不可自助改；
  * cobbAngle 不在内：影像学测量值由临床端写入，患者不可自助编辑 — T230 / Boss 2026-09-17 裁定 B）
+ *
+ * T0518（FB-20261021-014）：name / gender / age 移出——医疗档案关键字段，患者端只读，
+ * 修改入口仅后台 admin-web（运营/技师）。服务端白名单暂保留这三键以兼容未升级的老客户端。
  */
 export interface PatientProfileUpdate {
-  name?: string
-  gender?: 'male' | 'female'
-  age?: number
   heightCm?: number
   weightKg?: number
   emergencyContactName?: string

@@ -1,13 +1,17 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
 import { realLogin, getAuthToken, uniqueName, E2E_PATIENT_NAME_PREFIX } from '../real-helpers'
 import { resolveH5Origin } from '../h5-origin'
+import { requireDeployedBuild } from '../deploy-guard'
 
 /**
  * T617 丁类 · 链 C 患者自助资料的其余白名单字段（真实模式，打 TST 与 staging 两源）
  *
- * 与 21-chain-c 的分工（不重复断言）：21.1 走的是 昵称 / 年龄 / 身高 三格，PUT 体键集钉成四颗；
- * 本用例只走 21.1 从未触及的五格 —— 性别单选、体重、紧急联系人姓名 / 电话 / 与本人关系。
- * 两枚用例的键集合起来才是后端白名单全集（services/user-service/internal/handler/patient_profile_write.go:32-41 的八颗）。
+ * 与 21-chain-c 的分工（不重复断言）：21.1 走的是「姓名/性别/年龄三行只读 + 身高一格」，
+ * PUT 体键集钉成一颗；本用例只走 21.1 从未触及的四格 —— 体重、紧急联系人姓名 / 电话 / 与本人关系。
+ * 性别曾在本用例里走过真 UI 单选；T0518（甲方反馈 FB-20261021-014）起姓名/性别/年龄患者端只读，
+ * 本用例改为「性别只读展示且在 PUT 体中缺席」的反证。两枚用例覆盖的键合起来是患者端
+ * 现行可写面（services/user-service/internal/handler/patient_profile_write.go 白名单的子集——
+ * 服务端暂保留 name/gender/age 三键以兼容老客户端，新前端不再发送）。
  *
  * 为什么另起一颗文件而不并进 21 号：21 号那颗 describe 的收尾只删「一枚」自建患者
  * （createdPatientId 是标量，afterAll 只看最后一次赋值）。把第二枚患者塞进同一 describe，
@@ -38,7 +42,7 @@ if (!PATIENT_ID_RE.test(GHOST_PATIENT_ID)) {
   throw new Error(`T617 丁类探针患者号形状不符发号规则，代次探针打的不是真实形状：${GHOST_PATIENT_ID}`)
 }
 
-/** 本用例填进去的五格取值（体重走 type=digit，电话走 type=number，故两格的类型各证一次） */
+/** 本用例填进去的四格取值（体重走 type=digit，电话走 type=number，故两格的类型各证一次） */
 const WEIGHT_TEXT = '46.5'
 const WEIGHT_VALUE = 46.5
 const EMC_NAME_TEXT = '测试联系人甲'
@@ -170,38 +174,6 @@ async function fillField(sheet: Locator, labelRe: RegExp, tag: string, value: st
   return input
 }
 
-/**
- * 性别单选的一格：返回「可点的那整格」与「选中态的判据那颗」。
- *
- * 首跑红在 descendant::input 命中 0 —— uni-h5 把 <radio> 渲染成
- * uni-radio > div.uni-radio-wrapper > div.uni-radio-input，格内**没有**原生 input
- * （本机 node_modules/@dcloudio/uni-h5/dist/uni-h5.cjs.js:6042-6060 的渲染函数逐字可读），
- * 所以 toBeChecked() 在这颗组件上根本无处可判，硬转成点圈也判不出选中。
- * 选中态在 DOM 上只有一处落法：选中时 .uni-radio-input 内多一枚 svg 勾（同文件 :6060 那个
- * realCheckValue 三元分支的另一支是空串），所以判选中只押「svg 那颗的有无」。
- * 点击口径走 .form-radio 那颗 label：uni-radio 的 setup 把 _onClick 注册进了 uni-label
- * （同文件 :6039-6041），点整格（圈或文案）都算真点中；且 _onClick 在已选中时自己早退，
- * 那正是单选的语义，不需要用例这边兜。
- */
-function genderCell(sheet: Locator, cn: string): { option: Locator; checkedDot: Locator } {
-  const option = sheet.locator('.form-radio', { hasText: cn })
-  return { option, checkedDot: option.locator('.uni-radio-input svg') }
-}
-
-/** 弹层里那一格的选中态（只押 svg 那颗：1＝选中，0＝未选中） */
-async function expectGender(sheet: Locator, cn: string, checked: boolean): Promise<void> {
-  const { option, checkedDot } = genderCell(sheet, cn)
-  await expect(option, `性别单选应有唯一一格「${cn}」`).toHaveCount(1)
-  await expect(
-    option.locator('.uni-radio-input'),
-    `「${cn}」那一格应渲染出 uni-radio 的圆点容器（取不到＝这一族控件不是本用例读到的那一形）`,
-  ).toHaveCount(1)
-  await expect(
-    checkedDot,
-    `「${cn}」应${checked ? '处于选中态（圆点内应有勾）' : '未选中（圆点内不该有勾）'}`,
-  ).toHaveCount(checked ? 1 : 0)
-}
-
 /** 11 位、1 开头的测试号；建档按 phone_hash 查重，不许写死（同 21 号口径） */
 function uniqueTestPhone(): string {
   return `135${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`
@@ -211,7 +183,7 @@ test.describe('27-链 C 患者自助资料的其余白名单字段（T617 丁类
   let createdPatientId: string | null = null
   let baselineTotal: number | null = null
 
-  test('27.1 自建患者 → 真 UI 只走 21.1 未触及的五格（性别单选 + 体重 + 紧急联系人三格）→ PUT 体键集恰为七颗（空着的身高不得提交）→ 患者端点 / 重开的弹层 / 管理端三点回读', async ({
+  test('27.1 自建患者 → 真 UI 只走 21.1 未触及的四格（体重 + 紧急联系人三格）→ PUT 体键集恰为四颗（三行只读与空着的身高不得提交）→ 患者端点 / 重开的弹层 / 管理端三点回读', async ({
     page,
     browser,
   }) => {
@@ -223,6 +195,29 @@ test.describe('27-链 C 患者自助资料的其余白名单字段（T617 丁类
 
     const h5Net: string[] = []
     const h5Writes: Array<{ method: string; path: string; origin: string; body: unknown }> = []
+
+    // ── 0) 部署守卫（T324 口径）：staging 患者端产物不含 T0518 只读形态时，
+    //     本用例「四格可写真发、三行只读」的判据对旧包无意义 ⇒ PR 阶段显式 post-deploy
+    //     跳过；部署后 / 严格档（E2E_POST_DEPLOY_STRICT=1）仍缺标记照常判红。
+    //     探测走匿名上下文：弹层在未登录态也已渲染（loadProfile 只把 errorMsg 置「请先登录」），
+    //     故探测本身零写、零造数，不需要先建患者。
+    {
+      const probeCtx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+      try {
+        const probePage = await probeCtx.newPage()
+        await probePage.goto(`${H5_ORIGIN}${H5_PROFILE_PATH}`, { waitUntil: 'domcontentloaded' })
+        await requireDeployedBuild(probePage, {
+          marker: 'T0518-profile-readonly',
+          probe: async (p) => {
+            await p.locator('.page').waitFor({ state: 'attached', timeout: 20_000 })
+            return (await p.locator('.form-hint').count()) > 0
+          },
+          why: '患者端「我的」弹层姓名/性别/年龄只读形态',
+        })
+      } finally {
+        await probeCtx.close()
+      }
+    }
 
     // ── 1) admin 真实表单登录，拿 JWT ─────────────────────────
     await realLogin(page)
@@ -331,28 +326,34 @@ test.describe('27-链 C 患者自助资料的其余白名单字段（T617 丁类
           expect(prof[key], `${side}建档未给 ${key}，应读回 null`).toBeNull()
         }
       }
-      expect(prePatient.gender, '建档性别应为 female（本用例随后走单选改 male）').toBe('female')
+      expect(prePatient.gender, '建档性别应为 female（T0518 后本用例不再改性别）').toBe('female')
 
-      // ── 8) 真 UI：展开弹层，先证单选的回填方向 ─────────────
+      // ── 8) 真 UI：展开弹层，先证 T0518 三行只读 ────────────
       await h5.locator('.profile-edit').click()
       const sheet = h5.locator('.bottom-sheet').filter({ hasText: '编辑个人信息' })
       await expect(sheet, '点「编辑」应展开个人信息弹层').toHaveClass(/bottom-sheet-show/, { timeout: 10_000 })
+      await expect(
+        sheet.locator('.form-hint'),
+        '弹层应有只读提示（T0518 代次锚：缺它即该源患者端产物早于本卡）',
+      ).toHaveText('姓名、年龄、性别为医疗档案信息，不可自助修改；如需变更请联系运营人员修改。', {
+        timeout: 5_000,
+      })
+      const staticRows = sheet.locator('.form-static')
+      await expect(staticRows, '姓名/性别/年龄应是三行静态值').toHaveCount(3)
+      await expect(staticRows.nth(0), '姓名只读行应显示建档姓名').toHaveText(name)
+      await expect(staticRows.nth(1), '性别只读行应显示建档性别').toHaveText('女')
+      await expect(staticRows.nth(2), '年龄只读行应显示建档年龄').toHaveText('14岁')
+      await expect(sheet.locator('.form-radio, uni-radio'), 'T0518 后弹层不得再有性别单选控件').toHaveCount(0)
       await expect(
         sheet.locator('.form-section-label').first(),
         '弹层组标题应为「联系方式」，读到旧文案即该源的患者端产物早于 T444',
       ).toHaveText('联系方式', { timeout: 5_000 })
 
-      await expectGender(sheet, '女', true)
-      await expectGender(sheet, '男', false)
-
-      // ── 9) 只填 21.1 未触及的四格文本 + 点一次性别单选 ──────
+      // ── 9) 只填 21.1 未触及的四格文本（性别只读、不再操作）──
       const weightInput = await fillField(sheet, /^\s*体重/, '体重', WEIGHT_TEXT)
       const emcNameInput = await fillField(sheet, /^\s*紧急联系人\s*$/, '紧急联系人', EMC_NAME_TEXT)
       const emcPhoneInput = await fillField(sheet, /^\s*紧急联系人电话\s*$/, '紧急联系人电话', EMC_PHONE_TEXT)
       const emcRelationInput = await fillField(sheet, /^\s*与本人关系\s*$/, '与本人关系', EMC_RELATION_TEXT)
-      await genderCell(sheet, '男').option.click()
-      await expectGender(sheet, '男', true)
-      await expectGender(sheet, '女', false)
 
       await sheet.locator('.sheet-confirm-text').click()
       await expect(sheet, '保存后弹层应收起').not.toHaveClass(/bottom-sheet-show/, { timeout: 15_000 })
@@ -366,7 +367,7 @@ test.describe('27-链 C 患者自助资料的其余白名单字段（T617 丁类
       expect(post.emergencyContactName, 'PUT 后紧急联系人姓名应落库').toBe(EMC_NAME_TEXT)
       expect(post.emergencyContactPhone, 'PUT 后紧急联系人电话应逐字符落库').toBe(EMC_PHONE_TEXT)
       expect(post.emergencyContactRelation, 'PUT 后与本人关系应落库').toBe(EMC_RELATION_TEXT)
-      expect(post.gender, '单选点过「男」后应落库为 male').toBe('male')
+      expect(post.gender, 'T0518 后患者端不可改性别，应保持建档值 female').toBe('female')
       // 空着不填的格不许被清成别的形状（服务端指针语义 nil=不改）
       expect(post.heightCm, '身高本用例没填，应仍为 null（不得被空串清出 0）').toBeNull()
       expect(post.name, '昵称未改动，应保持建档值').toBe(name)
@@ -381,7 +382,7 @@ test.describe('27-链 C 患者自助资料的其余白名单字段（T617 丁类
       await expect(emcNameInput, '重开弹层后紧急联系人控件应回显落库值').toHaveValue(EMC_NAME_TEXT)
       await expect(emcPhoneInput, '重开弹层后紧急联系人电话控件应回显落库值').toHaveValue(EMC_PHONE_TEXT)
       await expect(emcRelationInput, '重开弹层后与本人关系控件应回显落库值').toHaveValue(EMC_RELATION_TEXT)
-      await expectGender(sheet, '男', true)
+      await expect(staticRows.nth(1), '重开弹层后性别只读行应仍是建档值').toHaveText('女')
       const meta = await h5.locator('.profile-meta').innerText()
       expect(meta, `档案副行应仍含未改动的年龄与患者号，实得 ${meta}`).toContain('14岁')
       expect(meta).toContain(createdPatientId)
@@ -421,14 +422,11 @@ test.describe('27-链 C 患者自助资料的其余白名单字段（T617 丁类
       const keys = Object.keys(putBody!).sort()
       expect(
         keys,
-        `弹层只应提交「有值的白名单字段」：本用例填了体重与紧急联系人三格并点过性别，身高留空 ⇒ 七颗；实得 ${keys.join('|')}`,
+        `弹层只应提交「有值且可写」的字段：本用例填了体重与紧急联系人三格，身高留空、姓名/性别/年龄只读 ⇒ 四颗；实得 ${keys.join('|')}`,
       ).toEqual([
-        'age',
         'emergencyContactName',
         'emergencyContactPhone',
         'emergencyContactRelation',
-        'gender',
-        'name',
         'weightKg',
       ])
       expect(putBody!.weightKg, 'PUT 体 weightKg 应为数值（type=digit 的取值那一腿不许发字符串）').toBe(WEIGHT_VALUE)
@@ -438,9 +436,10 @@ test.describe('27-链 C 患者自助资料的其余白名单字段（T617 丁类
         typeof putBody!.emergencyContactPhone,
         '紧急联系人电话落在 VARCHAR(32)，type=number 的输入框不许把它折成数值（会丢前导零）',
       ).toBe('string')
-      expect(putBody!.gender, 'PUT 体 gender 应为 male').toBe('male')
-      expect(putBody!.name, 'PUT 体 name 应等于未改动的建档昵称').toBe(name)
       for (const forbidden of [
+        'name',
+        'gender',
+        'age',
         'phone',
         'cobbAngle',
         'diagnosis',
@@ -450,7 +449,7 @@ test.describe('27-链 C 患者自助资料的其余白名单字段（T617 丁类
         'teamId',
         'heightCm',
       ]) {
-        expect(putBody!, `PUT 体不得含 ${forbidden}（白名单外或本用例留空的格）`).not.toHaveProperty(forbidden)
+        expect(putBody!, `PUT 体不得含 ${forbidden}（只读、白名单外或本用例留空的格）`).not.toHaveProperty(forbidden)
       }
 
       // ── 14) 反证二：串联顺序 读 → 写 → 保存后回读 ──────────

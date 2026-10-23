@@ -42,8 +42,8 @@ export async function requireDeployedBuild(
   opts: { marker: string; probe: (page: Page) => Promise<boolean>; why?: string },
 ): Promise<void> {
   const { marker, probe, why } = opts
-  if (!/^T\d{3}-./.test(marker)) {
-    throw new Error(`requireDeployedBuild: marker「${marker}」须以卡号开头（形如 T315-doctor-accounts），否则跳过无法追溯`)
+  if (!/^T\d{3,4}-./.test(marker)) {
+    throw new Error(`requireDeployedBuild: marker「${marker}」须以卡号开头（形如 T315-doctor-accounts；本仓亦有 T0518 这类四位任务号），否则跳过无法追溯`)
   }
 
   let present = probeCache.get(marker)
