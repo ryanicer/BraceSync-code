@@ -31,6 +31,7 @@
           <text class="clear-tip clear-err">设备 WiFi 清除未完成</text>
           <view class="btn-outline-sm" @click="retryClear"><text>重新清除</text></view>
         </view>
+        <text v-if="clearState === 'success' && handoverDone" class="handover-tip">设备已就绪，请使用患者端继续</text>
         <text v-if="clearState === 'success'" class="auto-return-tip">3 秒后自动返回安装流程...</text>
       </view>
     </view>
@@ -102,6 +103,7 @@ import { getProvisionKey } from '../../api/provision'
 import { setDeviceWifi, reportWifiCleared } from '../../api/device'
 import { encryptWifiPayload } from '../../utils/aes-ctr'
 import {
+  closeBLEConnection,
   connectDevice,
   registerBleStateListener,
   rescanOnce,
@@ -165,6 +167,11 @@ const clearState = ref<'pending' | 'success' | 'failed'>('pending')
 // 页面卸载后置 false，防止 clear settle 后对已卸载页面调 navigateBack/toast
 let pageAlive = true
 
+// T741: 清除成功后主动断开 BLE，把设备交还患者端（设备侧断开即回 BLE_WAIT 广播态）。
+// handoverClosing 用来区分「主动交接断开」与意外掉线，避免前者弹掉线误报。
+let handoverClosing = false
+const handoverDone = ref(false)
+
 /** T218 A-5: 60s 无推送兜底表——每收一帧重新计时（armProvisionTimeout） */
 function armProvisionTimeout() {
   if (timeoutTimer.value) clearTimeout(timeoutTimer.value)
@@ -184,7 +191,7 @@ const offBleState = registerBleStateListener((deviceId, connected) => {
   } else {
     installStore.setBleDisconnected()
     bleLinkUp.value = false
-    uni.showToast({ title: BLE_LINK_DOWN_TOAST, icon: 'none' })
+    if (!handoverClosing) uni.showToast({ title: BLE_LINK_DOWN_TOAST, icon: 'none' })
   }
 })
 
@@ -427,6 +434,29 @@ function reportWifiClearAudit() {
   })
 }
 
+/**
+ * T741: 配网/清除完成后的正常路径必须主动断开 BLE。
+ * 设备被技师端占着连接时不会广播（串口停在 BLE_SESSION），患者端搜索不到；
+ * 设备侧已支持断开即回 BLE_WAIT，因此这里只需关链路并把 UI 切到「可交接」。
+ * 注意：只在 clear 成功后调用——clear 失败时技师还要用这条链路重试，不能断。
+ */
+async function releaseDeviceForHandover() {
+  if (handoverClosing) return
+  handoverClosing = true
+  const deviceId = installStore.bleDeviceId || installStore.deviceId
+  if (!deviceId) {
+    bleLog.warn('T741 清除成功但无 BLE deviceId，跳过主动断开')
+    handoverDone.value = true
+    return
+  }
+  bleLog.info(`T741 清除成功，主动断开 BLE 交接设备 deviceId=${deviceId}`)
+  await closeBLEConnection(deviceId)
+  installStore.setBleDisconnected()
+  bleLinkUp.value = false
+  handoverDone.value = true
+  bleLog.info('T741 BLE 已断开，设备应回 BLE_WAIT 广播态')
+}
+
 // T240: clear 失败后技师手动重试
 async function retryClear() {
   clearState.value = 'pending'
@@ -435,8 +465,8 @@ async function retryClear() {
   if (clearOk) {
     clearState.value = 'success'
     reportWifiClearAudit()
-    // 不主动 closeBLEConnection：设备清完 WiFi 会自行重启掉链，
-    // 主动断开会让 install 页校准的 B513 订阅链路代次错乱、零收帧。
+    // T741: clear 成功后主动断开，设备回广播态交给患者端；clear 失败分支保持链路供重试。
+    await releaseDeviceForHandover()
     autoReturnTimer.value = setTimeout(() => {
       uni.navigateBack()
     }, 3000)
@@ -476,8 +506,8 @@ async function handleSuccess(ssid: string) {
   if (clearOk) {
     clearState.value = 'success'
     reportWifiClearAudit()
-    // 不主动 closeBLEConnection：设备清完 WiFi 会自行重启掉链，
-    // 主动断开会让 install 页校准的 B513 订阅链路代次错乱、零收帧。
+    // T741: clear 成功后主动断开，设备回广播态交给患者端；clear 失败分支保持链路供重试。
+    await releaseDeviceForHandover()
     autoReturnTimer.value = setTimeout(() => {
       uni.navigateBack()
     }, 3000)
@@ -586,6 +616,7 @@ onUnmounted(() => {
 .clear-ok { color: #047857; }
 .clear-err { color: #b91c1c; }
 .clear-failed { margin-top: 24rpx; }
+.handover-tip { display: block; font-size: 28rpx; color: #047857; font-weight: 600; margin-top: 12rpx; }
 .auto-return-tip { display: block; font-size: 24rpx; color: #6b7280; margin-top: 24rpx; }
 
 .error-card { background: #fef2f2; border: 1rpx solid #fecaca; border-radius: 24rpx; padding: 48rpx 32rpx; text-align: center; }
