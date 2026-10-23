@@ -102,7 +102,8 @@ test('fail-closed：面积未配置时 kPa 档只出 --，N 档照旧出数（�
   expect(kVals).not.toContain('0')
   expect(kVals).not.toContain('0.0')
   await expect(page.locator('.hero-number')).toHaveText('--')
-  await expect(page.locator('.heatmap-area-warn')).toHaveText('未配置面积，暂无法换算')
+  // T716：文案按 PM 2026-10-23 19:1x 裁定句（与 shared-utils 常量同源）
+  await expect(page.locator('.heatmap-area-warn')).toHaveText('受压面积未配置，请联系运维人员在管理后台【设备管理 → 受压面积】完成配置')
 })
 
 test('切档零请求：全程没有「单位」相关端点，档位与派生值都取自同一快照（判据 2）', async ({ page }) => {

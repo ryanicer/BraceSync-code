@@ -190,8 +190,8 @@ describe('heroRangeText：文案由配置边界派生（写死字面量与 sys_c
 })
 
 describe('提示文案逐字取 PRD 与两端稿面', () => {
-  it('AREA_MISSING_HINT 原文', () => {
-    expect(AREA_MISSING_HINT).toBe('未配置面积，暂无法换算')
+  it('AREA_MISSING_HINT 原文（T716：PM 2026-10-23 19:1x 裁定句，含后台去处）', () => {
+    expect(AREA_MISSING_HINT).toBe('受压面积未配置，请联系运维人员在管理后台【设备管理 → 受压面积】完成配置')
   })
 })
 

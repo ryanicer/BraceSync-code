@@ -740,7 +740,7 @@ type RealtimeSnapshot struct {
 	PressureLowN float64 `json:"pressureLowN"`
 	// T508 双单位（N/kPa）展示档：三字段全部同源于 device-service 写的 devices.contact_area_cm2，
 	// 只在本响应内派生，不落库、不进告警与聚合（PRD 裁定四）。
-	//   - ContactAreaCm2：当前绑定设备的面积；null = 未配置（前端「未配置面积，暂无法换算」)
+	//   - ContactAreaCm2：当前绑定设备的面积；null = 未配置（前端提示见 shared-utils 的 AREA_MISSING_HINT，T716 起句内含后台去处）
 	//   - HeatmapMaxKpa：色阶上界的 kPa 档文本值，与 HeatmapMaxN 同一次换算；不可换算为 null
 	//   - 每点 kPa 见 HeatmapPoint.PressureKpa
 	//

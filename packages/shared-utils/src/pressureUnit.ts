@@ -20,8 +20,10 @@ export const PRESSURE_UNITS: readonly PressureUnit[] = ['N', 'kPa'] as const
 /** 默认档 = N：PRD §7A.2.1 四.2「现状读数不变，避免一上线就看到量级突变」 */
 export const DEFAULT_PRESSURE_UNIT: PressureUnit = 'N'
 
-/** 面积缺失时的页内提示，逐字取 PRD §7A.2.1 五.3 与两端稿面 */
-export const AREA_MISSING_HINT = '未配置面积，暂无法换算'
+/** 面积缺失时的页内提示。T716 起按 PM 2026-10-23 19:1x 裁定定稿（句内含后台去处），
+ *  逐字同步 PRD §7A.2.1 五.3 与两端稿面；改文须同时动三处字面断言（shared-utils / 患者端单测 / e2e）
+ *  与三处文档原文，另两处 admin-web 断言走常量导入自动跟随。 */
+export const AREA_MISSING_HINT = '受压面积未配置，请联系运维人员在管理后台【设备管理 → 受压面积】完成配置'
 
 /** 只有稿面演示用的 'N' / 'kPa' 两个拼写算合法档；其余（含旧记忆里的脏值）回 null */
 export function normalizePressureUnit(raw: unknown): PressureUnit | null {
