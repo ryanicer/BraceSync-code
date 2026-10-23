@@ -95,4 +95,29 @@ jobs:
             exit 1
           fi
           python3 -c "import json; json.load(open('$CONFIG_FILE'))"
+          # T742 产物层门禁（T734 病根：源码已修、产物照旧）。源码单测钉不住出包产物，这里钉。
+          # ① mN→N 换算常量 MN_PER_N 在产物中必须零命中（命中即采集/校准腿仍带 ÷1000）。
+          if MN_HITS=$(grep -rIn "MN_PER_N" "$DIST_DIR"); then
+            echo "::error::[T742] ${{ matrix.app }} mp-weixin 产物命中 MN_PER_N（源码绿产物照旧）"
+            echo "$MN_HITS" | cut -d: -f1,2 | head -20
+            exit 1
+          fi
+          # ② /1e3 只允许落进以下显式白名单，禁无脑扩；每条豁免理由写死：
+          #    api/provision.js          —— 配网凭据到期倒计时 (expiresAt-Date.now())/1e3，毫秒转秒
+          #    common/vendor.js          —— 展示层唯一换算出口 nFromMn（Number.isFinite(e)?e/1e3:NaN）
+          #    pages/wifi-config/index.js —— 技师端配网倒计时 (3e3-(now-start))/1e3、(Date.now()-start)/1e3，毫秒转秒
+          #    pages/wifi-setup/index.js  —— 患者端配网倒计时 (Date.now()-start)/1e3、PROVISION_TIMEOUT_MS/1e3，毫秒转秒
+          case "${{ matrix.app }}" in
+            tech-miniapp)    ALLOW_1E3="api/provision.js common/vendor.js pages/wifi-config/index.js" ;;
+            patient-miniapp) ALLOW_1E3="api/provision.js pages/wifi-setup/index.js" ;;
+          esac
+          BAD_1E3=$( { grep -rIn "/ *1e3" "$DIST_DIR" || true; } | while IFS=: read -r f ln _; do
+            rel="${f#"$DIST_DIR"/}"
+            case " $ALLOW_1E3 " in *" $rel "*) ;; *) printf '%s:%s\n' "$f" "$ln" ;; esac
+          done)
+          if [ -n "$BAD_1E3" ]; then
+            echo "::error::[T742] ${{ matrix.app }} mp-weixin 产物出现非白名单 /1e3（只允许展示层 nFromMn 与毫秒计时）"
+            echo "$BAD_1E3" | head -20
+            exit 1
+          fi
           echo "✓ ${{ matrix.app }} mp-weixin build artifacts verified"
