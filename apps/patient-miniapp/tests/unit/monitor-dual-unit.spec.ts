@@ -247,7 +247,8 @@ describe('页面接线：二档分段、取数只读快照下发字段', () => {
   it('提示行文案逐字取判据本体（不在组件里另拟一句）', async () => {
     const { pickStartUnit } = await import('@bracesync/shared-utils')
     expect(pickStartUnit('kPa')).toBe('kPa')
-    expect(AREA_MISSING_HINT).toBe('未配置面积，暂无法换算')
+    // T716：PM 2026-10-23 19:1x 裁定句，句内含后台去处，患者照做能找到入口
+    expect(AREA_MISSING_HINT).toBe('受压面积未配置，请联系运维人员在管理后台【设备管理 → 受压面积】完成配置')
     expect(heatmap).not.toMatch(/面积未填写|无法换算，请先/)
   })
 })
