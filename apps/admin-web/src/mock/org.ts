@@ -289,7 +289,6 @@ export interface UpdateTeamInput {
 export interface AddMemberInput {
   memberType: 'doctor' | 'technician'
   memberId: string
-  role?: string
 }
 
 /** mock 团队自增序号（TEAM-200 起，避开预置） */
@@ -405,7 +404,8 @@ export function mockDeleteTeam(teamId: string): void {
   }
 }
 
-/** 添加成员：member 已在本团队 → 抛错；否则返回 TeamMember（mock 不持久化） */
+/** 添加成员：member 已在本团队 → 抛错；否则返回 TeamMember（mock 不持久化）。
+ *  T736：不接收职称覆写，成员职称只由医护账号页维护的 doctors.title 决定。 */
 export function mockAddTeamMember(teamId: string, input: AddMemberInput): TeamMember {
   const team = TEAMS.find((t) => t.teamId === teamId)
   if (!team) {
@@ -419,7 +419,7 @@ export function mockAddTeamMember(teamId: string, input: AddMemberInput): TeamMe
     if (d.teamId === teamId) {
       throw new Error('成员已在本团队')
     }
-    return toDoctorMember({ ...d, title: input.role || d.title }, team.createdAt)
+    return toDoctorMember(d, team.createdAt)
   }
   const t = TECHNICIANS.find((x) => x.techId === input.memberId)
   if (!t) {

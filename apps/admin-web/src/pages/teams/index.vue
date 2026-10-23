@@ -87,7 +87,7 @@
       <div class="member-toolbar">
         <el-input v-model="memberKeyword" placeholder="搜索成员" clearable class="member-search" />
         <el-select v-model="memberRoleFilter" placeholder="全部职称" clearable class="member-role-filter">
-          <el-option v-for="r in ROLE_OPTIONS" :key="r" :label="r" :value="r" />
+          <el-option v-for="r in memberTitleOptions" :key="r" :label="r" :value="r" />
         </el-select>
         <el-button type="success" size="small" @click="openAddMember">添加成员</el-button>
       </div>
@@ -162,6 +162,7 @@
     </el-dialog>
 
     <!-- 添加成员弹窗 -->
+    <!-- T736：职称唯一维护入口=医护账号页（Boss 拍板），本弹窗只选成员，不改职称 -->
     <el-dialog v-model="addMemberVisible" title="添加成员" width="480px" :close-on-click-modal="false">
       <el-form label-width="80px">
         <el-form-item label="成员">
@@ -172,11 +173,6 @@
               :label="m.name"
               :value="m.id"
             />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="职称">
-          <el-select v-model="addMemberForm.role" placeholder="请选择角色" clearable>
-            <el-option v-for="r in ROLE_OPTIONS" :key="r" :label="r" :value="r" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -196,14 +192,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import type { Team, TeamMember, TeamStats, Doctor, TeamType } from '@bracesync/shared-types'
 import { phoneDisplay } from '../../utils/phoneField'
+import { titleOptions } from '../../utils/medicalTitles'
 import {
   fetchTeams, fetchDoctors, fetchTeamStats,
   createTeamApi, updateTeamApi, deleteTeamApi,
   fetchTeamMembersApi, addTeamMemberApi, removeTeamMemberApi,
   fetchTeamDetailApi,
 } from '../../api'
-
-const ROLE_OPTIONS = ['主任医师', '副主任医师', '主治医师', '住院医师', '护士', '康复师']
 
 const mode = ref<'list' | 'members'>('list')
 const teams = ref<Team[]>([])
@@ -224,6 +219,8 @@ const memberLoading = ref(false)
 // T289 5.3：成员搜索 + 角色筛选（前端过滤，成员列表为全量返回，无分页）
 const memberKeyword = ref('')
 const memberRoleFilter = ref('')
+/** T736：筛选项走 T360 职称词表（预置 ∪ 成员真实 title），清掉本页硬编码角色数组 */
+const memberTitleOptions = computed(() => titleOptions(doctors.value))
 
 const filteredMembers = computed(() => {
   const kw = memberKeyword.value.trim().toLowerCase()
@@ -264,7 +261,7 @@ const teamLeaderOptions = computed(() => {
 // 添加成员
 const addMemberVisible = ref(false)
 const addMemberSaving = ref(false)
-const addMemberForm = ref({ memberId: '', role: '' })
+const addMemberForm = ref({ memberId: '' })
 
 function formatDate(iso: string): string {
   return iso ? iso.slice(0, 10) : '-'
@@ -435,7 +432,7 @@ async function loadMembers(teamId: string) {
 
 // 添加成员
 function openAddMember() {
-  addMemberForm.value = { memberId: '', role: '' }
+  addMemberForm.value = { memberId: '' }
   addMemberVisible.value = true
 }
 
@@ -447,11 +444,11 @@ async function confirmAddMember() {
   addMemberSaving.value = true
   try {
     const memberId = addMemberForm.value.memberId
-    // 候选成员只含 doctor，memberType 固定 doctor（candidateMembers 仅 doctors）
+    // 候选成员只含 doctor，memberType 固定 doctor（candidateMembers 仅 doctors）；
+    // T736：不再提交 role，成员职称沿用医护账号页维护的 doctors.title
     const result = await addTeamMemberApi(currentTeam.value.teamId, {
       memberType: 'doctor',
       memberId,
-      role: addMemberForm.value.role || undefined,
     })
     // 乐观 push 到成员表
     memberList.value.push(result)
