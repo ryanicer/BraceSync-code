@@ -11,6 +11,7 @@
 
 import { bleLog } from './ble-log'
 import { formatB512FrameLog, parseB512Frame } from './b512-frame'
+import { isLocationPermissionDenied } from './ble-scan-permission'
 import { logErrorText } from '@bracesync/shared-utils'
 import { advertisesB510, createScanDeduper } from './wifi-state'
 
@@ -110,7 +111,7 @@ export async function ensureLocationPermission(): Promise<boolean> {
                 _log('warn', `wx.authorize 被拒，errMsg=${err?.errMsg || 'unknown'}`)
                 uni.showModal({
                   title: '需要位置权限',
-                  content: '扫描附近蓝牙设备需要位置权限，请在设置中开启后重试',
+                  content: '需要在手机设置中允许微信使用位置信息，开启后返回即可继续扫描',
                   confirmText: '去设置',
                   success: (r) => {
                     if (r.confirm) {
@@ -506,6 +507,8 @@ export function startBleScan(
   let listed = 0
   let cacheTotal = 0
   let cacheHits = 0
+  /** T740：权限引导返回后只允许自动重扫一次，避免系统仍拒绝时形成重试循环。 */
+  let permissionRetryDone = false
 
   /** 一帧广播 → 02 列表：过同一套去重规则，返回是否新入列 */
   const accept = (deviceId: string, rawName: string, rssi: number): boolean => {
@@ -531,10 +534,14 @@ export function startBleScan(
   }
   flushScanSummary = logRawSummary
 
-  const finish = () => {
+  const haltDiscovery = () => {
     if (discoveryTimer) { clearTimeout(discoveryTimer); discoveryTimer = null }
     uni.stopBluetoothDevicesDiscovery({ fail: () => {} })
     uni.offBluetoothDeviceFound()
+  }
+
+  const finish = () => {
+    haltDiscovery()
     if (!scanActive) return
     scanActive = false
     if (flushScanSummary) { flushScanSummary(); flushScanSummary = null }
@@ -564,33 +571,81 @@ export function startBleScan(
     })
   }
 
-  uni.startBluetoothDevicesDiscovery({
-    // 固件把设备名放在 SCAN_RSP（ble_provision.h:408 setScanResponse(true)），广播主包里只有
-    // serviceUUID ⇒ Android 首帧经常不带名字。allowDuplicatesKey:false 时同一设备每轮只上报一次，
-    // 首帧无名就被永久丢掉 —— 表现为"手机系统蓝牙看得见、小程序 found:0"。改 true 后自行去重。
-    allowDuplicatesKey: true,
-    success: () => {
-      _log('info', 'startBluetoothDevicesDiscovery 成功，开始收 BSYNC- 广播')
-      uni.onBluetoothDeviceFound((res) => {
-        const devs = res.devices as unknown as RawAdvert[]
-        rawHits += devs.length
-        for (const dev of devs) {
-          const firstSight = !rawIds.has(dev.deviceId)
-          rawIds.add(dev.deviceId)
-          const rawName = (dev.name || dev.localName || '').trim()
-          if (!accept(dev.deviceId, rawName, dev.RSSI)
-            && firstSight && !rawName && advertisesB510(dev.advertisServiceUUIDs)
-            && uuidOnlySample.length < 3) {
-            uuidOnlySample.push(`${dev.deviceId} rssi=${dev.RSSI}`)
+  const stopForPermission = (msg: string) => {
+    _log('warn', msg)
+    if (epoch !== scanEpoch) return
+    scanActive = false
+    if (flushScanSummary) { flushScanSummary(); flushScanSummary = null }
+    onDone(0)
+  }
+
+  const beginDiscovery = () => {
+    uni.startBluetoothDevicesDiscovery({
+      // 固件把设备名放在 SCAN_RSP（ble_provision.h:408 setScanResponse(true)），广播主包里只有
+      // serviceUUID ⇒ Android 首帧经常不带名字。allowDuplicatesKey:false 时同一设备每轮只上报一次，
+      // 首帧无名就被永久丢掉 —— 表现为"手机系统蓝牙看得见、小程序 found:0"。改 true 后自行去重。
+      allowDuplicatesKey: true,
+      success: () => {
+        _log('info', 'startBluetoothDevicesDiscovery 成功，开始收 BSYNC- 广播')
+        uni.onBluetoothDeviceFound((res) => {
+          const devs = res.devices as unknown as RawAdvert[]
+          rawHits += devs.length
+          for (const dev of devs) {
+            const firstSight = !rawIds.has(dev.deviceId)
+            rawIds.add(dev.deviceId)
+            const rawName = (dev.name || dev.localName || '').trim()
+            if (!accept(dev.deviceId, rawName, dev.RSSI)
+              && firstSight && !rawName && advertisesB510(dev.advertisServiceUUIDs)
+              && uuidOnlySample.length < 3) {
+              uuidOnlySample.push(`${dev.deviceId} rssi=${dev.RSSI}`)
+            }
           }
+        })
+        discoveryTimer = setTimeout(finish, duration)
+      },
+      fail: (err) => {
+        const msg = err?.errMsg || ''
+        if (!isLocationPermissionDenied(msg)) {
+          _log('error', `startBluetoothDevicesDiscovery 失败: ${msg}`)
+          discoveryTimer = setTimeout(finish, 0)
+          return
         }
-      })
-      discoveryTimer = setTimeout(finish, duration)
-    },
-    fail: (err) => {
-      _log('error', `startBluetoothDevicesDiscovery 失败: ${err?.errMsg}`)
-      discoveryTimer = setTimeout(finish, 0)
-    },
+        // T740：权限拒绝类失败只扫这一次，绝不进入重试循环；先留原文 warn，再引导授权。
+        _log('warn', `startBluetoothDevicesDiscovery 位置权限被拒: ${msg}`)
+        haltDiscovery()
+        if (permissionRetryDone) {
+          stopForPermission(`位置权限仍被拒，停止本次扫描: ${msg}`)
+          return
+        }
+        permissionRetryDone = true
+        ensureLocationPermission().then((ok) => {
+          if (epoch !== scanEpoch || !scanActive) return
+          if (ok) {
+            _log('info', '位置权限已恢复，自动重扫一次')
+            beginDiscovery()
+            return
+          }
+          stopForPermission('位置权限未恢复，停止本次扫描')
+        }).catch((e) => {
+          _log('warn', '权限引导异常，停止本次扫描', logErrorText(e))
+          stopForPermission('位置权限未恢复，停止本次扫描')
+        })
+      },
+    })
+  }
+
+  // T740（Boss 2026-10-23）：配网扫描与 discoverDevices 共用同一权限前置；
+  // authorize → openSetting → 成功后再 discovery，杜绝 Android 直发 discovery 被系统拒。
+  ensureLocationPermission().then((ok) => {
+    if (epoch !== scanEpoch || !scanActive) return
+    if (!ok) {
+      stopForPermission('startBleScan 位置权限未授权，本次扫描不发起 discovery')
+      return
+    }
+    beginDiscovery()
+  }).catch((e) => {
+    _log('warn', '权限前置异常，按已授权继续扫描', logErrorText(e))
+    if (epoch === scanEpoch && scanActive) beginDiscovery()
   })
 }
 
