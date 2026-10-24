@@ -45,6 +45,12 @@ var deviceManageRoutes = []proxyRoute{
 	{http.MethodGet, "/admin/devices/:deviceId/secret-file"},
 	{http.MethodPost, "/admin/device-secrets/export"},
 	{http.MethodPost, "/admin/devices/:deviceId/secret-regenerate"},
+	// T706 厂商主体与 key 生命周期（RBAC 收口 admin-only，见 rbac.go adminOnlyPatterns）
+	{http.MethodPost, "/admin/vendors"},
+	{http.MethodGet, "/admin/vendors"},
+	{http.MethodPost, "/admin/vendors/:vendorId/keys"},
+	{http.MethodGet, "/admin/vendors/:vendorId/keys"},
+	{http.MethodPost, "/admin/vendor-keys/:keyId/revoke"},
 }
 
 // deviceReportRoutes 设备域上报路由（data-service；走设备验签组，非 JWT）

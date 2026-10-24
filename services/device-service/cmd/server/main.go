@@ -61,6 +61,11 @@ func main() {
 	// 组装（T030：ListStore 注入管理端列表查询，PGStore 同时实现 Store 与 ListStore）
 	store := repo.NewPGStore(pool)
 	svc := service.NewDeviceService(store, enc)
+	// T706：厂商凭据面与网关共用同一 pepper；缺失时签发/验签 fail-closed（端点 500，不降级）
+	svc.SetVendorStore(store, os.Getenv("VENDOR_KEY_PEPPER"))
+	if os.Getenv("VENDOR_KEY_PEPPER") == "" {
+		log.Warn().Msg("VENDOR_KEY_PEPPER empty: vendor key issue/verify endpoints will fail closed")
+	}
 	h := handler.New(svc)
 	h.SetListStore(store)
 	router := h.Router()

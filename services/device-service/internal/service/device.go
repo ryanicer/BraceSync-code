@@ -29,6 +29,10 @@ type DeviceService struct {
 	provisionMu       sync.Mutex
 	lastProvision     map[string]time.Time // deviceID → 上次签发时间
 	provisionInterval time.Duration        // 同设备最短重发间隔
+
+	// T706 厂商凭据面（SetVendorStore 注入；nil = 厂商端点 500，不降级）
+	vendors      repo.VendorStore
+	vendorPepper string // VENDOR_KEY_PEPPER：只从环境变量来，不落库不入日志
 }
 
 // NewDeviceService 组装 DeviceService

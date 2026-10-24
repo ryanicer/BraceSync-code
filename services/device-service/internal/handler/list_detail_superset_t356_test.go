@@ -173,6 +173,11 @@ func derivedListDetailPairsT356(routes gin.RoutesInfo) map[string][2]string {
 	}
 	out := map[string][2]string{}
 	for path := range get {
+		// T706：厂商面 /vendor/* 是机器对机器的另一套契约（元数据字段面由设计稿 §4 钉死，
+		// 不与运营列表做 key 超集比较），不参与本守卫的成对资源推导。
+		if strings.HasPrefix(path, "/api/v1/vendor/") {
+			continue
+		}
 		i := strings.LastIndex(path, "/")
 		if i <= 0 {
 			continue

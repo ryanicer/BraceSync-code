@@ -43,6 +43,8 @@ services:
       - MSG_SERVICE_URL=http://msg-service:8086
       # T022：file-service 代理目标（COS 预签名直传）
       - FILE_SERVICE_URL=http://file-service:8085
+      # T706：厂商 API key 验签 pepper（与 device-service 同值；缺失时厂商面 fail-closed）
+      - VENDOR_KEY_PEPPER=${VENDOR_KEY_PEPPER}
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,6 +91,8 @@ services:
       - REDIS_URL=${REDIS_URL}
       # device_secret 列加密密钥（架构 §5.2 AES-GCM，64 位 hex = 32 字节）
       - DEVICE_SECRET_ENC_KEY=${DEVICE_SECRET_ENC_KEY}
+      # T706：厂商 API key 的 HMAC pepper（与 gateway 同值；缺失时签发/验签 500，不降级）
+      - VENDOR_KEY_PEPPER=${VENDOR_KEY_PEPPER}
     depends_on:
       postgres:
         condition: service_healthy
