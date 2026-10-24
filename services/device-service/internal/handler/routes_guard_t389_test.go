@@ -68,8 +68,8 @@ var t389ExemptWrites = map[string]string{
 	"POST /api/v1/vendor/devices": "T706 厂商 key 面：网关独立 vendor-key 中间件验签，" +
 		"归属由 key 决定（服务端忽略请求体 vendor_id），不适用员工角色收口。",
 	// T706 管理面：两条 POST 均由 handler assertAdminRole + 网关 RBAC admin-only 双层收口。
-	"POST /api/v1/admin/vendors": "T706 管理面：assertAdminRole（ROLE_ADMIN）+ 网关 adminOnlyPatterns 双层收口。",
-	"POST /api/v1/admin/vendors/:vendorId/keys": "T706 管理面：assertAdminRole（ROLE_ADMIN）+ 网关 adminOnlyPatterns 双层收口。",
+	"POST /api/v1/admin/vendors":                   "T706 管理面：assertAdminRole（ROLE_ADMIN）+ 网关 adminOnlyPatterns 双层收口。",
+	"POST /api/v1/admin/vendors/:vendorId/keys":    "T706 管理面：assertAdminRole（ROLE_ADMIN）+ 网关 adminOnlyPatterns 双层收口。",
 	"POST /api/v1/admin/vendor-keys/:keyId/revoke": "T706 管理面：assertAdminRole（ROLE_ADMIN）+ 网关 adminOnlyPatterns 双层收口。",
 	"POST /internal/vendor-denied": "T706 服务间内部面：只由 gateway 越权回报调用（audit + 自动停 key），" +
 		"不经网关、无员工角色语义。",
