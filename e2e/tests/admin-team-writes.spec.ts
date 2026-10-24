@@ -281,4 +281,55 @@ test.describe('成员移除', () => {
     // 成员仍存在
     await expect(tableRows(page, memberPanel).filter({ hasText: '王护士' })).toHaveCount(1)
   })
+
+  // T743 判据 1/4：移除负责人 → leader 置空、顶部提示、孤儿团队仍可见
+  test('移除负责人后顶部提示请重新指定负责人且团队仍在列表', async ({ page }) => {
+    tableRows(page).filter({ hasText: '骨科一组' }).getByRole('button', { name: '成员' }).click()
+    const memberPanel = page.locator('.member-panel').filter({ hasText: '成员管理' })
+    await expect(memberPanel).toBeVisible()
+    // 有负责人时不得出现提示（改动只在空态追加）
+    await expect(memberPanel.locator('.leader-missing-hint')).toHaveCount(0)
+
+    // mock 夹具：骨科一组 leader=张主任
+    tableRows(page, memberPanel)
+      .filter({ hasText: '张主任' })
+      .getByRole('button', { name: '移除' })
+      .click()
+    const msgBox = page.locator('.el-message-box')
+    await expect(msgBox).toBeVisible()
+    await msgBox.getByRole('button', { name: '确定' }).click()
+
+    await expect(adminMessage(page)).toContainText('成功')
+    await expect(tableRows(page, memberPanel).filter({ hasText: '张主任' })).toHaveCount(0)
+    await expect(memberPanel.locator('.leader-missing-hint')).toContainText('请重新指定负责人')
+
+    // 孤儿团队必须可见：返回列表，行还在，负责人列退回占位符
+    await memberPanel.getByRole('button', { name: '返回' }).click()
+    const orphanRow = tableRows(page).filter({ hasText: '骨科一组' })
+    await expect(orphanRow).toHaveCount(1)
+    await expect(orphanRow.locator('td').nth(3)).toHaveText('-')
+  })
+
+  // T743 判据 2：移除非 leader 成员 → leader 不动、页面无提示
+  test('移除非负责人成员不出提示', async ({ page }) => {
+    tableRows(page).filter({ hasText: '骨科一组' }).getByRole('button', { name: '成员' }).click()
+    const memberPanel = page.locator('.member-panel').filter({ hasText: '成员管理' })
+    await expect(memberPanel).toBeVisible()
+
+    tableRows(page, memberPanel)
+      .filter({ hasText: '王护士' })
+      .getByRole('button', { name: '移除' })
+      .click()
+    const msgBox = page.locator('.el-message-box')
+    await expect(msgBox).toBeVisible()
+    await msgBox.getByRole('button', { name: '确定' }).click()
+
+    await expect(adminMessage(page)).toContainText('成功')
+    await expect(tableRows(page, memberPanel).filter({ hasText: '王护士' })).toHaveCount(0)
+    await expect(memberPanel.locator('.leader-missing-hint')).toHaveCount(0)
+
+    // 返回列表，负责人列仍是张主任
+    await memberPanel.getByRole('button', { name: '返回' }).click()
+    await expect(tableRows(page).filter({ hasText: '骨科一组' }).locator('td').nth(3)).toHaveText('张主任')
+  })
 })

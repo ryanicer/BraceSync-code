@@ -2958,8 +2958,8 @@ func toTeamDetailDTO(r repo.TeamDetailRow) model.TeamDetailDTO {
 	return model.TeamDetailDTO{
 		TeamID:       r.TeamID,
 		Name:         r.Name,
-		Leader:       r.Leader,
-		LeaderName:   r.LeaderName,
+		Leader:       nilIfBlank(r.Leader), // T743：无负责人回 null（与列表 TeamDTO 同口径）
+		LeaderName:   nilIfBlank(r.LeaderName),
 		MemberCount:  r.MemberCount,
 		PatientCount: r.PatientCount,
 		Description:  r.Description,

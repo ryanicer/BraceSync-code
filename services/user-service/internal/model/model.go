@@ -553,16 +553,17 @@ type UpdateTeamRequestDTO struct {
 
 // TeamDetailDTO 团队详情响应（创建/编辑返回；扩展 TeamDTO 增 leader/description/status/createdAt）
 type TeamDetailDTO struct {
-	TeamID       string `json:"teamId"`
-	Name         string `json:"name"`
-	Leader       string `json:"leader"`
-	LeaderName   string `json:"leaderName"`
-	MemberCount  int    `json:"memberCount"`
-	PatientCount int    `json:"patientCount"`
-	Description  string `json:"description"`
-	Status       string `json:"status"`
-	TeamType     string `json:"teamType"` // T627 方案乙：与 TeamDTO 同列，写端点回读也要带得回
-	CreatedAt    string `json:"createdAt"`
+	TeamID string `json:"teamId"`
+	Name   string `json:"name"`
+	// T743：与 TeamDTO 同口径 —— leader 可空时回 JSON null（空串会被前端当成「有负责人但名字为空」）。
+	Leader       *string `json:"leader"`
+	LeaderName   *string `json:"leaderName"`
+	MemberCount  int     `json:"memberCount"`
+	PatientCount int     `json:"patientCount"`
+	Description  string  `json:"description"`
+	Status       string  `json:"status"`
+	TeamType     string  `json:"teamType"` // T627 方案乙：与 TeamDTO 同列，写端点回读也要带得回
+	CreatedAt    string  `json:"createdAt"`
 }
 
 // AddMemberRequestDTO 添加成员请求

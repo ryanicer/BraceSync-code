@@ -431,7 +431,27 @@ export function mockAddTeamMember(teamId: string, input: AddMemberInput): TeamMe
   return toTechMember(t, team.createdAt)
 }
 
-/** 移除成员：幂等 no-op（mock 不持久化，前端乐观移除） */
-export function mockRemoveTeamMember(_teamId: string, _memberId: string, _memberType: 'doctor' | 'technician'): void {
-  // 幂等：不校验存在性，直接返回成功
+/** 移除成员：幂等 no-op（成员不在本团队/不存在都不报错）。
+ *  T743：真正摘掉成员且其就是 teams.leader 时同事务清 leader，与真实后端同口径；
+ *  否则 e2e mock 档只能演「成员没了、幽灵负责人还在」。 */
+export function mockRemoveTeamMember(teamId: string, memberId: string, memberType: 'doctor' | 'technician'): void {
+  const team = TEAMS.find((t) => t.teamId === teamId)
+  if (!team) {
+    throw new Error('团队不存在')
+  }
+  const removed = memberType === 'doctor'
+    ? DOCTORS.find((d) => d.doctorId === memberId && d.teamId === teamId)
+    : TECHNICIANS.find((t) => t.techId === memberId && t.teamId === teamId)
+  if (!removed) return
+  if (memberType === 'doctor') {
+    (removed as Doctor).teamId = null
+  } else {
+    // shared-types.Technician.teamId 声明为 string（历史类型），DB 列可空；移除后置空才是真实形态
+    const tech = removed as unknown as { teamId: string | null }
+    tech.teamId = null
+  }
+  if (team.leader === memberId) {
+    team.leader = null
+    team.leaderName = null
+  }
 }
