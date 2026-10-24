@@ -74,6 +74,11 @@
         <el-form-item label="型号">
           <el-input v-model="registerForm.model" placeholder="PRS-ML05-RC" />
         </el-form-item>
+        <el-form-item label="受压面积（cm²）" required>
+          <el-input v-model="registerForm.area" placeholder="如 0.64" @input="registerAreaError = ''" />
+          <div class="form-hint">必填：大于 0 的数值，最多两位小数。注册后仍可在设备详情中修改。</div>
+          <div v-if="registerAreaError" class="field-error">{{ registerAreaError }}</div>
+        </el-form-item>
         <el-alert
           v-if="canSecret"
           type="info"
@@ -134,6 +139,11 @@
             <span v-else style="color:#999">未连接</span>
           </el-descriptions-item>
           <el-descriptions-item label="最后上报">{{ formatDateTime(detail.lastReportAt) }}</el-descriptions-item>
+          <el-descriptions-item label="受压面积">
+            <span v-if="detail.contactAreaCm2 != null">{{ detail.contactAreaCm2 }} cm²</span>
+            <span v-else style="color:#999">未配置</span>
+            <el-button link type="primary" size="small" class="area-edit-btn" @click="openAreaDialog">修改</el-button>
+          </el-descriptions-item>
         </el-descriptions>
         <!-- 卡面验收 2 的落点写的是「设备详情 → 下载 secret 文件」，故抽屉里这一对入口与列表行内同源
              （共用 downloadSecret / askRegenerateSecret，不做两套语义） -->
@@ -157,6 +167,23 @@
         </el-table>
       </div>
     </el-drawer>
+
+    <!-- 修改受压面积（详情抽屉入口；T508 整值覆盖端点） -->
+    <el-dialog v-model="areaVisible" title="修改受压面积" width="420px">
+      <el-form label-width="110px">
+        <el-form-item label="设备ID">
+          <el-input :model-value="detail?.deviceId ?? ''" readonly />
+        </el-form-item>
+        <el-form-item label="受压面积（cm²）" required>
+          <el-input v-model="areaForm" placeholder="如 0.64" @input="areaError = ''" />
+          <div v-if="areaError" class="field-error">{{ areaError }}</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="areaVisible = false">取消</el-button>
+        <el-button type="primary" :loading="areaSaving" @click="submitArea">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -167,12 +194,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Device } from '@bracesync/shared-types'
 import {
   fetchDevices, fetchDeviceDetail, fetchDeviceBindings, registerDeviceApi, patientNameOf,
+  setDeviceContactAreaApi,
   downloadDeviceSecretFileApi, exportDeviceSecretsApi, regenerateDeviceSecretApi,
   type DeviceBindingRecord,
 } from '../../api'
 import { formatCstMonthDayTime } from '../../utils/formatTime'
 import { useAuthStore } from '../../stores/auth'
 import { canAccessDeviceSecret, MAX_SECRET_EXPORT_BATCH } from '../../utils/deviceSecretAccess'
+import { parseContactArea } from '../../utils/deviceContactArea'
 
 const auth = useAuthStore()
 
@@ -184,11 +213,16 @@ const loading = ref(false)
 // T268: 注册设备 + 详情抽屉
 const registerVisible = ref(false)
 const registering = ref(false)
-const registerForm = ref({ deviceId: '', model: 'PRS-ML05-RC' })
+const registerForm = ref({ deviceId: '', model: 'PRS-ML05-RC', area: '' })
+const registerAreaError = ref('')
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref<Device | null>(null)
 const bindings = ref<DeviceBindingRecord[]>([])
+const areaVisible = ref(false)
+const areaSaving = ref(false)
+const areaForm = ref('')
+const areaError = ref('')
 
 // T728：验签密钥的三个入口（单台下载 / 批量下载 / 重新生成）+ 一次性回显窗
 const canSecret = computed(() => canAccessDeviceSecret(auth.role))
@@ -242,7 +276,8 @@ function applyFilter() {
 }
 
 function openRegisterDialog() {
-  registerForm.value = { deviceId: '', model: 'PRS-ML05-RC' }
+  registerForm.value = { deviceId: '', model: 'PRS-ML05-RC', area: '' }
+  registerAreaError.value = ''
   registerVisible.value = true
 }
 
@@ -252,6 +287,12 @@ async function submitRegister() {
     ElMessage.warning('设备ID须为 4-48 位字母/数字/-/_')
     return
   }
+  const area = parseContactArea(registerForm.value.area)
+  if (!area.ok) {
+    registerAreaError.value = area.message
+    ElMessage.warning(area.message)
+    return
+  }
   registering.value = true
   try {
     const res = await registerDeviceApi({ deviceId, model: registerForm.value.model.trim() || undefined })
@@ -259,13 +300,22 @@ async function submitRegister() {
     // T728 的回显窗是叠加在上面的一层，不替代它。
     ElMessage.success('设备已注册')
     registerVisible.value = false
-    await loadData()
     // T728：deviceSecret 键缺席 = 本次没有新建（幂等命中既有行，库里密钥没变）⇒ 不开回显窗，
     // 否则等于把一个与库里无关的串摆到界面上让人去烧录。要取已存在设备的密钥走下载端点。
     if (res.deviceSecret) {
       showOneTimeSecret(deviceId, res.deviceSecret, 'register')
     } else {
-      ElMessage.info('该设备号已注册过，验签密钥未变更；如需取用请在列表点「下载密钥」')
+      ElMessage.info('该设备号已注册，验签密钥未变更，面积未变更；修改面积请在设备详情点「受压面积 - 修改」')
+    }
+    await loadData()
+    // T716：只有新建才写面积，幂等命中不覆盖既有配置（避免建设备动作静默改掉他人配置）。
+    // 密钥窗已先开：设备已建、密钥只有这一发，不因面积写入失败而吞掉。
+    if (res.deviceSecret) {
+      try {
+        await setDeviceContactAreaApi(deviceId, area.value)
+      } catch {
+        ElMessage.error('设备已注册，受压面积未保存，请重试（可在设备详情「受压面积 - 修改」补存）')
+      }
     }
   } catch (e: unknown) {
     ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '注册失败' }))
@@ -345,6 +395,36 @@ async function askRegenerateSecret(deviceId: string) {
   }
 }
 
+function openAreaDialog() {
+  areaForm.value = detail.value?.contactAreaCm2 != null ? String(detail.value.contactAreaCm2) : ''
+  areaError.value = ''
+  areaVisible.value = true
+}
+
+async function submitArea() {
+  const deviceId = detail.value?.deviceId
+  if (!deviceId) return
+  const area = parseContactArea(areaForm.value)
+  if (!area.ok) {
+    areaError.value = area.message
+    ElMessage.warning(area.message)
+    return
+  }
+  areaSaving.value = true
+  try {
+    await setDeviceContactAreaApi(deviceId, area.value)
+    detail.value = { ...detail.value!, contactAreaCm2: area.value }
+    const row = list.value.find((d) => d.deviceId === deviceId)
+    if (row) row.contactAreaCm2 = area.value
+    areaVisible.value = false
+    ElMessage.success('受压面积已保存')
+  } catch (e: unknown) {
+    ElMessage.error(userErrorCopy(e, { scope: 'admin', fallback: '受压面积保存失败' }))
+  } finally {
+    areaSaving.value = false
+  }
+}
+
 async function openDetail(row: Device) {
   detailVisible.value = true
   detailLoading.value = true
@@ -397,5 +477,18 @@ onMounted(loadData)
   flex: 1;
   word-break: break-all;
   font-family: 'SFMono-Regular', Consolas, monospace;
+}
+.form-hint {
+  font-size: 12px;
+  color: #999;
+  line-height: 1.5;
+}
+.field-error {
+  font-size: 12px;
+  color: #f56c6c;
+  line-height: 1.5;
+}
+.area-edit-btn {
+  margin-left: 8px;
 }
 </style>

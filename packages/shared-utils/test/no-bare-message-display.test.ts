@@ -50,6 +50,11 @@ const AUTHORED_COPY: { file: string; line: string; why: string }[] = [
     why: '同 review-records，共用白名单校验器',
   },
   {
+    file: 'apps/admin-web/src/pages/devices/index.vue',
+    line: `ElMessage.warning(area.message)`,
+    why: 'area 来自 utils/deviceContactArea.ts 的 parseContactArea 结果，message 是代码写死的校验中文（非错误对象）',
+  },
+  {
     file: 'apps/admin-web/src/pages/alerts/flow/designer/FlowDesigner.vue',
     line: '`结构校验有 ${result.warnings.length} 条提示（不阻断保存）：${result.warnings[0].message}`,',
     why: 'validateGraph 的 V 系规则文案（本仓自撰中文），不是后端返回',
