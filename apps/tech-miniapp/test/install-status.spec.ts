@@ -21,6 +21,7 @@ vi.mock('../src/utils/request', () => {
 })
 
 import { useInstallStore } from '../src/stores/install'
+import { WIFI_BAND_HINT_24G } from '@bracesync/shared-utils'
 import {
   WIFI_STATUS_LABEL,
   WIFI_SKIPPED_LABEL,
@@ -367,11 +368,15 @@ describe('TC-2 — 跳过配网写第四档 skipped，不冒充已连接', () =>
   // T718（承 T713 家族的漏扫）：常驻提示句里「合一路由器请填 2.4G 那个网络名」不可执行——
   // 合一（双频合一）路由器只广播一个 SSID，没有第二个「2.4G 那个名字」可填，且引导用户按名字猜频段
   // 与 PRD §7A.9.1 ④「只认信道，不认名字」互斥。文案取 §7A.9.1 ③-1 后半句（处置建议，非按名断言）。
+  // T744（Boss 2026-10-24）：首行换成 A 层定稿句，文案单源在 shared-utils，页面只插值。
   it('T718：wifi-config 常驻提示不得再出现「按名字填 2.4G 网络」类不可执行指引', () => {
     const src = pageSrc('wifi-config')
     expect(src).not.toContain('那个网络名')
     expect(src).not.toContain('合一路由器')
-    expectVisibleLine(src, '仅支持 2.4GHz Wi-Fi 网络，不支持 5GHz')
+    expect(WIFI_BAND_HINT_24G).toBe(
+      '设备仅支持 2.4G WiFi，请确认输入的是 2.4G 网络名称（5G 网络设备无法连接）',
+    )
+    expectVisibleLine(src, '{{ WIFI_BAND_HINT_24G }}')
     expectVisibleLine(src, '若路由器 2.4G 与 5G 同名，请先在路由器设置中改成不同名称后重试')
     expectVisibleLine(src, '请手动输入准确的 WiFi 名称与密码')
   })

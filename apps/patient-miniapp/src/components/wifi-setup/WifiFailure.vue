@@ -6,6 +6,12 @@
       <text class="fail-desc">{{ copy.desc }}</text>
     </view>
 
+    <!-- T744 B 层：手机扫描清单核对后的频段/拼写提示；扫描不可用时不渲染 -->
+    <view v-if="diagnosis" class="diagnosis">
+      <text class="diagnosis-label">{{ FAILURE_COMMON.diagnosisLabel }}</text>
+      <text class="diagnosis-text">{{ diagnosis }}</text>
+    </view>
+
     <view class="action-card">
       <text class="action-label">{{ FAILURE_COMMON.actionLabel }}</text>
       <view v-for="(a, i) in copy.actions" :key="i" class="action-item">
@@ -32,7 +38,7 @@ import { FAILURES, FAILURE_COMMON, type FailureKey } from '../../utils/wifi-copy
  * 06a–06e 五类失败态共用一套版式（设计稿仅图标色与按钮组不同），
  * tone / 文案 / 主按钮落点全部来自 FAILURES[type]，不在组件内写分支。
  */
-const props = defineProps<{ type: FailureKey }>()
+const props = defineProps<{ type: FailureKey; diagnosis?: string }>()
 
 defineEmits<{ (e: 'primary'): void; (e: 'secondary'): void; (e: 'contact'): void }>()
 
@@ -50,6 +56,10 @@ const copy = computed(() => FAILURES[props.type])
 .fail-ic.amber .glyph { color: #f59e0b; }
 .fail-title { font-size: 40rpx; font-weight: 600; color: #1e293b; margin-top: 40rpx; display: block; }
 .fail-desc { font-size: 28rpx; color: #64748b; line-height: 1.7; margin-top: 20rpx; display: block; }
+
+.diagnosis { margin: 32rpx 40rpx 0; background: #eff6ff; border: 2rpx solid #bfdbfe; border-radius: 24rpx; padding: 24rpx 28rpx; }
+.diagnosis-label { display: block; font-size: 22rpx; color: #2563EB; font-weight: 600; margin-bottom: 10rpx; }
+.diagnosis-text { font-size: 26rpx; color: #1e3a8a; line-height: 1.6; }
 
 .action-card { margin: 56rpx 40rpx 0; background: #fff; border: 2rpx solid #e2e8f0; border-radius: 28rpx; padding: 32rpx; }
 .action-label { font-size: 24rpx; color: #94a3b8; margin-bottom: 20rpx; display: block; }

@@ -41,6 +41,7 @@
       <view class="error-card">
         <text class="error-icon">!</text>
         <text class="error-title">{{ errorMessage }}</text>
+        <text v-if="wifiDiagnosis" class="error-diagnosis">{{ wifiDiagnosis }}</text>
         <view class="btn-outline" @click="retryWifi"><text>重新配网</text></view>
         <view v-if="errorCode === -4" class="skip-hint">
           <text class="skip-text">WiFi 已连接，但暂时无法连接云端。</text>
@@ -64,8 +65,8 @@
             <input class="form-input" type="text" placeholder="请输入 WiFi 名称" v-model="manualSSID" />
           </view>
           <view class="wifi-hint">
-            <text>仅支持 2.4GHz Wi-Fi 网络，不支持 5GHz。若路由器 2.4G 与 5G 同名，请先在路由器设置中改成不同名称后重试</text>
-            <text>请手动输入准确的 WiFi 名称与密码</text>
+            <text>{{ WIFI_BAND_HINT_24G }}</text>
+            <text>若路由器 2.4G 与 5G 同名，请先在路由器设置中改成不同名称后重试；请手动输入准确的 WiFi 名称与密码</text>
           </view>
           </view>
       </view>
@@ -97,7 +98,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
-import { logErrorText, userErrorCopy } from '@bracesync/shared-utils'
+import { logErrorText, userErrorCopy, WIFI_BAND_HINT_24G, wifiBandDiagnosis } from '@bracesync/shared-utils'
 import { useInstallStore } from '../../stores/install'
 import { getProvisionKey } from '../../api/provision'
 import { setDeviceWifi, reportWifiCleared } from '../../api/device'
@@ -117,6 +118,7 @@ import {
 } from '../../utils/ble'
 import { pickReconnectTarget, RECONNECT_SCAN_MS } from '../../utils/ble-link'
 import { bleLog } from '../../utils/ble-log'
+import { scanPhoneSsid } from '../../utils/wifi-band-scan'
 import {
   confirmSkipNetwork,
   provisionFailureWifiStatus,
@@ -155,6 +157,8 @@ const WRITE_MAX_ATTEMPTS = 2
 const wifiStatusCode = ref<number | null>(null)
 const statusHistory: number[] = []
 const errorCode = ref<number | null>(null)
+// T744 B 层：失败后用手机扫描清单给出频段/拼写提示；扫描不可用时空串不显示
+const wifiDiagnosis = ref('')
 const autoReturnTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const timeoutTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 let successProcessed = false
@@ -522,6 +526,16 @@ function handleError(code: number) {
   stopMockWifiStatusSequence()
   provisioning.value = false
   errorCode.value = code
+  // T744 B 层：-1（兜底：超时/关联失败/解密失败）与 -2（找不到这台网络）才可能是频段/拼写问题，
+  // -3/-4 是已连上 WiFi 后的地址/云端问题，扫手机清单给频段提示只会误导。
+  wifiDiagnosis.value = ''
+  if (code === -1 || code === -2) {
+    const ssid = manualSSID.value
+    void scanPhoneSsid(ssid).then((verdict) => {
+      if (!pageAlive || errorCode.value !== code) return
+      wifiDiagnosis.value = wifiBandDiagnosis(verdict)
+    })
+  }
   // T459·C2（PM 2026-09-28 15:1x 裁定）：只有 -4（云端不可达）落库 failed。
   // -1 密码错／-2 未找到网络／-3 DHCP 失败都是 WiFi 本身没连上，语义不是「连上了但打不到云端」，
   // 维持列默认 unconfigured，失败原因由 errorMessage 那四条稿面文案承载，不落库。
@@ -539,6 +553,7 @@ function handleTimeout() {
 function retryWifi() {
   wifiStatusCode.value = null
   errorCode.value = null
+  wifiDiagnosis.value = ''
   password.value = ''
 }
 
@@ -622,6 +637,7 @@ onUnmounted(() => {
 .error-card { background: #fef2f2; border: 1rpx solid #fecaca; border-radius: 24rpx; padding: 48rpx 32rpx; text-align: center; }
 .error-icon { display: inline-flex; width: 80rpx; height: 80rpx; border-radius: 50%; background: #ef4444; color: #fff; font-size: 48rpx; align-items: center; justify-content: center; }
 .error-title { display: block; font-size: 30rpx; color: #991b1b; margin: 24rpx 0; line-height: 1.5; }
+.error-diagnosis { display: block; font-size: 26rpx; color: #b91c1c; line-height: 1.6; background: #fff; border-radius: 16rpx; padding: 20rpx 24rpx; margin-bottom: 24rpx; }
 .skip-hint { margin-top: 32rpx; }
 .skip-text { display: block; font-size: 24rpx; color: #b45309; line-height: 1.5; }
 </style>

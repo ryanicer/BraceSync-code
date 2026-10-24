@@ -6,8 +6,9 @@
  * 改这里必须同步改设计稿，不要在页面里散落字符串。
  */
 
-/** 01-entry：入口卡片与前置检查 */
-export const ENTRY = {
+import { WIFI_BAND_HINT_24G } from '@bracesync/shared-utils'
+
+/** 01-entry：入口卡片与前置检查 */export const ENTRY = {
   navTitle: '配置家庭 WiFi',
   currentDeviceLabel: '当前设备',
   deviceName: '矫形支具监测器',
@@ -80,8 +81,9 @@ export const CONNECT = {
   findLink: 'WiFi 名称怎么找？',
   pwdLabel: 'WiFi 密码',
   pwdPlaceholder: '请输入 WiFi 密码',
-  /** 设计稿 tips + PRD §7A.9.1 ③-1 常驻口径（取并集，见交付偏差表 D-2） */
-  tips: '仅支持 2.4GHz WiFi。密码区分大小写，请仔细输入。若家中路由器 2.4G 与 5G 同名，请先在路由器设置中改成不同名称后重试。',
+  /** 设计稿 tips + PRD §7A.9.1 ③-1 常驻口径（取并集，见交付偏差表 D-2）；
+   *  T744（Boss 2026-10-24）A 层定稿句前置，单源在 shared-utils/wifiBand.ts。 */
+  tips: `${WIFI_BAND_HINT_24G}。密码区分大小写，请仔细输入。若家中路由器 2.4G 与 5G 同名，请先在路由器设置中改成不同名称后重试。`,
   startBtn: '开始配网',
   findModal: {
     title: 'WiFi 名称怎么找？',
@@ -297,6 +299,8 @@ export const FAILURE_COMMON = {
   navTitle: '配网未成功',
   actionLabel: '建议操作',
   contactBtn: '联系我们',
+  /** T744 B 层：手机扫描诊断结果的区块标题 */
+  diagnosisLabel: '网络诊断',
 } as const
 
 /**
