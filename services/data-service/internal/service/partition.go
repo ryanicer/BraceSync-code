@@ -29,13 +29,17 @@ func NewPartitionService(partitions repo.PartitionStore) *PartitionService {
 	}
 }
 
-// EnsureFuturePartitions 预建未来 2 个月的 pressure_records 分区
+// EnsureFuturePartitions 预建当月起未来 2 个月的 pressure_records 分区（共 3 个月）
+//
+// T705/000039 修正：原循环只预建 i=1..2（未来月）**跳当月**，而 000001 固化的
+// 历史分区只到建库当月（202609）⇒ 每月 25 日作业跑不到的整月（新库首发后至 25 日
+// 之间）当月分区恒缺，上报落库 ErrNoPartition 被映射 20402。现覆盖 i=0..2。
 func (s *PartitionService) EnsureFuturePartitions(ctx context.Context) {
 	now := s.now().In(model.CSTZone())
 	log.Info().Msg("partition pre-creation started")
 
 	created := 0
-	for i := 1; i <= 2; i++ {
+	for i := 0; i <= 2; i++ {
 		target := time.Date(now.Year(), now.Month()+time.Month(i), 1, 0, 0, 0, 0, model.CSTZone())
 		name := target.Format("200601")
 
