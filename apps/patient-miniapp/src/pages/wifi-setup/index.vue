@@ -729,7 +729,8 @@ async function runProvision() {
         // 不再复位——provision_key 不轮换，复位会让两轮用同一 (key, IV) 加密不同明文（CTR keystream 复用）。
         // ③：重试同样领新 seq（同一次配网内多次写入凭据 seq 须逐次递增）。
         const seq = deviceStore.nextWifiSeq()
-        const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, seq)
+        // T725：deviceId 传入仅供诊断行前缀（诊断在 staging 编译开关内，prod 产物整块剔除）
+        const payload = encryptWifiPayload(enteredSsid.value, enteredPwd.value, provision_key_hex, seq, cloudDeviceId.value)
         await writeWifiConfigV2(bleDeviceId.value, payload)
         // seq 不在固件候选窗口内时，设备必然解不出明文 → 会回 -1（并非真的密码错）
         logger.info('[T192] B511 写入完成，等待设备推送', {
