@@ -154,6 +154,14 @@ var adminOnlyPatterns = []rbacPattern{
 	rbacOf(http.MethodGet, "/api/v1/admin/devices/:deviceId/secret-file"),
 	rbacOf(http.MethodPost, "/api/v1/admin/device-secrets/export"),
 	rbacOf(http.MethodPost, "/api/v1/admin/devices/:deviceId/secret-regenerate"),
+	// T706 厂商凭据管理：登记厂商 = 决定谁能取设备 secret；签发/吊销 key = 决定谁能以厂商身份
+	// 批量注册与补取明文。危害与 T728 密钥面同级 ⇒ 全部 admin-only；device-service 侧
+	// assertAdminRole 是第二层（直连绕网关时仍 403）。
+	rbacOf(http.MethodPost, "/api/v1/admin/vendors"),
+	rbacOf(http.MethodGet, "/api/v1/admin/vendors"),
+	rbacOf(http.MethodPost, "/api/v1/admin/vendors/:vendorId/keys"),
+	rbacOf(http.MethodGet, "/api/v1/admin/vendors/:vendorId/keys"),
+	rbacOf(http.MethodPost, "/api/v1/admin/vendor-keys/:keyId/revoke"),
 }
 
 // techAdminOnlyPatterns 仅技师+管理员可访问端点矩阵（T122）：

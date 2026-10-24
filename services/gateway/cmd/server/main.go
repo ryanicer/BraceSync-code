@@ -21,14 +21,17 @@ func setupRouter() *gin.Engine {
 	r := gin.Default()
 	// T464：关联号在网关生成并注入转发请求头，逐跳透传给后端服务（先于所有代理与鉴权中间件挂载）
 	r.Use(requestIDMiddleware())
+	// T706：厂商 key 域外一律 403 vendor_scope_denied（含未注册路径/登录白名单，见 vendor_auth_t706.go）
+	agt := loadGatewayAuth()
+	r.Use(vendorScopeGate(agt.vendor))
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 	// T234 Prometheus 采集端点 —— 注册在引擎顶层（非 JWT 组），避免被鉴权中间件拦截或反向代理误吞
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	agt := loadGatewayAuth()           // JWT_SECRET + 设备密钥提供器（环境变量注入，不入库）
 	registerAPIProxies(r, agt)         // T032：/api/v1 全量路由 + 统一 JWT 鉴权 + 端点级 RBAC（T039-H2）+ T091 provision-key 限流
+	registerVendorProxies(r, agt)      // T706：厂商 key 面独立组（vendor-key 中间件，不进 JWT 组）
 	registerDeviceReportRoutes(r, agt) // T032：设备域路由 + HMAC 验签
 	// T612：路由注册层的方法白名单校验 —— 必须在两组路由都注册完之后挂，兜底处理器
 	// 继承上面已注册的 requestIDMiddleware，日志行才带得上关联号

@@ -63,12 +63,15 @@ const (
 
 // Handler HTTP 处理器
 type Handler struct {
-	svc  *service.DeviceService
-	list repo.ListStore // T030 管理端列表查询（SetListStore 注入；nil 时列表端点 500）
+	svc     *service.DeviceService
+	list    repo.ListStore     // T030 管理端列表查询（SetListStore 注入；nil 时列表端点 500）
+	limiter *vendorRateLimiter // T706 厂商 key 面 QPS/日限（进程内）
 }
 
 // New 创建 Handler
-func New(svc *service.DeviceService) *Handler { return &Handler{svc: svc} }
+func New(svc *service.DeviceService) *Handler {
+	return &Handler{svc: svc, limiter: newVendorRateLimiter()}
+}
 
 // Router 组装路由（可测试）
 func (h *Handler) Router() *gin.Engine {
@@ -104,6 +107,18 @@ func (h *Handler) Router() *gin.Engine {
 	{
 		internal.POST("/devices/:deviceId/report", h.report)
 		internal.GET("/devices/:deviceId/secret", h.getSecret) // T032 gateway 设备验签密钥来源
+		internal.GET("/vendor-keys", h.vendorKeyCandidates)    // T706 gateway 厂商 key 鉴权候选行
+		internal.POST("/vendor-denied", h.vendorDenied)        // T706 越权回报（audit + 自动停 key）
+	}
+
+	// T706 厂商 key 面：网关验签后注入 X-Vendor-* 三头；本组不走 JWT。
+	vendor := v1.Group("/vendor")
+	vendor.Use(h.vendorRateLimit())
+	{
+		vendor.POST("/devices", h.vendorBatchRegister)
+		vendor.GET("/devices", h.vendorListDevices)
+		vendor.GET("/devices/:deviceId", h.vendorDeviceMeta)
+		vendor.GET("/devices/:deviceId/secret", h.vendorFetchSecret)
 	}
 
 	// T728：设备验签密钥的服务端专用端点（仅 ROLE_ADMIN，判定见 admin_secret_t728.go）。
@@ -113,6 +128,12 @@ func (h *Handler) Router() *gin.Engine {
 		admin.GET("/devices/:deviceId/secret-file", h.downloadDeviceSecretFile)      // T728 单台 .env
 		admin.POST("/device-secrets/export", h.exportDeviceSecrets)                  // T728 批量 zip（勾选白名单）
 		admin.POST("/devices/:deviceId/secret-regenerate", h.regenerateDeviceSecret) // T728 重生成（旧值作废）
+		// T706 厂商主体与 key 生命周期（运营管理员面）
+		admin.POST("/vendors", h.createVendor)
+		admin.GET("/vendors", h.listVendors)
+		admin.POST("/vendors/:vendorId/keys", h.issueVendorKey)
+		admin.GET("/vendors/:vendorId/keys", h.listVendorKeys)
+		admin.POST("/vendor-keys/:keyId/revoke", h.revokeVendorKey)
 	}
 	return r
 }
