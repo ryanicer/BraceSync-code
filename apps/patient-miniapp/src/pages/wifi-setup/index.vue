@@ -57,6 +57,7 @@
     <WifiFailure
       v-else-if="view === 'failure'"
       :type="failureType"
+      :diagnosis="failureDiagnosis"
       @primary="onFailurePrimary"
       @secondary="onFailureSecondary"
       @contact="goContact(failureType, 'failure')"
@@ -80,8 +81,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
+import { wifiBandDiagnosis } from '@bracesync/shared-utils'
 import { useDeviceStore, WIFI_SEQ_CANDIDATE_MAX } from '../../stores/device'
 import { useAuthStore } from '../../stores/auth'
+import { scanPhoneSsid } from '../../utils/wifi-band-scan'
 import { request } from '../../utils/request'
 import { getProvisionKey } from '../../api/provision'
 import { reportDeviceWifi } from '../../api/device'
@@ -171,6 +174,8 @@ const devices = ref<ScannedDevice[]>([])
 const scanning = ref(false)
 const provisionCode = ref<number | null>(null)
 const failureType = ref<FailureKey>('timeout')
+/** T744 B 层：失败后用手机扫描清单核对 SSID 给出的诊断句；空串不渲染 */
+const failureDiagnosis = ref('')
 const contactIssue = ref<ContactIssue>('timeout')
 const contactBack = ref<View>('failure')
 const occurredAt = ref('')
@@ -784,8 +789,21 @@ async function runProvision() {
   }
 }
 
-function handleStatus(code: number) {
-  const gapMs = lastCodeAt ? Date.now() - lastCodeAt : 0
+/**
+ * T744 B 层：连接失败后读手机当前能扫到的 WiFi 清单，核对用户填写的 SSID。
+ * 只对可能真是频段/拼写问题的三档跑（-1 兜底 / -2 找不到 / 超时）；
+ * addr/srv 是已连上 WiFi 之后的问题，linklost 是 BLE 链路中断且设备可能已配好，都不做频段断言。
+ * 扫描不可用（iOS 受限、未授权、微信 WiFi 系列接口已下架）时由 wifiBandDiagnosis 回 A 层常驻提示。
+ */
+async function runBandDiagnosis() {
+  failureDiagnosis.value = ''
+  if (!['keycheck', 'nonet', 'timeout'].includes(failureType.value)) return
+  const verdict = await scanPhoneSsid(enteredSsid.value)
+  if (view.value !== 'failure') return
+  failureDiagnosis.value = wifiBandDiagnosis(verdict)
+}
+
+function handleStatus(code: number) {  const gapMs = lastCodeAt ? Date.now() - lastCodeAt : 0
   lastCodeAt = Date.now()
   logger.info('[T192] 收到 B512 状态推送', { code, gapMs })
   provisionCode.value = code
@@ -809,6 +827,7 @@ function handleStatus(code: number) {
     })
     deviceStore.setWifiStatus('failed')
     view.value = 'failure'
+    void runBandDiagnosis()
     return
   }
   prevCode = code
@@ -829,6 +848,7 @@ function armTimeout() {
     failureType.value = linkLostDuringProvision ? 'linklost' : 'timeout'
     deviceStore.setWifiStatus('failed')
     view.value = 'failure'
+    void runBandDiagnosis()
   }, PROVISION_TIMEOUT_MS)
 }
 
@@ -885,6 +905,7 @@ function goDevicePage() {
 /* ===== 06a–06e ===== */
 
 async function onFailurePrimary() {
+  failureDiagnosis.value = ''
   const to = FAILURES[failureType.value].primaryTo
   logger.info('[T192] 06 主按钮', { failureType: failureType.value, to })
   if (to === 'connect') {
@@ -904,6 +925,7 @@ async function onFailurePrimary() {
 }
 
 function onFailureSecondary() {
+  failureDiagnosis.value = ''
   void retryProvision()
 }
 
