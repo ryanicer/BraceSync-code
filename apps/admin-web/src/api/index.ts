@@ -374,6 +374,16 @@ export async function registerDeviceApi(data: { deviceId: string; model?: string
   return request<DeviceRegisterResult>({ url: '/api/v1/devices', method: 'POST', data: data as unknown as Record<string, unknown> })
 }
 
+/** T716：建设备时写入受压面积（T508 整值覆盖端点）。注册接口本身不收面积，新建成功后用本端点落值。 */
+export async function setDeviceContactAreaApi(deviceId: string, contactAreaCm2: number): Promise<void> {
+  if (USE_MOCK) { await delay(); return deviceMock.mockSetDeviceContactArea(deviceId, contactAreaCm2) }
+  await request<null>({
+    url: `/api/v1/devices/${encodeURIComponent(deviceId)}/contact-area`,
+    method: 'PUT',
+    data: { contactAreaCm2 },
+  })
+}
+
 // ========== T728 设备验签密钥的取用面（仅 ROLE_ADMIN，入口闸门见 utils/deviceSecretAccess） ==========
 //
 // 三条端点的形状由 device-service handler/admin_secret_t728.go 定：
