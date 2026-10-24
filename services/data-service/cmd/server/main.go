@@ -208,6 +208,15 @@ func main() {
 			log.Fatal().Err(err).Str("job", j.name).Str("spec", j.spec).Msg("cron register failed")
 		}
 	}
+	// T712：启动即自愈一次分区。预建 cron 的档期是「每月 25 日」，容器重建/新库首发落在
+	// 25 日之后就要整月空窗——T705 现网 400/20402「数据时间超出可上报范围」的真因正是
+	// 当月 202610 缺建（落库 ErrNoPartition 被映射成误导文案，设备时间本身正常）。
+	// EnsureFuturePartitions 幂等（已有分区只 skip、DDL 走 IF NOT EXISTS、零触既有数据行），
+	// 内部只记日志不返回错误 ⇒ 不会因分区面失败阻断启动；与迁移 000039、
+	// internal/service/partition.go 的 T705 修正注释互指。
+	preCreateCtx, preCreateCancel := context.WithTimeout(ctx, 30*time.Second)
+	partitionSvc.EnsureFuturePartitions(preCreateCtx)
+	preCreateCancel()
 	sched.Start()
 
 	go func() {
