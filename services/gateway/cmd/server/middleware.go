@@ -34,6 +34,7 @@ type gatewayAuth struct {
 	jwtSecret string // JWT_SECRET（T039-H1：空 = fail-closed 拒绝请求，main 启动即校验必填）
 	verifier  *auth.DeviceSigVerifier
 	secrets   SecretProvider
+	vendor    *vendorAuth // T706 厂商 API key 验签
 	now       func() time.Time
 }
 
@@ -55,6 +56,7 @@ func newGatewayAuth(jwtSecret string, secrets SecretProvider) *gatewayAuth {
 		jwtSecret: jwtSecret,
 		verifier:  verifier,
 		secrets:   secrets,
+		vendor:    newVendorAuth(),
 		now:       time.Now,
 	}
 }

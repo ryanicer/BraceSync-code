@@ -63,6 +63,16 @@ var t389ExemptWrites = map[string]string{
 		"按技师/管理员 allow-list 收口会挡掉患者端；该端点已有 requireDeviceBoundToCaller 归属判定。",
 	"POST /internal/devices/:deviceId/report": "服务间内部面：不经网关、调用方是 data-service，" +
 		"X-Role 语义不是员工角色；收口成技师/管理员会断掉上报链路。",
+	// T706 厂商面：鉴权模型是 API key（网关 vendorKeyAuth 验签 + 服务端按 key 强制厂商归属），
+	// X-Role 语义不存在；挂 assertDeviceWriteRole 会挡掉所有合法厂商。
+	"POST /api/v1/vendor/devices": "T706 厂商 key 面：网关独立 vendor-key 中间件验签，" +
+		"归属由 key 决定（服务端忽略请求体 vendor_id），不适用员工角色收口。",
+	// T706 管理面：两条 POST 均由 handler assertAdminRole + 网关 RBAC admin-only 双层收口。
+	"POST /api/v1/admin/vendors":                   "T706 管理面：assertAdminRole（ROLE_ADMIN）+ 网关 adminOnlyPatterns 双层收口。",
+	"POST /api/v1/admin/vendors/:vendorId/keys":    "T706 管理面：assertAdminRole（ROLE_ADMIN）+ 网关 adminOnlyPatterns 双层收口。",
+	"POST /api/v1/admin/vendor-keys/:keyId/revoke": "T706 管理面：assertAdminRole（ROLE_ADMIN）+ 网关 adminOnlyPatterns 双层收口。",
+	"POST /internal/vendor-denied": "T706 服务间内部面：只由 gateway 越权回报调用（audit + 自动停 key），" +
+		"不经网关、无员工角色语义。",
 }
 
 // t389WriteMethods 写方法集合。读侧（GET）的团队隔离归 T378，不在本守卫射程内。
