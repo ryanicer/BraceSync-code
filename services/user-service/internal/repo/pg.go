@@ -2154,10 +2154,21 @@ func (s *PGStore) updateTechMember(ctx context.Context, teamID, memberID string,
 }
 
 // RemoveTeamMember 移除成员（doctor/technician.team_id 置 NULL；幂等：已 NULL no-op）
+//
+// T743：被移除者若正是 teams.leader，leader 同步置 NULL，且与成员摘除同一事务——
+// 团队里不能留下「负责人已不在成员表」的幽灵引用。
+// 只有真正摘掉成员（RowsAffected>0）才解 leader：重复移除或不存在的 memberId 是 0 行 no-op，
+// 不得把 leader 误清（T743 判据 3）。
 func (s *PGStore) RemoveTeamMember(ctx context.Context, teamID, memberID, memberType string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	// 1. 团队存在性
 	var teamOK bool
-	if err := s.pool.QueryRow(ctx,
+	if err := tx.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM teams WHERE team_id = $1)`, teamID).Scan(&teamOK); err != nil {
 		return err
 	}
@@ -2165,14 +2176,25 @@ func (s *PGStore) RemoveTeamMember(ctx context.Context, teamID, memberID, member
 		return ErrTeamNotFound
 	}
 	// 2. 置 NULL（幂等：已 NULL 或 member 不属本团队 → 0 行 no-op）
+	var tag pgconn.CommandTag
 	if memberType == "doctor" {
-		_, err := s.pool.Exec(ctx,
+		tag, err = tx.Exec(ctx,
 			`UPDATE doctors SET team_id = NULL WHERE doctor_id = $1 AND team_id = $2`, memberID, teamID)
+	} else {
+		tag, err = tx.Exec(ctx,
+			`UPDATE technicians SET team_id = NULL WHERE tech_id = $1 AND team_id = $2`, memberID, teamID)
+	}
+	if err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx,
-		`UPDATE technicians SET team_id = NULL WHERE tech_id = $1 AND team_id = $2`, memberID, teamID)
-	return err
+	// 3. 被摘掉的成员就是负责人 → 同事务解引用（leader=memberId 谓词保证非 leader 成员不动）
+	if tag.RowsAffected() > 0 {
+		if _, err = tx.Exec(ctx,
+			`UPDATE teams SET leader = NULL WHERE team_id = $1 AND leader = $2`, teamID, memberID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // ─────────────────────────────────────────────────────────────

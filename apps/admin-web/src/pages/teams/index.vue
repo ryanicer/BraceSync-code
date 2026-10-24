@@ -77,6 +77,15 @@
 
     <!-- 成员管理模式 -->
     <div v-else class="member-panel">
+      <!-- T743：负责人被移除后 teams.leader 为空，顶部给出重新指定入口提示；有 leader 时不渲染，布局不变 -->
+      <el-alert
+        v-if="currentTeam && !currentTeam.leader"
+        class="leader-missing-hint"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="请重新指定负责人"
+      />
       <div class="member-panel-header">
         <span class="member-panel-title">团队: {{ currentTeam?.name }} - 成员管理</span>
         <el-button size="small" @click="mode = 'list'">返回</el-button>
@@ -474,10 +483,19 @@ async function confirmRemoveMember(row: TeamMember) {
   } catch {
     return // 取消
   }
+  const teamId = currentTeam.value.teamId
   try {
-    await removeTeamMemberApi(currentTeam.value.teamId, row.memberId, row.memberType)
+    await removeTeamMemberApi(teamId, row.memberId, row.memberType)
     // 乐观移除本地行（幂等）
     memberList.value = memberList.value.filter((m) => m.memberId !== row.memberId)
+    // T743：后端同事务清了 teams.leader 时本地跟着落，否则顶部提示要等下次进页才出现
+    if (currentTeam.value?.teamId === teamId && currentTeam.value.leader === row.memberId) {
+      currentTeam.value = { ...currentTeam.value, leader: null, leaderName: null }
+    }
+    const idx = teams.value.findIndex((t) => t.teamId === teamId)
+    if (idx >= 0 && teams.value[idx].leader === row.memberId) {
+      teams.value[idx] = { ...teams.value[idx], leader: null, leaderName: null }
+    }
     ElMessage.success('移除成功')
     loadStats()
   } catch (e: unknown) {
@@ -569,6 +587,9 @@ onMounted(async () => {
 }
 .member-role-filter {
   width: 150px;
+}
+.leader-missing-hint {
+  margin-bottom: 12px;
 }
 .member-panel-header {
   display: flex;

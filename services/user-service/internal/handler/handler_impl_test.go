@@ -1440,8 +1440,20 @@ func TestGetTeam(t *testing.T) {
 	assert.Equal(t, "TEAM01", e.store.lastGetTeamID)
 	var d model.TeamDetailDTO
 	require.NoError(t, json.Unmarshal(resp.Data, &d))
-	assert.Equal(t, "D01", d.Leader)
-	assert.Equal(t, "医生甲", d.LeaderName)
+	require.NotNil(t, d.Leader)
+	assert.Equal(t, "D01", *d.Leader)
+	require.NotNil(t, d.LeaderName)
+	assert.Equal(t, "医生甲", *d.LeaderName)
+	// T743：无负责人时详情必须回 JSON null（与列表同口径，不是空串）
+	e.store.gotTeam = &repo.TeamDetailRow{
+		TeamID: "TEAM02", Name: "二组", MemberCount: 1, PatientCount: 0,
+		Status: "active", TeamType: "medical", CreatedAt: created,
+	}
+	w, resp = e.do(http.MethodGet, "/api/v1/teams/TEAM02", nil, nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.JSONEq(t, `{"teamId":"TEAM02","name":"二组","leader":null,"leaderName":null,
+		"memberCount":1,"patientCount":0,"description":"","status":"active","createdAt":"2026-09-01T08:30:00Z",
+		"teamType":"medical"}`, string(resp.Data))
 	// 详情比列表多的三列必须一起回，否则编辑弹窗仍只能读列表行
 	assert.Equal(t, "脊柱侧弯矫形", d.Description)
 	assert.Equal(t, "active", d.Status)
