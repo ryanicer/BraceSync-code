@@ -125,8 +125,8 @@ export function mockRegisterDevice(input: { deviceId: string; model?: string }):
     firmwareVersion: '',
     patientId: null,
     wifiSsid: null,
-    // T508：刚注册的设备面积未配置（后台还没填）⇒ null，与真实写路径同形
-    contactAreaCm2: null,
+    // T715：建设备服务端落默认值 0.64；T716 前端随后按表单输入覆盖
+    contactAreaCm2: 0.64,
     bindTime: null,
     status: 'unbound',
     lastReportAt: null,
@@ -136,6 +136,14 @@ export function mockRegisterDevice(input: { deviceId: string; model?: string }):
   SECRET_BY_DEVICE.set(deviceId, secret)
   SECRET_VERSION_BY_DEVICE.set(deviceId, 1)
   return { ...dev, deviceSecret: secret }
+}
+
+/** T508 整值覆盖：与 device-service 同判据，非正数一律拒绝。 */
+export function mockSetDeviceContactArea(deviceId: string, contactAreaCm2: number): void {
+  if (!(contactAreaCm2 > 0)) throw new Error(`受压面积必须大于 0: ${contactAreaCm2}`)
+  const dev = DEVICES.find((d) => d.deviceId === deviceId)
+  if (!dev) throw new Error(`设备不存在: ${deviceId}`)
+  dev.contactAreaCm2 = contactAreaCm2
 }
 
 /** 重生成：新值覆盖旧值（一次性回显），版本号自增 —— 旧明文此后取不到也签不过。 */

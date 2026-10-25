@@ -219,12 +219,71 @@ test.describe('设备管理 T268（注册入口 + 列表列 + 详情）', () => 
     await page.getByRole('button', { name: '注册设备' }).click()
     const dialog = page.locator('.el-dialog')
     await dialog.locator('input').first().fill('E2E-DEV-001')
+    await dialog.getByPlaceholder('如 0.64').fill('0.64')
     await dialog.getByRole('button', { name: '注册' }).click()
     await expect(adminMessage(page)).toContainText('设备已注册')
     const row = tableRows(page).filter({ hasText: 'E2E-DEV-001' })
     await expect(row).toHaveCount(1)
     await expect(row).toContainText('未绑定')
     await expect(row).toContainText('PRS-ML05-RC')
+  })
+
+  test('注册设备：受压面积空值/0/三位小数前端拦截，不发请求也不进列表', async ({ page }) => {
+    await page.getByRole('button', { name: '注册设备' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('E2E-AREA-BAD')
+
+    await dialog.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('请输入受压面积')
+    await expect(dialog.locator('.field-error')).toContainText('请输入受压面积')
+
+    const areaInput = dialog.getByPlaceholder('如 0.64')
+    await areaInput.fill('0')
+    await dialog.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('受压面积必须大于 0')
+
+    await areaInput.fill('1.234')
+    await dialog.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('最多两位小数')
+    await expect(tableRows(page).filter({ hasText: 'E2E-AREA-BAD' })).toHaveCount(0)
+  })
+
+  test('注册设备：面积随建设备落库，详情可修改，幂等重注册不覆盖', async ({ page }) => {
+    await page.getByRole('button', { name: '注册设备' }).click()
+    const dialog = page.locator('.el-dialog')
+    await dialog.locator('input').first().fill('E2E-DEV-AREA')
+    await dialog.getByPlaceholder('如 0.64').fill('1.25')
+    await dialog.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('设备已注册')
+
+    // admin 注册成功会弹一次性密钥窗，先关掉再操作列表/抽屉
+    const secretDialog = page.locator('.el-dialog').filter({ hasText: '验签密钥仅此次展示' })
+    await expect(secretDialog).toBeVisible()
+    await secretDialog.getByRole('button', { name: '我已保存' }).click()
+
+    await tableRows(page).filter({ hasText: 'E2E-DEV-AREA' }).getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.el-drawer')
+    await expect(drawer).toContainText('1.25 cm²')
+    await expect(drawer).toContainText('配置入口')
+    await expect(drawer).toContainText('设备管理 → 受压面积')
+
+    await drawer.getByRole('button', { name: '修改' }).click()
+    const areaDialog = page.locator('.el-dialog').filter({ hasText: '修改受压面积' })
+    await areaDialog.getByPlaceholder('如 0.64').fill('2')
+    await areaDialog.getByRole('button', { name: '保存' }).click()
+    await expect(adminMessage(page)).toContainText('受压面积已保存')
+    await expect(drawer).toContainText('2 cm²')
+
+    await drawer.locator('.el-drawer__close-btn').click()
+    await page.getByRole('button', { name: '注册设备' }).click()
+    const again = page.locator('.el-dialog').filter({ hasText: '注册设备' })
+    await again.locator('input').first().fill('E2E-DEV-AREA')
+    await again.getByPlaceholder('如 0.64').fill('9')
+    await again.getByRole('button', { name: '注册' }).click()
+    await expect(adminMessage(page)).toContainText('面积未变更')
+
+    await tableRows(page).filter({ hasText: 'E2E-DEV-AREA' }).getByRole('button', { name: '详情' }).click()
+    await expect(page.locator('.el-drawer')).toContainText('2 cm²')
   })
 
   test('详情抽屉：设备信息 + 绑定历史', async ({ page }) => {

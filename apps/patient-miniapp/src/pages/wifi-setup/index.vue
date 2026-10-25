@@ -49,6 +49,7 @@
       v-else-if="view === 'success'"
       :device-label="deviceLabel"
       :network-name="enteredSsid"
+      :area-missing="areaMissing"
       @primary="goMonitor"
       @secondary="goDevicePage"
     />
@@ -213,6 +214,9 @@ let mockSequence: number[] | undefined
 
 /** 患者端设备标识只到广播名（PRD §7A.9：不展示完整 device_id） */
 const deviceLabel = computed(() => scannedName.value || broadcastNameOf(cloudDeviceId.value))
+
+/** T716：配网成功页只在快照明确回传 null 时提示；undefined = 尚未取到，不误报 */
+const areaMissing = computed(() => deviceStore.currentDevice?.contactAreaCm2 === null)
 
 const networkText = computed(() => {
   const ssid = deviceStore.currentDevice?.wifiSsid
