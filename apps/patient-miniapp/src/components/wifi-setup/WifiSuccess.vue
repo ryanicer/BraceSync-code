@@ -22,6 +22,10 @@
       </view>
     </view>
 
+    <view v-if="areaMissing" class="area-warn">
+      <text>{{ AREA_MISSING_HINT }}</text>
+    </view>
+
     <view class="benefit">
       <text class="benefit-head">{{ SUCCESS.benefitTitle }}</text>
       <text v-for="(b, i) in SUCCESS.benefits" :key="i" class="benefit-line">· {{ b }}</text>
@@ -34,14 +38,17 @@
 
 <script setup lang="ts">
 import { SUCCESS } from '../../utils/wifi-copy'
+import { AREA_MISSING_HINT } from '@bracesync/shared-utils'
 
 /**
  * deviceLabel 由页面传入广播名（BSYNC- + device_id 后 6 位）。
  * PRD §7A.9 患技差异表：完整 device_id 不展示给患者。
+ * areaMissing 只在快照明确为 null 时传 true（与 T714 默认 0.64 叠加，只有真被清空才提示）。
  */
 defineProps<{
   deviceLabel: string
   networkName: string
+  areaMissing?: boolean
 }>()
 
 defineEmits<{ (e: 'primary'): void; (e: 'secondary'): void }>()
@@ -64,6 +71,9 @@ defineEmits<{ (e: 'primary'): void; (e: 'secondary'): void }>()
 .tag-online { display: inline-flex; align-items: center; }
 .tag-online text { font-size: 22rpx; color: #10ac84; background: #e8f5e9; padding: 4rpx 16rpx; border-radius: 20rpx; }
 .dot { width: 12rpx; height: 12rpx; border-radius: 50%; background: #10ac84; margin-right: 8rpx; }
+
+.area-warn { margin: 32rpx 40rpx 0; background: #fffbeb; border: 2rpx solid #fcd34d; border-radius: 20rpx; padding: 24rpx 28rpx; }
+.area-warn text { font-size: 26rpx; color: #92400e; line-height: 1.6; }
 
 .benefit { margin: 48rpx 40rpx 0; background: #eff6ff; border: 2rpx solid #bfdbfe; border-radius: 20rpx; padding: 28rpx; }
 .benefit-head { font-size: 26rpx; font-weight: 700; color: #2563eb; display: block; margin-bottom: 8rpx; }

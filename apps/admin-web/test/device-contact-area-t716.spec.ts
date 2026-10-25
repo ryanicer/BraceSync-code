@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parseContactArea } from '../src/utils/deviceContactArea'
+import { AREA_MISSING_HINT } from '@bracesync/shared-utils'
 import * as deviceMock from '../src/mock/devices'
 
 const appRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -115,7 +116,7 @@ describe('T716 真实模式守卫', () => {
 
 describe('T716 页面接线（源码级）', () => {
   it('注册弹窗有受压面积必填项，且校验先于发请求', () => {
-    expect(pageSrc).toContain('label="受压面积（cm²）" required')
+    expect(pageSrc).toContain('label="受压面积" required')
     expect(pageSrc.indexOf('parseContactArea(registerForm.value.area)')).toBeGreaterThan(-1)
     expect(pageSrc.indexOf('parseContactArea(registerForm.value.area)')).toBeLessThan(
       pageSrc.indexOf('await registerDeviceApi('),
@@ -131,9 +132,41 @@ describe('T716 页面接线（源码级）', () => {
     expect(guardAt).toBeGreaterThan(-1)
   })
 
-  it('详情抽屉有受压面积行与修改入口', () => {
+  it('详情抽屉有受压面积行、修改入口与完整配置路径', () => {
     expect(pageSrc).toContain('label="受压面积"')
+    expect(pageSrc).toContain('label="配置入口"')
+    expect(pageSrc).toContain('设备管理 → 受压面积')
     expect(pageSrc).toContain('openAreaDialog')
     expect(pageSrc).toContain('submitArea')
+  })
+})
+
+// ===== T716 两端互指闭环（PM 定稿句 ↔ admin 标签/路径）=====
+describe('T716 两端互指自证', () => {
+  const repoRoot = join(appRoot, '../..')
+  const patientSuccessSrc = readFileSync(
+    join(repoRoot, 'apps/patient-miniapp/src/components/wifi-setup/WifiSuccess.vue'),
+    'utf8',
+  )
+  const patientWifiPageSrc = readFileSync(
+    join(repoRoot, 'apps/patient-miniapp/src/pages/wifi-setup/index.vue'),
+    'utf8',
+  )
+
+  it('患者端提示逐字含后台去处「设备管理 → 受压面积」', () => {
+    expect(AREA_MISSING_HINT).toBe('受压面积未配置，请联系运维人员在管理后台【设备管理 → 受压面积】完成配置')
+    expect(AREA_MISSING_HINT).toContain('管理后台【设备管理 → 受压面积】')
+  })
+
+  it('患者端 wifi-setup 有 contact_area 为 null 的分支，且渲染同一常量', () => {
+    expect(patientWifiPageSrc).toContain('deviceStore.currentDevice?.contactAreaCm2 === null')
+    expect(patientWifiPageSrc).toContain(':area-missing="areaMissing"')
+    expect(patientSuccessSrc).toContain('v-if="areaMissing"')
+    expect(patientSuccessSrc).toContain('{{ AREA_MISSING_HINT }}')
+  })
+
+  it('admin-web 标签同名「受压面积」，详情抽屉显示完整路径', () => {
+    expect(pageSrc).toContain('label="受压面积"')
+    expect(pageSrc).toContain('设备管理 → 受压面积')
   })
 })

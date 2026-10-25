@@ -264,6 +264,8 @@ test.describe('设备管理 T268（注册入口 + 列表列 + 详情）', () => 
     await tableRows(page).filter({ hasText: 'E2E-DEV-AREA' }).getByRole('button', { name: '详情' }).click()
     const drawer = page.locator('.el-drawer')
     await expect(drawer).toContainText('1.25 cm²')
+    await expect(drawer).toContainText('配置入口')
+    await expect(drawer).toContainText('设备管理 → 受压面积')
 
     await drawer.getByRole('button', { name: '修改' }).click()
     const areaDialog = page.locator('.el-dialog').filter({ hasText: '修改受压面积' })

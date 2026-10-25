@@ -74,9 +74,11 @@
         <el-form-item label="型号">
           <el-input v-model="registerForm.model" placeholder="PRS-ML05-RC" />
         </el-form-item>
-        <el-form-item label="受压面积（cm²）" required>
-          <el-input v-model="registerForm.area" placeholder="如 0.64" @input="registerAreaError = ''" />
-          <div class="form-hint">必填：大于 0 的数值，最多两位小数。注册后仍可在设备详情中修改。</div>
+        <el-form-item label="受压面积" required>
+          <el-input v-model="registerForm.area" placeholder="如 0.64" @input="registerAreaError = ''">
+            <template #append>cm²</template>
+          </el-input>
+          <div class="form-hint">必填：大于 0 的数值（单位 cm²），最多两位小数。注册后仍可在设备详情「设备管理 → 受压面积」中修改。</div>
           <div v-if="registerAreaError" class="field-error">{{ registerAreaError }}</div>
         </el-form-item>
         <el-alert
@@ -144,6 +146,7 @@
             <span v-else style="color:#999">未配置</span>
             <el-button link type="primary" size="small" class="area-edit-btn" @click="openAreaDialog">修改</el-button>
           </el-descriptions-item>
+          <el-descriptions-item label="配置入口">设备管理 → 受压面积</el-descriptions-item>
         </el-descriptions>
         <!-- 卡面验收 2 的落点写的是「设备详情 → 下载 secret 文件」，故抽屉里这一对入口与列表行内同源
              （共用 downloadSecret / askRegenerateSecret，不做两套语义） -->
@@ -174,8 +177,10 @@
         <el-form-item label="设备ID">
           <el-input :model-value="detail?.deviceId ?? ''" readonly />
         </el-form-item>
-        <el-form-item label="受压面积（cm²）" required>
-          <el-input v-model="areaForm" placeholder="如 0.64" @input="areaError = ''" />
+        <el-form-item label="受压面积" required>
+          <el-input v-model="areaForm" placeholder="如 0.64" @input="areaError = ''">
+            <template #append>cm²</template>
+          </el-input>
           <div v-if="areaError" class="field-error">{{ areaError }}</div>
         </el-form-item>
       </el-form>
