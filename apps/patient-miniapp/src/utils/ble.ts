@@ -12,6 +12,7 @@
 import { bleLog } from './ble-log'
 import { formatB512FrameLog, parseB512Frame } from './b512-frame'
 import { isLocationPermissionDenied } from './ble-scan-permission'
+import { classifyLocationAuth, type LocationAuthState } from './location-permission'
 import { logErrorText } from '@bracesync/shared-utils'
 import { advertisesB510, createScanDeduper } from './wifi-state'
 
@@ -82,68 +83,127 @@ function isAuthDeny(errMsg: string): boolean {
 
 // ===== 权限前置 =====
 
+/** 读 authSetting 真值；读不到不冒充已授权，按「未询问」交给授权流程兜底 */
+function readLocationAuthState(cb: (state: LocationAuthState) => void) {
+  try {
+    wx.getSetting({
+      success: (res) => {
+        _log('info', `wx.getSetting 成功，authSetting=${JSON.stringify(res.authSetting)}`)
+        cb(classifyLocationAuth(res.authSetting))
+      },
+      fail: (err) => {
+        _log('warn', `wx.getSetting 失败，按未询问处理，errMsg=${err?.errMsg || ''}`)
+        cb('unasked')
+      },
+    })
+  } catch (e) {
+    _log('error', 'wx.getSetting 异常，按未询问处理', logErrorText(e))
+    cb('unasked')
+  }
+}
+
 /**
- * 权限前置：扫描前检查 scope.userLocation（Android BLE 必需）
+ * 权限前置：扫描前确保 scope.userLocation 已授权（Android BLE 必需）
+ *
+ * 三态分别处置：已授权直接用；已拒绝（false）wx.authorize 不再弹框，只能引导去设置页；
+ * 从未询问才走「隐私授权门 -> wx.authorize 系统弹框」。任何读不到/异常都不返回 true。
  */
 export async function ensureLocationPermission(): Promise<boolean> {
   if (isH5()) return true
   // #ifdef MP-WEIXIN
   _log('info', 'ensureLocationPermission 入口')
   return new Promise((resolve) => {
-    const checkAndRequest = () => {
+    let settled = false
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      resolve(ok)
+    }
+
+    const guideToSetting = () => {
+      uni.showModal({
+        title: '需要位置权限',
+        content: '需要在手机设置中允许微信使用位置信息，开启后返回即可继续扫描',
+        confirmText: '去设置',
+        success: (r) => {
+          if (!r.confirm) {
+            finish(false)
+            return
+          }
+          wx.openSetting({
+            success: () => {
+              readLocationAuthState((state) => {
+                _log('info', `openSetting 返回后位置权限态=${state}`)
+                finish(state === 'granted')
+              })
+            },
+            fail: (err) => {
+              _log('warn', `wx.openSetting 失败，errMsg=${err?.errMsg || 'unknown'}`)
+              finish(false)
+            },
+          })
+        },
+        fail: () => finish(false),
+      })
+    }
+
+    const requestAuthorize = () => {
+      _log('info', '调用 wx.authorize 申请位置权限')
+      wx.authorize({
+        scope: 'scope.userLocation',
+        success: () => {
+          _log('info', 'wx.authorize 位置权限成功')
+          finish(true)
+        },
+        fail: (err) => {
+          _log('warn', `wx.authorize 未通过，errMsg=${err?.errMsg || 'unknown'}`)
+          guideToSetting()
+        },
+      })
+    }
+
+    // 2023-09 隐私规则：未同意隐私保护指引时，部分基础库直接拒弹系统授权框
+    const requestWithPrivacyGate = () => {
+      const requirePrivacy = (wx as unknown as {
+        requirePrivacyAuthorize?: (opts: { success?: () => void; fail?: (err?: { errMsg?: string }) => void }) => void
+      }).requirePrivacyAuthorize
+      if (typeof requirePrivacy !== 'function') {
+        requestAuthorize()
+        return
+      }
       try {
-        wx.getSetting({
-          success: (res) => {
-            _log('info', `wx.getSetting 成功，authSetting=${JSON.stringify(res.authSetting)}`)
-            if (res.authSetting['scope.userLocation']) {
-              _log('info', '位置权限已授权')
-              resolve(true)
-              return
-            }
-            _log('warn', 'scope.userLocation 未授权，尝试 wx.authorize')
-            wx.authorize({
-              scope: 'scope.userLocation',
-              success: () => {
-                _log('info', 'wx.authorize 位置权限成功')
-                resolve(true)
-              },
-              fail: (err) => {
-                _log('warn', `wx.authorize 被拒，errMsg=${err?.errMsg || 'unknown'}`)
-                uni.showModal({
-                  title: '需要位置权限',
-                  content: '需要在手机设置中允许微信使用位置信息，开启后返回即可继续扫描',
-                  confirmText: '去设置',
-                  success: (r) => {
-                    if (r.confirm) {
-                      wx.openSetting({
-                        success: () => {
-                          setTimeout(() => {
-                            wx.getSetting({
-                              success: (s2) => resolve(!!s2.authSetting['scope.userLocation']),
-                              fail: () => resolve(false),
-                            })
-                          }, 300)
-                        },
-                        complete: () => {},
-                      })
-                    } else {
-                      resolve(false)
-                    }
-                  },
-                  fail: () => resolve(false),
-                })
-              },
-            })
-          },
+        requirePrivacy({
+          success: () => requestAuthorize(),
           fail: (err) => {
-            _log('warn', `wx.getSetting 失败（不阻断），errMsg=${err?.errMsg || ''}`)
-            resolve(true)
+            _log('warn', `requirePrivacyAuthorize 未通过，errMsg=${err?.errMsg || 'unknown'}`)
+            uni.showModal({
+              title: '需要同意隐私保护指引',
+              content: '扫描并连接监测器前需同意隐私保护指引，请点击同意后重试',
+              showCancel: false,
+              success: () => finish(false),
+              fail: () => finish(false),
+            })
           },
         })
       } catch (e) {
-        _log('error', 'ensureLocationPermission 异常', logErrorText(e))
-        resolve(true)
+        _log('error', 'requirePrivacyAuthorize 异常，降级直调 wx.authorize', logErrorText(e))
+        requestAuthorize()
       }
+    }
+
+    const checkAndRequest = () => {
+      readLocationAuthState((state) => {
+        _log('info', `位置权限态=${state}`)
+        if (state === 'granted') {
+          finish(true)
+          return
+        }
+        if (state === 'denied') {
+          guideToSetting()
+          return
+        }
+        requestWithPrivacyGate()
+      })
     }
 
     let systemSettingResolved = false
@@ -161,8 +221,8 @@ export async function ensureLocationPermission(): Promise<boolean> {
               content: '扫描蓝牙设备需要开启手机位置服务，请在系统设置中开启后重试',
               confirmText: '我知道了',
               showCancel: false,
-              success: () => resolve(false),
-              fail: () => resolve(false),
+              success: () => finish(false),
+              fail: () => finish(false),
             })
             return
           }
@@ -424,7 +484,8 @@ export async function isBluetoothReady(): Promise<boolean> {
 }
 
 /**
- * 位置权限是否已授权（只读查询，不触发授权弹窗；授权动作由页面按设计稿弹窗引导）。
+ * 位置权限是否已授权（只读查询，不触发授权弹窗）。
+ * 只认真实 authSetting === true：undefined（从未询问）与读失败都算未授权，不得显示成"已授权"。
  */
 export async function isLocationAuthed(): Promise<boolean> {
   if (isH5()) return true
@@ -432,11 +493,15 @@ export async function isLocationAuthed(): Promise<boolean> {
   return new Promise((resolve) => {
     try {
       wx.getSetting({
-        success: (res) => resolve(res.authSetting['scope.userLocation'] !== false),
-        fail: () => resolve(true),
+        success: (res) => resolve(classifyLocationAuth(res.authSetting) === 'granted'),
+        fail: (err) => {
+          _log('warn', `isLocationAuthed 读 authSetting 失败，按未授权展示，errMsg=${err?.errMsg || ''}`)
+          resolve(false)
+        },
       })
-    } catch {
-      resolve(true)
+    } catch (e) {
+      _log('error', 'isLocationAuthed 异常，按未授权展示', logErrorText(e))
+      resolve(false)
     }
   })
   // #endif
