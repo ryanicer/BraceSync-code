@@ -32,52 +32,64 @@ function fnBody(hay: string, name: string): string {
   return next === -1 ? rest : rest.slice(0, next)
 }
 
-describe('T218 A-1 — B513 订阅按链路代次重发（T216① 同款）', () => {
-  it('一次性 latch 变量 realtimeNotifyRegistered 已删除', () => {
-    expect(src).not.toContain('realtimeNotifyRegistered')
+describe('T749 — B513 每次重连强制重订阅（T218 A-1 短路已删）', () => {
+  it('「已订阅跳过重复 notify」短路与订阅标记已删除（B512 不受影响）', () => {
+    expect(src).not.toContain('realtimeSubscribedKey')
+    expect(src).not.toContain('realtimeInFlightKey')
+    expect(src).not.toContain('B513 当前链路已订阅')
+    expect(src).not.toContain('invalidateRealtimeSubscription')
+    // B512 的链路代次短路不在本卡范围，仍应保留
+    expect(src).toContain('B512 当前链路已订阅')
   })
 
-  it('B513 订阅 key = deviceId#linkGeneration，判定在发起之前', () => {
-    const body = fnBody(src, 'startRealtimePressure')
-    expect(body).toContain('${deviceId}#${linkGeneration}')
-    const atKey = body.indexOf('const key = ')
-    const atGuard = body.indexOf('realtimeSubscribedKey === key')
+  it('订阅收进独立函数：success 才 resolve，fail 必须 reject（不再静默吞错）', () => {
+    const body = fnBody(src, 'subscribeRealtimeNotify')
     const atNotify = body.indexOf('uni.notifyBLECharacteristicValueChange(')
-    expect(atGuard, '缺少"当前链路已订阅"判定').toBeGreaterThan(-1)
-    expect(atNotify).toBeGreaterThan(-1)
-    expect(atKey).toBeGreaterThan(-1)
-    expect(atGuard).toBeLessThan(atNotify)
-  })
-
-  it('B513 订阅标记只在 success 回执授予；fail 只清 in-flight', () => {
-    const body = fnBody(src, 'startRealtimePressure')
-    const atNotify = body.indexOf('uni.notifyBLECharacteristicValueChange(')
-    const atSuccess = body.indexOf('success: ()', atNotify)
+    const atSuccess = body.indexOf('success: () =>', atNotify)
     const atFail = body.indexOf('fail: (err)', atNotify)
-    expect(atSuccess).toBeGreaterThan(-1)
+    expect(atNotify).toBeGreaterThan(-1)
+    expect(atSuccess).toBeGreaterThan(atNotify)
     expect(atFail).toBeGreaterThan(atSuccess)
-    const grant = 'realtimeSubscribedKey = key'
-    expect(body.slice(atSuccess, atFail)).toContain(grant)
-    expect(body.slice(0, atNotify), '发起前不得预占坑').not.toContain(grant)
-    expect(body.slice(atFail)).not.toContain(grant)
-    expect(body).toMatch(/if \(realtimeInFlightKey === key\) realtimeInFlightKey = ''/)
+    expect(body.slice(atSuccess, atFail)).toContain('resolve()')
+    expect(body.slice(atFail)).toContain('reject(')
   })
 
-  it('复位入口：断开回调与主动关连接都会作废 B513 标记（且 in-flight 一并作废）', () => {
-    const listener = fnBody(src, 'registerBleStateListener')
-    expect(listener).toContain('invalidateRealtimeSubscription(')
-    const close = fnBody(src, 'closeBLEConnection')
-    expect(close).toContain('invalidateRealtimeSubscription(')
-    const inv = fnBody(src, 'invalidateRealtimeSubscription')
-    expect(inv).toMatch(/if \(!realtimeSubscribedKey && !realtimeInFlightKey\) return/)
-    expect(inv).toContain("realtimeInFlightKey = ''")
+  it('先等订阅回调、再写 0x01（旧实现两件事并发，重连后 CCCD 未生效就启动推送）', () => {
+    const body = fnBody(src, 'startRealtimePressure')
+    const atSubscribe = body.indexOf('await subscribeRealtimeNotify(deviceId)')
+    const atPush = body.indexOf('await startRealtimePush(deviceId)')
+    expect(atSubscribe).toBeGreaterThan(-1)
+    expect(atPush).toBeGreaterThan(atSubscribe)
+    // 订阅与写 0x01 都不再内联在启动函数里
+    expect(body).not.toContain('uni.notifyBLECharacteristicValueChange(')
+  })
+
+  it('首帧确认：窗口内零帧则强制重订阅并重启推送一次', () => {
+    const body = fnBody(src, 'startRealtimePressure')
+    const atWait = body.indexOf('await waitRealtimeFirstFrame(seqBeforeStart)')
+    const atWarn = body.indexOf('未收到首帧')
+    const atRetry = body.indexOf('await subscribeRealtimeNotify(deviceId)', atWait + 1)
+    expect(atWait).toBeGreaterThan(-1)
+    expect(atWarn).toBeGreaterThan(atWait)
+    expect(atRetry).toBeGreaterThan(atWarn)
+    expect(body.slice(atRetry)).toContain('await startRealtimePush(deviceId)')
+    expect(src).toContain('B513_FIRST_FRAME_WAIT_MS')
+  })
+
+  it('帧解析成功后累加序号（首帧确认的判据来源）', () => {
+    const body = fnBody(src, 'startRealtimePressure')
+    const atSeq = body.indexOf('realtimeFrameSeq += 1')
+    // H5 mock 分支也有一处 realtimeCallback?.(frame)，这里只认监听块内的那处
+    const atCallback = body.indexOf('realtimeCallback?.(frame)', atSeq)
+    expect(atSeq).toBeGreaterThan(-1)
+    expect(atCallback).toBeGreaterThan(-1)
+    expect(atSeq).toBeLessThan(atCallback)
   })
 
   it('B513 全局帧监听仍只注册一次、不叠加', () => {
     const body = fnBody(src, 'startRealtimePressure')
     expect(body).toContain('if (!realtimeListenerRegistered)')
     expect(body).toMatch(/realtimeListenerRegistered = true/)
-    // 监听注册只出现一次；订阅动作（notifyBLECharacteristicValueChange）在监听块之外
     expect(body.split('uni.onBLECharacteristicValueChange(').length - 1).toBe(1)
   })
 })

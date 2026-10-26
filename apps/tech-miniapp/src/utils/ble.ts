@@ -553,8 +553,7 @@ export function registerBleStateListener(
     if (!res.connected) {
       // T216: 链路一断，B512 订阅随之失效 ⇒ 复位标记，重连后必然重订阅
       invalidateB512Subscription(`链路断开 deviceId=${res.deviceId}`)
-      // T218 A-1: B513 实时流订阅同链路同命运，一并作废
-      invalidateRealtimeSubscription(`链路断开 deviceId=${res.deviceId}`)
+      // T749: B513 不再有「已订阅」短路标记，每次 startRealtimePressure 都强制重订阅
     }
     for (const fn of bleStateCallbacks) fn(res.deviceId, res.connected)
   })
@@ -566,7 +565,7 @@ export async function closeBLEConnection(deviceId: string): Promise<void> {
     return
   }
   invalidateB512Subscription(`主动关闭连接 deviceId=${deviceId}`)
-  invalidateRealtimeSubscription(`主动关闭连接 deviceId=${deviceId}`)
+  // T749: B513 订阅不设标记，重连后由 startRealtimePressure 强制重订阅
   return new Promise((resolve) => {
     uni.closeBLEConnection({
       deviceId,
@@ -605,26 +604,81 @@ export async function readFirmwareVersion(deviceId: string): Promise<string> {
 
 let realtimeTimer: ReturnType<typeof setInterval> | null = null
 let realtimeCallback: ((frame: number[]) => void) | null = null
-// T218 A-1: 订阅按「deviceId + 链路代次」判定（T216① 同款），标记只在 success 回执授予。
-// 旧的一次性布尔没有复位入口 ⇒ 断一次链、重连后不再订阅，校准/测压页压力数恒 0。
 let realtimeListenerRegistered = false
-let realtimeSubscribedKey = ''
-/** 已发出、正等回执的订阅；只在 success/fail 回执里清空——realtimeSubscribedKey 必须由 success 授予 */
-let realtimeInFlightKey = ''
 let realtimeSubscribeRounds = 0
 let realtimeDeviceId = ''
+/** 已解析帧计数：用于「订阅回调成功但 CCCD 未真正生效」的首帧确认（T749） */
+let realtimeFrameSeq = 0
 // T109: B513 分包拼接缓冲区（默认 MTU 下 40 字节帧被拆成 2×20 字节 Notify）
 let realtimeBuffer: number[] = []
 
+/** B513 首帧等待窗口：notify 回执成功不代表 CCCD 已真正生效（重连后尤甚），到点零帧即重订阅一次 */
+const B513_FIRST_FRAME_WAIT_MS = 2500
+
 /**
- * T218 A-1: 作废「B513 当前订阅仍然生效」的标记。
- * 链路一走 CCCD 订阅即失效；不复位 ⇒ 重连后 startRealtimePressure 跳过订阅、零收帧。
+ * T749：每次启动都强制重订阅 B513，并等 success 回执。
+ * 旧实现按 deviceId#linkGeneration 短路「已订阅」，重连后首次订阅回调未必真正生效，
+ * 后续 start 反复跳过 notify ⇒ 设备在发帧、端上 0 帧 ⇒ 校准 10s 超时（二次绑必现）。
  */
-function invalidateRealtimeSubscription(reason: string): void {
-  if (!realtimeSubscribedKey && !realtimeInFlightKey) return
-  realtimeSubscribedKey = ''
-  realtimeInFlightKey = ''
-  bleLog.warn(`B513 订阅标记复位（${reason}）`)
+function subscribeRealtimeNotify(deviceId: string): Promise<void> {
+  realtimeSubscribeRounds += 1
+  const round = realtimeSubscribeRounds
+  bleLog.info(`B513 强制重订阅 第${round}次 deviceId=${deviceId} linkGeneration=${linkGeneration}`)
+  return new Promise((resolve, reject) => {
+    uni.notifyBLECharacteristicValueChange({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_REALTIME,
+      state: true,
+      success: () => {
+        bleLog.info(`B513 Notify 订阅成功 第${round}次 deviceId=${deviceId} linkGeneration=${linkGeneration}`)
+        resolve()
+      },
+      fail: (err) => {
+        bleLog.error(`B513 Notify 订阅失败 第${round}次 deviceId=${deviceId} linkGeneration=${linkGeneration}`, err?.errMsg)
+        reject(new Error(`B513 通知订阅失败: ${err?.errMsg || 'unknown'}`))
+      },
+    })
+  })
+}
+
+/** 写入 0x01 启动设备侧推送 */
+function startRealtimePush(deviceId: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    uni.writeBLECharacteristicValue({
+      deviceId,
+      serviceId: SERVICE_UUID,
+      characteristicId: CHAR_REALTIME,
+      value: new Uint8Array([0x01]).buffer,
+      success: () => {
+        bleLog.info('B513 写入 0x01 成功，实时推送已启动')
+        resolve()
+      },
+      fail: (err) => {
+        bleLog.error('B513 写入 0x01 失败', err?.errMsg)
+        reject(new Error(`启动实时推送失败: ${err.errMsg}`))
+      },
+    })
+  })
+}
+
+/** 等一条已解析帧从 fromSeq 之后到达；超时返回 false（不抛错，由调用方决定是否重订阅） */
+function waitRealtimeFirstFrame(fromSeq: number, timeoutMs = B513_FIRST_FRAME_WAIT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs
+    const tick = () => {
+      if (realtimeFrameSeq > fromSeq) {
+        resolve(true)
+        return
+      }
+      if (Date.now() >= deadline) {
+        resolve(false)
+        return
+      }
+      setTimeout(tick, 150)
+    }
+    tick()
+  })
 }
 
 /**
@@ -644,8 +698,8 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
     return
   }
   realtimeDeviceId = deviceId
-  bleLog.info(`startRealtimePressure deviceId=${deviceId}，写入 0x01 启动 B513 Notify`)
-  // 1. 全局帧监听只注册一次；订阅动作按「deviceId + 链路代次」判定，重连/换设备必重发（T218 A-1）
+  bleLog.info(`startRealtimePressure deviceId=${deviceId}，强制重订阅 B513 并写入 0x01 启动推送`)
+  // 1. 全局帧监听只注册一次
   if (!realtimeListenerRegistered) {
     realtimeListenerRegistered = true
     uni.onBLECharacteristicValueChange((res) => {
@@ -672,6 +726,7 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
           }
           // T173-dbg：原始 int16（mN）观测日志——供核对设备上报口径，勿删
           bleLog.info(`B513 raw mN P01..P05=[${frame.slice(0, 5).join(',')}] rawAll=[${frame.join(',')}]`)
+          realtimeFrameSeq += 1
           realtimeCallback?.(frame)
         }
       } catch (e) {
@@ -680,51 +735,20 @@ export async function startRealtimePressure(deviceId: string): Promise<void> {
     })
   }
 
-  const key = `${deviceId}#${linkGeneration}`
-  if (realtimeSubscribedKey === key || realtimeInFlightKey === key) {
-    bleLog.info(`B513 当前链路已订阅，跳过重复 notify deviceId=${deviceId} linkGeneration=${linkGeneration}`)
-  } else {
-    realtimeInFlightKey = key
-    realtimeSubscribeRounds += 1
-    const round = realtimeSubscribeRounds
-    bleLog.info(`B513 发起订阅 第${round}次 deviceId=${deviceId} linkGeneration=${linkGeneration}`)
-    uni.notifyBLECharacteristicValueChange({
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_REALTIME,
-      state: true,
-      success: () => {
-        // 🔴 标记只在 success 回执里授予（发起前置真 ⇒ 订阅 fail 后本链路永不重试）
-        if (realtimeInFlightKey !== key) return
-        realtimeInFlightKey = ''
-        realtimeSubscribedKey = key
-        bleLog.info(`B513 Notify 订阅成功 第${round}次 deviceId=${deviceId}`)
-      },
-      fail: (err) => {
-        // 只清 in-flight，不置 subscribedKey ⇒ 下一轮（含同一链路）可重试
-        if (realtimeInFlightKey === key) realtimeInFlightKey = ''
-        bleLog.error(`B513 Notify 订阅失败 第${round}次 deviceId=${deviceId}`, err?.errMsg)
-      },
-    })
-  }
-  // 2. 写入 0x01 启动推送
-  await new Promise<void>((resolve, reject) => {
-    uni.writeBLECharacteristicValue({
-      deviceId,
-      serviceId: SERVICE_UUID,
-      characteristicId: CHAR_REALTIME,
-      value: new Uint8Array([0x01]).buffer,
-      success: () => {
-        bleLog.info('B513 写入 0x01 成功，实时推送已启动')
-        resolve()
-      },
-      fail: (err) => {
-        bleLog.error('B513 写入 0x01 失败', err?.errMsg)
-        reject(new Error(`启动实时推送失败: ${err.errMsg}`))
-      },
-    })
-  })
+  // 2. 订阅必须等 success 回执再写 0x01（旧实现并发写，重连后 CCCD 尚未生效就启动推送）
+  const seqBeforeStart = realtimeFrameSeq
+  await subscribeRealtimeNotify(deviceId)
+  await startRealtimePush(deviceId)
+
+  // 3. 首帧确认：notify 回执成功但端上 0 帧 ⇒ 强制重订阅并重启推送一次（T749 二次绑必现场景的兜底）
+  if (await waitRealtimeFirstFrame(seqBeforeStart)) return
+  bleLog.warn(
+    `B513 订阅成功后 ${B513_FIRST_FRAME_WAIT_MS}ms 未收到首帧，强制重订阅并重启推送（一次）deviceId=${deviceId} linkGeneration=${linkGeneration}`,
+  )
+  await subscribeRealtimeNotify(deviceId)
+  await startRealtimePush(deviceId)
 }
+
 
 /** 停止 BLE 实时压力推送：向 B513 写 0x00 停止 Notify */
 export async function stopRealtimePressure(deviceId: string): Promise<void> {
