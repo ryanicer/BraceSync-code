@@ -385,6 +385,8 @@ function onFrame(frame: number[]) {
   if (collectedFrames.length >= CALIBRATION_FRAME_COUNT) return
   collectedFrames.push([...frame])
   frameCount.value = collectedFrames.length
+  // T749：已收帧数进日志——订阅看似成功但零帧时，靠这条区分「一帧没到」与「到帧后中断」
+  bleLog.info(`校准帧已收 ${collectedFrames.length}/${CALIBRATION_FRAME_COUNT} 帧`)
   // 收齐 5 帧直接汇总，不再等轮询
   if (collectedFrames.length === CALIBRATION_FRAME_COUNT) {
     finalizeCalibration()
