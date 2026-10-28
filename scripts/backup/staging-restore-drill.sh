@@ -57,7 +57,10 @@ fi
 
 source <(grep -E '^(COS_SECRET_ID|COS_SECRET_KEY|COS_BUCKET|COS_REGION)=' "$ENV_FILE")
 
+# COS_BUCKET 为 file-service 用的桶访问域名（<bucket>.cos.<region>.myqcloud.com），
+# coscmd -b 只接受裸桶名，故此处截掉首个点之后的域名后缀
 COS_BUCKET_VAL="${COS_BUCKET:-bracesync-prod}"
+COS_BUCKET_VAL="${COS_BUCKET_VAL%%.*}"
 COS_REGION_VAL="${COS_REGION:-ap-guangzhou}"
 
 #---------- 加载 staging 数据库配置 ----------
