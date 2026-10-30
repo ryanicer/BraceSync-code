@@ -12,5 +12,6 @@ use (
 	./services/msg-service
 	./services/feedback-proxy
 	./services/testhelper
+	./services/units
 	./scripts/dev/device-simulator
 )

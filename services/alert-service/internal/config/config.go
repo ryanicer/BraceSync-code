@@ -15,6 +15,8 @@ package config
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/bracesync/bracesync/services/units"
 )
 
 // sys_configs 配置键（键名与 scripts/db/seed/seed.sql 一致）。
@@ -45,8 +47,9 @@ const ErrCodeThresholdLinkage = 90712
 // sys_configs 阈值行已由迁移统一为 mN（threshold_pressure_high 5→5000、
 // threshold_sensor_drift 0.3→300、wearing_pressure_threshold 0.05→50），
 // 故本包读到的键值直接就是 mN，与帧压力同量纲比较。
-// 与各服务同名常量同值、互不 import（跨模块常量按服务各自本地定义）。
-const MnPerN = 1000.0
+// 分母唯一真源在 services/units；本常量仅为兼容既有调用点保留的别名。
+// 兼容别名：新代码请直接使用 units.MnPerN。
+const MnPerN = units.MnPerN
 
 // ValidationError 配置校验错误（Message 为可读拒绝原因，Code 归错误码分段）
 type ValidationError struct {
