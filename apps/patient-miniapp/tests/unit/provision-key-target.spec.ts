@@ -133,12 +133,11 @@ describe('T730② — 不一致提示把差异摆明（验收 2），且患者�
   })
 })
 
-describe('T730② — 成功回写跟着领 key 的目标走', () => {
-  it('reportDeviceWifi 不再固定打云端那台', () => {
+describe('T730② / T757 — 配网成功日志目标与源码守卫', () => {
+  it('onProvisionSuccess 的日志目标跟着领 key 的目标走，且页面不再引用患者端设备回写模块', () => {
     const body = fnBody('onProvisionSuccess')
-    expect(body).not.toContain('reportDeviceWifi(cloudDeviceId.value')
-    expect(body).toContain('reportDeviceWifi(reportTarget')
     expect(body).toContain("keyTargetDeviceId || cloudDeviceId.value")
+    expect(page).not.toContain("api/device")
   })
 
   it('断言确实读到了源码（防路径写错导致空内容假绿）', () => {
