@@ -12,18 +12,23 @@
 // 界面契约（model.SystemSettingsDTO / model.AlertRulesDTO 的 *N 字段）是 **N**。
 // ⇒ 本文件就是那条唯一边界：GET 出参 ÷MnPerN，PUT/POST 落库 ×MnPerN。
 //
-// 换算分母按服务本地定义（各服务一份，不跨 module import），
-// 与 data-service 的 model.MnPerN、alert-service 的 config.MnPerN 同值同语义。
+// 换算分母唯一真源在 services/units（Go 侧唯一分母定义），
+// data-service 的 model.MnPerN、alert-service 的 config.MnPerN 均为指向它的薄别名。
 package handler
 
-// MnPerN 毫牛↔牛换算分母（T733 方案A 唯一分母）。
-const MnPerN = 1000.0
+import "github.com/bracesync/bracesync/services/units"
+
+// MnPerN 兼容别名，指向 services/units.MnPerN（T733 方案A 唯一分母）。
+// 兼容别名：新代码请直接使用 units.MnPerN。
+const MnPerN = units.MnPerN
 
 // mnToN 存储空间(mN) → 展示空间(N)：只允许出现在 HTTP 出参组装处。
-func mnToN(mn float64) float64 { return mn / MnPerN }
+// 兼容包装：新代码请直接使用 units.MnToN；保留本包装只为既有调用点零改动。
+func mnToN(mn float64) float64 { return units.MnToN(mn) }
 
 // nToMn 展示空间(N) → 存储空间(mN)：只允许出现在写 sys_configs / 逐点表的落库处。
-func nToMn(n float64) float64 { return n * MnPerN }
+// 兼容包装：新代码请直接使用 units.NToMn；保留本包装只为既有调用点零改动。
+func nToMn(n float64) float64 { return units.NToMn(n) }
 
 // numOrMnToN 读 sys_configs 压力量纲键：库里存 mN，缺行/脏值回退**展示空间默认 defN**。
 // （默认值在各处仍以 N 声明，与前端表单 min/max 同档，读侧在此换算，避免两处硬编码。）
@@ -31,18 +36,7 @@ func numOrMnToN(raw string, defN float64) float64 { return mnToN(numOr(raw, nToM
 
 // nToMnPtr / mnToNPtr 指针版：nil（= 未设置 / 清除独立阈值）原样传 nil，
 // 让逐采集点 upperN(N) ↔ upper_n(mN) 在读写两侧都能一行换算。
-func nToMnPtr(n *float64) *float64 {
-	if n == nil {
-		return nil
-	}
-	v := nToMn(*n)
-	return &v
-}
+// 兼容包装：新代码请直接使用 units.NStampToMn / units.MnStampToN；保留本包装只为既有调用点零改动。
+func nToMnPtr(n *float64) *float64 { return units.NStampToMn(n) }
 
-func mnToNPtr(mn *float64) *float64 {
-	if mn == nil {
-		return nil
-	}
-	v := mnToN(*mn)
-	return &v
-}
+func mnToNPtr(mn *float64) *float64 { return units.MnStampToN(mn) }

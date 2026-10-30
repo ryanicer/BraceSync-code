@@ -210,7 +210,7 @@ func (s *RecordService) UploadSingle(ctx context.Context, headerDeviceID string,
 
 // applyRealtimeCache 单帧上报后的 Redis 三写
 // T173：佩戴判定与 stat:today 用「减偏移后」值（PRD §8.1/§7A.2：判定统一基于校准后值）；
-// rt:frame 缓存存原样入库的 N raw 值（T719），读侧统一校准（与 DB 口径一致）。
+// rt:frame 缓存存原样入库的 mN raw 值（T733 方案A），读侧统一校准（与 DB 口径一致）。
 func (s *RecordService) applyRealtimeCache(ctx context.Context, deviceID, patientID string, frame repo.PendingFrame, now time.Time, countStat bool) *model.AppError {
 	if err := s.cache.SetLastSeen(ctx, deviceID, frame.Ts); err != nil {
 		log.Error().Err(err).Str("device_id", deviceID).Msg("redis set lastseen failed")
@@ -851,10 +851,10 @@ func pointsToFloat64(points [model.PointCount]float32) []float64 {
 }
 
 // toPendingFrame 请求参数 → 待落库帧。
-// T719（Boss 真机实锤，固件 1.4）：设备上报 points 单位 = **牛顿 N 原样**，入口不再换算，
-// 落库/缓存/判档全链均为 N 空间。旧 T173 D1「上报 mN、入口 ÷1000 归一」口径作废——
-// 固件 1.4 已把 HTTP points 从 ADC/mN 改为牛顿 N，云端再 ÷1000 会把真值压成 1/1000，
-// 致 KpaFromN 恒 1、且与「原样存 N」的基线偏移做减法则出负值（Apply 跳负现象）。
+// T733 方案A（Boss 2026-10-22 拍板，固件 1.9）：设备上报 points 单位 = **毫牛 mN 原样**，
+// 入口零换算，落库/缓存/判档/校准减除全链均为 mN 空间；÷1000 只在 API 出口（model.FrameToN）。
+// 历史两次翻覆留此备案：T173 D1「入口 ÷1000 存 N」→ T719「入口原样存 N」（当时误判固件 1.4 发 N）
+// → T733「入口原样存 mN + 出口唯一换算」。再私自 ÷1000 或漏 ÷1000，症状固定为压力差 1000 倍。
 func toPendingFrame(ts time.Time, points []float64, battery, faultCode int) repo.PendingFrame {
 	var arr [model.PointCount]float32
 	for i := 0; i < model.PointCount && i < len(points); i++ {

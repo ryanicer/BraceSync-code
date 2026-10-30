@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/bracesync/bracesync/services/units"
 )
 
 // PointCount 压力采集点位数（P01–P20）
@@ -26,23 +28,20 @@ var (
 	BackfillMaxAge = 7 * 24 * time.Hour
 )
 
-// MnPerN 全链唯一换算分母（T733 方案A，Boss 2026-10-22 拍板）：设备毫牛 mN 换展示牛顿 N。
+// MnPerN 兼容别名，指向 services/units.MnPerN（Go 侧唯一分母定义，T733 方案A，Boss 2026-10-22 拍板）。
 // 🔴 存储语义 = **原始 mN 入库零加工**；÷MnPerN 只允许发生在 API 出口（响应组装层）。
 // 任何在入库、缓存、队列、聚合、告警判档、校准减除处 ÷ 或 × 本常数的写法都是违规
 // （T719 事故正是把换算从入口删掉后，展示层再没补，导致 mN 当 N 显示差 1000 倍）。
-const MnPerN = 1000.0
+// 兼容别名：新代码请直接使用 github.com/bracesync/bracesync/services/units.MnPerN。
+const MnPerN = units.MnPerN
 
 // MnToN 存储层 mN → 展示层 N（唯一换算出口原语；负值原样保留，归零口径仍由 KpaFromN 把）
-func MnToN(mn float64) float64 { return mn / MnPerN }
+// 兼容包装：新代码请直接使用 units.MnToN；保留本包装只为既有调用点零改动。
+func MnToN(mn float64) float64 { return units.MnToN(mn) }
 
 // MnStampToN 聚合印章里的佩戴阈值（*float64，mN）→ 展示层 N；nil（无印章）原样传 nil，不退 0
-func MnStampToN(v *float64) *float64 {
-	if v == nil {
-		return nil
-	}
-	n := MnToN(*v)
-	return &n
-}
+// 兼容包装：新代码请直接使用 units.MnStampToN；保留本包装只为既有调用点零改动。
+func MnStampToN(v *float64) *float64 { return units.MnStampToN(v) }
 
 // FrameToN 20 点帧 存储层 mN → 展示层 N（整帧一次性换算，读侧组装唯一入口）
 func FrameToN(points [PointCount]float32) [PointCount]float32 {

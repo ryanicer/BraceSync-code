@@ -46,6 +46,7 @@ import (
 	"github.com/bracesync/bracesync/services/device-service/internal/model"
 	"github.com/bracesync/bracesync/services/device-service/internal/repo"
 	"github.com/bracesync/bracesync/services/device-service/internal/service"
+	"github.com/bracesync/bracesync/services/units"
 )
 
 // headerUserID gateway 鉴权通过后注入的操作人身份头（架构 §5.2）
@@ -375,7 +376,8 @@ func (h *Handler) listBindings(c *gin.Context) {
 // 存在的理由：daily_wear_stats.avg_pressure 取的是**校准前**的 20 点原值，而 /records、
 // /realtime 每帧回的都是 calibration.Apply **减过偏移后**的值 —— 调用方拿不到那 20 个偏移
 // 就无法把读接口回的值还原回聚合式吃的值（Ella T366 验收附带发现 1）。本端点回的就是
-// calibration 实际减的那一条（规矩 A：该设备 baseline_id 最新），两侧同源，可直接相加反推。
+// calibration 实际减的那一条（规矩 A：该设备 baseline_id 最新）。本端点出口统一换算为 N，
+// 与 /records 同量纲，可直接相加反推；存储与安装详情仍保留原始 mN。
 //
 // 设备存在却从未校准：200 + calibrated=false + offsetValues 空数组（与 install 详情
 // 「未校准为 []」同形），不是 404 —— 404 留给设备不存在。
@@ -392,7 +394,10 @@ func (h *Handler) getDeviceBaseline(c *gin.Context) {
 	}
 	offsets := []float32{}
 	if bl != nil {
-		offsets = bl.OffsetValues
+		offsets = make([]float32, len(bl.OffsetValues))
+		for i, v := range bl.OffsetValues {
+			offsets[i] = float32(units.MnToN(float64(v)))
+		}
 	}
 	data := gin.H{
 		"deviceId":     deviceID,

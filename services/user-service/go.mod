@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/bracesync/bracesync/services/testhelper v0.0.0-00010101000000-000000000000
+	github.com/bracesync/bracesync/services/units v0.0.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/jackc/pgx/v5 v5.6.0
 	github.com/prometheus/client_golang v1.20.5
@@ -99,3 +100,5 @@ require (
 )
 
 replace github.com/bracesync/bracesync/services/testhelper => ../testhelper
+
+replace github.com/bracesync/bracesync/services/units => ../units

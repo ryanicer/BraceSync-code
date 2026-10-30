@@ -6,7 +6,7 @@
 // 聚合式吃的值（Ella T366 验收「缺 1」）。
 //
 // 本文件守四件事：
-//  1. 已校准设备回 calibration 实际减的那一条，且与 install 详情的 offsetValues 同源
+//  1. 已校准设备回 calibration 实际减的那一条；出口统一为 N，与 install 详情的 mN 原值同源同一条
 //     （两侧一分叉，用本端点反推出来的 avg_pressure 就是另一个数）；
 //  2. 一机多装：换基线后必须跟着换成最新那条（规矩 A：baseline_id 最大），旧安装仍回自己的；
 //  3. 设备存在却从未校准 = 200 + calibrated:false + offsetValues 空数组（不是 null，与
@@ -51,51 +51,55 @@ func t407Get(t *testing.T, env *testEnv, deviceID string) (int, int, json.RawMes
 func TestT407_BaselineRead_CalibratedDeviceMatchesInstallDetail(t *testing.T) {
 	env := newTestEnv(t)
 	const dev, pat, tech = "DEV-T407-A", "P-T407-A", "T-T407-A"
-	want := offsetsWith(map[int]float32{0: 0.5, 19: 1.25})
+	wantMn := offsetsWith(map[int]float32{0: 0.5, 19: 1.25})
 
 	installID := createInstallForCalib(t, env, dev, pat, tech)
-	saveBaselineFor(t, env, installID, want, tech)
+	saveBaselineFor(t, env, installID, wantMn, tech)
 
 	status, code, _, dto := t407Get(t, env, dev)
 	require.Equal(t, http.StatusOK, status)
 	assert.Equal(t, model.CodeOK, code)
 	assert.Equal(t, dev, dto.DeviceID)
 	assert.True(t, dto.Calibrated, "已校准设备必须 calibrated=true")
-	assert.Equal(t, want, dto.OffsetValues, "偏移值必须逐点等于校准写入的那一条")
+	require.Len(t, dto.OffsetValues, model.PointCount)
+	assert.Equal(t, float32(0.0005), dto.OffsetValues[0], "出口换算为 N：0.5 mN 对应 0.0005 N")
+	assert.Equal(t, float32(0.00125), dto.OffsetValues[19], "出口换算为 N：1.25 mN 对应 0.00125 N")
 	assert.NotEmpty(t, dto.BaselineID)
 	assert.Equal(t, installID, dto.InstallID)
 	assert.Equal(t, tech, dto.CalibratorID)
 	assert.NotEmpty(t, dto.CreatedAt)
 
 	detail := getInstallDetail(t, env, installID)
-	assert.Equal(t, detail.OffsetValues, dto.OffsetValues,
-		"设备维度基线与安装详情偏移值必须同源（读的是 baselines 同一条）")
+	assert.Equal(t, wantMn, detail.OffsetValues,
+		"安装详情仍回 mN 存储原值；与设备维度基线读的是 baselines 同一条")
 }
 
 func TestT407_BaselineRead_LatestBaselineIDWinsAcrossInstalls(t *testing.T) {
 	env := newTestEnv(t)
 	const dev, pat, tech = "DEV-T407-B", "P-T407-B", "T-T407-B"
-	first := offsetsWith(map[int]float32{0: 0.2})
-	second := offsetsWith(map[int]float32{0: 9.9})
+	firstMn := offsetsWith(map[int]float32{0: 0.2})
+	secondMn := offsetsWith(map[int]float32{0: 9.9})
 
 	i1 := createInstallForCalib(t, env, dev, pat, tech)
-	saveBaselineFor(t, env, i1, first, tech)
+	saveBaselineFor(t, env, i1, firstMn, tech)
 	_, _, _, mid := t407Get(t, env, dev)
-	require.Equal(t, first, mid.OffsetValues, "单次校准后应回那一条基线")
+	require.Len(t, mid.OffsetValues, model.PointCount)
+	assert.InDelta(t, 0.0002, mid.OffsetValues[0], 1e-9, "出口换算为 N：0.2 mN 对应 0.0002 N")
 
 	i2 := createInstallForCalib(t, env, dev, pat, tech) // 同机换装再校准
-	saveBaselineFor(t, env, i2, second, tech)
+	saveBaselineFor(t, env, i2, secondMn, tech)
 
 	_, _, _, cur := t407Get(t, env, dev)
-	assert.Equal(t, second, cur.OffsetValues, "规矩 A：同机多基线取 baseline_id 最新一条")
+	require.Len(t, cur.OffsetValues, model.PointCount)
+	assert.InDelta(t, 0.0099, cur.OffsetValues[0], 1e-9, "规矩 A：同机多基线取 baseline_id 最新一条，出口仍为 N")
 	assert.Equal(t, i2, cur.InstallID, "不得回上一次安装的基线")
 	assert.NotEqual(t, mid.BaselineID, cur.BaselineID, "换新基线后 baselineId 必须跟着换")
 
 	// 反证：库里两条基线各自归属自己的安装 —— 否则上面的「最新胜出」是在守空 detector
 	d1 := getInstallDetail(t, env, i1)
-	assert.Equal(t, first, d1.OffsetValues, "旧安装详情仍指自己的基线（per-install 语义未被本端点改写）")
+	assert.Equal(t, firstMn, d1.OffsetValues, "旧安装详情仍指自己的基线（per-install 语义未被本端点改写，单位 mN）")
 	d2 := getInstallDetail(t, env, i2)
-	assert.Equal(t, second, d2.OffsetValues, "新安装详情回新基线")
+	assert.Equal(t, secondMn, d2.OffsetValues, "新安装详情回新基线（单位 mN）")
 }
 
 func TestT407_BaselineRead_UncalibratedDeviceReturnsEmptyArray(t *testing.T) {
