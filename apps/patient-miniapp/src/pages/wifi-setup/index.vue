@@ -87,7 +87,6 @@ import { useAuthStore } from '../../stores/auth'
 import { scanPhoneSsid } from '../../utils/wifi-band-scan'
 import { request } from '../../utils/request'
 import { getProvisionKey } from '../../api/provision'
-import { reportDeviceWifi } from '../../api/device'
 import { submitWifiFailureFeedback, buildFailureContent, formatFeedbackTime } from '../../api/feedback'
 import { encryptWifiPayload } from '../../utils/aes-ctr'
 import { logger } from '../../utils/logger'
@@ -866,7 +865,7 @@ async function onProvisionSuccess() {
   stopMockWifiStatusSequence()
   deviceStore.setWifiStatus('connected')
   await teardownBle()
-  // T730 增补 2：回写目标跟着领 key 的目标走（WiFi 真正变化的是手里这台）
+  // T730 增补 2：日志目标跟着领 key 的目标走（WiFi 真正变化的是手里这台）
   const reportTarget = keyTargetDeviceId || cloudDeviceId.value
   logger.info('[T192] 配网成功 → 05', {
     deviceId: reportTarget,
@@ -874,13 +873,6 @@ async function onProvisionSuccess() {
     ssid: enteredSsid.value,
   })
   view.value = 'success'
-
-  try {
-    if (reportTarget) await reportDeviceWifi(reportTarget, enteredSsid.value)
-  } catch (e) {
-    logger.warn('[T192] WiFi 状态回写失败', { target: reportTarget, msg: (e as Error)?.message ?? String(e) })
-    uni.showToast({ title: SUCCESS.syncFailToast, icon: 'none' })
-  }
 }
 
 function onCancelProvision() {
