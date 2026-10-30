@@ -1,7 +1,7 @@
 // Package calibration 患者端监测数据校准读侧（T173）。
 //
-// 口径（T173-decision D2–D8 保持；单位契约随 T719 更新，PRD §7A.2）：
-//   - 设备上报单位 = 牛顿 N（T719 固件 1.4 起原样上报），入口不再换算，落库前即 N（见 service.toPendingFrame）；
+// 口径（T173-decision D2–D8 保持；单位契约随 T733 方案A 更新，PRD §7A.2）：
+//   - 设备上报单位 = 毫牛 mN（固件 1.9 原值），入口零换算，落库前即 mN（见 service.toPendingFrame）；
 //   - 基线偏移减法只在本读侧做一处，realtime（DB/Redis 双分支）、records、heatmap、
 //     告警评估入参共用同一 Calibrator，保证三端与告警同源；
 //   - 基线唯一权威源 = baselines 表（写归 device-service，本服务只读，D3 同库只读 JOIN）；
@@ -66,7 +66,7 @@ func NewCalibrator(store Store) *Calibrator {
 	}
 }
 
-// Apply 单帧校准：points（原样入库的 N 值，T719）减去设备当前基线偏移。
+// Apply 单帧校准：points（原样入库的 mN 值，T733 方案A）减去设备当前基线偏移（同 mN）。
 // 缺基线返回原值且 Applied=false（显式未校准，调用方透出 calibrated=false）。
 func (c *Calibrator) Apply(ctx context.Context, deviceID string, points [model.PointCount]float32) (Result, error) {
 	bl, found, err := c.currentBaseline(ctx, deviceID)
