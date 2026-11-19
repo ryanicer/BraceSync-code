@@ -44,7 +44,7 @@
         @getphonenumber="onGetPhoneNumber"
         :disabled="binding"
       >
-        <text v-if="!binding">{{ isRetry ? '重试绑定' : '微信授权手机号' }}</text>
+        <text v-if="!binding">{{ isRetry ? '重试绑定' : '手机号快捷登录' }}</text>
         <text v-else>绑定中...</text>
       </button>
       <view v-if="phoneToken" class="token-tip">已缓存手机号凭证，7 天内可重试</view>
@@ -55,9 +55,7 @@
           <text v-if="agreed" class="check-mark">✓</text>
         </view>
         <text class="agree-text">已阅读并同意</text>
-        <text class="agree-link">《用户协议》</text>
-        <text class="agree-text">和</text>
-        <text class="agree-link">《隐私政策》</text>
+        <text class="agree-link" @click="openPrivacy">《用户协议与隐私政策》</text>
       </view>
     </view>
   </view>
@@ -71,7 +69,7 @@ import { bindPhone, type BindPhoneData, type BindPhoneFailData } from '../../api
 import { resolveBindPhoneResult } from '../../utils/auth-state'
 
 const authStore = useAuthStore()
-const agreed = ref(true)
+const agreed = ref(false)
 const binding = ref(false)
 const phoneToken = ref<string | null>(authStore.getPhoneToken())
 
@@ -83,6 +81,17 @@ function goBack() {
 
 function contactStaff() {
   uni.showToast({ title: '请联系门诊工作人员协助建档', icon: 'none' })
+}
+
+function openPrivacy() {
+  // 打开公众平台已配置的《用户隐私保护指引》，无需内置协议正文
+  // #ifdef MP-WEIXIN
+  if (typeof wx !== 'undefined' && typeof wx.openPrivacyContract === 'function') {
+    wx.openPrivacyContract({ fail: () => uni.showToast({ title: '暂无法打开，请稍后重试', icon: 'none' }) })
+    return
+  }
+  // #endif
+  uni.showToast({ title: '请在微信中查看协议', icon: 'none' })
 }
 
 async function doBind(phoneCode?: string) {
@@ -184,7 +193,8 @@ function onGetPhoneNumber(e: any) {
 .benefit-txt { font-size: 28rpx; color: #334155; }
 .benefit-sub { font-size: 22rpx; color: #94a3b8; margin-top: 4rpx; }
 .content { padding: 0 64rpx; margin-top: 64rpx; }
-.btn-phone { width: 100%; padding: 28rpx 0; background: #07C160; color: #fff; border: none; border-radius: 24rpx; font-size: 30rpx; font-weight: 500; }
+.btn-phone { width: 100%; padding: 28rpx 0; background: #2563EB; color: #fff; border: none; border-radius: 24rpx; font-size: 30rpx; font-weight: 500; }
+.btn-phone::after { border: none; }
 .btn-phone-retry { background: #2563EB; }
 .token-tip { text-align: center; margin-top: 20rpx; font-size: 22rpx; color: #94a3b8; }
 .contact-link { text-align: center; margin-top: 32rpx; font-size: 26rpx; color: #2563EB; }

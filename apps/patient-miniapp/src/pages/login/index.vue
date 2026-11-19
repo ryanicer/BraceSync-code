@@ -5,17 +5,16 @@
         <text class="brand-icon">⚡</text>
       </view>
       <text class="brand-name">矫智通</text>
-      <text class="brand-desc">矫形支具佩戴监测与管理</text>
+      <text class="brand-desc">穿戴设备数据记录与管理</text>
     </view>
 
     <view class="content">
       <view
-        :class="['btn-wechat', { 'btn-wechat-loading': loginLoading }]"
+        :class="['btn-login', { 'btn-login-loading': loginLoading }]"
         @click="wechatLogin"
       >
-        <text v-if="!loginLoading" class="wechat-icon">💬</text>
-        <text v-else class="spinner"></text>
-        <text>{{ loginLoading ? '静默授权中...' : '微信一键登录' }}</text>
+        <text v-if="loginLoading" class="spinner"></text>
+        <text>{{ loginLoading ? '正在登录...' : '手机号快捷登录' }}</text>
       </view>
 
       <view class="agreement">
@@ -23,10 +22,7 @@
           <text v-if="agreed" class="check-mark">✓</text>
         </view>
         <text class="agree-text">已阅读并同意</text>
-        <text class="agree-link">《用户协议》</text>
-        <text class="agree-text">和</text>
-        <text class="agree-link">《隐私政策》</text>
-        <text class="agree-text">（含儿童个人信息保护及监护人授权声明）</text>
+        <text class="agree-link" @click="openPrivacy">《用户协议与隐私政策》</text>
       </view>
     </view>
 
@@ -45,7 +41,7 @@ import { wxLogin, type WxLoginData, type WxLoginNeedBindData } from '../../api/p
 import { resolveWxLoginResult } from '../../utils/auth-state'
 
 const authStore = useAuthStore()
-const agreed = ref(true)
+const agreed = ref(false)
 const loginLoading = ref(false)
 const toastVisible = ref(false)
 const toastText = ref('')
@@ -135,6 +131,17 @@ async function wechatLoginInner() {
   }
 }
 
+function openPrivacy() {
+  // 打开公众平台已配置的《用户隐私保护指引》，无需内置协议正文
+  // #ifdef MP-WEIXIN
+  if (typeof wx !== 'undefined' && typeof wx.openPrivacyContract === 'function') {
+    wx.openPrivacyContract({ fail: () => uni.showToast({ title: '暂无法打开，请稍后重试', icon: 'none' }) })
+    return
+  }
+  // #endif
+  uni.showToast({ title: '请在微信中查看协议', icon: 'none' })
+}
+
 function wechatLogin() {
   if (!checkAgreed()) return
   if (loginLoading.value) return
@@ -152,10 +159,9 @@ function wechatLogin() {
 .brand-name { display: block; font-size: 44rpx; font-weight: 600; color: #1e293b; margin-top: 32rpx; letter-spacing: 2rpx; }
 .brand-desc { display: block; font-size: 24rpx; color: #94a3b8; margin-top: 8rpx; }
 .content { padding: 0 64rpx; }
-.btn-wechat { width: 100%; padding: 28rpx 0; background: #07C160; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; gap: 16rpx; }
-.btn-wechat text { color: #fff; font-size: 30rpx; font-weight: 500; }
-.wechat-icon { font-size: 36rpx; }
-.btn-wechat-loading { opacity: 0.8; }
+.btn-login { width: 100%; padding: 28rpx 0; background: #2563EB; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; gap: 16rpx; }
+.btn-login text { color: #fff; font-size: 30rpx; font-weight: 500; }
+.btn-login-loading { opacity: 0.8; }
 .spinner { width: 32rpx; height: 32rpx; border: 4rpx solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .agreement { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8rpx; margin-top: 40rpx; font-size: 22rpx; line-height: 1.6; }
