@@ -1,9 +1,7 @@
 <template>
   <view class="page">
     <view class="brand-header">
-      <view class="brand-logo">
-        <text class="brand-icon">⚡</text>
-      </view>
+      <image class="brand-logo" src="/static/logo.png" mode="aspectFit" />
       <text class="brand-name">矫智通</text>
       <text class="brand-desc">穿戴设备数据记录与管理</text>
     </view>
@@ -154,8 +152,7 @@ function wechatLogin() {
 <style scoped>
 .page { min-height: 100%; padding-bottom: 240rpx; }
 .brand-header { text-align: center; padding: 160rpx 0 80rpx; }
-.brand-logo { width: 144rpx; height: 144rpx; border-radius: 40rpx; background: linear-gradient(135deg, #2563EB, #6366f1); margin: 0 auto; display: flex; align-items: center; justify-content: center; box-shadow: 0 8rpx 32rpx rgba(37, 99, 235, 0.25); }
-.brand-icon { font-size: 72rpx; }
+.brand-logo { width: 144rpx; height: 144rpx; margin: 0 auto; display: block; }
 .brand-name { display: block; font-size: 44rpx; font-weight: 600; color: #1e293b; margin-top: 32rpx; letter-spacing: 2rpx; }
 .brand-desc { display: block; font-size: 24rpx; color: #94a3b8; margin-top: 8rpx; }
 .content { padding: 0 64rpx; }
