@@ -22,6 +22,8 @@
         <text class="agree-text">已阅读并同意</text>
         <text class="agree-link" @click="openPrivacy">《用户协议与隐私政策》</text>
       </view>
+
+      <view class="guest-link" @click="goGuide">先了解功能 ›</view>
     </view>
 
     <view v-if="toastVisible" class="toast">
@@ -140,6 +142,10 @@ function openPrivacy() {
   uni.showToast({ title: '请在微信中查看协议', icon: 'none' })
 }
 
+function goGuide() {
+  uni.redirectTo({ url: '/pages/guide/index' })
+}
+
 function wechatLogin() {
   if (!checkAgreed()) return
   if (loginLoading.value) return
@@ -167,6 +173,7 @@ function wechatLogin() {
 .check-mark { color: #fff; font-size: 20rpx; line-height: 1; }
 .agree-text { color: #64748b; }
 .agree-link { color: #2563EB; }
+.guest-link { text-align: center; font-size: 24rpx; color: #64748b; margin-top: 48rpx; padding: 16rpx; }
 .toast { position: fixed; top: 160rpx; left: 50%; transform: translateX(-50%); background: #1e293b; color: #fff; padding: 20rpx 36rpx; border-radius: 16rpx; z-index: 999; display: flex; align-items: center; gap: 12rpx; box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.2); }
 .toast-icon { color: #22c55e; font-size: 28rpx; }
 .toast-text { font-size: 26rpx; white-space: nowrap; }
