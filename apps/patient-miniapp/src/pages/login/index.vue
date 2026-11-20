@@ -23,6 +23,9 @@
         <text class="agree-link" @click="openPrivacy">《用户协议与隐私政策》</text>
       </view>
 
+      <view class="btn-guest" @click="guestExperience">
+        <text>游客体验 ›</text>
+      </view>
       <view class="guest-link" @click="goGuide">先了解功能 ›</view>
     </view>
 
@@ -144,6 +147,14 @@ function openPrivacy() {
 
 function goGuide() {
   uni.redirectTo({ url: '/pages/guide/index' })
+}
+
+function guestExperience() {
+  import('../../utils/guest').then(({ enterGuest }) => {
+    enterGuest()
+    uni.showToast({ title: '正在进入体验...', icon: 'none' })
+    setTimeout(() => uni.switchTab({ url: '/pages/monitor/index' }), 500)
+  })
 }
 
 function wechatLogin() {

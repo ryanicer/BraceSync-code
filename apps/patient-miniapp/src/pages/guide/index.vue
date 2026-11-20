@@ -19,10 +19,13 @@
     </view>
 
     <view class="content">
-      <view class="btn-login" @click="goLogin">
-        <text>登录 / 注册</text>
+      <view class="btn-login" @click="guestExperience">
+        <text>游客体验（无需登录）</text>
       </view>
-      <text class="hint">本产品面向已建档用户，登录后查看个人数据</text>
+      <view class="btn-secondary" @click="goLogin">
+        <text>账号登录</text>
+      </view>
+      <text class="hint">游客体验展示演示数据，不含真实信息</text>
     </view>
   </view>
 </template>
@@ -37,6 +40,14 @@ const features = [
 
 function goLogin() {
   uni.navigateTo({ url: '/pages/login/index' })
+}
+
+function guestExperience() {
+  import('../../utils/guest').then(({ enterGuest }) => {
+    enterGuest()
+    uni.showToast({ title: '正在进入体验...', icon: 'none' })
+    setTimeout(() => uni.switchTab({ url: '/pages/monitor/index' }), 500)
+  })
 }
 </script>
 
@@ -56,5 +67,7 @@ function goLogin() {
 .content { padding: 56rpx 64rpx 0; }
 .btn-login { width: 100%; padding: 28rpx 0; background: #2563EB; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; }
 .btn-login text { color: #fff; font-size: 30rpx; font-weight: 500; }
+.btn-secondary { width: 100%; padding: 26rpx 0; margin-top: 24rpx; background: #f1f5f9; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; }
+.btn-secondary text { color: #475569; font-size: 28rpx; }
 .hint { display: block; text-align: center; font-size: 20rpx; color: #94a3b8; margin-top: 24rpx; }
 </style>

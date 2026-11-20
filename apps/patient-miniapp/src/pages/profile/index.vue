@@ -24,8 +24,9 @@
             <view class="profile-name">{{ nameText }}</view>
             <view class="profile-meta">{{ metaText }}</view>
           </view>
-          <view class="profile-edit" @click="openEditSheet">编辑</view>
+          <view v-if="!isGuestMode" class="profile-edit" @click="openEditSheet">编辑</view>
         </view>
+        <view v-if="isGuestMode" class="guest-banner">体验模式 · 当前为演示数据</view>
       </view>
 
       <!-- T223 六项功能菜单（顺序/文案/图标对齐 profile.html） -->
@@ -71,6 +72,12 @@
             <text class="menu-ic">💬</text>
             <text class="menu-text">联系我们</text>
             <text class="menu-sub">在线客服 · 留言反馈</text>
+            <text class="menu-arrow">›</text>
+          </view>
+          <view v-if="isGuestMode" class="menu-item" @click="exitExperience">
+            <text class="menu-ic">↩</text>
+            <text class="menu-text">退出体验</text>
+            <text class="menu-sub">返回登录页</text>
             <text class="menu-arrow">›</text>
           </view>
         </view>
@@ -145,9 +152,16 @@ import { onShow } from '@dcloudio/uni-app'
 import { getPatientProfile, updatePatientProfile, type PatientProfile, type PatientProfileUpdate } from '../../api/profile'
 import { useAuthStore } from '../../stores/auth'
 import { logger } from '../../utils/logger'
+import { isGuest, exitGuest } from '../../utils/guest'
 import { ageText, avatarCharOf, cobbText as fmtCobb, genderText, textOrDash, CONTACT_GROUP_LABEL } from '../../utils/profile-format'
 
 const auth = useAuthStore()
+const isGuestMode = ref(isGuest())
+
+function exitExperience() {
+  exitGuest()
+  uni.reLaunch({ url: '/pages/login/index' })
+}
 
 const profile = ref<PatientProfile | null>(null)
 const loading = ref(false)
@@ -313,6 +327,7 @@ function goContact() {
 .error-text { font-size: 26rpx; color: #ef4444; display: block; }
 
 .profile-card { display: flex; align-items: center; gap: 32rpx; background: #fff; border: 1rpx solid #e2e8f0; border-radius: 24rpx; padding: 40rpx; }
+.guest-banner { margin-top: 16rpx; text-align: center; font-size: 22rpx; color: #b45309; background: #fffbeb; border-radius: 16rpx; padding: 14rpx; }
 .avatar { width: 104rpx; height: 104rpx; border-radius: 50%; background: #2563EB; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 44rpx; font-weight: 500; flex-shrink: 0; }
 .profile-info { flex: 1; min-width: 0; }
 .profile-name { font-size: 36rpx; font-weight: 500; color: #1e293b; }

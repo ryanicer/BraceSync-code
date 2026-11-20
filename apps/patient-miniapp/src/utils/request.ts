@@ -97,6 +97,22 @@ function emit(payload: Record<string, unknown>): void {
 }
 
 export async function request<T>(options: RequestOptions): Promise<T> {
+  // 游客体验模式：运行时拦截，读接口返回本地演示数据，写接口一律拒绝。
+  // 不触碰真实后端，不建生产账号。详见 utils/guest.ts。
+  const { isGuest } = await import('./guest')
+  if (isGuest()) {
+    const method = (options.method || 'GET').toUpperCase()
+    if (method !== 'GET') {
+      uni.showToast({ title: '体验模式不可修改数据', icon: 'none' })
+      throw new Error('guest mode: write operation blocked')
+    }
+    const { guestResponse } = await import('./guest-data')
+    const data = guestResponse<T>(options.url)
+    if (data !== undefined) return data
+    // 未覆盖的读接口返回空列表，保持页面空态而非报错
+    return [] as unknown as T
+  }
+
   if (USE_MOCK) {
     throw new Error('Mock mode: use mock data functions directly')
   }
