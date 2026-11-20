@@ -12,7 +12,7 @@
  */
 const GUEST_KEY = 'bracesync_guest_mode'
 export const GUEST_PATIENT_ID = 'DEMO-20260101'
-const GUEST_TOKEN = 'guest-local-demo-token'
+export const GUEST_TOKEN = 'guest-local-demo-token'
 
 export function isGuest(): boolean {
   try {

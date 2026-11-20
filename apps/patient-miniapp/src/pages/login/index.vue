@@ -15,6 +15,10 @@
         <text>{{ loginLoading ? '正在登录...' : '手机号快捷登录' }}</text>
       </view>
 
+      <view class="btn-guest" @click="guestExperience">
+        <text>游客体验</text>
+      </view>
+
       <view class="agreement">
         <view :class="['checkbox', { 'checkbox-checked': agreed }]" @click="agreed = !agreed">
           <text v-if="agreed" class="check-mark">✓</text>
@@ -22,11 +26,6 @@
         <text class="agree-text">已阅读并同意</text>
         <text class="agree-link" @click="openPrivacy">《用户协议与隐私政策》</text>
       </view>
-
-      <view class="btn-guest" @click="guestExperience">
-        <text>游客体验 ›</text>
-      </view>
-      <view class="guest-link" @click="goGuide">先了解功能 ›</view>
     </view>
 
     <view v-if="toastVisible" class="toast">
@@ -42,6 +41,7 @@ import { userErrorCopy } from '@bracesync/shared-utils'
 import { useAuthStore } from '../../stores/auth'
 import { wxLogin, type WxLoginData, type WxLoginNeedBindData } from '../../api/patient'
 import { resolveWxLoginResult } from '../../utils/auth-state'
+import { enterGuest, GUEST_TOKEN, GUEST_PATIENT_ID } from '../../utils/guest'
 
 const authStore = useAuthStore()
 const agreed = ref(false)
@@ -145,15 +145,13 @@ function openPrivacy() {
   uni.showToast({ title: '请在微信中查看协议', icon: 'none' })
 }
 
-function goGuide() {
-  uni.redirectTo({ url: '/pages/guide/index' })
-}
-
 function guestExperience() {
-  import('../../utils/guest').then(({ enterGuest }) => {
-    enterGuest()
-    uni.showToast({ title: '正在进入体验...', icon: 'none' })
-    setTimeout(() => uni.switchTab({ url: '/pages/monitor/index' }), 500)
+  // 写本地游客标记 + 演示登录态；同步 Pinia 内存态，否则 monitor 页 patientId 仍为 null 直接 return
+  enterGuest()
+  authStore.login(GUEST_TOKEN, GUEST_PATIENT_ID)
+  uni.switchTab({
+    url: '/pages/monitor/index',
+    fail: () => uni.reLaunch({ url: '/pages/monitor/index' }),
   })
 }
 
@@ -184,7 +182,8 @@ function wechatLogin() {
 .check-mark { color: #fff; font-size: 20rpx; line-height: 1; }
 .agree-text { color: #64748b; }
 .agree-link { color: #2563EB; }
-.guest-link { text-align: center; font-size: 24rpx; color: #64748b; margin-top: 48rpx; padding: 16rpx; }
+.btn-guest { width: 100%; padding: 26rpx 0; margin-top: 24rpx; background: #f1f5f9; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; }
+.btn-guest text { color: #475569; font-size: 28rpx; }
 .toast { position: fixed; top: 160rpx; left: 50%; transform: translateX(-50%); background: #1e293b; color: #fff; padding: 20rpx 36rpx; border-radius: 16rpx; z-index: 999; display: flex; align-items: center; gap: 12rpx; box-shadow: 0 8rpx 32rpx rgba(0,0,0,0.2); }
 .toast-icon { color: #22c55e; font-size: 28rpx; }
 .toast-text { font-size: 26rpx; white-space: nowrap; }
